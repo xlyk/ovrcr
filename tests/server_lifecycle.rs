@@ -336,6 +336,40 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
 }
 
 #[test]
+fn dashboard_request_id_zero_does_not_block_followup_response() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 0,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let response = read_frame::<ServerMessage>(&mut dashboard);
+    assert!(
+        response.is_ok(),
+        "request id zero must not block later dashboard responses: {response:?}"
+    );
+    drop(dashboard);
+    fixture.stop();
+}
+
+#[test]
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     let mut fixture = ServerFixture::new();
     fixture.start();

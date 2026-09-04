@@ -62,24 +62,28 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub selected: Mutex<Option<SessionId>>,
-    pub dashboard: Mutex<Option<SyncSender<ServerMessage>>>,
+    pub dashboard: Mutex<Option<SyncSender<DashboardOutbound>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
     pub dispatch: SyncSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
-    dashboard_ack_request: AtomicU64,
+}
+
+pub struct DashboardOutbound {
+    message: ServerMessage,
+    completion: Option<SyncSender<Result<(), String>>>,
 }
 
 struct DashboardSlot {
-    sender: SyncSender<ServerMessage>,
+    sender: SyncSender<DashboardOutbound>,
     identity: Arc<()>,
     stream: UnixStream,
 }
 
 struct DashboardSnapshot {
-    sender: SyncSender<ServerMessage>,
+    sender: SyncSender<DashboardOutbound>,
     identity: Arc<()>,
     stream: UnixStream,
 }
@@ -140,7 +144,6 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         shutdown: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
         dashboard_slot: Mutex::new(None),
-        dashboard_ack_request: AtomicU64::new(0),
     });
     let bridge_dispatch = dispatch.clone();
     let bridge = thread::Builder::new()
@@ -280,7 +283,6 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let (dashboard_tx, dashboard_rx) = mpsc::sync_channel(DASHBOARD_QUEUE);
     let mut dashboard_rx = Some(dashboard_rx);
     let mut writer: Option<JoinHandle<()>> = None;
-    let mut dashboard_ack = None;
     while !state.shutdown.load(Ordering::Acquire) {
         let message = match read_frame::<ClientMessage>(&mut stream) {
             Ok(message) => message,
@@ -309,29 +311,26 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             role = ClientRole::Dashboard;
             let mut output = stream.try_clone().ok();
             let writer_receiver = dashboard_rx.take().expect("dashboard writer receiver");
-            let (ack_sender, ack_receiver) = mpsc::sync_channel(0);
-            let writer_state = Arc::clone(&state);
             writer = Some(
                 thread::Builder::new()
                     .name("ovrcr-dashboard-writer".into())
                     .spawn(move || {
-                        while let Ok(message) = writer_receiver.recv() {
-                            let Some(ref mut stream) = output else { break };
-                            if write_frame(stream, &message).is_err() {
-                                break;
+                        while let Ok(outbound) = writer_receiver.recv() {
+                            let result = match output.as_mut() {
+                                Some(stream) => write_frame(stream, &outbound.message)
+                                    .map_err(|error| error.to_string()),
+                                None => Err("dashboard writer stream unavailable".into()),
+                            };
+                            if let Some(completion) = outbound.completion {
+                                let _ = completion.send(result.clone());
                             }
-                            if let ServerMessage::Response { request_id, .. } = message {
-                                if writer_state.dashboard_ack_request.load(Ordering::Acquire)
-                                    == request_id
-                                {
-                                    let _ = ack_sender.send(());
-                                }
+                            if result.is_err() {
+                                break;
                             }
                         }
                     })
                     .expect("dashboard writer thread"),
             );
-            dashboard_ack = Some(ack_receiver);
             dashboard_try_send(
                 &state,
                 response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
@@ -342,26 +341,39 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         let select = matches!(message.request, Request::Select { .. });
         let response = handle_request(&state, &message.request, message.request_id);
         let successful_shutdown = shutdown && matches!(&response, Response::Ok);
-        if successful_shutdown && matches!(role, ClientRole::Dashboard) {
-            state
-                .dashboard_ack_request
-                .store(message.request_id, Ordering::Release);
-        }
-        let delivered = match role {
-            ClientRole::Control => send_direct(&mut stream, message.request_id, response).is_ok(),
+        let (delivered, dashboard_shutdown_attempt) = match role {
+            ClientRole::Control => (
+                send_direct(&mut stream, message.request_id, response).is_ok(),
+                false,
+            ),
             ClientRole::Dashboard => {
                 if !select {
-                    dashboard_try_send(&state, response_message(message.request_id, response));
+                    if successful_shutdown {
+                        let (completion, result) = mpsc::sync_channel(1);
+                        let queued = dashboard_send(
+                            &state,
+                            response_message(message.request_id, response),
+                            Some(completion),
+                        );
+                        let delivered =
+                            queued && result.recv().is_ok_and(|write_result| write_result.is_ok());
+                        (delivered, true)
+                    } else {
+                        (
+                            dashboard_try_send(
+                                &state,
+                                response_message(message.request_id, response),
+                            ),
+                            false,
+                        )
+                    }
+                } else {
+                    (true, false)
                 }
-                true
             }
         };
         if successful_shutdown {
-            if let Some(ack_receiver) = dashboard_ack.take() {
-                if delivered {
-                    let _ = ack_receiver.recv_timeout(Duration::from_millis(500));
-                }
-            }
+            debug_assert!(dashboard_shutdown_attempt || matches!(role, ClientRole::Control));
             state.shutdown.store(true, Ordering::Release);
             wake_accept(&state);
         }
@@ -481,16 +493,29 @@ fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> 
     write_frame(stream, &response_message(request_id, response))
 }
 
-fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) {
+fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) -> bool {
+    dashboard_send(state, message, None)
+}
+
+fn dashboard_send(
+    state: &Arc<ServerState>,
+    message: ServerMessage,
+    completion: Option<SyncSender<Result<(), String>>>,
+) -> bool {
     let Some(snapshot) = dashboard_snapshot(state) else {
-        return;
+        return false;
     };
     if matches!(
-        snapshot.sender.try_send(message),
+        snapshot.sender.try_send(DashboardOutbound {
+            message,
+            completion,
+        }),
         Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
     ) {
         disconnect_dashboard(state, snapshot);
+        return false;
     }
+    true
 }
 
 fn dashboard_snapshot(state: &Arc<ServerState>) -> Option<DashboardSnapshot> {
@@ -504,6 +529,7 @@ fn dashboard_snapshot(state: &Arc<ServerState>) -> Option<DashboardSnapshot> {
 }
 
 fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
+    let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
     let mut slot = state.dashboard_slot.lock().unwrap();
     if slot
         .as_ref()
@@ -511,7 +537,6 @@ fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
     {
         let _ = slot.take();
         *state.dashboard.lock().unwrap() = None;
-        let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -629,7 +654,7 @@ mod tests {
     use std::io::Read;
 
     fn test_state(
-        dashboard: Option<SyncSender<ServerMessage>>,
+        dashboard: Option<SyncSender<DashboardOutbound>>,
         stream: Option<(Arc<()>, UnixStream)>,
     ) -> Arc<ServerState> {
         let (events, _) = mpsc::sync_channel(EVENT_QUEUE);
@@ -651,7 +676,6 @@ mod tests {
                 identity,
                 stream,
             })),
-            dashboard_ack_request: AtomicU64::new(0),
         })
     }
 
@@ -663,9 +687,12 @@ mod tests {
             .unwrap();
         let (sender, receiver) = mpsc::sync_channel(1);
         sender
-            .send(ServerMessage::Event(ServerEvent::ScreenDirty {
-                session: SessionId(1),
-            }))
+            .send(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::ScreenDirty {
+                    session: SessionId(1),
+                }),
+                completion: None,
+            })
             .unwrap();
         let identity = Arc::new(());
         let state = test_state(Some(sender), Some((identity, server_stream)));
@@ -684,6 +711,8 @@ mod tests {
     #[test]
     fn dashboard_overflow_does_not_clear_replacement_slot() {
         let (old_server, mut old_client) = UnixStream::pair().unwrap();
+        let _old_handler_stream = old_server.try_clone().unwrap();
+        let _old_writer_stream = old_server.try_clone().unwrap();
         old_client
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
@@ -705,6 +734,69 @@ mod tests {
 
         assert!(state.dashboard.lock().unwrap().is_some());
         assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+    }
+
+    #[test]
+    fn dashboard_shutdown_waits_for_stalled_writer_completion() {
+        let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+        let send_buffer = 1_i32;
+        let result = unsafe {
+            libc::setsockopt(
+                server_stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&send_buffer as *const i32).cast(),
+                std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+            )
+        };
+        assert_eq!(result, 0);
+        let state = test_state(None, None);
+        state.registry.lock().unwrap().projects = (0..256)
+            .map(|index| crate::config::ProjectRecord {
+                name: format!("project-{index}-{}", "x".repeat(2_000)),
+                repo: PathBuf::from(format!("/repo/{index}")),
+                workspace_root: PathBuf::from(format!("/workspace/{index}")),
+                workspaces: Vec::new(),
+            })
+            .collect();
+        let handler_state = Arc::clone(&state);
+        let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+        write_frame(
+            &mut client_stream,
+            &ClientMessage {
+                request_id: 0,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        write_frame(
+            &mut client_stream,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::Shutdown { kill: false },
+            },
+        )
+        .unwrap();
+        thread::park_timeout(Duration::from_millis(100));
+        let shutdown_before_drain = state.shutdown.load(Ordering::Acquire);
+
+        client_stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let _ = read_frame::<ServerMessage>(&mut client_stream).unwrap();
+        assert!(matches!(
+            read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            }
+        ));
+        handler.join().unwrap();
+        assert!(
+            !shutdown_before_drain,
+            "shutdown must wait for the writer's actual response attempt"
+        );
+        assert!(state.shutdown.load(Ordering::Acquire));
     }
 
     #[test]
