@@ -1,0 +1,20 @@
+[package]
+name = "ovrcr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+bincode = { version = "2", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+directories = "6"
+libc = "0.2"
+portable-pty = "0.9"
+ratatui = "0.30"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+vt100 = "0.16"
+
+[dev-dependencies]
+tempfile = "3"
