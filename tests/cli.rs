@@ -93,6 +93,7 @@ fn session_command_keeps_arguments_after_separator() {
         );
         output
     };
+    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
     run(&[
         "project",
         "add",
@@ -113,7 +114,7 @@ fn session_command_keeps_arguments_after_separator() {
         "--base",
         "main",
     ]);
-    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
+    cleanup.capture_live_process_groups(&socket);
     let created = run(&[
         "new",
         "--project",
@@ -274,45 +275,53 @@ impl<'a> CleanupGuard<'a> {
         }
     }
 
-    fn confirm(&mut self) {
+    fn cleanup(&mut self) -> Result<(), String> {
         let output = Command::new(self.bin)
             .args(["shutdown", "--kill"])
             .env("OVRCR_CONFIG", self.config)
             .env("OVRCR_SOCKET", self.socket)
             .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "cleanup shutdown failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+            .map_err(|error| format!("spawn cleanup shutdown: {error}"))?;
+        let mut failures = Vec::new();
+        if !output.status.success() {
+            failures.push(format!(
+                "cleanup shutdown failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         let deadline = Instant::now() + Duration::from_secs(3);
         while self.socket.exists() && Instant::now() < deadline {
             std::thread::park_timeout(Duration::from_millis(10));
         }
-        assert!(
-            !self.socket.exists(),
-            "server socket remained after cleanup"
-        );
-        for pgid in &self.pgids {
-            assert_eq!(
-                unsafe { libc::kill(-*pgid, 0) },
-                -1,
-                "managed process group {pgid} remained"
-            );
+        if self.socket.exists() {
+            failures.push("server socket remained after cleanup".into());
         }
-        self.cleaned = true;
+        for pgid in &self.pgids {
+            if unsafe { libc::kill(-*pgid, 0) } != -1 {
+                failures.push(format!("managed process group {pgid} remained"));
+            }
+        }
+        if failures.is_empty() {
+            self.cleaned = true;
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
+    fn confirm(&mut self) {
+        if let Err(error) = self.cleanup() {
+            panic!("cleanup confirmation failed: {error}");
+        }
     }
 }
 
 impl Drop for CleanupGuard<'_> {
     fn drop(&mut self) {
         if !self.cleaned {
-            let _ = Command::new(self.bin)
-                .args(["shutdown", "--kill"])
-                .env("OVRCR_CONFIG", self.config)
-                .env("OVRCR_SOCKET", self.socket)
-                .output();
+            if let Err(error) = self.cleanup() {
+                eprintln!("cleanup confirmation failed during unwind: {error}");
+            }
         }
     }
 }

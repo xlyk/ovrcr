@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 struct LifecycleFailure {
     code: ErrorCode,
     message: String,
+    publish_hierarchy: bool,
 }
 
 impl std::fmt::Display for LifecycleFailure {
@@ -38,9 +39,18 @@ impl std::fmt::Display for LifecycleFailure {
 impl std::error::Error for LifecycleFailure {}
 
 fn lifecycle_error(code: ErrorCode, message: impl Into<String>) -> anyhow::Error {
+    lifecycle_error_with_hierarchy(code, message, false)
+}
+
+fn lifecycle_error_with_hierarchy(
+    code: ErrorCode,
+    message: impl Into<String>,
+    publish_hierarchy: bool,
+) -> anyhow::Error {
     anyhow::Error::new(LifecycleFailure {
         code,
         message: message.into(),
+        publish_hierarchy,
     })
 }
 
@@ -343,13 +353,14 @@ impl ServerState {
             *registry = next;
         }
         let shell = std::env::var_os("SHELL").ok_or_else(|| {
-            lifecycle_error(
+            lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree for workspace {} exists at {} but SHELL is unset",
                     name,
                     workspace.path.display()
                 ),
+                true,
             )
         })?;
         if let Err(error) = self.create_session_locked(
@@ -362,13 +373,14 @@ impl ServerState {
             },
             None,
         ) {
-            return Err(lifecycle_error(
+            return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree for workspace {} remains at {}: {error}",
                     name,
                     workspace.path.display()
                 ),
+                true,
             ));
         }
         Ok(())
@@ -414,12 +426,13 @@ impl ServerState {
         next.remove_workspace(project, name)?;
         if let Err(error) = next.save_atomic(&self.registry_path) {
             *registry = next;
-            return Err(lifecycle_error(
+            return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree was removed at {} but registry update failed; live state reflects removal: {error}",
                     workspace.path.display()
                 ),
+                true,
             ));
         }
         *registry = next;
@@ -939,14 +952,11 @@ fn lifecycle_response_with_partial_hierarchy(
     state: &ServerState,
     error: anyhow::Error,
 ) -> Response {
+    let publish_hierarchy = error
+        .downcast_ref::<LifecycleFailure>()
+        .is_some_and(|failure| failure.publish_hierarchy);
     let response = error_for_lifecycle(error);
-    if matches!(
-        &response,
-        Response::Error {
-            code: ErrorCode::PartialFailure,
-            ..
-        }
-    ) {
+    if publish_hierarchy {
         dashboard_try_send_arc(
             state,
             ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
@@ -1359,6 +1369,31 @@ mod tests {
             "shutdown must wait for the writer's actual response attempt"
         );
         assert!(state.shutdown.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn uncommitted_partial_failure_does_not_publish_hierarchy() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+        let state = test_state(Some(sender), Some((Arc::new(()), server_stream)));
+        let response = lifecycle_response_with_partial_hierarchy(
+            &state,
+            lifecycle_error(
+                ErrorCode::PartialFailure,
+                "registry write failed: worktree remains",
+            ),
+        );
+        assert!(matches!(
+            response,
+            Response::Error {
+                code: ErrorCode::PartialFailure,
+                ..
+            }
+        ));
+        assert!(
+            receiver.try_recv().is_err(),
+            "uncommitted partial failure must not publish unchanged hierarchy"
+        );
     }
 
     #[test]
