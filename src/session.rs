@@ -118,7 +118,7 @@ impl Session {
             let _ = child.kill();
             bail!("PTY process-group leader does not own the child process");
         }
-        verify_group_identity(pgid)?;
+        verify_group_identity(pgid, false)?;
 
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
@@ -247,14 +247,14 @@ impl Session {
             return Ok(());
         }
 
-        verify_owned_group(self)?;
-        if group_exists(self.pgid)? {
+        if should_signal_group(self)? {
             signal_group(self.pgid, libc::SIGTERM)?;
         }
         let deadline = Instant::now() + grace;
         if !wait_for_group_exit(self.pgid, deadline)? && group_exists(self.pgid)? {
-            verify_owned_group(self)?;
-            signal_group(self.pgid, libc::SIGKILL)?;
+            if should_signal_group(self)? {
+                signal_group(self.pgid, libc::SIGKILL)?;
+            }
             let kill_deadline = Instant::now() + grace.max(Duration::from_secs(2));
             if !wait_for_group_exit(self.pgid, kill_deadline)? {
                 bail!("PTY process group did not exit after SIGKILL")
@@ -373,40 +373,57 @@ fn wait_for_child(
 }
 
 #[cfg(unix)]
-fn verify_group_identity(pgid: libc::pid_t) -> Result<()> {
+fn verify_group_identity(pgid: libc::pid_t, allow_reaped_leader: bool) -> Result<()> {
     if pgid <= 1 || pgid == unsafe { libc::getpgrp() } {
         bail!("refusing unsafe process group")
     }
     let actual = unsafe { libc::getpgid(pgid) };
-    if actual != pgid {
-        bail!("PTY process group is not owned")
+    if actual == pgid {
+        return Ok(());
     }
-    Ok(())
+    if allow_reaped_leader
+        && actual == -1
+        && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        && group_exists(pgid)?
+    {
+        return Ok(());
+    }
+    bail!("PTY process group is not owned")
 }
 
 #[cfg(not(unix))]
-fn verify_group_identity(_: libc::pid_t) -> Result<()> {
+fn verify_group_identity(_: libc::pid_t, _: bool) -> Result<()> {
     bail!("OVRCR sessions require Unix process groups")
 }
 
 fn verify_owned_group(session: &Session) -> Result<()> {
     #[cfg(unix)]
     {
-        let actual = session
-            .master
-            .lock()
-            .unwrap()
-            .process_group_leader()
-            .context("PTY no longer exposes its process group")?;
-        if actual != session.pgid {
-            bail!("PTY process group ownership changed")
+        let foreground = session.master.lock().unwrap().process_group_leader();
+        if let Some(actual) = foreground {
+            if actual != session.pgid {
+                bail!("PTY process group ownership changed")
+            }
+        } else if !group_exists(session.pgid)? {
+            bail!("PTY process group no longer exists")
         }
-        verify_group_identity(session.pgid)
+        verify_group_identity(session.pgid, true)
     }
     #[cfg(not(unix))]
     {
         let _ = session;
         bail!("OVRCR sessions require Unix process groups")
+    }
+}
+
+fn should_signal_group(session: &Session) -> Result<bool> {
+    if !group_exists(session.pgid)? {
+        return Ok(false);
+    }
+    match verify_owned_group(session) {
+        Ok(()) => Ok(true),
+        Err(_error) if !group_exists(session.pgid)? => Ok(false),
+        Err(error) => Err(error),
     }
 }
 
@@ -550,13 +567,25 @@ mod tests {
             tx,
         )
         .unwrap();
-        let output = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(matches!(output, SessionEvent::Output { .. }));
+        let first_event = rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(matches!(session.summary().phase, SessionPhase::Running));
-        session.apply_event(output);
-        let exit = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(matches!(exit, SessionEvent::Exited { .. }));
-        session.apply_event(exit);
+        let mut next_event = Some(first_event);
+        let mut saw_output = false;
+        loop {
+            let event = match next_event.take() {
+                Some(event) => event,
+                None => rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            };
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            if !exited {
+                saw_output = saw_output || matches!(event, SessionEvent::Output { .. });
+            }
+            session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+        assert!(saw_output);
         assert!(String::from_utf8_lossy(&session.current_screen()).contains("FINAL_MARKER"));
         assert!(matches!(
             session.summary().phase,
@@ -590,7 +619,11 @@ mod tests {
                 name: "group".into(),
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
-                argv: vec!["sh".into()],
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap '' HUP; sleep 30 & printf 'OVRCR_DESC:%s\\n' \"$!\"; exit".into(),
+                ],
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -598,16 +631,58 @@ mod tests {
         .unwrap();
         let dispatcher = dispatch_test_events(session.clone(), rx);
         let leader = session.summary().pid.unwrap();
-        session.write(b"sleep 30 & echo $!; wait\r").unwrap();
-        assert!(wait_for_screen(&session, "30", Duration::from_secs(2)));
-        session.terminate(Duration::from_millis(200)).unwrap();
+        let screen_deadline = Instant::now() + Duration::from_secs(2);
+        let descendant = loop {
+            if let Some(pid) = extract_tagged_pid(&session.current_screen(), b"OVRCR_DESC:")
+                && pid_exists(pid)
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < screen_deadline,
+                "descendant PID was not observed: {}",
+                String::from_utf8_lossy(&session.current_screen())
+            );
+            thread::park_timeout(Duration::from_millis(5));
+        };
+        assert!(pid_exists(descendant));
+        let termination = session.terminate(Duration::from_millis(200));
+        if termination.is_err() {
+            let owned_group = unsafe { libc::getpgid(descendant as libc::pid_t) } == session.pgid;
+            assert!(owned_group, "negative-control cleanup lost PTY ownership");
+            signal_group(session.pgid, libc::SIGKILL).unwrap();
+            assert!(
+                wait_for_group_exit(session.pgid, Instant::now() + Duration::from_secs(2)).unwrap()
+            );
+            let _ = session.wait_until_exited(Duration::from_secs(2));
+        }
+        termination.unwrap();
         dispatcher.join().unwrap();
-        assert!(!pid_exists(leader));
+        assert_pid_is_gone(leader);
+        assert_pid_is_gone(descendant);
         assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    fn extract_tagged_pid(screen: &[u8], tag: &[u8]) -> Option<u32> {
+        let start = screen.windows(tag.len()).position(|window| window == tag)? + tag.len();
+        let digits = screen[start..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .copied()
+            .collect::<Vec<_>>();
+        if digits.is_empty() {
+            return None;
+        }
+        std::str::from_utf8(&digits).ok()?.parse().ok()
     }
 
     fn pid_exists(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
         result == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    fn assert_pid_is_gone(pid: u32) {
+        assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
     }
 }
