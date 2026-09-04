@@ -3,7 +3,9 @@ use crate::protocol::{
 };
 use crate::session::{SessionId, TerminalSize};
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -17,6 +19,8 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
@@ -229,6 +233,38 @@ pub fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
     }
 }
 
+pub fn event_to_request(
+    dashboard: &mut Dashboard,
+    event: Event,
+    request_id: u64,
+) -> Option<ClientMessage> {
+    if dashboard.mode != InputMode::Terminal {
+        return None;
+    }
+    match event {
+        Event::Paste(text) => dashboard.input_request(
+            encode_paste(&text, dashboard.parser.screen().bracketed_paste()),
+            request_id,
+        ),
+        Event::Key(key) => match encode_key(key, dashboard.parser.screen().application_cursor()) {
+            KeyEncoding::Browse => {
+                dashboard.mode = InputMode::Browse;
+                None
+            }
+            KeyEncoding::Bytes(bytes) => dashboard.input_request(bytes, request_id),
+            KeyEncoding::Ignore => None,
+        },
+        _ => None,
+    }
+}
+
+pub fn dashboard_message_channel() -> (
+    mpsc::SyncSender<ServerMessage>,
+    mpsc::Receiver<ServerMessage>,
+) {
+    mpsc::sync_channel(DASHBOARD_READER_QUEUE_CAPACITY)
+}
+
 pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen, focused: bool) {
     let (rows, cols) = screen.size();
     let rows = rows.min(area.height);
@@ -246,10 +282,7 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
             if vt_cell.is_wide_continuation() {
                 continue;
             }
-            let (mut fg, mut bg) = (color(vt_cell.fgcolor()), color(vt_cell.bgcolor()));
-            if vt_cell.inverse() {
-                std::mem::swap(&mut fg, &mut bg);
-            }
+            let (fg, bg) = (color(vt_cell.fgcolor()), color(vt_cell.bgcolor()));
             cell.set_symbol(vt_cell.contents()).set_fg(fg).set_bg(bg);
             let mut modifier = Modifier::empty();
             if vt_cell.bold() {
@@ -301,14 +334,19 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
     }
 
     let reader_stream = stream.try_clone().context("clone dashboard socket")?;
-    let (received, messages) = mpsc::channel();
+    let (received, messages) = dashboard_message_channel();
     thread::Builder::new()
         .name("ovrcr-dashboard-reader".into())
         .spawn(move || read_messages(reader_stream, received))?;
 
     crossterm_terminal::enable_raw_mode().context("enable raw terminal mode")?;
     let mut stdout = io::stdout();
-    execute!(stdout, crossterm_terminal::EnterAlternateScreen).context("enter alternate screen")?;
+    execute!(
+        stdout,
+        crossterm_terminal::EnterAlternateScreen,
+        EnableBracketedPaste
+    )
+    .context("enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create dashboard terminal")?;
     let result = dashboard_loop(&mut terminal, &mut stream, &mut dashboard, &messages);
@@ -316,6 +354,7 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
     crossterm_terminal::disable_raw_mode().ok();
     execute!(
         terminal.backend_mut(),
+        DisableBracketedPaste,
         crossterm_terminal::LeaveAlternateScreen
     )
     .ok();
@@ -345,29 +384,23 @@ fn dashboard_loop(
             }
         }
         if event::poll(Duration::from_millis(100))? {
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            match dashboard.mode {
-                InputMode::Browse => match key.code {
+            match event::read()? {
+                Event::Key(key) if dashboard.mode == InputMode::Browse => match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Enter => dashboard.mode = InputMode::Terminal,
                     KeyCode::Down | KeyCode::Char('j') => select_relative(dashboard, 1, stream)?,
                     KeyCode::Up | KeyCode::Char('k') => select_relative(dashboard, -1, stream)?,
                     _ => {}
                 },
-                InputMode::Terminal => {
-                    match encode_key(key, dashboard.parser.screen().application_cursor()) {
-                        KeyEncoding::Browse => dashboard.mode = InputMode::Browse,
-                        KeyEncoding::Bytes(bytes) => {
-                            let request_id = dashboard.next_request_id();
-                            if let Some(request) = dashboard.input_request(bytes, request_id) {
-                                write_frame(stream, &request)?;
-                            }
-                        }
-                        KeyEncoding::Ignore => {}
+                event @ (Event::Key(_) | Event::Paste(_))
+                    if dashboard.mode == InputMode::Terminal =>
+                {
+                    let request_id = dashboard.next_request_id();
+                    if let Some(request) = event_to_request(dashboard, event, request_id) {
+                        write_frame(stream, &request)?;
                     }
                 }
+                _ => {}
             }
         }
     }
@@ -434,7 +467,7 @@ fn sessions(hierarchy: &HierarchySnapshot) -> impl Iterator<Item = SessionId> + 
         .map(|session| session.id)
 }
 
-fn read_messages(mut stream: UnixStream, sender: mpsc::Sender<ServerMessage>) {
+fn read_messages(mut stream: UnixStream, sender: mpsc::SyncSender<ServerMessage>) {
     while let Ok(message) = read_server(&mut stream) {
         if sender.send(message).is_err() {
             break;
