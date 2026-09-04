@@ -177,7 +177,7 @@ Each session owns:
 - One child-waiter thread.
 - A synchronized `vt100` parser containing the current screen.
 
-When a child exits, the server retains the session and its final screen. Remove it with:
+After the child exits, the PTY reader drains through EOF and the process group disappears. The server processes all queued output before marking the session exited and removable. Until then it remains non-removable, including when descendants outlive the child. The server retains the exited session and its final screen. Remove it with:
 
 ```text
 ovrcr session remove ID
@@ -189,11 +189,13 @@ Removal rejects a live session. Stop a live session with:
 ovrcr kill ID
 ```
 
-The server sends `SIGTERM` to the process group, waits up to five seconds, and sends `SIGKILL` if any member remains. The child waiter must complete before the session becomes removable.
+The server sends `SIGTERM` to the process group, waits up to five seconds, and sends `SIGKILL` if any member remains. The child waiter, PTY drainage, and final parser updates must complete before the session becomes removable.
 
 ## Terminal data flow
 
-Every PTY reader continuously drains output, including output from background sessions. It feeds raw bytes into the server's `vt100` parser. This prevents verbose detached agents from blocking on a full PTY buffer.
+Every PTY reader drains output, including output from background sessions. Readers send chunks through bounded, lossless queues to one ordered dispatcher, which feeds each session's `vt100` parser. Queue saturation applies backpressure while parsing catches up; raw terminal bytes are never discarded before parsing. Dashboard delivery is separate and nonblocking for the dispatcher, so a slow or detached dashboard cannot stop PTY drainage.
+
+The child waiter sends its exit event only after the reader has queued every final byte and the process group has disappeared. The dispatcher applies those bytes before the exit event. Session removal and shutdown wait for this completed state.
 
 Only the selected session streams incremental output to the dashboard. When selection changes or the dashboard reattaches, the server first sends a formatted current-screen snapshot. The dashboard resets its local parser from that snapshot and then processes incremental chunks.
 
@@ -263,13 +265,13 @@ The Unix socket protocol uses length-prefixed typed frames. Requests and events 
 
 The decoder enforces a fixed maximum frame length and rejects unknown or malformed messages. Protocol compatibility between different OVRCR binary versions is outside the MVP; the server and clients are expected to use the same executable version.
 
-If a dashboard falls behind, the server drops queued incremental output for that client and replaces it with a fresh current-screen snapshot. It never lets one slow dashboard block a PTY reader.
+If a dashboard falls behind, the server discards its queued incremental output and schedules one resynchronization notification. The socket writer delivers that notification when it can make progress, even after PTY output stops. The dashboard requests a fresh current-screen snapshot; the server queues that snapshot before resuming incremental output. Already transmitted bytes may arrive before the notification. Responses and lifecycle events are preserved; if the bounded queue cannot accept them, the server disconnects the dashboard so it can reattach. Socket writes never block the parser dispatcher.
 
 ## Failure handling
 
 - **Dashboard disconnect:** Unsubscribe it and keep all sessions running.
 - **Control client disconnect:** Finish any operation the server already accepted and retain its result.
-- **PTY EOF:** Join the child waiter and retain the session's final screen.
+- **PTY EOF or child exit:** Complete both PTY drainage and child waiting, confirm process-group disappearance, then apply all final output before publishing the exited state and retaining the final screen.
 - **Server startup race:** The successful socket owner wins; other processes reconnect.
 - **Stale socket:** Remove it only after a connection attempt proves that no server answers.
 - **Malformed protocol input:** Close that client without affecting sessions.
@@ -304,7 +306,8 @@ If a dashboard falls behind, the server drops queued incremental output for that
 - Reattach and reconstruct the current terminal screen.
 - Propagate PTY dimensions and `SIGWINCH`.
 - Terminate a process group that contains descendant processes.
-- Retain and explicitly remove exited sessions.
+- Retain and explicitly remove exited sessions only after their final output is parsed.
+- Recover a slow dashboard after a finite output burst stops, with bounded raw-output and dashboard queues.
 - Exercise 50 lightweight concurrent shell sessions.
 
 Tests use bounded waits and observable process, PTY, Git, and socket state. They do not use arbitrary sleeps as proof of lifecycle completion.
