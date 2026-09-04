@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registry {
-    #[serde(default)]
     pub projects: Vec<ProjectRecord>,
 }
 
@@ -268,6 +267,10 @@ mod tests {
         };
         registry.save_atomic(&path).unwrap();
         assert_eq!(Registry::load(&path).unwrap(), registry);
+
+        let empty_path = dir.path().join("empty-config.toml");
+        Registry::default().save_atomic(&empty_path).unwrap();
+        assert_eq!(Registry::load(&empty_path).unwrap(), Registry::default());
     }
 
     #[test]
@@ -282,6 +285,20 @@ mod tests {
                 .contains("parse registry")
         );
         assert_eq!(std::fs::read_to_string(path).unwrap(), "[[projects]\n");
+    }
+
+    #[test]
+    fn present_empty_registry_is_reported_and_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+        assert!(
+            Registry::load(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("parse registry")
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "");
     }
 
     #[test]
