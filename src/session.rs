@@ -399,12 +399,7 @@ fn verify_group_identity(_: libc::pid_t, _: bool) -> Result<()> {
 fn verify_owned_group(session: &Session) -> Result<()> {
     #[cfg(unix)]
     {
-        let foreground = session.master.lock().unwrap().process_group_leader();
-        if let Some(actual) = foreground {
-            if actual != session.pgid {
-                bail!("PTY process group ownership changed")
-            }
-        } else if !group_exists(session.pgid)? {
+        if !group_exists(session.pgid)? {
             bail!("PTY process group no longer exists")
         }
         verify_group_identity(session.pgid, true)

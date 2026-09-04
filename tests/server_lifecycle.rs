@@ -1,13 +1,19 @@
 use ovrcr::config::Registry;
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
+    ServerMessage, read_frame, write_frame,
+};
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
-use std::io::Read;
+use ovrcr::session::{SessionId, SessionPhase};
+use std::ffi::OsString;
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
+
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct ServerFixture {
     root: tempfile::TempDir,
@@ -300,6 +306,293 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
 }
 
 #[test]
+fn control_lifecycle_enforces_every_removal_gate() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    fixture.request(Request::AddProject {
+        name: "fixture".into(),
+        repo: fixture.repo.clone(),
+        workspace_root: fixture.workspace_root.clone(),
+    });
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/test".into(),
+                base: "main".into()
+            }
+        }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    let review = fixture.create_session("review", vec!["sh".into(), "-c".into(), "exit 0".into()]);
+    assert!(matches!(
+        fixture.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: "review".into(),
+            label: None,
+            argv: vec!["sh".into()]
+        })),
+        Response::Error {
+            code: ErrorCode::AlreadyExists,
+            ..
+        }
+    ));
+    assert!(matches!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into()
+        }),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    fixture.wait_exited(review);
+    assert!(matches!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into()
+        }),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: review }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into()
+        }),
+        Response::Ok
+    );
+    assert!(
+        fixture
+            .git_output(&["show-ref", "--verify", "refs/heads/feature/test"])
+            .status
+            .success()
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into()
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
+fn workspace_shell_failure_retains_worktree_and_registry() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    fixture.request(Request::AddProject {
+        name: "fixture".into(),
+        repo: fixture.repo.clone(),
+        workspace_root: fixture.workspace_root.clone(),
+    });
+    let old_shell = std::env::var_os("SHELL");
+    unsafe {
+        std::env::set_var("SHELL", "/ovrcr/no-such-shell");
+    }
+    let response = fixture.request(Request::CreateWorkspace {
+        project: "fixture".into(),
+        name: "failed".into(),
+        branch: BranchRequest::New {
+            branch: "feature/failed".into(),
+            base: "main".into(),
+        },
+    });
+    match old_shell {
+        Some(value) => unsafe { std::env::set_var("SHELL", value) },
+        None => unsafe { std::env::remove_var("SHELL") },
+    }
+    assert!(
+        matches!(response, Response::Error { code: ErrorCode::PartialFailure, message } if message.contains("failed") && message.contains("worktree"))
+    );
+    let listed = fixture.request(Request::List);
+    assert!(
+        matches!(listed, Response::Hierarchy(ref snapshot) if snapshot.projects[0].workspaces.iter().any(|workspace| workspace.name == "failed" && workspace.sessions.is_empty()))
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "failed".into()
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into()
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+struct ControlFixture {
+    _root: tempfile::TempDir,
+    repo: std::path::PathBuf,
+    workspace_root: std::path::PathBuf,
+    socket: std::path::PathBuf,
+    thread: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl ControlFixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        let workspace_root = root.path().join("workspaces");
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::create_dir(&workspace_root).unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec!["config", "user.name", "OVRCR Tests"],
+            vec!["config", "user.email", "tests@example.invalid"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&repo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        std::fs::write(repo.join("README"), "fixture\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "README"])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "initial"])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let socket = root.path().join("server.sock");
+        let registry = root.path().join("config.toml");
+        ovrcr::config::Registry::default()
+            .save_atomic(&registry)
+            .unwrap();
+        let paths = ServerPaths {
+            socket: socket.clone(),
+        };
+        let thread = thread::spawn(move || run_server(paths, registry).unwrap());
+        let fixture = Self {
+            _root: root,
+            repo: repo.canonicalize().unwrap(),
+            workspace_root: workspace_root.canonicalize().unwrap(),
+            socket,
+            thread: std::sync::Mutex::new(Some(thread)),
+        };
+        fixture.wait_socket();
+        fixture
+    }
+    fn wait_socket(&self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if UnixStream::connect(&self.socket).is_ok() {
+                return;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("control server did not start");
+    }
+    fn request(&self, request: Request) -> Response {
+        let mut stream = UnixStream::connect(&self.socket).unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 1,
+                request,
+            },
+        )
+        .unwrap();
+        match read_frame::<ServerMessage>(&mut stream).unwrap() {
+            ServerMessage::Response { response, .. } => response,
+            ServerMessage::Event(_) => panic!("unexpected event"),
+        }
+    }
+    fn create_session(&self, name: &str, argv: Vec<OsString>) -> SessionId {
+        match self.request(Request::CreateSession(CreateSessionRequest {
+            project: "fixture".into(),
+            workspace: "work".into(),
+            name: name.into(),
+            label: None,
+            argv,
+        })) {
+            Response::CreatedSession(summary) => summary.id,
+            response => panic!("unexpected response: {response:?}"),
+        }
+    }
+    fn only_session_id(&self) -> SessionId {
+        match self.request(Request::List) {
+            Response::Hierarchy(snapshot) => snapshot.projects[0].workspaces[0].sessions[0].id,
+            response => panic!("unexpected response: {response:?}"),
+        }
+    }
+    fn wait_exited(&self, id: SessionId) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if let Response::Hierarchy(snapshot) = self.request(Request::List) {
+                if snapshot
+                    .projects
+                    .iter()
+                    .flat_map(|project| project.workspaces.iter())
+                    .flat_map(|workspace| workspace.sessions.iter())
+                    .any(|session| {
+                        session.id == id && matches!(session.phase, SessionPhase::Exited { .. })
+                    })
+                {
+                    return;
+                }
+            }
+            thread::park_timeout(Duration::from_millis(10));
+        }
+        panic!("session {id:?} did not exit");
+    }
+    fn git_output(&self, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(&self.repo)
+            .output()
+            .unwrap()
+    }
+    fn join(&self) {
+        self.thread.lock().unwrap().take().unwrap().join().unwrap();
+    }
+}
+
+#[test]
 fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     let mut fixture = ServerFixture::new();
     fixture.start();
@@ -325,12 +618,16 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     second
         .set_read_timeout(Some(Duration::from_millis(250)))
         .unwrap();
-    let mut byte = [0_u8; 1];
-    assert_eq!(
-        second.read(&mut byte).unwrap(),
-        0,
-        "duplicate dashboard must be closed without a second writer"
-    );
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut second).unwrap(),
+        ServerMessage::Response {
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            },
+            ..
+        }
+    ));
     first.shutdown(Shutdown::Both).unwrap();
     fixture.stop();
 }

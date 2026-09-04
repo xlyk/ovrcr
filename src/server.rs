@@ -1,9 +1,13 @@
-use crate::config::Registry;
+use crate::config::{ProjectRecord, Registry};
+use crate::git::{self, BranchSpec};
 use crate::protocol::{
-    ClientMessage, ClientRole, DispatchMessage, ErrorCode, HierarchySnapshot, ProjectSummary,
-    Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame, write_frame,
+    BranchRequest, ClientMessage, ClientRole, DispatchMessage, ErrorCode, HierarchySnapshot,
+    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
+    write_frame,
 };
-use crate::session::{Session, SessionEvent, SessionId, SessionPhase, TerminalSize};
+use crate::session::{
+    Session, SessionEvent, SessionId, SessionPhase, SessionSpec, SessionSummary, TerminalSize,
+};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -69,6 +73,241 @@ pub struct ServerState {
     pub shutdown: AtomicBool,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
+}
+
+impl ServerState {
+    pub fn hierarchy(&self) -> HierarchySnapshot {
+        snapshot_from_state(self)
+    }
+
+    pub fn handle_request(&self, role: &mut ClientRole, request: Request) -> Response {
+        handle_request_with_id(self, role, request, 0)
+    }
+
+    pub fn create_session(
+        &self,
+        request: crate::protocol::CreateSessionRequest,
+    ) -> Result<SessionSummary> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.create_session_locked(request)
+    }
+
+    fn create_session_locked(
+        &self,
+        request: crate::protocol::CreateSessionRequest,
+    ) -> Result<SessionSummary> {
+        let (cwd, label) = {
+            let registry = self.registry.lock().unwrap();
+            let workspace = registry.workspace(&request.project, &request.workspace)?;
+            if self.sessions.lock().unwrap().values().any(|session| {
+                let summary = session.summary();
+                summary.project == request.project
+                    && summary.workspace == request.workspace
+                    && summary.name == request.name
+            }) {
+                bail!(
+                    "duplicate session: {}/{}:{}",
+                    request.project,
+                    request.workspace,
+                    request.name
+                );
+            }
+            let label = request.label.clone().unwrap_or_else(|| {
+                request
+                    .argv
+                    .first()
+                    .and_then(|arg| Path::new(arg).file_name())
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
+            (workspace.path.clone(), label)
+        };
+        let id = SessionId(self.next_session_id.fetch_add(1, Ordering::Relaxed));
+        let session = Session::spawn(
+            id,
+            SessionSpec {
+                project: request.project,
+                workspace: request.workspace,
+                name: request.name,
+                label,
+                cwd,
+                argv: request.argv,
+            },
+            TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+            self.events
+                .lock()
+                .unwrap()
+                .as_ref()
+                .context("server event channel closed")?
+                .clone(),
+        )
+        .context("spawn session")?;
+        let summary = session.summary();
+        self.sessions.lock().unwrap().insert(id, session);
+        Ok(summary)
+    }
+
+    pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .context("session not found")?;
+        session.terminate(grace)
+    }
+
+    pub fn remove_session(&self, id: SessionId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .context("session not found")?;
+        if matches!(session.summary().phase, SessionPhase::Running) {
+            bail!("session is still running")
+        }
+        self.sessions.lock().unwrap().remove(&id);
+        if self.selected.lock().unwrap().as_ref() == Some(&id) {
+            *self.selected.lock().unwrap() = None;
+        }
+        Ok(())
+    }
+
+    pub fn request_shutdown(&self, kill: bool) -> Response {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if !kill && !sessions.is_empty() {
+            return error_response(ErrorCode::SessionsRemain, "sessions remain");
+        }
+        if kill {
+            let mut failures = Vec::new();
+            for session in sessions {
+                if let Err(error) = session.terminate(Duration::from_secs(5)) {
+                    failures.push(format!("session {}: {error}", session.summary().id.0));
+                }
+            }
+            if !failures.is_empty() {
+                return error_response(ErrorCode::PartialFailure, failures.join("; "));
+            }
+        }
+        Response::Ok
+    }
+
+    pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
+        let mut registry = self.registry.lock().unwrap();
+        registry.add_project(ProjectRecord {
+            name,
+            repo,
+            workspace_root,
+            workspaces: Vec::new(),
+        })?;
+        registry.save_atomic(&self.registry_path)
+    }
+
+    pub fn remove_project(&self, name: &str) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let mut registry = self.registry.lock().unwrap();
+        registry.remove_project(name)?;
+        registry.save_atomic(&self.registry_path)
+    }
+
+    pub fn create_workspace(
+        &self,
+        project: String,
+        name: String,
+        branch: BranchRequest,
+    ) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let project_record = self.registry.lock().unwrap().project(&project)?.clone();
+        if project_record
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.name == name)
+        {
+            bail!("duplicate workspace: {project}/{name}");
+        }
+        let branch = match branch {
+            BranchRequest::New { branch, base } => BranchSpec::New { branch, base },
+            BranchRequest::Existing { branch } => BranchSpec::Existing { branch },
+        };
+        let workspace = git::create_worktree(&project_record, &name, branch)
+            .with_context(|| format!("create workspace {project}/{name}"))?;
+        {
+            let mut registry = self.registry.lock().unwrap();
+            registry.add_workspace(&project, workspace.clone())?;
+            if let Err(error) = registry.save_atomic(&self.registry_path) {
+                return Err(error).context(format!(
+                    "partial failure: worktree remains at {}",
+                    workspace.path.display()
+                ));
+            }
+        }
+        let shell = std::env::var_os("SHELL").ok_or_else(|| {
+            anyhow::anyhow!(
+                "partial failure: worktree for workspace {} exists at {} but SHELL is unset",
+                name,
+                workspace.path.display()
+            )
+        })?;
+        if let Err(error) = self.create_session_locked(crate::protocol::CreateSessionRequest {
+            project,
+            workspace: name.clone(),
+            name: "local".into(),
+            label: None,
+            argv: vec![shell],
+        }) {
+            return Err(error).context(format!(
+                "partial failure: worktree for workspace {} remains at {}",
+                name,
+                workspace.path.display()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let occupied = self.sessions.lock().unwrap().values().any(|session| {
+            let summary = session.summary();
+            summary.project == project && summary.workspace == name
+        });
+        if occupied {
+            bail!("sessions remain for workspace {project}/{name}")
+        }
+        let (project_record, workspace) = {
+            let registry = self.registry.lock().unwrap();
+            (
+                registry.project(project)?.clone(),
+                registry.workspace(project, name)?.clone(),
+            )
+        };
+        git::remove_worktree(&project_record, &workspace)?;
+        let mut registry = self.registry.lock().unwrap();
+        registry.remove_workspace(project, name)?;
+        if let Err(error) = registry.save_atomic(&self.registry_path) {
+            return Err(error).context(format!(
+                "partial failure: worktree was removed at {} but registry update failed",
+                workspace.path.display()
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct DashboardOutbound {
@@ -290,6 +529,14 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         };
         if matches!(message.request, Request::DashboardHello) {
             if writer.is_some() {
+                let _ = send_direct(
+                    &mut stream,
+                    message.request_id,
+                    error_response(
+                        ErrorCode::Conflict,
+                        "dashboard is already registered on this connection",
+                    ),
+                );
                 break;
             }
             let identity = Arc::new(());
@@ -298,6 +545,15 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             };
             let mut slot = state.dashboard_slot.lock().unwrap();
             if slot.is_some() {
+                drop(slot);
+                let _ = send_direct(
+                    &mut stream,
+                    message.request_id,
+                    error_response(
+                        ErrorCode::Conflict,
+                        "another dashboard is already connected",
+                    ),
+                );
                 break;
             }
             *slot = Some(DashboardSlot {
@@ -339,7 +595,12 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         }
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let select = matches!(message.request, Request::Select { .. });
-        let response = handle_request(&state, &message.request, message.request_id);
+        let response = handle_request_with_id(
+            &state,
+            &mut role,
+            message.request.clone(),
+            message.request_id,
+        );
         let successful_shutdown = shutdown && matches!(&response, Response::Ok);
         let (delivered, dashboard_shutdown_attempt) = match role {
             ClientRole::Control => (
@@ -393,6 +654,7 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         if owns_dashboard {
             let _ = slot.take();
             *state.dashboard.lock().unwrap() = None;
+            *state.selected.lock().unwrap() = None;
         }
     }
     drop(dashboard_tx);
@@ -401,20 +663,38 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     }
 }
 
-fn handle_request(state: &Arc<ServerState>, request: &Request, request_id: u64) -> Response {
+fn handle_request_with_id(
+    state: &ServerState,
+    role: &mut ClientRole,
+    request: Request,
+    request_id: u64,
+) -> Response {
+    let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
-        Request::List => Response::Hierarchy(snapshot(state)),
+        Request::List => Response::Hierarchy(state.hierarchy()),
         Request::Select { session, size } => {
+            if !dashboard {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "Select requires a dashboard connection",
+                );
+            }
             let _ = state.dispatch.send(DispatchMessage::Select {
                 request_id,
-                session: *session,
-                size: *size,
+                session,
+                size,
             });
             Response::Ok
         }
         Request::Input { session, bytes } => {
-            match state.sessions.lock().unwrap().get(session).cloned() {
-                Some(session) => session.write(bytes).map_or_else(
+            if !dashboard || state.selected.lock().unwrap().as_ref() != Some(&session) {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "input is only accepted for the selected dashboard session",
+                );
+            }
+            match state.sessions.lock().unwrap().get(&session).cloned() {
+                Some(session) => session.write(&bytes).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
                     |_| Response::Ok,
                 ),
@@ -425,8 +705,14 @@ fn handle_request(state: &Arc<ServerState>, request: &Request, request_id: u64) 
             }
         }
         Request::Resize { session, size } => {
-            match state.sessions.lock().unwrap().get(session).cloned() {
-                Some(session) => session.resize(*size).map_or_else(
+            if !dashboard || state.selected.lock().unwrap().as_ref() != Some(&session) {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "resize is only accepted for the selected dashboard session",
+                );
+            }
+            match state.sessions.lock().unwrap().get(&session).cloned() {
+                Some(session) => session.resize(size).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
                     |_| Response::Ok,
                 ),
@@ -436,17 +722,153 @@ fn handle_request(state: &Arc<ServerState>, request: &Request, request_id: u64) 
                 ),
             }
         }
-        Request::Shutdown { kill } => handle_shutdown(state, *kill, |session| {
-            session.terminate(Duration::from_secs(5))
-        }),
-        Request::DashboardHello => Response::Ok,
-        _ => error_response(
-            ErrorCode::InvalidRequest,
-            "command handling belongs to Task 5".into(),
+        Request::Shutdown { kill } => state.request_shutdown(kill),
+        Request::AddProject {
+            name,
+            repo,
+            workspace_root,
+        } => state.add_project(name, repo, workspace_root).map_or_else(
+            |error| error_for_lifecycle(error),
+            |_| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::Ok
+            },
         ),
+        Request::RemoveProject { name } => state.remove_project(&name).map_or_else(
+            |error| error_for_lifecycle(error),
+            |_| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::Ok
+            },
+        ),
+        Request::CreateWorkspace {
+            project,
+            name,
+            branch,
+        } => state.create_workspace(project, name, branch).map_or_else(
+            |error| error_for_lifecycle(error),
+            |_| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::Ok
+            },
+        ),
+        Request::RemoveWorkspace { project, name } => {
+            state.remove_workspace(&project, &name).map_or_else(
+                |error| error_for_lifecycle(error),
+                |_| {
+                    dashboard_try_send_arc(
+                        state,
+                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                    );
+                    Response::Ok
+                },
+            )
+        }
+        Request::CreateSession(request) => state.create_session(request).map_or_else(
+            |error| error_for_lifecycle(error),
+            |summary| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::CreatedSession(summary)
+            },
+        ),
+        Request::KillSession { session } => state
+            .kill_session(session, Duration::from_secs(5))
+            .map_or_else(|error| error_for_lifecycle(error), |_| Response::Ok),
+        Request::RemoveSession { session } => state.remove_session(session).map_or_else(
+            |error| error_for_lifecycle(error),
+            |_| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::Ok
+            },
+        ),
+        Request::DashboardHello => {
+            *role = ClientRole::Dashboard;
+            Response::Ok
+        }
     }
 }
 
+fn error_for_lifecycle(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    let code = if message.contains("partial failure") {
+        ErrorCode::PartialFailure
+    } else if message.contains("duplicate") {
+        ErrorCode::AlreadyExists
+    } else if message.contains("not found") {
+        ErrorCode::NotFound
+    } else if message.contains("sessions remain") {
+        ErrorCode::SessionsRemain
+    } else if message.contains("still running") {
+        ErrorCode::SessionRunning
+    } else if message.contains("worktree has changes") {
+        ErrorCode::DirtyWorktree
+    } else {
+        ErrorCode::Conflict
+    };
+    error_response(code, message)
+}
+
+fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
+    let Some(slot) = state.dashboard_slot.lock().unwrap().as_ref().map(|slot| {
+        (
+            slot.sender.clone(),
+            slot.identity.clone(),
+            slot.stream.try_clone().ok(),
+        )
+    }) else {
+        return false;
+    };
+    let Some(stream) = slot.2 else {
+        return false;
+    };
+    let snapshot = DashboardSnapshot {
+        sender: slot.0,
+        identity: slot.1,
+        stream,
+    };
+    if snapshot
+        .sender
+        .try_send(DashboardOutbound {
+            message,
+            completion: None,
+        })
+        .is_err()
+    {
+        disconnect_dashboard_ref(state, snapshot);
+        return false;
+    }
+    true
+}
+
+fn disconnect_dashboard_ref(state: &ServerState, snapshot: DashboardSnapshot) {
+    let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
+    let mut slot = state.dashboard_slot.lock().unwrap();
+    if slot
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, &snapshot.identity))
+    {
+        let _ = slot.take();
+        *state.dashboard.lock().unwrap() = None;
+        *state.selected.lock().unwrap() = None;
+    }
+}
+
+#[cfg(test)]
 fn handle_shutdown<F>(state: &Arc<ServerState>, kill: bool, mut terminate: F) -> Response
 where
     F: FnMut(&Arc<Session>) -> Result<()>,
@@ -464,7 +886,7 @@ where
             .iter()
             .any(|session| matches!(session.summary().phase, SessionPhase::Running))
     {
-        return error_response(ErrorCode::SessionsRemain, "sessions remain".into());
+        return error_response(ErrorCode::SessionsRemain, "sessions remain");
     }
     if kill {
         let mut failures = Vec::new();
@@ -480,8 +902,11 @@ where
     Response::Ok
 }
 
-fn error_response(code: ErrorCode, message: String) -> Response {
-    Response::Error { code, message }
+fn error_response(code: ErrorCode, message: impl std::fmt::Display) -> Response {
+    Response::Error {
+        code,
+        message: message.to_string(),
+    }
 }
 fn response_message(request_id: u64, response: Response) -> ServerMessage {
     ServerMessage::Response {
@@ -537,6 +962,7 @@ fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
     {
         let _ = slot.take();
         *state.dashboard.lock().unwrap() = None;
+        *state.selected.lock().unwrap() = None;
     }
 }
 
@@ -555,6 +981,10 @@ fn acquire_startup_lock(parent: &Path) -> Result<File> {
 }
 
 fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
+    snapshot_from_state(state)
+}
+
+fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
     let sessions = state.sessions.lock().unwrap();
     let mut projects = registry
@@ -580,6 +1010,9 @@ fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
                             .then_some(summary)
                     })
                     .collect();
+                workspace.sessions.sort_by(|left, right| {
+                    (left.name != "local", left.id.0).cmp(&(right.name != "local", right.id.0))
+                });
             }
             workspaces.sort_by(|left, right| left.name.cmp(&right.name));
             ProjectSummary {
