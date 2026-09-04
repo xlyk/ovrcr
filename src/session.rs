@@ -85,6 +85,26 @@ impl Session {
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
     ) -> Result<Arc<Self>> {
+        Self::spawn_internal(id, spec, size, events, None)
+    }
+
+    pub(crate) fn spawn_with_ready(
+        id: SessionId,
+        spec: SessionSpec,
+        size: TerminalSize,
+        events: SyncSender<SessionEvent>,
+        ready: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_internal(id, spec, size, events, Some(ready))
+    }
+
+    fn spawn_internal(
+        id: SessionId,
+        spec: SessionSpec,
+        size: TerminalSize,
+        events: SyncSender<SessionEvent>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<Arc<Self>> {
         let argv0 = spec
             .argv
             .first()
@@ -174,6 +194,9 @@ impl Session {
             let mut handles = session.handles.lock().unwrap();
             handles.reader = Some(reader_handle);
             handles.waiter = Some(waiter_handle);
+        }
+        if let Some(ready) = ready {
+            ready();
         }
         Ok(session)
     }
@@ -399,12 +422,7 @@ fn verify_group_identity(_: libc::pid_t, _: bool) -> Result<()> {
 fn verify_owned_group(session: &Session) -> Result<()> {
     #[cfg(unix)]
     {
-        let foreground = session.master.lock().unwrap().process_group_leader();
-        if let Some(actual) = foreground {
-            if actual != session.pgid {
-                bail!("PTY process group ownership changed")
-            }
-        } else if !group_exists(session.pgid)? {
+        if !group_exists(session.pgid)? {
             bail!("PTY process group no longer exists")
         }
         verify_group_identity(session.pgid, true)
