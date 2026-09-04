@@ -6,8 +6,9 @@ use crate::protocol::{
 use crate::session::{Session, SessionEvent, SessionId, SessionPhase, TerminalSize};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -68,6 +69,7 @@ pub struct ServerState {
     pub shutdown: AtomicBool,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_identity: Mutex<Option<Arc<()>>>,
+    dashboard_stream: Mutex<Option<(Arc<()>, UnixStream)>>,
 }
 
 pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
@@ -80,6 +82,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .with_context(|| format!("create server socket directory {}", parent.display()))?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("secure server socket directory {}", parent.display()))?;
+    let startup_lock = acquire_startup_lock(parent)?;
     if paths.socket.exists() {
         match UnixStream::connect(&paths.socket) {
             Ok(_) => bail!("server is already running"),
@@ -107,6 +110,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     }
     let listener = UnixListener::bind(&paths.socket)
         .with_context(|| format!("bind server socket {}", paths.socket.display()))?;
+    drop(startup_lock);
     let registry = Registry::load(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
     let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE);
@@ -124,6 +128,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         shutdown: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
         dashboard_identity: Mutex::new(None),
+        dashboard_stream: Mutex::new(None),
     });
     let bridge_dispatch = dispatch.clone();
     let bridge = thread::Builder::new()
@@ -270,27 +275,11 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         };
         if matches!(message.request, Request::DashboardHello) {
             if writer.is_some() {
-                let _ = send_direct(
-                    &mut stream,
-                    message.request_id,
-                    Response::Error {
-                        code: ErrorCode::InvalidRequest,
-                        message: "dashboard already registered".into(),
-                    },
-                );
-                continue;
+                break;
             }
             let mut dashboard = state.dashboard.lock().unwrap();
             if dashboard.is_some() {
-                let _ = send_direct(
-                    &mut stream,
-                    message.request_id,
-                    Response::Error {
-                        code: ErrorCode::Conflict,
-                        message: "dashboard already connected".into(),
-                    },
-                );
-                continue;
+                break;
             }
             *dashboard = Some(dashboard_tx.clone());
             drop(dashboard);
@@ -298,6 +287,10 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             *state.dashboard_identity.lock().unwrap() = Some(identity.clone());
             dashboard_identity = Some(identity);
             role = ClientRole::Dashboard;
+            if let Ok(close_stream) = stream.try_clone() {
+                *state.dashboard_stream.lock().unwrap() =
+                    Some((dashboard_identity.as_ref().unwrap().clone(), close_stream));
+            }
             let mut output = stream.try_clone().ok();
             let writer_receiver = dashboard_rx.take().expect("dashboard writer receiver");
             writer = Some(
@@ -322,37 +315,39 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let select = matches!(message.request, Request::Select { .. });
         let response = handle_request(&state, &message.request, message.request_id);
-        match role {
-            ClientRole::Control => {
-                if send_direct(&mut stream, message.request_id, response).is_err() {
-                    break;
-                }
-            }
+        let successful_shutdown = shutdown && matches!(&response, Response::Ok);
+        let delivered = match role {
+            ClientRole::Control => send_direct(&mut stream, message.request_id, response).is_ok(),
             ClientRole::Dashboard => {
                 if !select {
                     dashboard_try_send(&state, response_message(message.request_id, response));
                 }
+                true
             }
-        }
-        if shutdown && state.shutdown.load(Ordering::Acquire) {
+        };
+        if successful_shutdown {
+            state.shutdown.store(true, Ordering::Release);
             wake_accept(&state);
+        }
+        if !delivered {
+            break;
         }
         if matches!(role, ClientRole::Control) {
             break;
         }
     }
     {
-        let mut dashboard = state.dashboard.lock().unwrap();
-        if dashboard_identity.as_ref().is_some_and(|identity| {
-            state
-                .dashboard_identity
-                .lock()
-                .unwrap()
+        let mut current_identity = state.dashboard_identity.lock().unwrap();
+        let owns_dashboard = dashboard_identity.as_ref().is_some_and(|identity| {
+            current_identity
                 .as_ref()
                 .is_some_and(|current| Arc::ptr_eq(current, identity))
-        }) {
+        });
+        if owns_dashboard {
+            let mut dashboard = state.dashboard.lock().unwrap();
             *dashboard = None;
-            *state.dashboard_identity.lock().unwrap() = None;
+            *current_identity = None;
+            *state.dashboard_stream.lock().unwrap() = None;
         }
     }
     drop(dashboard_tx);
@@ -413,11 +408,16 @@ fn handle_request(state: &Arc<ServerState>, request: &Request, request_id: u64) 
                 return error_response(ErrorCode::SessionsRemain, "sessions remain".into());
             }
             if *kill {
+                let mut failures = Vec::new();
                 for session in sessions {
-                    let _ = session.terminate(Duration::from_secs(5));
+                    if let Err(error) = session.terminate(Duration::from_secs(5)) {
+                        failures.push(format!("session {}: {error}", session.summary().id.0));
+                    }
+                }
+                if !failures.is_empty() {
+                    return error_response(ErrorCode::PartialFailure, failures.join("; "));
                 }
             }
-            state.shutdown.store(true, Ordering::Release);
             Response::Ok
         }
         Request::DashboardHello => Response::Ok,
@@ -448,9 +448,34 @@ fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) {
         sender.try_send(message),
         Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
     ) {
-        *state.dashboard.lock().unwrap() = None;
-        *state.dashboard_identity.lock().unwrap() = None;
+        let identity = state.dashboard_identity.lock().unwrap().clone();
+        let Some(identity) = identity else { return };
+        let mut current_identity = state.dashboard_identity.lock().unwrap();
+        if current_identity
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &identity))
+        {
+            *state.dashboard.lock().unwrap() = None;
+            *current_identity = None;
+            if let Some((_, stream)) = state.dashboard_stream.lock().unwrap().take() {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        }
     }
+}
+
+fn acquire_startup_lock(parent: &Path) -> Result<File> {
+    let path = parent.join(".server.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("open server startup lock {}", path.display()))?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io::Error::last_os_error()).context("lock server startup");
+    }
+    Ok(file)
 }
 
 fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
@@ -543,5 +568,61 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
             bail!("timed out waiting for server startup")
         }
         thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ServerEvent, ServerMessage};
+    use std::io::Read;
+
+    fn test_state(
+        dashboard: Option<SyncSender<ServerMessage>>,
+        stream: Option<(Arc<()>, UnixStream)>,
+    ) -> Arc<ServerState> {
+        let (events, _) = mpsc::sync_channel(EVENT_QUEUE);
+        let (dispatch, _) = mpsc::sync_channel(EVENT_QUEUE);
+        Arc::new(ServerState {
+            socket: PathBuf::from("/tmp/ovrcr-test.sock"),
+            registry_path: PathBuf::from("config.toml"),
+            registry: Mutex::new(Registry::default()),
+            sessions: Mutex::new(HashMap::new()),
+            selected: Mutex::new(None),
+            dashboard: Mutex::new(dashboard),
+            next_session_id: AtomicU64::new(1),
+            mutation_lock: Mutex::new(()),
+            dispatch,
+            shutdown: AtomicBool::new(false),
+            events: Mutex::new(Some(events)),
+            dashboard_identity: Mutex::new(stream.as_ref().map(|(identity, _)| identity.clone())),
+            dashboard_stream: Mutex::new(stream),
+        })
+    }
+
+    #[test]
+    fn dashboard_overflow_closes_affected_connection() {
+        let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+        client_stream
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender
+            .send(ServerMessage::Event(ServerEvent::ScreenDirty {
+                session: SessionId(1),
+            }))
+            .unwrap();
+        let identity = Arc::new(());
+        let state = test_state(Some(sender), Some((identity, server_stream)));
+        dashboard_try_send(
+            &state,
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                session: SessionId(2),
+            }),
+        );
+        let mut byte = [0_u8; 1];
+        assert!(matches!(client_stream.read(&mut byte), Ok(0) | Err(_)));
+        assert!(state.dashboard.lock().unwrap().is_none());
+        drop(receiver);
     }
 }

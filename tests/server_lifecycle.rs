@@ -1,6 +1,8 @@
 use ovrcr::config::Registry;
 use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
+use std::io::Read;
+use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::Command;
@@ -181,4 +183,144 @@ fn startup_read_only_commands_do_not_start_a_missing_server() {
         .unwrap();
     assert!(shutdown.success());
     assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
+fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
+    let fixture = ServerFixture::new();
+    let registry = fixture.root.path().join("config.toml");
+    Registry::default().save_atomic(&registry).unwrap();
+    std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
+    let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
+    drop(stale);
+    let executable = env!("CARGO_BIN_EXE_ovrcr");
+    unsafe {
+        std::env::set_var("OVRCR_SERVER_EXECUTABLE", executable);
+        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
+        std::env::set_var("OVRCR_CONFIG", &registry);
+    }
+    let mut workers = Vec::new();
+    for _ in 0..2 {
+        let paths = fixture.paths.clone();
+        workers.push(thread::spawn(move || connect_or_start(&paths).unwrap()));
+    }
+    let mut streams = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    for stream in &mut streams {
+        write_frame(
+            stream,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::List,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            read_frame::<ServerMessage>(stream).unwrap(),
+            ServerMessage::Response {
+                response: Response::Hierarchy(_),
+                ..
+            }
+        ));
+    }
+    let first = streams.pop().unwrap();
+    drop(first);
+    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut first,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut first).unwrap(),
+        ServerMessage::Response {
+            response: Response::Ok,
+            ..
+        }
+    ));
+    drop(first);
+    let second = streams.pop().unwrap();
+    drop(second);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while fixture.paths.socket.exists() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(
+        !fixture.paths.socket.exists(),
+        "shutdown must stop the sole server"
+    );
+    unsafe {
+        std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
+        std::env::remove_var("OVRCR_SOCKET");
+        std::env::remove_var("OVRCR_CONFIG");
+    }
+}
+
+#[test]
+fn shutdown_disconnected_requester_still_wakes_accept() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 9,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    stream.shutdown(Shutdown::Both).unwrap();
+    let deadline = Instant::now() + Duration::from_millis(250);
+    while fixture.paths.socket.exists() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let completed_without_interference = !fixture.paths.socket.exists();
+    if !completed_without_interference {
+        let _ = UnixStream::connect(&fixture.paths.socket);
+    }
+    fixture.thread.take().unwrap().join().unwrap();
+    assert!(
+        completed_without_interference,
+        "disconnected shutdown left accept blocked"
+    );
+}
+
+#[test]
+fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut first,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut first).unwrap();
+    let mut second = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut second,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    assert!(
+        matches!(second.read(&mut byte), Err(_) | Ok(0)),
+        "duplicate dashboard must be closed without a second writer"
+    );
+    first.shutdown(Shutdown::Both).unwrap();
+    fixture.stop();
 }
