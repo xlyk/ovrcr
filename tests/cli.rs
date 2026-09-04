@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn new_and_existing_branch_flags_are_exclusive() {
+    let root = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args([
             "workspace",
@@ -21,6 +22,8 @@ fn new_and_existing_branch_flags_are_exclusive() {
             "--branch",
             "feature/existing",
         ])
+        .env("OVRCR_CONFIG", root.path().join("config.toml"))
+        .env("OVRCR_SOCKET", root.path().join("server.sock"))
         .output()
         .expect("run compiled ovrcr binary");
     assert!(!output.status.success());
@@ -110,6 +113,7 @@ fn session_command_keeps_arguments_after_separator() {
         "--base",
         "main",
     ]);
+    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
     let created = run(&[
         "new",
         "--project",
@@ -121,7 +125,7 @@ fn session_command_keeps_arguments_after_separator() {
         "--",
         "sh",
         "-c",
-        "printf '%s\\n' \"$@\"",
+        "printf '%s\\n' \"$0\" \"$@\"",
         "agent",
         "--looks-like-flag",
     ]);
@@ -134,6 +138,7 @@ fn session_command_keeps_arguments_after_separator() {
         std::thread::park_timeout(Duration::from_millis(10));
     }
     let deadline = Instant::now() + Duration::from_secs(3);
+    let mut exited = false;
     while Instant::now() < deadline {
         let mut control = UnixStream::connect(&socket).unwrap();
         write_frame(
@@ -149,7 +154,7 @@ fn session_command_keeps_arguments_after_separator() {
             ..
         } = read_frame::<ServerMessage>(&mut control).unwrap()
         {
-            let exited = snapshot
+            let is_exited = snapshot
                 .projects
                 .iter()
                 .flat_map(|project| project.workspaces.iter())
@@ -158,12 +163,15 @@ fn session_command_keeps_arguments_after_separator() {
                     session.id == SessionId(id)
                         && matches!(session.phase, SessionPhase::Exited { .. })
                 });
-            if exited {
+            if is_exited {
+                exited = true;
                 break;
             }
         }
         std::thread::park_timeout(Duration::from_millis(10));
     }
+    assert!(exited, "session {id} did not reach Exited before deadline");
+    cleanup.capture_live_process_groups(&socket);
     let mut dashboard = UnixStream::connect(&socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -198,10 +206,113 @@ fn session_command_keeps_arguments_after_separator() {
             _ => {}
         }
     };
+    let mut parser = vt100::Parser::new(24, 80, 0);
+    parser.process(&screen);
+    let contents = parser.screen().contents();
+    let received = contents
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
     let text = String::from_utf8_lossy(&screen);
-    assert!(
-        text.contains("--looks-like-flag"),
-        "retained screen did not contain exact argument: {text:?}"
+    assert_eq!(
+        received,
+        ["agent", "--looks-like-flag"],
+        "retained screen did not contain exact argv: {text:?}"
     );
-    let _ = run(&["shutdown", "--kill"]);
+    cleanup.confirm();
+}
+
+struct CleanupGuard<'a> {
+    bin: &'a str,
+    config: &'a std::path::Path,
+    socket: &'a std::path::Path,
+    pgids: Vec<libc::pid_t>,
+    cleaned: bool,
+}
+
+impl<'a> CleanupGuard<'a> {
+    fn new(bin: &'a str, config: &'a std::path::Path, socket: &'a std::path::Path) -> Self {
+        Self {
+            bin,
+            config,
+            socket,
+            pgids: Vec::new(),
+            cleaned: false,
+        }
+    }
+
+    fn capture_live_process_groups(&mut self, socket: &std::path::Path) {
+        let mut stream = UnixStream::connect(socket).unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 4,
+                request: Request::List,
+            },
+        )
+        .unwrap();
+        let ServerMessage::Response {
+            response: Response::Hierarchy(snapshot),
+            ..
+        } = read_frame::<ServerMessage>(&mut stream).unwrap()
+        else {
+            panic!("unexpected list response")
+        };
+        for session in snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+        {
+            if let Some(pid) = session.pid {
+                let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+                if pgid > 1 {
+                    self.pgids.push(pgid);
+                }
+            }
+        }
+    }
+
+    fn confirm(&mut self) {
+        let output = Command::new(self.bin)
+            .args(["shutdown", "--kill"])
+            .env("OVRCR_CONFIG", self.config)
+            .env("OVRCR_SOCKET", self.socket)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "cleanup shutdown failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while self.socket.exists() && Instant::now() < deadline {
+            std::thread::park_timeout(Duration::from_millis(10));
+        }
+        assert!(
+            !self.socket.exists(),
+            "server socket remained after cleanup"
+        );
+        for pgid in &self.pgids {
+            assert_eq!(
+                unsafe { libc::kill(-*pgid, 0) },
+                -1,
+                "managed process group {pgid} remained"
+            );
+        }
+        self.cleaned = true;
+    }
+}
+
+impl Drop for CleanupGuard<'_> {
+    fn drop(&mut self) {
+        if !self.cleaned {
+            let _ = Command::new(self.bin)
+                .args(["shutdown", "--kill"])
+                .env("OVRCR_CONFIG", self.config)
+                .env("OVRCR_SOCKET", self.socket)
+                .output();
+        }
+    }
 }

@@ -309,6 +309,15 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
 fn control_lifecycle_enforces_every_removal_gate() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();
+    assert!(matches!(
+        fixture.request(Request::RemoveProject {
+            name: "duplicate".into()
+        }),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            ..
+        }
+    ));
     fixture.request(Request::AddProject {
         name: "fixture".into(),
         repo: fixture.repo.clone(),
@@ -442,6 +451,62 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
     assert_eq!(
         fixture.request(Request::RemoveProject {
             name: "fixture".into()
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
+fn fast_exit_session_is_retained_as_exited() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/fast-exit".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let fast = fixture.create_session(
+        "fast",
+        vec!["sh".into(), "-c".into(), "printf retained".into()],
+    );
+    fixture.wait_exited(fast);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: fast }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into()
         }),
         Response::Ok
     );
@@ -629,6 +694,50 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
         }
     ));
     first.shutdown(Shutdown::Both).unwrap();
+    fixture.stop();
+}
+
+#[test]
+fn duplicate_dashboard_hello_uses_the_sole_writer() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 20,
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ));
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 21,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            },
+            ..
+        }
+    ));
+    drop(dashboard);
     fixture.stop();
 }
 
