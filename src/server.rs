@@ -68,8 +68,20 @@ pub struct ServerState {
     pub dispatch: SyncSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
-    dashboard_identity: Mutex<Option<Arc<()>>>,
-    dashboard_stream: Mutex<Option<(Arc<()>, UnixStream)>>,
+    dashboard_slot: Mutex<Option<DashboardSlot>>,
+    dashboard_ack_request: AtomicU64,
+}
+
+struct DashboardSlot {
+    sender: SyncSender<ServerMessage>,
+    identity: Arc<()>,
+    stream: UnixStream,
+}
+
+struct DashboardSnapshot {
+    sender: SyncSender<ServerMessage>,
+    identity: Arc<()>,
+    stream: UnixStream,
 }
 
 pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
@@ -127,8 +139,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         events: Mutex::new(Some(events)),
-        dashboard_identity: Mutex::new(None),
-        dashboard_stream: Mutex::new(None),
+        dashboard_slot: Mutex::new(None),
+        dashboard_ack_request: AtomicU64::new(0),
     });
     let bridge_dispatch = dispatch.clone();
     let bridge = thread::Builder::new()
@@ -268,6 +280,7 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let (dashboard_tx, dashboard_rx) = mpsc::sync_channel(DASHBOARD_QUEUE);
     let mut dashboard_rx = Some(dashboard_rx);
     let mut writer: Option<JoinHandle<()>> = None;
+    let mut dashboard_ack = None;
     while !state.shutdown.load(Ordering::Acquire) {
         let message = match read_frame::<ClientMessage>(&mut stream) {
             Ok(message) => message,
@@ -277,22 +290,27 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             if writer.is_some() {
                 break;
             }
-            let mut dashboard = state.dashboard.lock().unwrap();
-            if dashboard.is_some() {
+            let identity = Arc::new(());
+            let Ok(close_stream) = stream.try_clone() else {
+                break;
+            };
+            let mut slot = state.dashboard_slot.lock().unwrap();
+            if slot.is_some() {
                 break;
             }
-            *dashboard = Some(dashboard_tx.clone());
-            drop(dashboard);
-            let identity = Arc::new(());
-            *state.dashboard_identity.lock().unwrap() = Some(identity.clone());
+            *slot = Some(DashboardSlot {
+                sender: dashboard_tx.clone(),
+                identity: identity.clone(),
+                stream: close_stream,
+            });
+            drop(slot);
+            *state.dashboard.lock().unwrap() = Some(dashboard_tx.clone());
             dashboard_identity = Some(identity);
             role = ClientRole::Dashboard;
-            if let Ok(close_stream) = stream.try_clone() {
-                *state.dashboard_stream.lock().unwrap() =
-                    Some((dashboard_identity.as_ref().unwrap().clone(), close_stream));
-            }
             let mut output = stream.try_clone().ok();
             let writer_receiver = dashboard_rx.take().expect("dashboard writer receiver");
+            let (ack_sender, ack_receiver) = mpsc::sync_channel(0);
+            let writer_state = Arc::clone(&state);
             writer = Some(
                 thread::Builder::new()
                     .name("ovrcr-dashboard-writer".into())
@@ -302,10 +320,18 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
                             if write_frame(stream, &message).is_err() {
                                 break;
                             }
+                            if let ServerMessage::Response { request_id, .. } = message {
+                                if writer_state.dashboard_ack_request.load(Ordering::Acquire)
+                                    == request_id
+                                {
+                                    let _ = ack_sender.send(());
+                                }
+                            }
                         }
                     })
                     .expect("dashboard writer thread"),
             );
+            dashboard_ack = Some(ack_receiver);
             dashboard_try_send(
                 &state,
                 response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
@@ -316,6 +342,11 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         let select = matches!(message.request, Request::Select { .. });
         let response = handle_request(&state, &message.request, message.request_id);
         let successful_shutdown = shutdown && matches!(&response, Response::Ok);
+        if successful_shutdown && matches!(role, ClientRole::Dashboard) {
+            state
+                .dashboard_ack_request
+                .store(message.request_id, Ordering::Release);
+        }
         let delivered = match role {
             ClientRole::Control => send_direct(&mut stream, message.request_id, response).is_ok(),
             ClientRole::Dashboard => {
@@ -326,6 +357,11 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             }
         };
         if successful_shutdown {
+            if let Some(ack_receiver) = dashboard_ack.take() {
+                if delivered {
+                    let _ = ack_receiver.recv_timeout(Duration::from_millis(500));
+                }
+            }
             state.shutdown.store(true, Ordering::Release);
             wake_accept(&state);
         }
@@ -337,17 +373,14 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
         }
     }
     {
-        let mut current_identity = state.dashboard_identity.lock().unwrap();
+        let mut slot = state.dashboard_slot.lock().unwrap();
         let owns_dashboard = dashboard_identity.as_ref().is_some_and(|identity| {
-            current_identity
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(current, identity))
+            slot.as_ref()
+                .is_some_and(|current| Arc::ptr_eq(&current.identity, identity))
         });
         if owns_dashboard {
-            let mut dashboard = state.dashboard.lock().unwrap();
-            *dashboard = None;
-            *current_identity = None;
-            *state.dashboard_stream.lock().unwrap() = None;
+            let _ = slot.take();
+            *state.dashboard.lock().unwrap() = None;
         }
     }
     drop(dashboard_tx);
@@ -391,41 +424,48 @@ fn handle_request(state: &Arc<ServerState>, request: &Request, request_id: u64) 
                 ),
             }
         }
-        Request::Shutdown { kill } => {
-            let _mutation = state.mutation_lock.lock().unwrap();
-            let sessions = state
-                .sessions
-                .lock()
-                .unwrap()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            if !kill
-                && sessions
-                    .iter()
-                    .any(|session| matches!(session.summary().phase, SessionPhase::Running))
-            {
-                return error_response(ErrorCode::SessionsRemain, "sessions remain".into());
-            }
-            if *kill {
-                let mut failures = Vec::new();
-                for session in sessions {
-                    if let Err(error) = session.terminate(Duration::from_secs(5)) {
-                        failures.push(format!("session {}: {error}", session.summary().id.0));
-                    }
-                }
-                if !failures.is_empty() {
-                    return error_response(ErrorCode::PartialFailure, failures.join("; "));
-                }
-            }
-            Response::Ok
-        }
+        Request::Shutdown { kill } => handle_shutdown(state, *kill, |session| {
+            session.terminate(Duration::from_secs(5))
+        }),
         Request::DashboardHello => Response::Ok,
         _ => error_response(
             ErrorCode::InvalidRequest,
             "command handling belongs to Task 5".into(),
         ),
     }
+}
+
+fn handle_shutdown<F>(state: &Arc<ServerState>, kill: bool, mut terminate: F) -> Response
+where
+    F: FnMut(&Arc<Session>) -> Result<()>,
+{
+    let _mutation = state.mutation_lock.lock().unwrap();
+    let sessions = state
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    if !kill
+        && sessions
+            .iter()
+            .any(|session| matches!(session.summary().phase, SessionPhase::Running))
+    {
+        return error_response(ErrorCode::SessionsRemain, "sessions remain".into());
+    }
+    if kill {
+        let mut failures = Vec::new();
+        for session in sessions {
+            if let Err(error) = terminate(&session) {
+                failures.push(format!("session {}: {error}", session.summary().id.0));
+            }
+        }
+        if !failures.is_empty() {
+            return error_response(ErrorCode::PartialFailure, failures.join("; "));
+        }
+    }
+    Response::Ok
 }
 
 fn error_response(code: ErrorCode, message: String) -> Response {
@@ -442,25 +482,36 @@ fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> 
 }
 
 fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) {
-    let sender = state.dashboard.lock().unwrap().clone();
-    let Some(sender) = sender else { return };
+    let Some(snapshot) = dashboard_snapshot(state) else {
+        return;
+    };
     if matches!(
-        sender.try_send(message),
+        snapshot.sender.try_send(message),
         Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
     ) {
-        let identity = state.dashboard_identity.lock().unwrap().clone();
-        let Some(identity) = identity else { return };
-        let mut current_identity = state.dashboard_identity.lock().unwrap();
-        if current_identity
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(current, &identity))
-        {
-            *state.dashboard.lock().unwrap() = None;
-            *current_identity = None;
-            if let Some((_, stream)) = state.dashboard_stream.lock().unwrap().take() {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
-            }
-        }
+        disconnect_dashboard(state, snapshot);
+    }
+}
+
+fn dashboard_snapshot(state: &Arc<ServerState>) -> Option<DashboardSnapshot> {
+    let slot = state.dashboard_slot.lock().unwrap();
+    let slot = slot.as_ref()?;
+    Some(DashboardSnapshot {
+        sender: slot.sender.clone(),
+        identity: slot.identity.clone(),
+        stream: slot.stream.try_clone().ok()?,
+    })
+}
+
+fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
+    let mut slot = state.dashboard_slot.lock().unwrap();
+    if slot
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, &snapshot.identity))
+    {
+        let _ = slot.take();
+        *state.dashboard.lock().unwrap() = None;
+        let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -589,14 +640,18 @@ mod tests {
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             selected: Mutex::new(None),
-            dashboard: Mutex::new(dashboard),
+            dashboard: Mutex::new(dashboard.clone()),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
-            dashboard_identity: Mutex::new(stream.as_ref().map(|(identity, _)| identity.clone())),
-            dashboard_stream: Mutex::new(stream),
+            dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
+                sender: dashboard.as_ref().unwrap().clone(),
+                identity,
+                stream,
+            })),
+            dashboard_ack_request: AtomicU64::new(0),
         })
     }
 
@@ -621,8 +676,84 @@ mod tests {
             }),
         );
         let mut byte = [0_u8; 1];
-        assert!(matches!(client_stream.read(&mut byte), Ok(0) | Err(_)));
+        assert_eq!(client_stream.read(&mut byte).unwrap(), 0);
         assert!(state.dashboard.lock().unwrap().is_none());
         drop(receiver);
+    }
+
+    #[test]
+    fn dashboard_overflow_does_not_clear_replacement_slot() {
+        let (old_server, mut old_client) = UnixStream::pair().unwrap();
+        old_client
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
+        let (old_sender, _) = mpsc::sync_channel(1);
+        let old_identity = Arc::new(());
+        let state = test_state(Some(old_sender), Some((old_identity, old_server)));
+        let old_snapshot = dashboard_snapshot(&state).unwrap();
+
+        let (new_server, _new_client) = UnixStream::pair().unwrap();
+        let (new_sender, _) = mpsc::sync_channel(1);
+        let new_identity = Arc::new(());
+        *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+            sender: new_sender.clone(),
+            identity: new_identity,
+            stream: new_server,
+        });
+        *state.dashboard.lock().unwrap() = Some(new_sender);
+        disconnect_dashboard(&state, old_snapshot);
+
+        assert!(state.dashboard.lock().unwrap().is_some());
+        assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+    }
+
+    #[test]
+    fn shutdown_termination_failure_is_partial_and_server_remains_available() {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(EVENT_QUEUE);
+        let session = Session::spawn(
+            SessionId(7),
+            crate::session::SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "fault".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec!["sh".into()],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+        )
+        .unwrap();
+        let dispatch_session = Arc::clone(&session);
+        let waiter = thread::spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                dispatch_session.apply_event(event);
+                if exited {
+                    break;
+                }
+            }
+        });
+        let state = test_state(None, None);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SessionId(7), Arc::clone(&session));
+        let response = handle_shutdown(&state, true, |_| {
+            Err(anyhow::anyhow!("controlled ownership failure"))
+        });
+        assert!(matches!(
+            response,
+            Response::Error {
+                code: ErrorCode::PartialFailure,
+                ..
+            }
+        ));
+        assert!(!state.shutdown.load(Ordering::Acquire));
+        assert!(matches!(session.summary().phase, SessionPhase::Running));
+        session.terminate(Duration::from_secs(2)).unwrap();
+        waiter.join().unwrap();
     }
 }

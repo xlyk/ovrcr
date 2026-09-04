@@ -5,7 +5,7 @@ use std::io::Read;
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -194,39 +194,38 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
     let executable = env!("CARGO_BIN_EXE_ovrcr");
-    unsafe {
-        std::env::set_var("OVRCR_SERVER_EXECUTABLE", executable);
-        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
-        std::env::set_var("OVRCR_CONFIG", &registry);
-    }
-    let mut workers = Vec::new();
+    let mut workers: Vec<Child> = Vec::new();
     for _ in 0..2 {
-        let paths = fixture.paths.clone();
-        workers.push(thread::spawn(move || connect_or_start(&paths).unwrap()));
+        workers.push(
+            Command::new(executable)
+                .arg("server")
+                .env("OVRCR_SOCKET", &fixture.paths.socket)
+                .env("OVRCR_CONFIG", &registry)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
     }
-    let mut streams = workers
-        .into_iter()
-        .map(|worker| worker.join().unwrap())
-        .collect::<Vec<_>>();
-    for stream in &mut streams {
-        write_frame(
-            stream,
-            &ClientMessage {
-                request_id: 2,
-                request: Request::List,
-            },
-        )
-        .unwrap();
-        assert!(matches!(
-            read_frame::<ServerMessage>(stream).unwrap(),
-            ServerMessage::Response {
-                response: Response::Hierarchy(_),
-                ..
+    assert_ne!(workers[0].id(), workers[1].id());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut exited = 0;
+    while Instant::now() < deadline {
+        exited = 0;
+        for worker in &mut workers {
+            if worker.try_wait().unwrap().is_some() {
+                exited += 1;
             }
-        ));
+        }
+        if exited == 1 {
+            break;
+        }
+        thread::park_timeout(Duration::from_millis(5));
     }
-    let first = streams.pop().unwrap();
-    drop(first);
+    assert_eq!(
+        exited, 1,
+        "exactly one detached server owner must survive startup"
+    );
     let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
     write_frame(
         &mut first,
@@ -244,21 +243,31 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         }
     ));
     drop(first);
-    let second = streams.pop().unwrap();
-    drop(second);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while fixture.paths.socket.exists() && Instant::now() < deadline {
+    while Instant::now() < deadline {
+        if workers
+            .iter_mut()
+            .all(|worker| worker.try_wait().unwrap().is_some())
+        {
+            break;
+        }
         thread::park_timeout(Duration::from_millis(5));
     }
+    for worker in &mut workers {
+        if worker.try_wait().unwrap().is_none() {
+            worker.kill().unwrap();
+            worker.wait().unwrap();
+        }
+    }
+    assert!(
+        workers
+            .iter_mut()
+            .all(|worker| worker.try_wait().unwrap().is_some())
+    );
     assert!(
         !fixture.paths.socket.exists(),
         "shutdown must stop the sole server"
     );
-    unsafe {
-        std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
-        std::env::remove_var("OVRCR_SOCKET");
-        std::env::remove_var("OVRCR_CONFIG");
-    }
 }
 
 #[test]
@@ -317,10 +326,49 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
         .set_read_timeout(Some(Duration::from_millis(250)))
         .unwrap();
     let mut byte = [0_u8; 1];
-    assert!(
-        matches!(second.read(&mut byte), Err(_) | Ok(0)),
+    assert_eq!(
+        second.read(&mut byte).unwrap(),
+        0,
         "duplicate dashboard must be closed without a second writer"
     );
     first.shutdown(Shutdown::Both).unwrap();
     fixture.stop();
+}
+
+#[test]
+fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 10,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 11,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 11,
+            response: Response::Ok,
+        }
+    );
+    drop(dashboard);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while fixture.paths.socket.exists() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    fixture.thread.take().unwrap().join().unwrap();
+    assert!(!fixture.paths.socket.exists());
 }
