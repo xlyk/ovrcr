@@ -148,6 +148,9 @@ pub fn inspect_worktree(
 
 pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> Result<()> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
+    if !project.workspaces.iter().any(|record| record == workspace) {
+        bail!("workspace is not registered");
+    }
     if !workspace.path.starts_with(&workspace_root) {
         bail!("worktree is outside workspace root");
     }
@@ -156,6 +159,9 @@ pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> 
         bail!("registry/Git path disagreement");
     }
     let canonical_path = canonical_workspace_path(&workspace_root, workspace)?;
+    if canonical_path != expected_path {
+        bail!("unexpected canonical path");
+    }
     let entries = worktree_entries(&repo)?;
     let entry = matching_entry(&entries, &canonical_path, &workspace.branch)?;
     let status = run_git(
@@ -234,16 +240,15 @@ fn matching_entry<'a>(
     expected_path: &Path,
     expected_branch: &str,
 ) -> Result<&'a (PathBuf, Option<String>)> {
-    if entries.iter().any(|(path, branch)| {
-        branch.as_deref() == Some(expected_branch)
-            && fs::canonicalize(path).unwrap_or_else(|_| path.clone()) != expected_path
-    }) {
+    if entries
+        .iter()
+        .any(|(path, branch)| branch.as_deref() == Some(expected_branch) && path != expected_path)
+    {
         bail!("branch checked out elsewhere");
     }
     for entry in entries {
         let (path, branch) = entry;
-        let listed_path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-        if listed_path == expected_path {
+        if path == expected_path {
             match branch.as_deref() {
                 Some(branch) if branch == expected_branch => return Ok(entry),
                 Some(branch) => bail!(
