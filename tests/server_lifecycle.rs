@@ -9,6 +9,7 @@ use std::ffi::OsString;
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -811,4 +812,273 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     }
     fixture.thread.take().unwrap().join().unwrap();
     assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
+fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let workspaces = root.path().join("workspaces");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::create_dir(&workspaces).unwrap();
+    git(&repo, &["init", "-b", "main"]);
+    git(&repo, &["config", "user.name", "OVRCR Tests"]);
+    git(&repo, &["config", "user.email", "tests@example.invalid"]);
+    std::fs::write(repo.join("README"), "fixture\n").unwrap();
+    git(&repo, &["add", "README"]);
+    git(&repo, &["commit", "-m", "initial"]);
+
+    let config = root.path().join("config.toml");
+    let socket = root.path().join("server.sock");
+    Registry::default().save_atomic(&config).unwrap();
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let mut cleanup = CliLifecycleGuard::new(bin, &config, &socket);
+    let server = Command::new(bin)
+        .arg("server")
+        .env("OVRCR_CONFIG", &config)
+        .env("OVRCR_SOCKET", &socket)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let server_pid = server.id();
+    cleanup.server = Some(server);
+    wait_for_socket(&socket);
+
+    cli(
+        bin,
+        &config,
+        &socket,
+        &[
+            "project",
+            "add",
+            "demo",
+            repo.to_str().unwrap(),
+            "--workspace-root",
+            workspaces.to_str().unwrap(),
+        ],
+    );
+    cli(
+        bin,
+        &config,
+        &socket,
+        &[
+            "workspace",
+            "create",
+            "--project",
+            "demo",
+            "--name",
+            "one",
+            "--new-branch",
+            "feature/one",
+            "--base",
+            "main",
+        ],
+    );
+    let output = cli_with_output(
+        bin,
+        &config,
+        &socket,
+        &[
+            "new",
+            "--project",
+            "demo",
+            "--workspace",
+            "one",
+            "--name",
+            "agent",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s\\n' DETACHED_READY; while :; do sleep 1; done",
+        ],
+    );
+    let agent: u64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    let agent = SessionId(agent);
+
+    let marker_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < marker_deadline {
+        if dashboard_screen(&socket, agent).contains("DETACHED_READY") {
+            break;
+        }
+        thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(dashboard_screen(&socket, agent).contains("DETACHED_READY"));
+    assert!(dashboard_screen(&socket, agent).contains("DETACHED_READY"));
+    let groups = session_process_groups(&socket);
+    assert!(
+        !groups.is_empty(),
+        "live session process groups must be observable"
+    );
+
+    cli(bin, &config, &socket, &["shutdown", "--kill"]);
+    let mut server = cleanup.server.take().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && server.try_wait().unwrap().is_none() {
+        thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        server.try_wait().unwrap().is_some(),
+        "server process did not exit"
+    );
+    assert!(!pid_exists(server_pid));
+    assert!(!socket.exists());
+    assert!(groups.iter().all(|pgid| !group_exists(*pgid)));
+    cleanup.completed = true;
+}
+
+fn git(repo: &Path, args: &[&str]) {
+    assert!(
+        Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+fn cli(bin: &str, config: &Path, socket: &Path, args: &[&str]) {
+    let output = cli_with_output(bin, config, socket, args);
+    assert!(
+        output.status.success(),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn cli_with_output(bin: &str, config: &Path, socket: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(bin)
+        .args(args)
+        .env("OVRCR_CONFIG", config)
+        .env("OVRCR_SOCKET", socket)
+        .output()
+        .unwrap()
+}
+
+fn wait_for_socket(socket: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !socket.exists() && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(socket.exists(), "server socket did not appear");
+}
+
+fn dashboard_screen(socket: &Path, session: SessionId) -> String {
+    let mut stream = UnixStream::connect(socket).unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut stream).unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    loop {
+        match read_frame::<ServerMessage>(&mut stream).unwrap() {
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Screen { bytes, .. },
+            } => {
+                let mut parser = vt100::Parser::new(24, 80, 0);
+                parser.process(&bytes);
+                return parser.screen().contents();
+            }
+            _ => {}
+        }
+    }
+}
+
+fn session_process_groups(socket: &Path) -> Vec<libc::pid_t> {
+    let mut stream = UnixStream::connect(socket).unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    let ServerMessage::Response {
+        response: Response::Hierarchy(snapshot),
+        ..
+    } = read_frame::<ServerMessage>(&mut stream).unwrap()
+    else {
+        panic!("unexpected list response");
+    };
+    snapshot
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .filter_map(|session| session.pid)
+        .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
+        .filter(|pgid| *pgid > 1)
+        .collect()
+}
+
+fn pid_exists(pid: u32) -> bool {
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+fn group_exists(pgid: libc::pid_t) -> bool {
+    unsafe { libc::kill(-pgid, 0) == 0 }
+}
+
+struct CliLifecycleGuard {
+    bin: String,
+    config: PathBuf,
+    socket: PathBuf,
+    server: Option<Child>,
+    completed: bool,
+}
+
+impl CliLifecycleGuard {
+    fn new(bin: &str, config: &Path, socket: &Path) -> Self {
+        Self {
+            bin: bin.into(),
+            config: config.into(),
+            socket: socket.into(),
+            server: None,
+            completed: false,
+        }
+    }
+}
+
+impl Drop for CliLifecycleGuard {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let _ = cli_with_output(
+            &self.bin,
+            &self.config,
+            &self.socket,
+            &["shutdown", "--kill"],
+        );
+        if let Some(server) = self.server.as_mut() {
+            if server.try_wait().ok().flatten().is_none() {
+                let _ = server.kill();
+            }
+            let _ = server.wait();
+        }
+    }
 }

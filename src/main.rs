@@ -6,6 +6,7 @@ use ovrcr::protocol::{
     read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
+use ovrcr::tui::run_dashboard;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -103,7 +104,10 @@ enum SessionCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let command = cli.command.unwrap_or(Command::List);
+    let Some(command) = cli.command else {
+        let paths = ServerPaths::resolve()?;
+        return run_dashboard(connect_or_start(&paths)?);
+    };
     match command {
         Command::Server => run_server(ServerPaths::resolve()?, RegistryPath::resolve()?.0),
         Command::List => {
