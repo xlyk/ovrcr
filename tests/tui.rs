@@ -11,7 +11,7 @@ use ovrcr::tui::{
     encode_paste, event_to_request,
 };
 use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use std::io::{self, Write};
@@ -512,6 +512,42 @@ fn render_terminal_copies_text_style_wide_cells_and_cursor() {
     assert_eq!(buffer[(7, 1)].symbol(), " ");
     assert_eq!(buffer[(7, 0)].modifier, Modifier::empty());
     assert_eq!(terminal.backend().cursor_position(), (8, 1).into());
+}
+
+#[test]
+fn render_terminal_crossterm_roundtrip_clears_replaced_text() {
+    let mut output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut output);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut initial = vt100::Parser::new(2, 20, 0);
+        initial.process(b"CODEX BANNER\r\nprompt$ ");
+        terminal
+            .draw(|frame| {
+                ovrcr::tui::render_terminal(frame, Rect::new(0, 0, 20, 2), initial.screen(), false);
+            })
+            .unwrap();
+
+        let mut replacement = vt100::Parser::new(2, 20, 0);
+        replacement.process(b"ok");
+        terminal
+            .draw(|frame| {
+                ovrcr::tui::render_terminal(
+                    frame,
+                    Rect::new(0, 0, 20, 2),
+                    replacement.screen(),
+                    false,
+                );
+            })
+            .unwrap();
+    }
+
+    let mut outer = vt100::Parser::new(2, 20, 0);
+    outer.process(&output);
+    let rows = outer.screen().rows(0, 20).collect::<Vec<_>>();
+    assert_eq!(rows[0].trim_end(), "ok");
+    assert_eq!(rows[1].trim_end(), "");
 }
 
 #[test]
