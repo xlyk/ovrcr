@@ -13,8 +13,11 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
+use std::io::{self, Write};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::mpsc::TrySendError;
+use std::sync::{Arc, Mutex};
 
 fn dashboard_fixture() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
@@ -86,13 +89,18 @@ fn dashboard_fixture() -> Dashboard {
             },
         ],
     };
+    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].pid = None;
     dashboard.selected = Some(SessionId(1));
     dashboard
 }
 
 #[test]
 fn dashboard_layout() {
-    let dashboard = dashboard_fixture();
+    let mut dashboard = dashboard_fixture();
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -140,6 +148,21 @@ fn dashboard_layout() {
     assert!(rendered.iter().any(|row| row.contains("BROWSE")));
     assert!(rendered.iter().any(|row| row.contains("Ctrl-g")));
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
+    assert_eq!(buffer[(30, 10)].symbol(), "│");
+    assert_eq!(buffer[(30, 1)].symbol(), "│");
+    assert!(rendered[1].contains("PID 111"));
+    assert!(rendered[1].contains("•"));
+    assert_eq!(buffer[(1, 8)].modifier, Modifier::DIM);
+    assert_eq!(buffer[(1, 5)].bg, Color::Rgb(203, 166, 247));
+
+    dashboard.selected = Some(SessionId(2));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let selected_exited = (0..120)
+        .map(|col| terminal.backend().buffer()[(col, 1)].symbol())
+        .collect::<String>();
+    assert!(selected_exited.contains("pid closed"));
 }
 
 #[test]
@@ -197,11 +220,116 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
     let action = dashboard.mouse_action(mouse(5), Rect::new(0, 0, 120, 40));
     assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
     assert_eq!(dashboard.selected, Some(SessionId(1)));
+    let action = dashboard.mouse_action(mouse(2), Rect::new(0, 0, 120, 40));
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    assert!(dashboard.collapsed_projects.contains("consigint"));
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            column: 60,
+            ..mouse(5)
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert_eq!(action, ovrcr::tui::DashboardAction::None);
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.mouse_action(mouse(5), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::None
     );
+}
+
+#[derive(Clone)]
+struct InjectedWriter {
+    output: Arc<Mutex<Vec<u8>>>,
+    writes: Arc<Mutex<usize>>,
+    fail_after: usize,
+}
+
+impl InjectedWriter {
+    fn new(fail_after: usize) -> (Self, Arc<Mutex<Vec<u8>>>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                output: Arc::clone(&output),
+                writes: Arc::new(Mutex::new(0)),
+                fail_after,
+            },
+            output,
+        )
+    }
+}
+
+impl Write for InjectedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut writes = self.writes.lock().unwrap();
+        if *writes == self.fail_after {
+            *writes += 1;
+            return Err(io::Error::other("injected writer failure"));
+        }
+        *writes += 1;
+        self.output.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn occurrences(bytes: &[u8], needle: &[u8]) -> usize {
+    bytes
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
+}
+
+#[test]
+fn terminal_guard_restores_each_enabled_mode_once_on_normal_return_and_unwind() {
+    let (writer, output) = InjectedWriter::new(usize::MAX);
+    let guard = ovrcr::tui::TerminalGuard::enter_with_writer(writer).unwrap();
+    drop(guard);
+    let bytes = output.lock().unwrap().clone();
+    assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+
+    let (writer, output) = InjectedWriter::new(usize::MAX);
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let _guard = ovrcr::tui::TerminalGuard::enter_with_writer(writer).unwrap();
+        panic!("exercise unwind restoration");
+    }));
+    assert!(result.is_err());
+    let bytes = output.lock().unwrap().clone();
+    assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
+    assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+}
+
+#[test]
+fn terminal_guard_restores_before_prior_hook_callback() {
+    let (writer, output) = InjectedWriter::new(usize::MAX);
+    let mut guard = ovrcr::tui::TerminalGuard::enter_with_writer(writer).unwrap();
+    let observed = Arc::clone(&output);
+    guard.restore_before(|| {
+        let bytes = observed.lock().unwrap().clone();
+        assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[?2004l"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[?1000l"), 1);
+        assert_eq!(occurrences(&bytes, b"\x1b[?25h"), 1);
+    });
+    drop(guard);
+    let bytes = output.lock().unwrap().clone();
+    assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
+}
+
+#[test]
+fn terminal_guard_rolls_back_modes_when_a_later_enter_write_fails() {
+    let (writer, output) = InjectedWriter::new(2);
+    assert!(ovrcr::tui::TerminalGuard::enter_with_writer(writer).is_err());
+    let bytes = output.lock().unwrap().clone();
+    assert_eq!(occurrences(&bytes, b"\x1b[?1049l"), 1);
 }
 
 #[test]

@@ -242,7 +242,7 @@ impl Dashboard {
         let sidebar = if area.width <= 31 {
             area
         } else {
-            dashboard_areas(area).1
+            sidebar_area(area)
         };
         if mouse.column < sidebar.x
             || mouse.column >= sidebar.x.saturating_add(sidebar.width)
@@ -566,23 +566,18 @@ impl TerminalGuard<io::Stdout> {
         };
         crossterm_terminal::enable_raw_mode().context("enable raw terminal mode")?;
         guard.raw = true;
-        execute!(
-            guard.writer,
-            crossterm_terminal::EnterAlternateScreen,
-            EnableBracketedPaste,
-            EnableMouseCapture,
-            cursor::Hide
-        )
-        .context("enter dashboard terminal")?;
-        guard.alternate = true;
-        guard.bracketed_paste = true;
-        guard.mouse = true;
-        guard.cursor_hidden = true;
+        guard.enter_modes()?;
         Ok(guard)
     }
 }
 
 impl<W: Write> TerminalGuard<W> {
+    pub fn enter_with_writer(writer: W) -> Result<Self> {
+        let mut guard = Self::with_writer(writer);
+        guard.enter_modes()?;
+        Ok(guard)
+    }
+
     pub fn with_writer(writer: W) -> Self {
         Self {
             writer,
@@ -596,6 +591,24 @@ impl<W: Write> TerminalGuard<W> {
 
     pub fn writer_mut(&mut self) -> &mut W {
         &mut self.writer
+    }
+
+    fn enter_modes(&mut self) -> Result<()> {
+        execute!(self.writer, crossterm_terminal::EnterAlternateScreen)
+            .context("enter alternate screen")?;
+        self.alternate = true;
+        execute!(self.writer, EnableBracketedPaste).context("enable bracketed paste")?;
+        self.bracketed_paste = true;
+        execute!(self.writer, EnableMouseCapture).context("enable dashboard mouse")?;
+        self.mouse = true;
+        execute!(self.writer, cursor::Hide).context("hide dashboard cursor")?;
+        self.cursor_hidden = true;
+        Ok(())
+    }
+
+    pub fn restore_before<F: FnOnce()>(&mut self, prior: F) {
+        self.restore();
+        prior();
     }
 
     fn mark_mouse(&mut self, enabled: bool) {
@@ -677,11 +690,12 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
         cleanup.mouse = true;
         cleanup.cursor_hidden = true;
         cleanup.bracketed_paste = true;
-        cleanup.restore();
-        PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
-        if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
-            prior(panic_info);
-        }
+        cleanup.restore_before(|| {
+            PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
+            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
+                prior(panic_info);
+            }
+        });
     }));
     let result = dashboard_loop(&mut terminal, &mut stream, &mut dashboard, &messages);
     drop(terminal);
@@ -877,6 +891,14 @@ fn dashboard_areas(area: Rect) -> (Rect, Rect, Rect) {
         ])
         .areas(area);
     (title, body, footer)
+}
+
+fn sidebar_area(area: Rect) -> Rect {
+    let (_, body, _) = dashboard_areas(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(31), Constraint::Min(1)])
+        .areas::<2>(body)[0]
 }
 
 fn tree_row_text(dashboard: &Dashboard, row: &TreeRow) -> (String, ratatui::style::Style) {
