@@ -32,7 +32,7 @@ thread_local! {
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_INPUT_BATCH_LIMIT: usize = 32;
 const DASHBOARD_FRAME_INTERVAL: Duration = Duration::from_millis(16);
-const DASHBOARD_EVENT_PROBE: Duration = Duration::from_millis(1);
+const DASHBOARD_EVENT_PROBE: Duration = Duration::from_micros(100);
 const DASHBOARD_IDLE_REDRAW_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -849,7 +849,7 @@ fn dashboard_loop<W: Write>(
                 // The raw descriptor can wake for the first byte of an
                 // escape sequence. Give crossterm a short bounded window to
                 // finish parsing it before deciding whether read() is safe.
-                event::poll(Duration::from_millis(10))?
+                event::poll(DASHBOARD_EVENT_PROBE)?
             } else if wait.server_ready || wait.timed_out {
                 event::poll(DASHBOARD_EVENT_PROBE)?
             } else {
@@ -892,6 +892,11 @@ fn dashboard_loop<W: Write>(
         }
         update_mouse_capture(terminal, dashboard, &mut mouse_enabled)?;
         if pending_redraw && Instant::now() >= next_frame_redraw {
+            // Output may have arrived while the frame wait ignored the server
+            // wake. Clear before draining so a producer racing this drain
+            // leaves a wake for the next iteration.
+            wake.clear()?;
+            next_dashboard_messages(messages, dashboard, stream)?;
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
