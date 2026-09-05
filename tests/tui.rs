@@ -81,7 +81,15 @@ fn dashboard_fixture() -> Dashboard {
                         name: "auth".into(),
                         path: PathBuf::from("/tmp/auth"),
                         sessions: vec![
-                            session(1, "consigint", "auth", "review", "claude", Some(111), 0),
+                            session(
+                                1,
+                                "consigint",
+                                "auth",
+                                "review",
+                                "claude",
+                                Some(111),
+                                u64::MAX,
+                            ),
                             session(5, "consigint", "auth", "local", "zsh", Some(555), 0),
                         ],
                     },
@@ -152,6 +160,7 @@ fn dashboard_layout() {
     assert_eq!(buffer[(30, 1)].symbol(), "│");
     assert!(rendered[1].contains("PID 111"));
     assert!(rendered[1].contains("•"));
+    assert!(rendered[1].contains("00:00:00"));
     assert_eq!(buffer[(1, 8)].modifier, Modifier::DIM);
     assert_eq!(buffer[(1, 5)].bg, Color::Rgb(203, 166, 247));
 
