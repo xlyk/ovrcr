@@ -247,6 +247,81 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
     );
 }
 
+#[test]
+fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
+    dashboard.hierarchy = HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "project".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "project".into(),
+                name: "workspace".into(),
+                path: PathBuf::from("/tmp/workspace"),
+                sessions: (1..=50)
+                    .map(|id| SessionSummary {
+                        id: SessionId(id),
+                        project: "project".into(),
+                        workspace: "workspace".into(),
+                        name: format!("session-{id}"),
+                        label: "sh".into(),
+                        pid: Some(id as u32),
+                        started_unix_ms: 0,
+                        phase: SessionPhase::Running,
+                    })
+                    .collect(),
+            }],
+        }],
+    };
+    for _ in 0..50 {
+        dashboard.move_selection(1);
+    }
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let rendered = (0..40)
+        .map(|row| {
+            (0..31)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("session-50"));
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 37,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+}
+
+#[test]
+fn dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible() {
+    let inner = ovrcr::tui::actual_drawn_inner_rect(Rect::new(0, 0, 120, 40));
+    assert_eq!(inner.height, 34);
+    assert_eq!(inner.width, 88);
+    let mut parser = vt100::Parser::new(inner.height, inner.width, 0);
+    parser.process(b"\x1b[34;1HBOTTOM_MARKER");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            ovrcr::tui::render_terminal(frame, inner, parser.screen(), true);
+        })
+        .unwrap();
+    let bottom = (inner.x..inner.right())
+        .map(|column| terminal.backend().buffer()[(column, inner.bottom() - 1)].symbol())
+        .collect::<String>();
+    assert!(bottom.contains("BOTTOM_MARKER"));
+    assert_eq!(terminal.backend().cursor_position().y, inner.bottom() - 1);
+}
+
 #[derive(Clone)]
 struct InjectedWriter {
     output: Arc<Mutex<Vec<u8>>>,

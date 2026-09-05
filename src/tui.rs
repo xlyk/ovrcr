@@ -2,7 +2,7 @@ use crate::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, TerminalSize};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -67,6 +67,7 @@ pub struct Dashboard {
     pub pane_size: TerminalSize,
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
+    tree_offset: usize,
     next_request_id: u64,
 }
 
@@ -82,6 +83,7 @@ impl Dashboard {
             pane_size: size,
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
+            tree_offset: 0,
             next_request_id: 1,
         }
     }
@@ -123,11 +125,11 @@ impl Dashboard {
     }
 
     pub fn move_selection(&mut self, delta: isize) {
-        let ids = self
-            .visible_rows()
-            .into_iter()
+        let rows = self.visible_rows();
+        let ids = rows
+            .iter()
             .filter_map(|row| match row {
-                TreeRow::Session { id } => Some(id),
+                TreeRow::Session { id } => Some(*id),
                 TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
             })
             .collect::<Vec<_>>();
@@ -144,6 +146,7 @@ impl Dashboard {
             None => 0,
         };
         self.selected = Some(ids[index]);
+        self.ensure_selection_visible(&rows);
     }
 
     pub fn toggle_selected_group(&mut self) {
@@ -169,6 +172,32 @@ impl Dashboard {
 
     pub fn select_session(&mut self, id: SessionId) {
         self.selected = Some(id);
+        let rows = self.visible_rows();
+        self.ensure_selection_visible(&rows);
+    }
+
+    fn tree_viewport_height(&self) -> usize {
+        usize::from(self.pane_size.rows).saturating_add(2).max(1)
+    }
+
+    fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(index) = rows
+            .iter()
+            .position(|row| *row == TreeRow::Session { id: selected })
+        else {
+            return;
+        };
+        let height = self.tree_viewport_height();
+        if index < self.tree_offset {
+            self.tree_offset = index;
+        } else if index >= self.tree_offset.saturating_add(height) {
+            self.tree_offset = index + 1 - height;
+        }
+        let max_offset = rows.len().saturating_sub(height);
+        self.tree_offset = self.tree_offset.min(max_offset);
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
@@ -251,8 +280,9 @@ impl Dashboard {
         {
             return DashboardAction::None;
         }
-        let row_index = usize::from(mouse.row.saturating_sub(sidebar.y + 1));
-        let Some(row) = self.visible_rows().get(row_index).cloned() else {
+        let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y + 1));
+        let rows = self.visible_rows();
+        let Some(row) = rows.get(row_index).cloned() else {
             return DashboardAction::None;
         };
         match row {
@@ -655,6 +685,13 @@ impl<W: Write> Drop for TerminalGuard<W> {
 pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
     write_client(&mut stream, 1, Request::DashboardHello)?;
     let initial = read_server(&mut stream)?;
+    if let ServerMessage::Response {
+        response: Response::Error { code, message },
+        ..
+    } = &initial
+    {
+        bail!("dashboard hello failed ({code:?}): {message}");
+    }
     let size = terminal_size()?;
     let mut dashboard = Dashboard::new(pane_size(size));
     dashboard.handle_server_message(initial);
@@ -727,8 +764,12 @@ fn dashboard_loop<W: Write>(
         }
         let mut redraw = true;
         for _ in 0..DASHBOARD_READER_QUEUE_CAPACITY {
-            let Ok(message) = messages.try_recv() else {
-                break;
+            let message = match messages.try_recv() {
+                Ok(message) => message,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(anyhow::anyhow!("dashboard connection lost"));
+                }
             };
             redraw = true;
             for request in dashboard.handle_server_message(message) {
@@ -814,7 +855,11 @@ pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
         sidebar,
     );
     let rows = dashboard.visible_rows();
+    let start = dashboard.tree_offset.min(rows.len());
     for (index, row) in rows.iter().enumerate() {
+        let Some(index) = index.checked_sub(start) else {
+            continue;
+        };
         let y = sidebar.y.saturating_add(1).saturating_add(index as u16);
         if y >= sidebar.bottom().saturating_sub(1) {
             break;
@@ -862,12 +907,7 @@ pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
     );
     render_terminal(
         frame,
-        Rect::new(
-            terminal_area.x,
-            terminal_area.y.saturating_add(1),
-            terminal_area.width.saturating_sub(1),
-            terminal_area.height.saturating_sub(2),
-        ),
+        actual_drawn_inner_rect(frame.area()),
         dashboard.parser.screen(),
         dashboard.mode == InputMode::Terminal,
     );
@@ -997,9 +1037,28 @@ fn terminal_size() -> Result<TerminalSize> {
     })
 }
 
+pub fn actual_drawn_inner_rect(area: Rect) -> Rect {
+    let (_, body, _) = dashboard_areas(area);
+    let right = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(31), Constraint::Min(1)])
+        .areas::<2>(body)[1];
+    let terminal_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
+        .areas::<2>(right)[1];
+    Rect::new(
+        terminal_area.x,
+        terminal_area.y.saturating_add(1),
+        terminal_area.width.saturating_sub(1),
+        terminal_area.height.saturating_sub(2),
+    )
+}
+
 fn pane_size(size: TerminalSize) -> TerminalSize {
+    let inner = actual_drawn_inner_rect(Rect::new(0, 0, size.cols, size.rows));
     TerminalSize {
-        rows: size.rows.saturating_sub(2).max(1),
-        cols: size.cols.saturating_sub(32).max(1),
+        rows: inner.height.max(1),
+        cols: inner.width.max(1),
     }
 }

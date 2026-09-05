@@ -69,6 +69,8 @@ pub struct Session {
     state: Mutex<SessionState>,
     state_changed: Condvar,
     parser: Mutex<vt100::Parser>,
+    parser_revision: Mutex<u64>,
+    parser_changed: Condvar,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     pgid: libc::pid_t,
@@ -163,6 +165,8 @@ impl Session {
             }),
             state_changed: Condvar::new(),
             parser: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
+            parser_revision: Mutex::new(0),
+            parser_changed: Condvar::new(),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             pgid,
@@ -245,6 +249,9 @@ impl Session {
         match event {
             SessionEvent::Output { id, bytes } if id == self.summary.id => {
                 self.parser.lock().unwrap().process(&bytes);
+                let mut revision = self.parser_revision.lock().unwrap();
+                *revision = revision.saturating_add(1);
+                self.parser_changed.notify_all();
             }
             SessionEvent::Exited { id, phase } if id == self.summary.id => {
                 let mut state = self.state.lock().unwrap();
@@ -258,6 +265,13 @@ impl Session {
 
     pub fn current_screen(&self) -> Vec<u8> {
         self.parser.lock().unwrap().screen().state_formatted()
+    }
+
+    pub fn wait_for_output(&self, timeout: Duration) {
+        let revision = self.parser_revision.lock().unwrap();
+        if *revision == 0 {
+            let _ = self.parser_changed.wait_timeout(revision, timeout);
+        }
     }
 
     pub fn terminate(&self, grace: Duration) -> Result<()> {

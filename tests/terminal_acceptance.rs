@@ -562,10 +562,10 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
     dashboard.resize(40, 120)?;
     dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard.wait_for(b"SIZE_ACK_38 ", Duration::from_secs(3))?;
+    dashboard.wait_for(b"SIZE_ACK_34 ", Duration::from_secs(3))?;
     let rendered = dashboard.rendered();
     let resize_ack = rendered
-        .split("SIZE_ACK_38 ")
+        .split("SIZE_ACK_34 ")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|cols| cols.parse::<u16>().ok())

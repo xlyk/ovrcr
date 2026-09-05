@@ -103,6 +103,8 @@ pub struct ServerState {
     pub mutation_lock: Mutex<()>,
     pub dispatch: SyncSender<DispatchMessage>,
     pub shutdown: AtomicBool,
+    pub stopping: AtomicBool,
+    pub dashboard_size: Mutex<Option<TerminalSize>>,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
 }
@@ -121,6 +123,7 @@ impl ServerState {
         request: crate::protocol::CreateSessionRequest,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         self.create_session_locked(request, None)
     }
 
@@ -131,6 +134,7 @@ impl ServerState {
         ready: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         self.create_session_locked(request, Some(ready))
     }
 
@@ -178,10 +182,10 @@ impl ServerState {
             cwd,
             argv: request.argv,
         };
-        let size = TerminalSize {
+        let size = self.dashboard_size.lock().unwrap().unwrap_or(TerminalSize {
             rows: 40,
             cols: 120,
-        };
+        });
         let events = self
             .events
             .lock()
@@ -201,6 +205,7 @@ impl ServerState {
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let session = self
             .sessions
             .lock()
@@ -215,6 +220,7 @@ impl ServerState {
 
     pub fn remove_session(&self, id: SessionId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let session = self
             .sessions
             .lock()
@@ -239,6 +245,9 @@ impl ServerState {
 
     pub fn request_shutdown(&self, kill: bool) -> Response {
         let _mutation = self.mutation_lock.lock().unwrap();
+        if self.stopping.load(Ordering::Acquire) {
+            return error_response(ErrorCode::Conflict, "server is stopping");
+        }
         let sessions = self
             .sessions
             .lock()
@@ -253,18 +262,31 @@ impl ServerState {
             let mut failures = Vec::new();
             for session in sessions {
                 if let Err(error) = session.terminate(Duration::from_secs(5)) {
-                    failures.push(format!("session {}: {error}", session.summary().id.0));
+                    failures.push(format!(
+                        "session {}: {}",
+                        session.summary().id.0,
+                        error_chain_string(&error)
+                    ));
                 }
             }
             if !failures.is_empty() {
                 return error_response(ErrorCode::PartialFailure, failures.join("; "));
             }
         }
+        self.stopping.store(true, Ordering::Release);
         Response::Ok
+    }
+
+    fn reject_if_stopping(&self) -> Result<()> {
+        if self.stopping.load(Ordering::Acquire) {
+            bail!("server is stopping")
+        }
+        Ok(())
     }
 
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
@@ -287,6 +309,7 @@ impl ServerState {
 
     pub fn remove_project(&self, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         let project = next
@@ -315,6 +338,7 @@ impl ServerState {
         branch: BranchRequest,
     ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let project_record = self
             .registry
             .lock()
@@ -346,8 +370,9 @@ impl ServerState {
                 return Err(lifecycle_error(
                     ErrorCode::PartialFailure,
                     format!(
-                        "registry write failed: worktree remains at {}: {error}",
-                        workspace.path.display()
+                        "registry write failed: worktree remains at {}: {}",
+                        workspace.path.display(),
+                        error_chain_string(&error)
                     ),
                 ));
             }
@@ -377,9 +402,10 @@ impl ServerState {
             return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
-                    "worktree for workspace {} remains at {}: {error}",
+                    "worktree for workspace {} remains at {}: {}",
                     name,
-                    workspace.path.display()
+                    workspace.path.display(),
+                    error_chain_string(&error)
                 ),
                 true,
             ));
@@ -389,6 +415,7 @@ impl ServerState {
 
     pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let occupied = self.sessions.lock().unwrap().values().any(|session| {
             let summary = session.summary();
             summary.project == project && summary.workspace == name
@@ -430,8 +457,9 @@ impl ServerState {
             return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
-                    "worktree was removed at {} but registry update failed; live state reflects removal: {error}",
-                    workspace.path.display()
+                    "worktree was removed at {} but registry update failed; live state reflects removal: {}",
+                    workspace.path.display(),
+                    error_chain_string(&error)
                 ),
                 true,
             ));
@@ -660,6 +688,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
         dashboard_slot: Mutex::new(None),
     });
@@ -755,7 +785,8 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     }
 }
 
-fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, size: TerminalSize) {
+fn dispatch_select(state: &ServerState, request_id: u64, id: SessionId, size: TerminalSize) {
+    *state.dashboard_size.lock().unwrap() = Some(size);
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else {
         dashboard_try_send(
@@ -783,6 +814,7 @@ fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, siz
         );
         return;
     }
+    session.wait_for_output(Duration::from_millis(500));
     let previous = *state.selected.lock().unwrap();
     let Some(snapshot) = dashboard_snapshot(state) else {
         return;
@@ -996,11 +1028,7 @@ fn handle_request_with_id(
                     "Select requires a dashboard connection",
                 );
             }
-            let _ = state.dispatch.send(DispatchMessage::Select {
-                request_id,
-                session,
-                size,
-            });
+            dispatch_select(state, request_id, session, size);
             Response::Ok
         }
         Request::Input { session, bytes } => {
@@ -1010,7 +1038,8 @@ fn handle_request_with_id(
                     "input is only accepted for the selected dashboard session",
                 );
             }
-            match state.sessions.lock().unwrap().get(&session).cloned() {
+            let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
+            match selected_session {
                 Some(session) => session.write(&bytes).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
                     |_| Response::Ok,
@@ -1028,7 +1057,9 @@ fn handle_request_with_id(
                     "resize is only accepted for the selected dashboard session",
                 );
             }
-            match state.sessions.lock().unwrap().get(&session).cloned() {
+            *state.dashboard_size.lock().unwrap() = Some(size);
+            let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
+            match selected_session {
                 Some(session) => session.resize(size).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
                     |_| Response::Ok,
@@ -1123,12 +1154,26 @@ fn handle_request_with_id(
 }
 
 fn error_for_lifecycle(error: anyhow::Error) -> Response {
-    let message = error.to_string();
+    let message = error_chain_string(&error);
     let code = error
-        .downcast_ref::<LifecycleFailure>()
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
         .map(|failure| failure.code.clone())
         .unwrap_or(ErrorCode::Conflict);
     error_response(code, message)
+}
+
+fn error_chain_string(error: &anyhow::Error) -> String {
+    let mut chain = error.chain().map(ToString::to_string);
+    chain.next().map_or_else(String::new, |first| {
+        chain.fold(first, |mut message, cause| {
+            if !message.contains(&cause) {
+                message.push_str(": ");
+                message.push_str(&cause);
+            }
+            message
+        })
+    })
 }
 
 fn lifecycle_response_with_partial_hierarchy(
@@ -1176,7 +1221,11 @@ where
         let mut failures = Vec::new();
         for session in sessions {
             if let Err(error) = terminate(&session) {
-                failures.push(format!("session {}: {error}", session.summary().id.0));
+                failures.push(format!(
+                    "session {}: {}",
+                    session.summary().id.0,
+                    error_chain_string(&error)
+                ));
             }
         }
         if !failures.is_empty() {
@@ -1405,6 +1454,20 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn lifecycle_response_preserves_error_chain_and_code() {
+        let error =
+            lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session");
+        let response = error_for_lifecycle(error);
+        assert_eq!(
+            response,
+            Response::Error {
+                code: ErrorCode::NotFound,
+                message: "spawn session: missing executable".into(),
+            }
+        );
+    }
+
     fn test_state(
         dashboard: Option<Arc<DashboardSink>>,
         stream: Option<(Arc<()>, UnixStream)>,
@@ -1422,6 +1485,8 @@ mod tests {
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
                 sink: dashboard.as_ref().unwrap().clone(),
@@ -1655,6 +1720,8 @@ mod tests {
             mutation_lock: Mutex::new(()),
             dispatch: dispatch.clone(),
             shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
             dashboard_slot: Mutex::new(None),
         });
