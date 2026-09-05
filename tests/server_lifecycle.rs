@@ -351,7 +351,12 @@ fn backpressured_input_does_not_block_list_or_kill() {
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
     let mut ready = false;
-    for request_id in 2..20 {
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let readiness_deadline = Instant::now() + Duration::from_secs(2);
+    let mut request_id = 2;
+    while !ready && Instant::now() < readiness_deadline {
         write_frame(
             &mut dashboard,
             &ClientMessage {
@@ -363,17 +368,29 @@ fn backpressured_input_does_not_block_list_or_kill() {
             },
         )
         .unwrap();
-        if let ServerMessage::Response {
-            response: Response::Screen { bytes, .. },
-            ..
-        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
-            && String::from_utf8_lossy(&bytes).contains("READY")
-        {
-            ready = true;
-            break;
+        request_id += 1;
+        let Ok(message) = read_frame::<ServerMessage>(&mut dashboard) else {
+            continue;
+        };
+        match message {
+            ServerMessage::Response {
+                response: Response::Screen { bytes, .. },
+                ..
+            }
+            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, session: _ })
+                if String::from_utf8_lossy(&bytes).contains("READY") =>
+            {
+                ready = true;
+                break;
+            }
+            _ => {}
         }
     }
     assert!(ready, "blocked-session readiness marker was not rendered");
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    while read_frame::<ServerMessage>(&mut dashboard).is_ok() {}
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -862,28 +879,12 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
     for (index, session) in sessions.iter().copied().enumerate() {
-        write_frame(
+        select_screen_containing(
             &mut dashboard,
-            &ClientMessage {
-                request_id: index as u64 + 2,
-                request: Request::Select {
-                    session,
-                    size: ovrcr::session::TerminalSize {
-                        rows: 40,
-                        cols: 120,
-                    },
-                },
-            },
-        )
-        .unwrap();
-        let message = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-        assert!(matches!(
-            message,
-            ServerMessage::Response {
-                response: Response::Screen { bytes, .. },
-                ..
-            } if String::from_utf8_lossy(&bytes).contains(&format!("SESSION_MARKER_{index}"))
-        ));
+            index as u64 + 2,
+            session,
+            &format!("SESSION_MARKER_{index}"),
+        );
     }
     drop(dashboard);
 
@@ -924,28 +925,12 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
     for (index, session) in sessions.iter().copied().enumerate() {
-        write_frame(
+        select_screen_containing(
             &mut reattached,
-            &ClientMessage {
-                request_id: index as u64 + 101,
-                request: Request::Select {
-                    session,
-                    size: ovrcr::session::TerminalSize {
-                        rows: 40,
-                        cols: 120,
-                    },
-                },
-            },
-        )
-        .unwrap();
-        let message = read_frame::<ServerMessage>(&mut reattached).unwrap();
-        assert!(matches!(
-            message,
-            ServerMessage::Response {
-                response: Response::Screen { bytes, .. },
-                ..
-            } if String::from_utf8_lossy(&bytes).contains(&format!("SESSION_MARKER_{index}"))
-        ));
+            index as u64 + 101,
+            session,
+            &format!("SESSION_MARKER_{index}"),
+        );
     }
     drop(reattached);
 
@@ -1262,6 +1247,280 @@ fn dashboard_request_id_zero_does_not_block_followup_response() {
     );
     drop(dashboard);
     fixture.stop();
+}
+
+#[test]
+fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/dashboard-geometry".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardGeometry {
+                size: ovrcr::session::TerminalSize { rows: 17, cols: 61 },
+            },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        }
+    ));
+    let connected_path = fixture._root.path().join("connected-size");
+    let connected = fixture.create_session(
+        "connected",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("stty size > {}; sleep 30", connected_path.display()).into(),
+        ],
+    );
+    wait_for_file_contents(&connected_path, "17 61");
+    drop(dashboard);
+    let detached_path = fixture._root.path().join("detached-size");
+    let detached = fixture.create_session(
+        "detached",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("stty size > {}; sleep 30", detached_path.display()).into(),
+        ],
+    );
+    wait_for_file_contents(&detached_path, "40 120");
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    ));
+    fixture.join();
+    let _ = (connected, detached);
+}
+
+#[test]
+fn dashboard_receives_concrete_ordinary_request_errors() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session: SessionId(99),
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                message,
+            },
+        } if message.contains("session 99 not found")
+    ));
+    drop(dashboard);
+    fixture.stop();
+}
+
+#[test]
+fn selection_snapshot_precedes_later_quiet_tail_output() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/select-order".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session(
+        "quiet-tail",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "printf READY; read line; printf QUIET_TAIL; exec sleep 30".into(),
+        ],
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    let mut saw_snapshot = false;
+    while !saw_snapshot {
+        if let ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen { .. },
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            saw_snapshot = true;
+        }
+    }
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::Input {
+                session,
+                bytes: b"\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    let mut saw_tail = false;
+    while !saw_tail {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, .. })
+                if String::from_utf8_lossy(&bytes).contains("QUIET_TAIL") =>
+            {
+                saw_tail = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_snapshot);
+    assert!(saw_tail);
+    drop(dashboard);
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    ));
+    fixture.join();
+}
+
+fn wait_for_file_contents(path: &Path, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(path)
+            .map(|contents| contents.trim() == expected)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        thread::yield_now();
+    }
+    panic!("{} did not contain {expected:?}", path.display());
+}
+
+fn select_screen_containing(
+    stream: &mut UnixStream,
+    request_id: u64,
+    session: SessionId,
+    marker: &str,
+) {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        write_frame(
+            stream,
+            &ClientMessage {
+                request_id,
+                request: Request::Select {
+                    session,
+                    size: ovrcr::session::TerminalSize {
+                        rows: 40,
+                        cols: 120,
+                    },
+                },
+            },
+        )
+        .unwrap();
+        while Instant::now() < deadline {
+            let Ok(message) = read_frame::<ServerMessage>(stream) else {
+                break;
+            };
+            if let ServerMessage::Response {
+                response: Response::Screen { bytes, .. },
+                ..
+            } = message
+                && String::from_utf8_lossy(&bytes).contains(marker)
+            {
+                return;
+            }
+        }
+    }
+    panic!("session {session:?} did not render {marker:?}");
 }
 
 #[test]

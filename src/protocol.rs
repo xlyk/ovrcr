@@ -44,6 +44,9 @@ pub struct CreateSessionRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
     DashboardHello,
+    DashboardGeometry {
+        size: TerminalSize,
+    },
     List,
     AddProject {
         name: String,
@@ -148,6 +151,7 @@ pub enum DispatchMessage {
         request_id: u64,
         session: SessionId,
         size: TerminalSize,
+        completion: std::sync::mpsc::SyncSender<()>,
     },
     Stop,
 }

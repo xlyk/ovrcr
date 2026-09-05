@@ -2,7 +2,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr::protocol::{
-    HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage, WorkspaceSummary,
+    ErrorCode, HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage,
+    WorkspaceSummary,
 };
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
@@ -320,6 +321,56 @@ fn dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible() {
         .collect::<String>();
     assert!(bottom.contains("BOTTOM_MARKER"));
     assert_eq!(terminal.backend().cursor_position().y, inner.bottom() - 1);
+}
+
+#[test]
+fn ordinary_response_errors_remain_visible_to_dashboard() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "session 99 not found".into(),
+        },
+    });
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("NotFound: session 99 not found")
+    );
+}
+
+#[test]
+fn shrinking_dashboard_keeps_selected_tree_row_visible() {
+    let mut dashboard = dashboard_fixture();
+    let workspace = &mut dashboard.hierarchy.projects[0].workspaces[0];
+    for id in 6..=50 {
+        workspace.sessions.push(SessionSummary {
+            id: SessionId(id),
+            project: "consigint".into(),
+            workspace: "auth".into(),
+            name: format!("session-{id}"),
+            label: "sh".into(),
+            pid: Some(id as u32),
+            started_unix_ms: 0,
+            phase: SessionPhase::Running,
+        });
+    }
+    dashboard.select_session(SessionId(50));
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+    dashboard.resize_request(TerminalSize { rows: 18, cols: 88 }, 99);
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let rendered = (0..24)
+        .map(|row| {
+            (0..31)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("session-50"));
 }
 
 #[derive(Clone)]

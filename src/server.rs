@@ -104,9 +104,14 @@ pub struct ServerState {
     pub dispatch: SyncSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
-    pub dashboard_size: Mutex<Option<TerminalSize>>,
+    pub dashboard_size: Mutex<Option<DashboardGeometry>>,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
+}
+
+pub struct DashboardGeometry {
+    owner: Arc<()>,
+    size: TerminalSize,
 }
 
 impl ServerState {
@@ -182,10 +187,13 @@ impl ServerState {
             cwd,
             argv: request.argv,
         };
-        let size = self.dashboard_size.lock().unwrap().unwrap_or(TerminalSize {
-            rows: 40,
-            cols: 120,
-        });
+        let size = self.dashboard_size.lock().unwrap().as_ref().map_or(
+            TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+            |geometry| geometry.size,
+        );
         let events = self
             .events
             .lock()
@@ -749,7 +757,8 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
                 request_id,
                 session,
                 size,
-            } => dispatch_select(&state, request_id, session, size),
+                completion,
+            } => dispatch_select(&state, request_id, session, size, completion),
             DispatchMessage::Stop => break,
         }
     }
@@ -785,8 +794,13 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     }
 }
 
-fn dispatch_select(state: &ServerState, request_id: u64, id: SessionId, size: TerminalSize) {
-    *state.dashboard_size.lock().unwrap() = Some(size);
+fn dispatch_select(
+    state: &ServerState,
+    request_id: u64,
+    id: SessionId,
+    size: TerminalSize,
+    completion: SyncSender<()>,
+) {
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else {
         dashboard_try_send(
@@ -799,6 +813,7 @@ fn dispatch_select(state: &ServerState, request_id: u64, id: SessionId, size: Te
                 },
             ),
         );
+        let _ = completion.send(());
         return;
     };
     if let Err(error) = session.resize(size) {
@@ -812,21 +827,42 @@ fn dispatch_select(state: &ServerState, request_id: u64, id: SessionId, size: Te
                 },
             ),
         );
+        let _ = completion.send(());
         return;
     }
-    session.wait_for_output(Duration::from_millis(500));
     let previous = *state.selected.lock().unwrap();
     let Some(snapshot) = dashboard_snapshot(state) else {
+        let _ = completion.send(());
         return;
     };
+    set_dashboard_geometry(state, &snapshot.identity, size);
     if !snapshot
         .sink
         .replace_selection(previous, id, request_id, size, session.current_screen())
     {
         disconnect_dashboard(state, snapshot);
+        let _ = completion.send(());
         return;
     }
     *state.selected.lock().unwrap() = Some(id);
+    let _ = completion.send(());
+}
+
+fn set_dashboard_geometry(state: &ServerState, owner: &Arc<()>, size: TerminalSize) {
+    *state.dashboard_size.lock().unwrap() = Some(DashboardGeometry {
+        owner: Arc::clone(owner),
+        size,
+    });
+}
+
+fn clear_dashboard_geometry(state: &ServerState, owner: &Arc<()>) {
+    let mut geometry = state.dashboard_size.lock().unwrap();
+    if geometry
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.owner, owner))
+    {
+        *geometry = None;
+    }
 }
 
 fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
@@ -1004,6 +1040,7 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             }
             *state.dashboard.lock().unwrap() = None;
             *state.selected.lock().unwrap() = None;
+            clear_dashboard_geometry(&state, dashboard_identity.as_ref().unwrap());
         }
     }
     dashboard_sink.close();
@@ -1028,7 +1065,20 @@ fn handle_request_with_id(
                     "Select requires a dashboard connection",
                 );
             }
-            dispatch_select(state, request_id, session, size);
+            let (sender, receiver) = mpsc::sync_channel(1);
+            if state
+                .dispatch
+                .send(DispatchMessage::Select {
+                    request_id,
+                    session,
+                    size,
+                    completion: sender,
+                })
+                .is_err()
+            {
+                return error_response(ErrorCode::Internal, "dispatcher is unavailable");
+            }
+            let _ = receiver.recv();
             Response::Ok
         }
         Request::Input { session, bytes } => {
@@ -1057,12 +1107,17 @@ fn handle_request_with_id(
                     "resize is only accepted for the selected dashboard session",
                 );
             }
-            *state.dashboard_size.lock().unwrap() = Some(size);
+            let geometry_owner = dashboard_snapshot(state).map(|snapshot| snapshot.identity);
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
             match selected_session {
                 Some(session) => session.resize(size).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
-                    |_| Response::Ok,
+                    |_| {
+                        if let Some(owner) = geometry_owner.as_ref() {
+                            set_dashboard_geometry(state, owner, size);
+                        }
+                        Response::Ok
+                    },
                 ),
                 None => error_response(
                     ErrorCode::NotFound,
@@ -1149,6 +1204,21 @@ fn handle_request_with_id(
         Request::DashboardHello => {
             *role = ClientRole::Dashboard;
             Response::Ok
+        }
+        Request::DashboardGeometry { size } => {
+            if !dashboard {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "DashboardGeometry requires a dashboard connection",
+                );
+            }
+            let _mutation = state.mutation_lock.lock().unwrap();
+            if let Some(snapshot) = dashboard_snapshot(state) {
+                set_dashboard_geometry(state, &snapshot.identity, size);
+                Response::Ok
+            } else {
+                error_response(ErrorCode::Conflict, "dashboard is disconnected")
+            }
         }
     }
 }
@@ -1304,6 +1374,7 @@ fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {
         let _ = slot.take();
         *state.dashboard.lock().unwrap() = None;
         *state.selected.lock().unwrap() = None;
+        clear_dashboard_geometry(state, &snapshot.identity);
     }
 }
 

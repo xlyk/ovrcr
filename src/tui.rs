@@ -67,6 +67,7 @@ pub struct Dashboard {
     pub pane_size: TerminalSize,
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
+    pub error: Option<String>,
     tree_offset: usize,
     next_request_id: u64,
 }
@@ -83,6 +84,7 @@ impl Dashboard {
             pane_size: size,
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
+            error: None,
             tree_offset: 0,
             next_request_id: 1,
         }
@@ -333,7 +335,11 @@ impl Dashboard {
                         self.parser.process(&bytes);
                     }
                 }
-                Response::Ok | Response::CreatedSession(_) | Response::Error { .. } => {}
+                Response::Ok => self.error = None,
+                Response::CreatedSession(_) => self.error = None,
+                Response::Error { code, message } => {
+                    self.error = Some(format!("{code:?}: {message}"));
+                }
             },
             ServerMessage::Event(event) => match event {
                 ServerEvent::HierarchyChanged(hierarchy) => self.hierarchy = hierarchy,
@@ -381,6 +387,8 @@ impl Dashboard {
         }
         self.pane_size = size;
         self.parser.screen_mut().set_size(size.rows, size.cols);
+        let rows = self.visible_rows();
+        self.ensure_selection_visible(&rows);
         self.selected.map(|session| ClientMessage {
             request_id,
             request: Request::Resize { session, size },
@@ -683,12 +691,20 @@ impl<W: Write> Drop for TerminalGuard<W> {
 }
 
 pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
+    let size = terminal_size()?;
+    let pane_size = pane_size(size);
     write_client(&mut stream, 1, Request::DashboardHello)?;
     let initial = read_server(&mut stream)?;
     dashboard_hello_result(&initial)?;
-    let size = terminal_size()?;
-    let mut dashboard = Dashboard::new(pane_size(size));
+    let mut dashboard = Dashboard::new(pane_size);
     dashboard.handle_server_message(initial);
+    write_client(
+        &mut stream,
+        2,
+        Request::DashboardGeometry { size: pane_size },
+    )?;
+    let geometry_ack = read_server(&mut stream)?;
+    dashboard.handle_server_message(geometry_ack);
     let first_session = dashboard
         .visible_rows()
         .into_iter()
@@ -697,7 +713,7 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
             TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
         });
     if let Some(id) = first_session {
-        write_client(&mut stream, 2, dashboard.select_request(id, 2).request)?;
+        write_client(&mut stream, 3, dashboard.select_request(id, 3).request)?;
         if let Ok(message) = read_server(&mut stream) {
             dashboard.handle_server_message(message);
         }
@@ -926,10 +942,11 @@ pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
         InputMode::Browse => "BROWSE",
         InputMode::Terminal => "TERMINAL",
     };
-    frame.render_widget(
-        Paragraph::new(format!("{mode}   Ctrl-g: browse")),
-        footer_area,
+    let footer = dashboard.error.as_deref().map_or_else(
+        || format!("{mode}   Ctrl-g: browse"),
+        |error| format!("ERROR: {error}"),
     );
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 fn dashboard_areas(area: Rect) -> (Rect, Rect, Rect) {
