@@ -10,10 +10,10 @@ use ovrcr::tui::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding, dashboard_message_channel, encode_key,
     encode_paste, event_to_request,
 };
-use ratatui::Terminal;
 use ratatui::backend::{CrosstermBackend, TestBackend};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
@@ -519,7 +519,13 @@ fn render_terminal_crossterm_roundtrip_clears_replaced_text() {
     let mut output = Vec::new();
     {
         let backend = CrosstermBackend::new(&mut output);
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 20, 2)),
+            },
+        )
+        .unwrap();
 
         let mut initial = vt100::Parser::new(2, 20, 0);
         initial.process(b"CODEX BANNER\r\nprompt$ ");
