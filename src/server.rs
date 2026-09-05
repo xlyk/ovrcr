@@ -863,26 +863,26 @@ fn handle_request_with_id(
             name,
             repo,
             workspace_root,
-        } => state.add_project(name, repo, workspace_root).map_or_else(
-            |error| error_for_lifecycle(error),
-            |_| {
+        } => state
+            .add_project(name, repo, workspace_root)
+            .map_or_else(error_for_lifecycle, |_| {
                 dashboard_try_send_arc(
                     state,
                     ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
                 );
                 Response::Ok
-            },
-        ),
-        Request::RemoveProject { name } => state.remove_project(&name).map_or_else(
-            |error| error_for_lifecycle(error),
-            |_| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
-                Response::Ok
-            },
-        ),
+            }),
+        Request::RemoveProject { name } => {
+            state
+                .remove_project(&name)
+                .map_or_else(error_for_lifecycle, |_| {
+                    dashboard_try_send_arc(
+                        state,
+                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                    );
+                    Response::Ok
+                })
+        }
         Request::CreateWorkspace {
             project,
             name,
@@ -909,29 +909,31 @@ fn handle_request_with_id(
                 },
             )
         }
-        Request::CreateSession(request) => state.create_session(request).map_or_else(
-            |error| error_for_lifecycle(error),
-            |summary| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
-                Response::CreatedSession(summary)
-            },
-        ),
+        Request::CreateSession(request) => {
+            state
+                .create_session(request)
+                .map_or_else(error_for_lifecycle, |summary| {
+                    dashboard_try_send_arc(
+                        state,
+                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                    );
+                    Response::CreatedSession(summary)
+                })
+        }
         Request::KillSession { session } => state
             .kill_session(session, Duration::from_secs(5))
-            .map_or_else(|error| error_for_lifecycle(error), |_| Response::Ok),
-        Request::RemoveSession { session } => state.remove_session(session).map_or_else(
-            |error| error_for_lifecycle(error),
-            |_| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
-                Response::Ok
-            },
-        ),
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::RemoveSession { session } => {
+            state
+                .remove_session(session)
+                .map_or_else(error_for_lifecycle, |_| {
+                    dashboard_try_send_arc(
+                        state,
+                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                    );
+                    Response::Ok
+                })
+        }
         Request::DashboardHello => {
             *role = ClientRole::Dashboard;
             Response::Ok
@@ -1114,6 +1116,7 @@ fn acquire_startup_lock(parent: &Path) -> Result<File> {
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .open(&path)
         .with_context(|| format!("open server startup lock {}", path.display()))?;
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {

@@ -629,8 +629,8 @@ impl ControlFixture {
     fn wait_exited(&self, id: SessionId) {
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            if let Response::Hierarchy(snapshot) = self.request(Request::List) {
-                if snapshot
+            if let Response::Hierarchy(snapshot) = self.request(Request::List)
+                && snapshot
                     .projects
                     .iter()
                     .flat_map(|project| project.workspaces.iter())
@@ -638,9 +638,8 @@ impl ControlFixture {
                     .any(|session| {
                         session.id == id && matches!(session.phase, SessionPhase::Exited { .. })
                     })
-                {
-                    return;
-                }
+            {
+                return;
             }
             thread::park_timeout(Duration::from_millis(10));
         }
@@ -993,16 +992,14 @@ fn dashboard_screen(socket: &Path, session: SessionId) -> String {
         .set_read_timeout(Some(Duration::from_secs(1)))
         .unwrap();
     loop {
-        match read_frame::<ServerMessage>(&mut stream).unwrap() {
-            ServerMessage::Response {
-                request_id: 2,
-                response: Response::Screen { bytes, .. },
-            } => {
-                let mut parser = vt100::Parser::new(24, 80, 0);
-                parser.process(&bytes);
-                return parser.screen().contents();
-            }
-            _ => {}
+        if let ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen { bytes, .. },
+        } = read_frame::<ServerMessage>(&mut stream).unwrap()
+        {
+            let mut parser = vt100::Parser::new(24, 80, 0);
+            parser.process(&bytes);
+            return parser.screen().contents();
         }
     }
 }
