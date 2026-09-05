@@ -113,7 +113,7 @@ impl AcceptanceFixture {
             "--",
             "sh",
             "-c",
-            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *WAITING_TOKEN*) printf WAITING_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
+            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
         self.managed_pgids = self.session_pgids()?;
@@ -552,6 +552,49 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     dashboard.wait_for(b"PASTE_ACK", Duration::from_secs(3))?;
     dashboard.send(b"INPUT_TOKEN\r")?;
     dashboard.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    let mut latencies = Vec::new();
+    for index in 0..20 {
+        let token = format!("LATENCY_TOKEN_{index}");
+        let needle = format!("ECHO_{token}");
+        let started = Instant::now();
+        dashboard.send(format!("{token}\r").as_bytes())?;
+        dashboard.wait_for(needle.as_bytes(), Duration::from_secs(3))?;
+        latencies.push(started.elapsed());
+    }
+    let mut sorted = latencies.clone();
+    sorted.sort_unstable();
+    eprintln!(
+        "command-to-visible-echo: p50={:?} p95={:?} max={:?}",
+        sorted[sorted.len() / 2],
+        sorted[sorted.len() * 19 / 20],
+        sorted[sorted.len() - 1],
+    );
+    assert!(
+        sorted[sorted.len() * 19 / 20] < Duration::from_millis(100),
+        "command-to-visible echo exceeded 100ms: {sorted:?}"
+    );
+    dashboard.send(b"RAW_MODE\r")?;
+    dashboard.wait_for(b"RAW_READY", Duration::from_secs(3))?;
+    let mut single_key_latencies = Vec::new();
+    for byte in b'a'..=b't' {
+        let started = Instant::now();
+        dashboard.send(&[byte])?;
+        let needle = format!("RAW_ACK_{}", byte as char);
+        dashboard.wait_for(needle.as_bytes(), Duration::from_secs(3))?;
+        single_key_latencies.push(started.elapsed());
+    }
+    let mut sorted_single_key = single_key_latencies.clone();
+    sorted_single_key.sort_unstable();
+    eprintln!(
+        "single-key-to-visible-echo: p50={:?} p95={:?} max={:?}",
+        sorted_single_key[sorted_single_key.len() / 2],
+        sorted_single_key[sorted_single_key.len() * 19 / 20],
+        sorted_single_key[sorted_single_key.len() - 1],
+    );
+    assert!(
+        sorted_single_key[sorted_single_key.len() * 19 / 20] < Duration::from_millis(100),
+        "single-key visible echo exceeded 100ms: {sorted_single_key:?}"
+    );
     dashboard.send(b"\x07")?;
     dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
     dashboard.send(b"\x1b[<0;5;7M")?;
