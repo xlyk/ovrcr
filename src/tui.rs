@@ -547,7 +547,9 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
                 continue;
             }
             let (fg, bg) = (color(vt_cell.fgcolor()), color(vt_cell.bgcolor()));
-            cell.set_symbol(vt_cell.contents()).set_fg(fg).set_bg(bg);
+            let contents = vt_cell.contents();
+            let symbol = if contents.is_empty() { " " } else { contents };
+            cell.set_symbol(symbol).set_fg(fg).set_bg(bg);
             let mut modifier = Modifier::empty();
             if vt_cell.bold() {
                 modifier.insert(Modifier::BOLD);
