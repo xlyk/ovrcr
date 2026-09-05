@@ -685,13 +685,7 @@ impl<W: Write> Drop for TerminalGuard<W> {
 pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
     write_client(&mut stream, 1, Request::DashboardHello)?;
     let initial = read_server(&mut stream)?;
-    if let ServerMessage::Response {
-        response: Response::Error { code, message },
-        ..
-    } = &initial
-    {
-        bail!("dashboard hello failed ({code:?}): {message}");
-    }
+    dashboard_hello_result(&initial)?;
     let size = terminal_size()?;
     let mut dashboard = Dashboard::new(pane_size(size));
     dashboard.handle_server_message(initial);
@@ -764,12 +758,8 @@ fn dashboard_loop<W: Write>(
         }
         let mut redraw = true;
         for _ in 0..DASHBOARD_READER_QUEUE_CAPACITY {
-            let message = match messages.try_recv() {
-                Ok(message) => message,
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err(anyhow::anyhow!("dashboard connection lost"));
-                }
+            let Some(message) = next_dashboard_message(messages)? else {
+                break;
             };
             redraw = true;
             for request in dashboard.handle_server_message(message) {
@@ -830,6 +820,27 @@ fn dashboard_loop<W: Write>(
         }
     }
     Ok(())
+}
+
+fn dashboard_hello_result(message: &ServerMessage) -> Result<()> {
+    if let ServerMessage::Response {
+        response: Response::Error { code, message },
+        ..
+    } = message
+    {
+        bail!("dashboard hello failed ({code:?}): {message}");
+    }
+    Ok(())
+}
+
+fn next_dashboard_message(
+    messages: &mpsc::Receiver<ServerMessage>,
+) -> Result<Option<ServerMessage>> {
+    match messages.try_recv() {
+        Ok(message) => Ok(Some(message)),
+        Err(mpsc::TryRecvError::Empty) => Ok(None),
+        Err(mpsc::TryRecvError::Disconnected) => Err(anyhow::anyhow!("dashboard connection lost")),
+    }
 }
 
 pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
@@ -1060,5 +1071,30 @@ fn pane_size(size: TerminalSize) -> TerminalSize {
     TerminalSize {
         rows: inner.height.max(1),
         cols: inner.width.max(1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dashboard_hello_result, dashboard_message_channel, next_dashboard_message};
+    use crate::protocol::{ErrorCode, Response, ServerMessage};
+
+    #[test]
+    fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
+        let refusal = ServerMessage::Response {
+            request_id: 1,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                message: "another dashboard is already connected".into(),
+            },
+        };
+        let error = dashboard_hello_result(&refusal).unwrap_err().to_string();
+        assert!(error.contains("dashboard hello failed"));
+        assert!(error.contains("another dashboard is already connected"));
+
+        let (sender, receiver) = dashboard_message_channel();
+        drop(sender);
+        let error = next_dashboard_message(&receiver).unwrap_err().to_string();
+        assert_eq!(error, "dashboard connection lost");
     }
 }

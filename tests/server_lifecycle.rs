@@ -307,6 +307,137 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
 }
 
 #[test]
+fn backpressured_input_does_not_block_list_or_kill() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/backpressure".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session(
+        "blocked",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "stty raw -echo; printf READY; exec sleep 30".into(),
+        ],
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    let mut ready = false;
+    for request_id in 2..20 {
+        write_frame(
+            &mut dashboard,
+            &ClientMessage {
+                request_id,
+                request: Request::Select {
+                    session,
+                    size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+                },
+            },
+        )
+        .unwrap();
+        if let ServerMessage::Response {
+            response: Response::Screen { bytes, .. },
+            ..
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+            && String::from_utf8_lossy(&bytes).contains("READY")
+        {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "blocked-session readiness marker was not rendered");
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::Input {
+                session,
+                bytes: vec![b'x'; 512 * 1024],
+            },
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    assert!(
+        read_frame::<ServerMessage>(&mut dashboard).is_err(),
+        "input response unexpectedly completed while PTY stdin was backpressured"
+    );
+
+    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut control,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut control).unwrap(),
+        ServerMessage::Response {
+            request_id: 21,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    drop(control);
+    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut control,
+        &ClientMessage {
+            request_id: 22,
+            request: Request::KillSession { session },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_frame::<ServerMessage>(&mut control).unwrap(),
+        ServerMessage::Response {
+            request_id: 22,
+            response: Response::Ok,
+        }
+    );
+    drop(dashboard);
+    fixture.request(Request::Shutdown { kill: true });
+    fixture.join();
+}
+
+#[test]
 fn control_lifecycle_enforces_every_removal_gate() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();
@@ -1169,6 +1300,44 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     }
     fixture.thread.take().unwrap().join().unwrap();
     assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
+fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "project",
+            "add",
+            "relative",
+            ".",
+            "--workspace-root",
+            "../workspaces",
+        ])
+        .current_dir(&fixture.repo)
+        .env("OVRCR_CONFIG", fixture._root.path().join("config.toml"))
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "relative project registration failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let registry = Registry::load(&fixture._root.path().join("config.toml")).unwrap();
+    let project = registry
+        .projects
+        .iter()
+        .find(|project| project.name == "relative")
+        .unwrap();
+    assert_eq!(project.repo, fixture.repo);
+    assert_eq!(project.workspace_root, fixture.workspace_root);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
 }
 
 #[test]

@@ -1424,6 +1424,7 @@ mod tests {
     use super::*;
     use crate::protocol::{ServerEvent, ServerMessage};
     use std::io::Read;
+    use std::net::Shutdown;
 
     #[test]
     fn raw_event_and_dispatch_queues_reject_the_65th_item() {
@@ -1612,6 +1613,114 @@ mod tests {
             !shutdown_before_drain,
             "shutdown must wait for the writer's actual response attempt"
         );
+        assert!(state.shutdown.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
+        let (dashboard_server, mut dashboard_client) = UnixStream::pair().unwrap();
+        let send_buffer = 1_i32;
+        let result = unsafe {
+            libc::setsockopt(
+                dashboard_server.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&send_buffer as *const i32).cast(),
+                std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+            )
+        };
+        assert_eq!(result, 0);
+        let state = test_state(None, None);
+        state.registry.lock().unwrap().projects = (0..256)
+            .map(|index| crate::config::ProjectRecord {
+                name: format!("project-{index}-{}", "x".repeat(2_000)),
+                repo: PathBuf::from(format!("/repo/{index}")),
+                workspace_root: PathBuf::from(format!("/workspace/{index}")),
+                workspaces: Vec::new(),
+            })
+            .collect();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .projects
+            .push(crate::config::ProjectRecord {
+                name: "late".into(),
+                repo: PathBuf::from("/repo/late"),
+                workspace_root: PathBuf::from("/workspace/late"),
+                workspaces: Vec::new(),
+            });
+        let dashboard_state = Arc::clone(&state);
+        let dashboard_handler =
+            thread::spawn(move || handle_connection(dashboard_state, dashboard_server));
+        let (control_server, mut control_client) = UnixStream::pair().unwrap();
+        let control_state = Arc::clone(&state);
+        let control_handler =
+            thread::spawn(move || handle_connection(control_state, control_server));
+        write_frame(
+            &mut dashboard_client,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        write_frame(
+            &mut dashboard_client,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::Shutdown { kill: false },
+            },
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.stopping.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "shutdown did not enter stopping state"
+            );
+            thread::yield_now();
+        }
+        control_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write_frame(
+            &mut control_client,
+            &ClientMessage {
+                request_id: 3,
+                request: Request::RemoveProject {
+                    name: "late".into(),
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut control_client).unwrap(),
+            ServerMessage::Response {
+                request_id: 3,
+                response: Response::Error {
+                    code: ErrorCode::Conflict,
+                    message: "server is stopping".into(),
+                },
+            }
+        );
+        dashboard_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        loop {
+            if matches!(
+                read_frame::<ServerMessage>(&mut dashboard_client).unwrap(),
+                ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok,
+                }
+            ) {
+                break;
+            }
+        }
+        dashboard_handler.join().unwrap();
+        let _ = control_client.shutdown(Shutdown::Both);
+        control_handler.join().unwrap();
         assert!(state.shutdown.load(Ordering::Acquire));
     }
 
