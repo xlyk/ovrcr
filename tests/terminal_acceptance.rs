@@ -17,6 +17,7 @@ struct AcceptanceFixture {
     config: PathBuf,
     executable: PathBuf,
     server: Option<Child>,
+    managed_pgids: Vec<libc::pid_t>,
 }
 
 impl AcceptanceFixture {
@@ -57,6 +58,7 @@ impl AcceptanceFixture {
             repo,
             workspace_root,
             server: Some(server),
+            managed_pgids: Vec::new(),
         })
     }
 
@@ -75,7 +77,7 @@ impl AcceptanceFixture {
             .with_context(|| format!("CLI command timed out or failed: {args:?}"))
     }
 
-    fn setup(&self) -> Result<()> {
+    fn setup(&mut self) -> Result<()> {
         let repo = self.repo.to_string_lossy();
         let workspace_root = self.workspace_root.to_string_lossy();
         let output = self.cli(&[
@@ -114,6 +116,7 @@ impl AcceptanceFixture {
             "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *WAITING_TOKEN*) printf WAITING_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
+        self.managed_pgids = self.session_pgids()?;
         let output = self.cli(&[
             "new",
             "--project",
@@ -128,6 +131,7 @@ impl AcceptanceFixture {
             "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "mouse session")?;
+        self.managed_pgids = self.session_pgids()?;
         Ok(())
     }
 
@@ -153,12 +157,18 @@ impl AcceptanceFixture {
             .into_iter()
             .flat_map(|project| project.workspaces)
             .flat_map(|workspace| workspace.sessions)
-            .filter_map(|session| session.pid.map(|pid| pid as libc::pid_t))
+            .filter_map(|session| {
+                session
+                    .pid
+                    .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
+            })
+            .filter(|pgid| *pgid > 1)
             .collect())
     }
 
     fn shutdown(&mut self) -> Result<()> {
         let pgids = self.session_pgids()?;
+        self.managed_pgids = pgids.clone();
         let output = self.cli_timeout(&["shutdown", "--kill"], Duration::from_secs(12))?;
         require_success(output, "shutdown --kill")?;
         let server = self
@@ -175,12 +185,41 @@ impl AcceptanceFixture {
         }
         Ok(())
     }
+
+    fn terminate_managed_groups(&self) {
+        for &pgid in &self.managed_pgids {
+            if group_exists(pgid) {
+                unsafe {
+                    libc::kill(-pgid, libc::SIGTERM);
+                }
+            }
+        }
+        let grace_deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < grace_deadline
+            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
+        {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        for &pgid in &self.managed_pgids {
+            if group_exists(pgid) {
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+            }
+        }
+        let kill_deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < kill_deadline
+            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
+        {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    }
 }
 
 impl Drop for AcceptanceFixture {
     fn drop(&mut self) {
-        if self.server.is_some() {
-            let _ = self.shutdown();
+        if self.server.is_some() && self.shutdown().is_err() {
+            self.terminate_managed_groups();
         }
         if let Some(mut server) = self.server.take() {
             if server.try_wait().ok().flatten().is_none() {
@@ -531,9 +570,9 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|cols| cols.parse::<u16>().ok())
         .context("rendered resize acknowledgement missing columns")?;
-    assert!(
-        resize_ack > 0,
-        "rendered resize acknowledgement had zero columns"
+    assert_eq!(
+        resize_ack, 88,
+        "rendered resized pane geometry changed unexpectedly"
     );
     dashboard.send(b"\x07")?;
     dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;

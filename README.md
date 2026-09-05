@@ -116,8 +116,7 @@ socket. The trap stops the disposable server and removes the fixture:
 $ d=$(mktemp -d)
 $ export OVRCR_CONFIG="$d/config.toml"
 $ export OVRCR_SOCKET="$d/server.sock"
-$ bounded_shutdown() { ovrcr shutdown --kill >/dev/null 2>&1 & p=$!; i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; }
-$ cleanup() { bounded_shutdown; test ! -e "$OVRCR_SOCKET"; rm -rf "$d"; }
+$ trap 'if [ -e "$OVRCR_SOCKET" ]; then ovrcr shutdown --kill >/dev/null 2>&1 & p=$!; i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; status=0; if kill -0 "$p" 2>/dev/null; then kill -KILL "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; status=124; else wait "$p"; status=$?; fi; if [ "$status" -ne 0 ] || [ -e "$OVRCR_SOCKET" ]; then echo "cleanup failed; preserving $d" >&2; exit 1; fi; fi; rm -rf "$d"' EXIT
 $ trap cleanup EXIT
 $ git -C "$d" init -b main
 $ git -C "$d" config user.name OVRCR
