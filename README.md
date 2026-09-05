@@ -109,11 +109,16 @@ managed process group and then stops the server.
 
 ## Disposable repository transcript
 
-The following transcript uses a temporary repository and leaves no managed
-processes after the final command:
+The following transcript uses an isolated temporary repository, config, and
+socket. The trap stops the disposable server and removes the fixture:
 
 ```sh
 $ d=$(mktemp -d)
+$ export OVRCR_CONFIG="$d/config.toml"
+$ export OVRCR_SOCKET="$d/server.sock"
+$ bounded_shutdown() { ovrcr shutdown --kill >/dev/null 2>&1 & p=$!; i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; kill "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; }
+$ cleanup() { bounded_shutdown; test ! -e "$OVRCR_SOCKET"; rm -rf "$d"; }
+$ trap cleanup EXIT
 $ git -C "$d" init -b main
 $ git -C "$d" config user.name OVRCR
 $ git -C "$d" config user.email ovrcr@example.invalid
@@ -122,24 +127,33 @@ $ git -C "$d" add README && git -C "$d" commit -m initial
 $ ovrcr project add fixture "$d" --workspace-root "$d/workspaces"
 $ ovrcr workspace create --project fixture --name demo \
     --new-branch feature/demo --base main
-$ ovrcr new --project fixture --workspace demo --name agent -- sh
-2
+$ agent_id=$(ovrcr new --project fixture --workspace demo --name agent -- sh)
+$ local_id=$(ovrcr list | awk '$1 == "session" && $3 == "local" { print $2; exit }')
+$ printf 'created agent session %s and local session %s\n' "$agent_id" "$local_id"
 $ ovrcr list
 project fixture
   workspace demo
-    session 1 local
-    session 2 agent
+    session $local_id local
+    session $agent_id agent
 $ ovrcr
 # select agent, press Enter, then Ctrl-g and q
 $ ovrcr
 # the agent's current screen is still present; press q
-$ ovrcr kill 2
-$ ovrcr session remove 2
-$ ovrcr kill 1
-$ ovrcr session remove 1
+$ ovrcr kill "$agent_id"
+$ ovrcr session remove "$agent_id"
+$ ovrcr kill "$local_id"
+$ ovrcr session remove "$local_id"
 $ ovrcr workspace remove --project fixture --name demo
 $ ovrcr project remove fixture
 $ ovrcr shutdown
+$ test ! -e "$OVRCR_SOCKET"
+```
+
+The headless PTY wrapper exercises rendered terminal state, input and paste,
+resize, mouse selection, detach, reattach, and bounded cleanup:
+
+```sh
+rtk cargo test --test terminal_acceptance -- --nocapture
 ```
 
 ## MVP limits

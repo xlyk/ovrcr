@@ -54,7 +54,8 @@ fn lifecycle_error_with_hierarchy(
     })
 }
 
-const EVENT_QUEUE: usize = 64;
+pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
+pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -646,8 +647,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     drop(startup_lock);
     let registry = Registry::load(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
-    let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(EVENT_QUEUE);
+    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
     let state = Arc::new(ServerState {
         socket: paths.socket.clone(),
         registry_path,
@@ -1101,7 +1102,7 @@ fn handle_request_with_id(
                 })
         }
         Request::KillSession { session } => state
-            .kill_session(session, Duration::from_secs(5))
+            .kill_session(session, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
         Request::RemoveSession { session } => {
             state
@@ -1190,6 +1191,16 @@ fn error_response(code: ErrorCode, message: impl std::fmt::Display) -> Response 
         code,
         message: message.to_string(),
     }
+}
+
+fn requested_kill_grace() -> Duration {
+    // Integration tests use this per-server-process seam to exercise the short
+    // escalation path without changing the normal five-second CLI behavior.
+    std::env::var("OVRCR_KILL_GRACE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(5))
 }
 fn response_message(request_id: u64, response: Response) -> ServerMessage {
     ServerMessage::Response {
@@ -1365,12 +1376,41 @@ mod tests {
     use crate::protocol::{ServerEvent, ServerMessage};
     use std::io::Read;
 
+    #[test]
+    fn raw_event_and_dispatch_queues_reject_the_65th_item() {
+        let (event_sender, _event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
+            event_sender
+                .try_send(SessionEvent::Output {
+                    id: SessionId(1),
+                    bytes: Vec::new(),
+                })
+                .unwrap();
+        }
+        assert!(matches!(
+            event_sender.try_send(SessionEvent::Output {
+                id: SessionId(1),
+                bytes: Vec::new(),
+            }),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+
+        let (dispatch_sender, _dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+            dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
+        }
+        assert!(matches!(
+            dispatch_sender.try_send(DispatchMessage::Stop),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+    }
+
     fn test_state(
         dashboard: Option<Arc<DashboardSink>>,
         stream: Option<(Arc<()>, UnixStream)>,
     ) -> Arc<ServerState> {
-        let (events, _) = mpsc::sync_channel(EVENT_QUEUE);
-        let (dispatch, _) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
         Arc::new(ServerState {
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
             registry_path: PathBuf::from("config.toml"),
@@ -1538,7 +1578,7 @@ mod tests {
     #[test]
     fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         let cwd = tempfile::tempdir().unwrap();
-        let (events, receiver) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
         let session = Session::spawn(
             SessionId(7),
             crate::session::SessionSpec {
@@ -1588,8 +1628,8 @@ mod tests {
     #[test]
     fn registration_holds_sessions_guard_until_spawn_returns() {
         let root = tempfile::tempdir().unwrap();
-        let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE);
-        let (dispatch, dispatch_receiver) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
         let workspace = root.path().join("workspace");
         std::fs::create_dir(&workspace).unwrap();
         let registry = Registry {

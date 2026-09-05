@@ -521,6 +521,8 @@ fn fast_exit_session_is_retained_as_exited() {
 #[test]
 fn slow_dashboard_recovers_after_output_burst() {
     let _env_lock = ENV_LOCK.lock().unwrap();
+    assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);
+    assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -630,6 +632,38 @@ fn slow_dashboard_recovers_after_output_burst() {
             ..
         } if String::from_utf8_lossy(&bytes).contains("FINAL_MARKER")
     ));
+    let mut dirty_count = 1;
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let quiet_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < quiet_deadline {
+        match read_frame::<ServerMessage>(&mut dashboard) {
+            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session }))
+                if session == burst =>
+            {
+                dirty_count += 1
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.root_cause().downcast_ref::<std::io::Error>(),
+                    Some(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        )
+                ) =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    assert_eq!(
+        dirty_count, 1,
+        "quiet burst emitted more than one ScreenDirty"
+    );
     drop(dashboard);
     fixture.request(Request::RemoveSession { session: burst });
     let local = fixture.only_session_id();
@@ -733,11 +767,17 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
             .collect();
     }
     assert_eq!(summaries.len(), sessions.len());
-    assert!(summaries.iter().all(|summary| {
-        summary
-            .pid
-            .is_some_and(|pid| unsafe { libc::kill(-(pid as libc::pid_t), 0) } == 0)
-    }));
+    let pgids = summaries
+        .iter()
+        .filter_map(|summary| summary.pid)
+        .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pgids.len(),
+        50,
+        "all 50 managed process groups must be saved"
+    );
+    assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
     let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
     write_frame(
@@ -778,27 +818,20 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     }
     drop(reattached);
 
+    let previous_grace = std::env::var_os("OVRCR_KILL_GRACE_MS");
+    unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", "500") };
     for session in sessions {
         assert_eq!(
             fixture.request(Request::KillSession { session }),
             Response::Ok
         );
     }
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
-        if let Response::Hierarchy(snapshot) = fixture.request(Request::List) {
-            let alive = snapshot
-                .projects
-                .iter()
-                .flat_map(|project| project.workspaces.iter())
-                .flat_map(|workspace| workspace.sessions.iter())
-                .filter(|summary| summary.name.starts_with("waiting-") && summary.pid.is_some())
-                .count();
-            if alive == 0 {
-                break;
-            }
-        }
-        thread::park_timeout(Duration::from_millis(5));
+    match previous_grace {
+        Some(value) => unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) },
+        None => unsafe { std::env::remove_var("OVRCR_KILL_GRACE_MS") },
+    }
+    for pgid in pgids {
+        wait_for_group_absent(pgid, Duration::from_secs(3));
     }
     if let Response::Hierarchy(snapshot) = fixture.request(Request::List) {
         assert!(
@@ -1363,6 +1396,17 @@ fn pid_exists(pid: u32) -> bool {
 
 fn group_exists(pgid: libc::pid_t) -> bool {
     unsafe { libc::kill(-pgid, 0) == 0 }
+}
+
+fn wait_for_group_absent(pgid: libc::pid_t, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !group_exists(pgid) {
+            return;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    panic!("PTY process group {pgid} did not disappear");
 }
 
 struct CliLifecycleGuard {
