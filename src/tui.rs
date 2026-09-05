@@ -10,7 +10,7 @@ use crossterm::event::{
 use crossterm::{cursor, execute, terminal as crossterm_terminal};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::{Frame, Terminal};
@@ -34,6 +34,32 @@ const DASHBOARD_INPUT_BATCH_LIMIT: usize = 32;
 const DASHBOARD_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const DASHBOARD_EVENT_PROBE: Duration = Duration::from_micros(100);
 const DASHBOARD_IDLE_REDRAW_INTERVAL: Duration = Duration::from_secs(1);
+const SPINNER_INTERVAL: Duration = Duration::from_millis(100);
+const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+const BASE: Color = Color::Rgb(30, 30, 46);
+const CRUST: Color = Color::Rgb(17, 17, 27);
+const TEXT: Color = Color::Rgb(205, 214, 244);
+const SUBTEXT: Color = Color::Rgb(166, 173, 200);
+const MUTED: Color = Color::Rgb(108, 112, 134);
+const MAUVE: Color = Color::Rgb(203, 166, 247);
+const PEACH: Color = Color::Rgb(250, 179, 135);
+const GREEN: Color = Color::Rgb(166, 227, 161);
+const TEAL: Color = Color::Rgb(148, 226, 213);
+const BLUE: Color = Color::Rgb(137, 180, 250);
+const SKY: Color = Color::Rgb(137, 220, 235);
+const METADATA_HEIGHT: u16 = 2;
+const DEFAULT_SIDEBAR_WIDTH: u16 = 40;
+
+#[derive(Clone, Copy)]
+struct DashboardLayout {
+    title: Rect,
+    footer: Rect,
+    sidebar: Rect,
+    sidebar_content: Rect,
+    metadata: Rect,
+    terminal: Rect,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
@@ -74,6 +100,8 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    /// Explicit activity only; left empty until agent hooks supply busy/idle signals.
+    pub busy_sessions: HashSet<SessionId>,
     tree_offset: usize,
     next_request_id: u64,
 }
@@ -91,8 +119,28 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
+            busy_sessions: HashSet::new(),
             tree_offset: 0,
             next_request_id: 1,
+        }
+    }
+
+    fn session_is_busy(&self, id: SessionId) -> bool {
+        self.busy_sessions.contains(&id)
+            && find_session(self, id).is_some_and(|session| {
+                matches!(session.phase, crate::session::SessionPhase::Running)
+            })
+    }
+
+    fn redraw_interval(&self) -> Duration {
+        if self
+            .busy_sessions
+            .iter()
+            .any(|id| self.session_is_busy(*id))
+        {
+            SPINNER_INTERVAL
+        } else {
+            DASHBOARD_IDLE_REDRAW_INTERVAL
         }
     }
 
@@ -185,7 +233,9 @@ impl Dashboard {
     }
 
     fn tree_viewport_height(&self) -> usize {
-        usize::from(self.pane_size.rows).saturating_add(2).max(1)
+        usize::from(self.pane_size.rows)
+            .saturating_add(usize::from(METADATA_HEIGHT))
+            .max(1)
     }
 
     fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
@@ -199,12 +249,20 @@ impl Dashboard {
             return;
         };
         let height = self.tree_viewport_height();
-        if index < self.tree_offset {
-            self.tree_offset = index;
-        } else if index >= self.tree_offset.saturating_add(height) {
-            self.tree_offset = index + 1 - height;
+        let selected_start = rows
+            .iter()
+            .enumerate()
+            .take(index)
+            .map(|(index, row)| tree_row_gap(rows, index) + tree_row_height(row))
+            .sum::<usize>()
+            + tree_row_gap(rows, index);
+        let selected_end = selected_start.saturating_add(tree_row_height(&rows[index]));
+        if selected_start < self.tree_offset {
+            self.tree_offset = selected_start;
+        } else if selected_end > self.tree_offset.saturating_add(height) {
+            self.tree_offset = selected_end.saturating_sub(height);
         }
-        let max_offset = rows.len().saturating_sub(height);
+        let max_offset = tree_line_count(rows).saturating_sub(height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 
@@ -232,9 +290,7 @@ impl Dashboard {
                 }
             }
             InputMode::Terminal => {
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('g' | 'G'))
-                {
+                if is_browse_key(key) {
                     self.mode = InputMode::Browse;
                     DashboardAction::EnterBrowse
                 } else {
@@ -276,11 +332,7 @@ impl Dashboard {
         {
             return DashboardAction::None;
         }
-        let sidebar = if area.width <= 31 {
-            area
-        } else {
-            sidebar_area(area)
-        };
+        let sidebar = sidebar_area(area);
         if mouse.column < sidebar.x
             || mouse.column >= sidebar.x.saturating_add(sidebar.width)
             || mouse.row < sidebar.y
@@ -288,12 +340,12 @@ impl Dashboard {
         {
             return DashboardAction::None;
         }
-        let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y + 1));
+        let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
         let rows = self.visible_rows();
-        let Some(row) = rows.get(row_index).cloned() else {
+        let Some((row, _)) = tree_line_at(&rows, row_index) else {
             return DashboardAction::None;
         };
-        match row {
+        match row.clone() {
             TreeRow::Session { id } => {
                 self.select_session(id);
                 self.request_selected()
@@ -416,9 +468,7 @@ impl Dashboard {
 }
 
 pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
-    if event.modifiers.contains(KeyModifiers::CONTROL)
-        && matches!(event.code, KeyCode::Char('g' | 'G'))
-    {
+    if is_browse_key(event) {
         return KeyEncoding::Browse;
     }
 
@@ -464,6 +514,11 @@ pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
         _ => return KeyEncoding::Ignore,
     };
     KeyEncoding::Bytes(bytes)
+}
+
+fn is_browse_key(key: KeyEvent) -> bool {
+    (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('g' | 'G')))
+        || matches!(key.code, KeyCode::Char('\u{7}'))
 }
 
 fn cursor_sequence(application: bool, suffix: u8) -> Vec<u8> {
@@ -552,7 +607,10 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
             if vt_cell.is_wide_continuation() {
                 continue;
             }
-            let (fg, bg) = (color(vt_cell.fgcolor()), color(vt_cell.bgcolor()));
+            let (fg, bg) = (
+                color(vt_cell.fgcolor(), TEXT),
+                color(vt_cell.bgcolor(), BASE),
+            );
             let contents = vt_cell.contents();
             let symbol = if contents.is_empty() { " " } else { contents };
             cell.set_symbol(symbol).set_fg(fg).set_bg(bg);
@@ -583,9 +641,9 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
     }
 }
 
-fn color(value: vt100::Color) -> Color {
+fn color(value: vt100::Color, default: Color) -> Color {
     match value {
-        vt100::Color::Default => Color::Reset,
+        vt100::Color::Default => default,
         vt100::Color::Idx(index) => Color::Indexed(index),
         vt100::Color::Rgb(red, green, blue) => Color::Rgb(red, green, blue),
     }
@@ -784,7 +842,7 @@ fn dashboard_loop<W: Write>(
 ) -> Result<()> {
     let mut mouse_enabled = dashboard.mode == InputMode::Browse;
     let input_fd = input.as_raw_fd();
-    let mut next_idle_redraw = Instant::now() + DASHBOARD_IDLE_REDRAW_INTERVAL;
+    let mut next_idle_redraw = Instant::now() + dashboard.redraw_interval();
     let mut next_frame_redraw = Instant::now();
     let mut pending_redraw = false;
     let mut first_frame = true;
@@ -817,7 +875,7 @@ fn dashboard_loop<W: Write>(
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
-            next_idle_redraw = Instant::now() + DASHBOARD_IDLE_REDRAW_INTERVAL;
+            next_idle_redraw = Instant::now() + dashboard.redraw_interval();
             continue;
         }
 
@@ -900,7 +958,7 @@ fn dashboard_loop<W: Write>(
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
-            next_idle_redraw = Instant::now() + DASHBOARD_IDLE_REDRAW_INTERVAL;
+            next_idle_redraw = Instant::now() + dashboard.redraw_interval();
         }
     }
     Ok(())
@@ -1128,148 +1186,386 @@ fn dashboard_input() -> Result<Option<File>> {
 }
 
 pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
-    let (title_area, body_area, footer_area) = dashboard_areas(frame.area());
-    let mauve = Color::Rgb(203, 166, 247);
+    let now_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    draw_dashboard_at(frame, dashboard, now_unix_ms);
+}
+
+pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_ms: u64) {
+    let layout = dashboard_layout(frame.area());
     frame.render_widget(
-        Paragraph::new("OVRCR").style(
-            ratatui::style::Style::default()
-                .fg(Color::Rgb(30, 30, 46))
-                .bg(mauve),
-        ),
-        title_area,
+        Block::default().style(Style::default().bg(BASE)),
+        frame.area(),
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("󰚩 ", Style::default().fg(CRUST)),
+            Span::styled(
+                "OVRCR",
+                Style::default().fg(CRUST).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  agent runtime",
+                Style::default().fg(CRUST).add_modifier(Modifier::DIM),
+            ),
+        ]))
+        .style(Style::default().bg(MAUVE)),
+        layout.title,
     );
 
-    let [sidebar, right] = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(31), Constraint::Min(1)])
-        .areas(body_area);
     frame.render_widget(
         Block::default()
             .borders(Borders::RIGHT)
-            .border_style(ratatui::style::Style::default().fg(Color::DarkGray)),
-        sidebar,
+            .border_style(Style::default().fg(MUTED))
+            .style(Style::default().bg(BASE)),
+        layout.sidebar,
     );
     let rows = dashboard.visible_rows();
-    let start = dashboard.tree_offset.min(rows.len());
-    for (index, row) in rows.iter().enumerate() {
-        let Some(index) = index.checked_sub(start) else {
+    let viewport_height = usize::from(layout.sidebar_content.height);
+    let start = dashboard.tree_offset.min(tree_line_count(&rows));
+    for screen_line in 0..viewport_height {
+        let Some((row, row_line)) = tree_line_at(&rows, start.saturating_add(screen_line)) else {
             continue;
         };
-        let y = sidebar.y.saturating_add(1).saturating_add(index as u16);
-        if y >= sidebar.bottom().saturating_sub(1) {
-            break;
-        }
-        let (text, style) = tree_row_text(dashboard, row);
+        let y = layout.sidebar_content.y.saturating_add(screen_line as u16);
+        let (text, style) = tree_line_text(
+            dashboard,
+            row,
+            row_line,
+            usize::from(layout.sidebar_content.width),
+            now_unix_ms,
+        );
+        let line_area = Rect::new(layout.sidebar_content.x, y, layout.sidebar_content.width, 1);
+        frame.render_widget(Block::default().style(style), line_area);
         frame.render_widget(
             Paragraph::new(Line::from(Span::raw(text))).style(style),
-            Rect::new(
-                sidebar.x.saturating_add(1),
-                y,
-                sidebar.width.saturating_sub(2),
-                1,
-            ),
+            line_area,
         );
+        let accents: &[(u16, Color)] = match row {
+            TreeRow::Project { name } => &[(
+                2,
+                if dashboard
+                    .hierarchy
+                    .projects
+                    .iter()
+                    .filter(|project| project.name < *name)
+                    .count()
+                    % 2
+                    == 0
+                {
+                    MAUVE
+                } else {
+                    SKY
+                },
+            )],
+            TreeRow::Workspace { .. } => &[(2, MAUVE)],
+            TreeRow::Session { id } if row_line == 0 && dashboard.selected != Some(*id) => &[(
+                2,
+                if dashboard.session_is_busy(*id) {
+                    GREEN
+                } else {
+                    MUTED
+                },
+            )],
+            _ => &[],
+        };
+        for &(column, color) in accents {
+            if column < line_area.width {
+                frame.buffer_mut()[(line_area.x + column, y)].set_fg(color);
+            }
+        }
     }
 
     let selected = dashboard
         .selected
         .and_then(|id| find_session(dashboard, id));
     let metadata = selected.map_or_else(
-        || "no session selected".to_string(),
+        || {
+            Line::from(Span::styled(
+                "no session selected",
+                Style::default().fg(MUTED),
+            ))
+        },
         |session| {
             let pid = session
                 .pid
-                .map_or_else(|| "pid closed".to_string(), |pid| format!("PID {pid}"));
-            format!("{pid}  •  {}", format_elapsed(session.started_unix_ms))
+                .map_or_else(|| "—".to_string(), |pid| pid.to_string());
+            Line::from(vec![
+                Span::styled("pid: ", Style::default().fg(MUTED)),
+                Span::styled(pid, Style::default().fg(TEAL)),
+                Span::styled("  elapsed: ", Style::default().fg(MUTED)),
+                Span::styled(
+                    format_elapsed_at(session.started_unix_ms, now_unix_ms),
+                    Style::default().fg(TEAL),
+                ),
+            ])
         },
     );
-    let [metadata_area, terminal_area] = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1)])
-        .areas(right);
-    frame.render_widget(
-        Paragraph::new(metadata).block(Block::default().borders(Borders::BOTTOM)),
-        metadata_area,
-    );
-    frame.render_widget(
-        Block::default()
-            .title(Line::from(selected.map_or_else(
-                || "terminal".to_string(),
-                |session| session.name.clone(),
-            )))
-            .borders(Borders::TOP | Borders::BOTTOM | Borders::RIGHT),
-        terminal_area,
-    );
+    if !layout.metadata.is_empty() {
+        frame.render_widget(
+            Paragraph::new(metadata).style(Style::default().bg(BASE)),
+            Rect::new(
+                layout.metadata.x,
+                layout.metadata.y,
+                layout.metadata.width,
+                1,
+            ),
+        );
+    }
+    if layout.metadata.height > 1 {
+        frame.render_widget(
+            Paragraph::new("─".repeat(usize::from(layout.metadata.width)))
+                .style(Style::default().fg(MUTED).bg(BASE)),
+            Rect::new(
+                layout.metadata.x,
+                layout.metadata.y.saturating_add(1),
+                layout.metadata.width,
+                1,
+            ),
+        );
+    }
     render_terminal(
         frame,
-        actual_drawn_inner_rect(frame.area()),
+        layout.terminal,
         dashboard.parser.screen(),
         dashboard.mode == InputMode::Terminal,
     );
-    let mode = match dashboard.mode {
-        InputMode::Browse => "BROWSE",
-        InputMode::Terminal => "TERMINAL",
-    };
     let footer = dashboard.error.as_deref().map_or_else(
-        || format!("{mode}   Ctrl-g: browse"),
-        |error| format!("ERROR: {error}"),
+        || {
+            Line::from(vec![
+                Span::styled("j/k/↑/↓", Style::default().fg(Color::Rgb(249, 226, 175))),
+                Span::styled(" select  ", Style::default().fg(MUTED)),
+                Span::styled("Enter", Style::default().fg(Color::Rgb(249, 226, 175))),
+                Span::styled(" focus  ", Style::default().fg(MUTED)),
+                Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
+                Span::styled(" browse  ", Style::default().fg(MUTED)),
+                Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
+                Span::styled(" detach", Style::default().fg(MUTED)),
+            ])
+        },
+        |error| {
+            Line::from(vec![
+                Span::styled("ERROR: ", Style::default().fg(Color::Rgb(243, 139, 168))),
+                Span::styled(error, Style::default().fg(TEXT)),
+            ])
+        },
     );
-    frame.render_widget(Paragraph::new(footer), footer_area);
+    frame.render_widget(
+        Paragraph::new(footer).style(Style::default().bg(CRUST)),
+        layout.footer,
+    );
 }
 
-fn dashboard_areas(area: Rect) -> (Rect, Rect, Rect) {
+fn dashboard_layout(area: Rect) -> DashboardLayout {
     let [title, body, footer] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Min(1),
+            Constraint::Min(0),
             Constraint::Length(1),
         ])
         .areas(area);
-    (title, body, footer)
+    let sidebar_width = body.width.min(DEFAULT_SIDEBAR_WIDTH).min(body.width / 2);
+    let [sidebar, right] = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
+        .areas(body);
+    let metadata_height = right.height.min(METADATA_HEIGHT);
+    let [metadata, terminal] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(metadata_height), Constraint::Min(0)])
+        .areas(right);
+    DashboardLayout {
+        title,
+        footer,
+        sidebar,
+        sidebar_content: Rect::new(
+            sidebar.x,
+            sidebar.y,
+            sidebar.width.saturating_sub(1),
+            sidebar.height,
+        ),
+        metadata,
+        terminal,
+    }
 }
 
 fn sidebar_area(area: Rect) -> Rect {
-    let (_, body, _) = dashboard_areas(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(31), Constraint::Min(1)])
-        .areas::<2>(body)[0]
+    dashboard_layout(area).sidebar_content
 }
 
-fn tree_row_text(dashboard: &Dashboard, row: &TreeRow) -> (String, ratatui::style::Style) {
-    let (text, selected, exited) = match row {
-        TreeRow::Project { name } => (format!("▾ {name}"), false, false),
-        TreeRow::Workspace { name, .. } => (format!("  ▾ {name}"), false, false),
+fn tree_row_height(row: &TreeRow) -> usize {
+    match row {
+        TreeRow::Session { .. } => 3,
+        TreeRow::Project { .. } | TreeRow::Workspace { .. } => 1,
+    }
+}
+
+fn tree_line_count(rows: &[TreeRow]) -> usize {
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| tree_row_gap(rows, index) + tree_row_height(row))
+        .sum()
+}
+
+fn tree_row_gap(rows: &[TreeRow], index: usize) -> usize {
+    usize::from(
+        index > 0
+            && match &rows[index] {
+                TreeRow::Project { .. } => true,
+                TreeRow::Workspace { .. } => !matches!(rows[index - 1], TreeRow::Project { .. }),
+                TreeRow::Session { .. } => false,
+            },
+    )
+}
+
+fn tree_line_at(rows: &[TreeRow], line: usize) -> Option<(&TreeRow, usize)> {
+    let mut start: usize = 0;
+    for (index, row) in rows.iter().enumerate() {
+        start += tree_row_gap(rows, index);
+        if line < start {
+            return None;
+        }
+        let height = tree_row_height(row);
+        if line < start.saturating_add(height) {
+            return Some((row, line - start));
+        }
+        start += height;
+    }
+    None
+}
+
+fn tree_line_text(
+    dashboard: &Dashboard,
+    row: &TreeRow,
+    line: usize,
+    width: usize,
+    now_unix_ms: u64,
+) -> (String, Style) {
+    let base_style = Style::default().fg(TEXT).bg(BASE);
+    match row {
+        TreeRow::Project { name } => {
+            let disclosure = if dashboard.collapsed_projects.contains(name) {
+                '▶'
+            } else {
+                '▼'
+            };
+            (
+                clip_text(&format!("{disclosure} 󰉋 {name}"), width),
+                base_style.fg(BLUE).add_modifier(Modifier::BOLD),
+            )
+        }
+        TreeRow::Workspace { project, name } => {
+            let disclosure = if dashboard.collapsed_workspaces.iter().any(
+                |(collapsed_project, collapsed_workspace)| {
+                    collapsed_project == project && collapsed_workspace == name
+                },
+            ) {
+                '▶'
+            } else {
+                '▼'
+            };
+            (
+                clip_text(&format!("  {disclosure} {name}"), width),
+                base_style.fg(TEXT).add_modifier(Modifier::BOLD),
+            )
+        }
         TreeRow::Session { id } => {
             let Some(session) = find_session(dashboard, *id) else {
                 return (
-                    format!("    session {}", id.0),
-                    ratatui::style::Style::default(),
+                    clip_text(&format!("    session {}", id.0), width),
+                    base_style,
                 );
             };
-            (
-                format!(
-                    "    {} ctx - {} {}",
-                    session.name,
-                    session.label,
-                    format_elapsed(session.started_unix_ms)
+            let selected = dashboard.selected == Some(*id);
+            let label = if session.name == "local" {
+                "terminal"
+            } else {
+                session.label.as_str()
+            };
+            let status = if dashboard.session_is_busy(*id) {
+                SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
+            } else {
+                ' '
+            };
+            let text = match line {
+                0 => format!("  {status} {}", session.name),
+                1 => format!("     ├ {label}"),
+                _ => format!(
+                    "     └ run {}  ctx —",
+                    format_elapsed_at(session.started_unix_ms, now_unix_ms)
                 ),
-                dashboard.selected == Some(*id),
-                !matches!(session.phase, crate::session::SessionPhase::Running),
-            )
+            };
+            let mut style = if selected {
+                Style::default().fg(CRUST).bg(MAUVE)
+            } else if line == 1 {
+                Style::default().fg(faded(label_color(label), 65)).bg(BASE)
+            } else if line == 2 {
+                Style::default().fg(faded(MUTED, 80)).bg(BASE)
+            } else {
+                base_style
+            };
+            if line == 0 {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            (clip_text(&text, width), style)
         }
-    };
-    let mut style = ratatui::style::Style::default();
-    if exited {
-        style = style.add_modifier(Modifier::DIM);
     }
-    if selected {
-        style = style
-            .fg(Color::Rgb(30, 30, 46))
-            .bg(Color::Rgb(203, 166, 247));
+}
+
+fn label_color(label: &str) -> Color {
+    let explicit_label = label.split('/').next().unwrap_or(label).trim();
+    if explicit_label.eq_ignore_ascii_case("claude") {
+        PEACH
+    } else if explicit_label.eq_ignore_ascii_case("codex") {
+        GREEN
+    } else if explicit_label.eq_ignore_ascii_case("pi") {
+        MAUVE
+    } else if explicit_label.eq_ignore_ascii_case("grok") {
+        BLUE
+    } else if explicit_label.eq_ignore_ascii_case("terminal") {
+        SUBTEXT
+    } else {
+        TEXT
     }
-    (text, style)
+}
+
+// Match the mockup's label/metadata opacity against its solid terminal background.
+fn faded(color: Color, percent: u16) -> Color {
+    match (color, BASE) {
+        (Color::Rgb(r, g, b), Color::Rgb(br, bg, bb)) => {
+            let blend = |channel, background| {
+                ((u16::from(channel) * percent + u16::from(background) * (100 - percent) + 50)
+                    / 100) as u8
+            };
+            Color::Rgb(blend(r, br), blend(g, bg), blend(b, bb))
+        }
+        _ => color,
+    }
+}
+
+fn clip_text(text: &str, width: usize) -> String {
+    if Line::raw(text).width() <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let mut clipped = String::new();
+    for character in text.chars() {
+        let next = format!("{clipped}{character}");
+        if Line::raw(&next).width() > width - 1 {
+            break;
+        }
+        clipped.push(character);
+    }
+    clipped.push('…');
+    clipped
 }
 
 fn find_session(dashboard: &Dashboard, id: SessionId) -> Option<&crate::session::SessionSummary> {
@@ -1282,20 +1578,17 @@ fn find_session(dashboard: &Dashboard, id: SessionId) -> Option<&crate::session:
         .find(|session| session.id == id)
 }
 
-fn format_elapsed(started_unix_ms: u64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let seconds = now.saturating_sub(started_unix_ms) / 1_000;
-    let days = seconds / 86_400;
-    let hours = seconds / 3_600 % 24;
-    let minutes = seconds / 60 % 60;
-    let seconds = seconds % 60;
+fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
+    let minutes = now_unix_ms.saturating_sub(started_unix_ms) / 60_000;
+    let days = minutes / (24 * 60);
+    let hours = minutes / 60 % 24;
+    let minutes = minutes % 60;
     if days > 0 {
-        format!("{days}d {hours:02}:{minutes:02}:{seconds:02}")
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h{minutes:02}")
     } else {
-        format!("{hours:02}:{minutes:02}:{seconds:02}")
+        format!("{minutes}m")
     }
 }
 
@@ -1341,21 +1634,7 @@ fn terminal_size() -> Result<TerminalSize> {
 }
 
 pub fn actual_drawn_inner_rect(area: Rect) -> Rect {
-    let (_, body, _) = dashboard_areas(area);
-    let right = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(31), Constraint::Min(1)])
-        .areas::<2>(body)[1];
-    let terminal_area = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1)])
-        .areas::<2>(right)[1];
-    Rect::new(
-        terminal_area.x,
-        terminal_area.y.saturating_add(1),
-        terminal_area.width.saturating_sub(1),
-        terminal_area.height.saturating_sub(2),
-    )
+    dashboard_layout(area).terminal
 }
 
 fn pane_size(size: TerminalSize) -> TerminalSize {

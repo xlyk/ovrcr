@@ -62,7 +62,13 @@ Run `ovrcr` with no subcommand to open the dashboard. Browse mode uses `j`,
 detaches. Terminal mode sends keyboard and bracketed-paste input to the
 selected PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
 collapse sidebar rows while browsing. The dashboard shows one selected
-terminal and the current `ctx -` field.
+terminal and the current `ctx —` field. Sidebar sessions use three lines: the
+session name, its label, and elapsed runtime with context usage. Context usage
+remains unknown in the MVP. The selected session is highlighted across all three
+lines; clicking any of those lines selects it.
+Idle sessions leave their status slot blank; an explicit busy state animates a braille spinner.
+Activity defaults to idle until agent hooks are connected; terminal output and
+process liveness do not imply that an agent is busy.
 
 Detaching leaves the server, PTYs, and child process groups running. Run
 `ovrcr` again to reattach and rebuild the selected terminal from its current
@@ -153,6 +159,40 @@ resize, mouse selection, detach, reattach, and bounded cleanup:
 
 ```sh
 rtk cargo test --test terminal_acceptance -- --nocapture
+```
+
+## Test in a GUI window (macOS)
+
+Run the optional development helper with Rust 1.95 or newer, `just`, and `rtk`:
+
+```sh
+rtk proxy just gui
+```
+
+This builds `target/OVRCR GUI.app` and opens the real dashboard inside a
+terminal window. Each launch creates temporary repositories, configuration,
+socket, and server with two projects, four workspaces, and ten shell sessions.
+The agent/model labels and example output are demo fixtures; all sessions run
+local shells. It inherits your shell environment while overriding the demo paths
+and terminal capabilities. The helper uses an installed JetBrains Mono Nerd Font
+Mono when available, with a monospace fallback.
+
+Click the terminal to focus it. Select a session and press Enter, then type
+commands or paste with Cmd-V. Ctrl-g returns to browse mode,
+where sidebar clicks select sessions and `q` detaches. Click **Restart dashboard**
+to reattach to the same demo. Resizing the window resizes the selected session.
+
+Computer-use tools can address the app as `dev.ovrcr.gui` or by its bundle path.
+The accessibility tree exposes the terminal and its individual screen rows.
+Closing the window stops the demo server and sessions and removes the temporary
+fixture. A cleanup failure reports the retained fixture path. Changes made in
+the demo are disposable; the helper does not open your normal ovrcr instance.
+
+The GUI dependency is enabled only by the `gui` feature. Ordinary builds and
+`cargo run` still use the CLI. To run the helper's focused tests:
+
+```sh
+rtk proxy cargo test --features gui --test gui
 ```
 
 ## MVP limits
