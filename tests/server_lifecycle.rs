@@ -307,6 +307,154 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
 }
 
 #[test]
+fn backpressured_input_does_not_block_list_or_kill() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/backpressure".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session(
+        "blocked",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "stty raw -echo; printf READY; exec sleep 30".into(),
+        ],
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    let mut ready = false;
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let readiness_deadline = Instant::now() + Duration::from_secs(2);
+    let mut request_id = 2;
+    while !ready && Instant::now() < readiness_deadline {
+        write_frame(
+            &mut dashboard,
+            &ClientMessage {
+                request_id,
+                request: Request::Select {
+                    session,
+                    size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+                },
+            },
+        )
+        .unwrap();
+        request_id += 1;
+        let Ok(message) = read_frame::<ServerMessage>(&mut dashboard) else {
+            continue;
+        };
+        match message {
+            ServerMessage::Response {
+                response: Response::Screen { bytes, .. },
+                ..
+            }
+            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, session: _ })
+                if String::from_utf8_lossy(&bytes).contains("READY") =>
+            {
+                ready = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(ready, "blocked-session readiness marker was not rendered");
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(10)))
+        .unwrap();
+    while read_frame::<ServerMessage>(&mut dashboard).is_ok() {}
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::Input {
+                session,
+                bytes: vec![b'x'; 512 * 1024],
+            },
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    assert!(
+        read_frame::<ServerMessage>(&mut dashboard).is_err(),
+        "input response unexpectedly completed while PTY stdin was backpressured"
+    );
+
+    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut control,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut control).unwrap(),
+        ServerMessage::Response {
+            request_id: 21,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    drop(control);
+    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut control,
+        &ClientMessage {
+            request_id: 22,
+            request: Request::KillSession { session },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_frame::<ServerMessage>(&mut control).unwrap(),
+        ServerMessage::Response {
+            request_id: 22,
+            response: Response::Ok,
+        }
+    );
+    drop(dashboard);
+    fixture.request(Request::Shutdown { kill: true });
+    fixture.join();
+}
+
+#[test]
 fn control_lifecycle_enforces_every_removal_gate() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();
@@ -516,6 +664,332 @@ fn fast_exit_session_is_retained_as_exited() {
         Response::Ok
     );
     fixture.join();
+}
+
+#[test]
+fn slow_dashboard_recovers_after_output_burst() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);
+    assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/slow-dashboard".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let burst = fixture.create_session(
+        "burst",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "i=0; while [ $i -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf FINAL_MARKER".into(),
+        ],
+    );
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session: burst,
+                size: ovrcr::session::TerminalSize {
+                    rows: 40,
+                    cols: 120,
+                },
+            },
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if matches!(
+            fixture.request(Request::List),
+            Response::Hierarchy(ref snapshot)
+                if snapshot
+                    .projects
+                    .iter()
+                    .flat_map(|project| project.workspaces.iter())
+                    .flat_map(|workspace| workspace.sessions.iter())
+                    .any(|session| session.id == burst && matches!(session.phase, SessionPhase::Exited { .. }))
+        ) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "burst process did not finish");
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    let mut saw_dirty = false;
+    while !saw_dirty {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session })
+                if session == burst =>
+            {
+                saw_dirty = true
+            }
+            _ => {}
+        }
+    }
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::Select {
+                session: burst,
+                size: ovrcr::session::TerminalSize {
+                    rows: 40,
+                    cols: 120,
+                },
+            },
+        },
+    )
+    .unwrap();
+    let snapshot = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    assert!(matches!(
+        snapshot,
+        ServerMessage::Response {
+            response: Response::Screen { bytes, .. },
+            ..
+        } if String::from_utf8_lossy(&bytes).contains("FINAL_MARKER")
+    ));
+    let mut dirty_count = 1;
+    dashboard
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let quiet_deadline = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < quiet_deadline {
+        match read_frame::<ServerMessage>(&mut dashboard) {
+            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session }))
+                if session == burst =>
+            {
+                dirty_count += 1
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.root_cause().downcast_ref::<std::io::Error>(),
+                    Some(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        )
+                ) =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    assert_eq!(
+        dirty_count, 1,
+        "quiet burst emitted more than one ScreenDirty"
+    );
+    drop(dashboard);
+    fixture.request(Request::RemoveSession { session: burst });
+    let local = fixture.only_session_id();
+    fixture.request(Request::KillSession { session: local });
+    fixture.wait_exited(local);
+    fixture.request(Request::RemoveSession { session: local });
+    fixture.request(Request::RemoveWorkspace {
+        project: "fixture".into(),
+        name: "work".into(),
+    });
+    fixture.request(Request::RemoveProject {
+        name: "fixture".into(),
+    });
+    fixture.request(Request::Shutdown { kill: false });
+    fixture.join();
+}
+
+#[test]
+fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/fifty-sessions".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let sessions = (0..50)
+        .map(|index| {
+            fixture.create_session(
+                &format!("waiting-{index}"),
+                vec![
+                    "sh".into(),
+                    "-c".into(),
+                    format!("printf 'SESSION_MARKER_{index}'; while :; do sleep 1; done").into(),
+                ],
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    for (index, session) in sessions.iter().copied().enumerate() {
+        select_screen_containing(
+            &mut dashboard,
+            index as u64 + 2,
+            session,
+            &format!("SESSION_MARKER_{index}"),
+        );
+    }
+    drop(dashboard);
+
+    let mut summaries = Vec::new();
+    if let Response::Hierarchy(snapshot) = fixture.request(Request::List) {
+        summaries = snapshot
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .flat_map(|workspace| workspace.sessions)
+            .filter(|summary| sessions.contains(&summary.id))
+            .collect();
+    }
+    assert_eq!(summaries.len(), sessions.len());
+    let pgids = summaries
+        .iter()
+        .filter_map(|summary| summary.pid)
+        .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pgids.len(),
+        50,
+        "all 50 managed process groups must be saved"
+    );
+    assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
+
+    let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
+    write_frame(
+        &mut reattached,
+        &ClientMessage {
+            request_id: 100,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut reattached).unwrap();
+    reattached
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    for (index, session) in sessions.iter().copied().enumerate() {
+        select_screen_containing(
+            &mut reattached,
+            index as u64 + 101,
+            session,
+            &format!("SESSION_MARKER_{index}"),
+        );
+    }
+    drop(reattached);
+
+    let previous_grace = std::env::var_os("OVRCR_KILL_GRACE_MS");
+    unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", "500") };
+    for session in sessions {
+        assert_eq!(
+            fixture.request(Request::KillSession { session }),
+            Response::Ok
+        );
+    }
+    match previous_grace {
+        Some(value) => unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) },
+        None => unsafe { std::env::remove_var("OVRCR_KILL_GRACE_MS") },
+    }
+    for pgid in pgids {
+        wait_for_group_absent(pgid, Duration::from_secs(3));
+    }
+    if let Response::Hierarchy(snapshot) = fixture.request(Request::List) {
+        assert!(
+            snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .filter(|summary| summary.name.starts_with("waiting-"))
+                .all(|summary| summary.pid.is_none())
+        );
+    }
+    let local = fixture.only_session_id();
+    fixture.request(Request::KillSession { session: local });
+    fixture.wait_exited(local);
+    for session in sessions_for_cleanup(&fixture) {
+        fixture.request(Request::RemoveSession { session });
+    }
+    fixture.request(Request::RemoveSession { session: local });
+    fixture.request(Request::RemoveWorkspace {
+        project: "fixture".into(),
+        name: "work".into(),
+    });
+    fixture.request(Request::RemoveProject {
+        name: "fixture".into(),
+    });
+    fixture.request(Request::Shutdown { kill: false });
+    fixture.join();
+}
+
+fn sessions_for_cleanup(fixture: &ControlFixture) -> Vec<SessionId> {
+    match fixture.request(Request::List) {
+        Response::Hierarchy(snapshot) => snapshot
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .flat_map(|workspace| workspace.sessions)
+            .filter(|session| session.name.starts_with("waiting-"))
+            .map(|session| session.id)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 struct ControlFixture {
@@ -776,6 +1250,280 @@ fn dashboard_request_id_zero_does_not_block_followup_response() {
 }
 
 #[test]
+fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/dashboard-geometry".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardGeometry {
+                size: ovrcr::session::TerminalSize { rows: 17, cols: 61 },
+            },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        }
+    ));
+    let connected_path = fixture._root.path().join("connected-size");
+    let connected = fixture.create_session(
+        "connected",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("stty size > {}; sleep 30", connected_path.display()).into(),
+        ],
+    );
+    wait_for_file_contents(&connected_path, "17 61");
+    drop(dashboard);
+    let detached_path = fixture._root.path().join("detached-size");
+    let detached = fixture.create_session(
+        "detached",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!("stty size > {}; sleep 30", detached_path.display()).into(),
+        ],
+    );
+    wait_for_file_contents(&detached_path, "40 120");
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    ));
+    fixture.join();
+    let _ = (connected, detached);
+}
+
+#[test]
+fn dashboard_receives_concrete_ordinary_request_errors() {
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session: SessionId(99),
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                message,
+            },
+        } if message.contains("session 99 not found")
+    ));
+    drop(dashboard);
+    fixture.stop();
+}
+
+#[test]
+fn selection_snapshot_precedes_later_quiet_tail_output() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/select-order".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session(
+        "quiet-tail",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "printf READY; read line; printf QUIET_TAIL; exec sleep 30".into(),
+        ],
+    );
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    let mut saw_snapshot = false;
+    while !saw_snapshot {
+        if let ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen { .. },
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            saw_snapshot = true;
+        }
+    }
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::Input {
+                session,
+                bytes: b"\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    let mut saw_tail = false;
+    while !saw_tail {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, .. })
+                if String::from_utf8_lossy(&bytes).contains("QUIET_TAIL") =>
+            {
+                saw_tail = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_snapshot);
+    assert!(saw_tail);
+    drop(dashboard);
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    ));
+    fixture.join();
+}
+
+fn wait_for_file_contents(path: &Path, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(path)
+            .map(|contents| contents.trim() == expected)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        thread::yield_now();
+    }
+    panic!("{} did not contain {expected:?}", path.display());
+}
+
+fn select_screen_containing(
+    stream: &mut UnixStream,
+    request_id: u64,
+    session: SessionId,
+    marker: &str,
+) {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        write_frame(
+            stream,
+            &ClientMessage {
+                request_id,
+                request: Request::Select {
+                    session,
+                    size: ovrcr::session::TerminalSize {
+                        rows: 40,
+                        cols: 120,
+                    },
+                },
+            },
+        )
+        .unwrap();
+        while Instant::now() < deadline {
+            let Ok(message) = read_frame::<ServerMessage>(stream) else {
+                break;
+            };
+            if let ServerMessage::Response {
+                response: Response::Screen { bytes, .. },
+                ..
+            } = message
+                && String::from_utf8_lossy(&bytes).contains(marker)
+            {
+                return;
+            }
+        }
+    }
+    panic!("session {session:?} did not render {marker:?}");
+}
+
+#[test]
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     let mut fixture = ServerFixture::new();
     fixture.start();
@@ -811,6 +1559,44 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     }
     fixture.thread.take().unwrap().join().unwrap();
     assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
+fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "project",
+            "add",
+            "relative",
+            ".",
+            "--workspace-root",
+            "../workspaces",
+        ])
+        .current_dir(&fixture.repo)
+        .env("OVRCR_CONFIG", fixture._root.path().join("config.toml"))
+        .env("OVRCR_SOCKET", &fixture.socket)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "relative project registration failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let registry = Registry::load(&fixture._root.path().join("config.toml")).unwrap();
+    let project = registry
+        .projects
+        .iter()
+        .find(|project| project.name == "relative")
+        .unwrap();
+    assert_eq!(project.repo, fixture.repo);
+    assert_eq!(project.workspace_root, fixture.workspace_root);
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
 }
 
 #[test]
@@ -1038,6 +1824,17 @@ fn pid_exists(pid: u32) -> bool {
 
 fn group_exists(pgid: libc::pid_t) -> bool {
     unsafe { libc::kill(-pgid, 0) == 0 }
+}
+
+fn wait_for_group_absent(pgid: libc::pid_t, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !group_exists(pgid) {
+            return;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    panic!("PTY process group {pgid} did not disappear");
 }
 
 struct CliLifecycleGuard {

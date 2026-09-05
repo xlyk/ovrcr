@@ -108,6 +108,44 @@ fn creates_new_and_existing_branch_worktrees() {
 }
 
 #[test]
+fn rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation() {
+    let fixture = GitFixture::new();
+    let invalid_destination = fixture.project.workspace_root.join("invalid-base");
+    let error = create_worktree(
+        &fixture.project,
+        "invalid-base",
+        BranchSpec::New {
+            branch: "feature/invalid-base".into(),
+            base: "--force".into(),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("validate worktree base"));
+    assert!(!invalid_destination.exists());
+    assert!(
+        !fixture
+            .worktree_paths()
+            .iter()
+            .any(|path| path == &invalid_destination)
+    );
+
+    fixture.git(&["tag", "tag-only"]);
+    let tag_destination = fixture.project.workspace_root.join("tag-only");
+    let error = create_worktree(
+        &fixture.project,
+        "tag-only",
+        BranchSpec::Existing {
+            branch: "tag-only".into(),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("local branch does not exist"));
+    assert!(!tag_destination.exists());
+}
+
+#[test]
 fn rejects_workspace_path_traversal_before_git() {
     let fixture = GitFixture::new();
     let error = create_worktree(

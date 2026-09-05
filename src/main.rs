@@ -132,8 +132,8 @@ fn main() -> Result<()> {
                     workspace_root,
                 } => Request::AddProject {
                     name,
-                    repo,
-                    workspace_root,
+                    repo: resolve_cli_path(repo)?,
+                    workspace_root: resolve_cli_path(workspace_root)?,
                 },
                 ProjectCommand::List => {
                     let paths = ServerPaths::resolve()?;
@@ -254,5 +254,13 @@ fn print_response(response: Response) -> Result<()> {
             Ok(())
         }
         Response::Screen { .. } | Response::Ok => Ok(()),
+    }
+}
+
+fn resolve_cli_path(path: PathBuf) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
     }
 }

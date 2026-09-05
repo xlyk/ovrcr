@@ -87,11 +87,13 @@ pub fn create_worktree(
             if base.is_empty() {
                 bail!("worktree base cannot be empty");
             }
+            validate_commitish(&repo, &base)?;
             let args = vec![
                 OsString::from("worktree"),
                 OsString::from("add"),
                 OsString::from("-b"),
                 OsString::from(&branch),
+                OsString::from("--"),
                 destination.as_os_str().to_owned(),
                 OsString::from(base),
             ];
@@ -99,9 +101,11 @@ pub fn create_worktree(
         }
         BranchSpec::Existing { branch } => {
             validate_branch(&repo, &branch)?;
+            validate_local_branch(&repo, &branch)?;
             let args = vec![
                 OsString::from("worktree"),
                 OsString::from("add"),
+                OsString::from("--"),
                 destination.as_os_str().to_owned(),
                 OsString::from(&branch),
             ];
@@ -211,6 +215,34 @@ fn validate_branch(repo: &Path, branch: &str) -> Result<()> {
             OsString::from(branch),
         ],
     )?;
+    Ok(())
+}
+
+fn validate_commitish(repo: &Path, base: &str) -> Result<()> {
+    run_git(
+        repo,
+        &[
+            OsString::from("rev-parse"),
+            OsString::from("--verify"),
+            OsString::from("--end-of-options"),
+            OsString::from(format!("{base}^{{commit}}")),
+        ],
+    )
+    .with_context(|| format!("validate worktree base {base:?}"))?;
+    Ok(())
+}
+
+fn validate_local_branch(repo: &Path, branch: &str) -> Result<()> {
+    let ref_name = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(["show-ref", "--verify", "--quiet"])
+        .arg(&ref_name)
+        .output()
+        .with_context(|| format!("check local branch {branch:?}"))?;
+    if !output.status.success() {
+        bail!("local branch does not exist: {branch}");
+    }
     Ok(())
 }
 

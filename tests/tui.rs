@@ -2,7 +2,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr::protocol::{
-    HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage, WorkspaceSummary,
+    ErrorCode, HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage,
+    WorkspaceSummary,
 };
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
@@ -245,6 +246,131 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
         dashboard.mouse_action(mouse(5), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::None
     );
+}
+
+#[test]
+fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
+    dashboard.hierarchy = HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "project".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "project".into(),
+                name: "workspace".into(),
+                path: PathBuf::from("/tmp/workspace"),
+                sessions: (1..=50)
+                    .map(|id| SessionSummary {
+                        id: SessionId(id),
+                        project: "project".into(),
+                        workspace: "workspace".into(),
+                        name: format!("session-{id}"),
+                        label: "sh".into(),
+                        pid: Some(id as u32),
+                        started_unix_ms: 0,
+                        phase: SessionPhase::Running,
+                    })
+                    .collect(),
+            }],
+        }],
+    };
+    for _ in 0..50 {
+        dashboard.move_selection(1);
+    }
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let rendered = (0..40)
+        .map(|row| {
+            (0..31)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("session-50"));
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 4,
+            row: 37,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+}
+
+#[test]
+fn dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible() {
+    let inner = ovrcr::tui::actual_drawn_inner_rect(Rect::new(0, 0, 120, 40));
+    assert_eq!(inner.height, 34);
+    assert_eq!(inner.width, 88);
+    let mut parser = vt100::Parser::new(inner.height, inner.width, 0);
+    parser.process(b"\x1b[34;1HBOTTOM_MARKER");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            ovrcr::tui::render_terminal(frame, inner, parser.screen(), true);
+        })
+        .unwrap();
+    let bottom = (inner.x..inner.right())
+        .map(|column| terminal.backend().buffer()[(column, inner.bottom() - 1)].symbol())
+        .collect::<String>();
+    assert!(bottom.contains("BOTTOM_MARKER"));
+    assert_eq!(terminal.backend().cursor_position().y, inner.bottom() - 1);
+}
+
+#[test]
+fn ordinary_response_errors_remain_visible_to_dashboard() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "session 99 not found".into(),
+        },
+    });
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("NotFound: session 99 not found")
+    );
+}
+
+#[test]
+fn shrinking_dashboard_keeps_selected_tree_row_visible() {
+    let mut dashboard = dashboard_fixture();
+    let workspace = &mut dashboard.hierarchy.projects[0].workspaces[0];
+    for id in 6..=50 {
+        workspace.sessions.push(SessionSummary {
+            id: SessionId(id),
+            project: "consigint".into(),
+            workspace: "auth".into(),
+            name: format!("session-{id}"),
+            label: "sh".into(),
+            pid: Some(id as u32),
+            started_unix_ms: 0,
+            phase: SessionPhase::Running,
+        });
+    }
+    dashboard.select_session(SessionId(50));
+    assert_eq!(dashboard.selected, Some(SessionId(50)));
+    dashboard.resize_request(TerminalSize { rows: 18, cols: 88 }, 99);
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let rendered = (0..24)
+        .map(|row| {
+            (0..31)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("session-50"));
 }
 
 #[derive(Clone)]

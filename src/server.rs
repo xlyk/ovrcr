@@ -9,7 +9,7 @@ use crate::session::{
     Session, SessionEvent, SessionId, SessionPhase, SessionSpec, SessionSummary, TerminalSize,
 };
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
@@ -18,8 +18,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -54,7 +54,8 @@ fn lifecycle_error_with_hierarchy(
     })
 }
 
-const EVENT_QUEUE: usize = 64;
+pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
+pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,13 +98,20 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub selected: Mutex<Option<SessionId>>,
-    pub dashboard: Mutex<Option<SyncSender<DashboardOutbound>>>,
+    pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
     pub dispatch: SyncSender<DispatchMessage>,
     pub shutdown: AtomicBool,
+    pub stopping: AtomicBool,
+    pub dashboard_size: Mutex<Option<DashboardGeometry>>,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
+}
+
+pub struct DashboardGeometry {
+    owner: Arc<()>,
+    size: TerminalSize,
 }
 
 impl ServerState {
@@ -120,6 +128,7 @@ impl ServerState {
         request: crate::protocol::CreateSessionRequest,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         self.create_session_locked(request, None)
     }
 
@@ -130,6 +139,7 @@ impl ServerState {
         ready: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         self.create_session_locked(request, Some(ready))
     }
 
@@ -177,10 +187,13 @@ impl ServerState {
             cwd,
             argv: request.argv,
         };
-        let size = TerminalSize {
-            rows: 40,
-            cols: 120,
-        };
+        let size = self.dashboard_size.lock().unwrap().as_ref().map_or(
+            TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+            |geometry| geometry.size,
+        );
         let events = self
             .events
             .lock()
@@ -200,6 +213,7 @@ impl ServerState {
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let session = self
             .sessions
             .lock()
@@ -214,6 +228,7 @@ impl ServerState {
 
     pub fn remove_session(&self, id: SessionId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let session = self
             .sessions
             .lock()
@@ -238,6 +253,9 @@ impl ServerState {
 
     pub fn request_shutdown(&self, kill: bool) -> Response {
         let _mutation = self.mutation_lock.lock().unwrap();
+        if self.stopping.load(Ordering::Acquire) {
+            return error_response(ErrorCode::Conflict, "server is stopping");
+        }
         let sessions = self
             .sessions
             .lock()
@@ -252,18 +270,31 @@ impl ServerState {
             let mut failures = Vec::new();
             for session in sessions {
                 if let Err(error) = session.terminate(Duration::from_secs(5)) {
-                    failures.push(format!("session {}: {error}", session.summary().id.0));
+                    failures.push(format!(
+                        "session {}: {}",
+                        session.summary().id.0,
+                        error_chain_string(&error)
+                    ));
                 }
             }
             if !failures.is_empty() {
                 return error_response(ErrorCode::PartialFailure, failures.join("; "));
             }
         }
+        self.stopping.store(true, Ordering::Release);
         Response::Ok
+    }
+
+    fn reject_if_stopping(&self) -> Result<()> {
+        if self.stopping.load(Ordering::Acquire) {
+            bail!("server is stopping")
+        }
+        Ok(())
     }
 
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
@@ -286,6 +317,7 @@ impl ServerState {
 
     pub fn remove_project(&self, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         let project = next
@@ -314,6 +346,7 @@ impl ServerState {
         branch: BranchRequest,
     ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let project_record = self
             .registry
             .lock()
@@ -345,8 +378,9 @@ impl ServerState {
                 return Err(lifecycle_error(
                     ErrorCode::PartialFailure,
                     format!(
-                        "registry write failed: worktree remains at {}: {error}",
-                        workspace.path.display()
+                        "registry write failed: worktree remains at {}: {}",
+                        workspace.path.display(),
+                        error_chain_string(&error)
                     ),
                 ));
             }
@@ -376,9 +410,10 @@ impl ServerState {
             return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
-                    "worktree for workspace {} remains at {}: {error}",
+                    "worktree for workspace {} remains at {}: {}",
                     name,
-                    workspace.path.display()
+                    workspace.path.display(),
+                    error_chain_string(&error)
                 ),
                 true,
             ));
@@ -388,6 +423,7 @@ impl ServerState {
 
     pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
         let occupied = self.sessions.lock().unwrap().values().any(|session| {
             let summary = session.summary();
             summary.project == project && summary.workspace == name
@@ -429,8 +465,9 @@ impl ServerState {
             return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
-                    "worktree was removed at {} but registry update failed; live state reflects removal: {error}",
-                    workspace.path.display()
+                    "worktree was removed at {} but registry update failed; live state reflects removal: {}",
+                    workspace.path.display(),
+                    error_chain_string(&error)
                 ),
                 true,
             ));
@@ -445,14 +482,162 @@ pub struct DashboardOutbound {
     completion: Option<SyncSender<Result<(), String>>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirtyState {
+    Pending,
+    Sending,
+    Sent,
+}
+
+struct DashboardQueue {
+    messages: VecDeque<DashboardOutbound>,
+    dirty: HashMap<SessionId, DirtyState>,
+    closed: bool,
+}
+
+pub struct DashboardSink {
+    queue: Mutex<DashboardQueue>,
+    wake: Condvar,
+}
+
+enum DashboardDelivery {
+    Message(DashboardOutbound),
+    Dirty(SessionId),
+}
+
+impl DashboardSink {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            queue: Mutex::new(DashboardQueue {
+                messages: VecDeque::with_capacity(DASHBOARD_QUEUE),
+                dirty: HashMap::new(),
+                closed: false,
+            }),
+            wake: Condvar::new(),
+        })
+    }
+
+    fn enqueue(&self, outbound: DashboardOutbound) -> bool {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return false;
+        }
+        if let ServerMessage::Event(ServerEvent::Output { session, .. }) = &outbound.message {
+            if queue.dirty.contains_key(session) {
+                return true;
+            }
+            if queue.messages.len() == DASHBOARD_QUEUE {
+                queue.messages.retain(|queued| {
+                    !matches!(
+                        queued.message,
+                        ServerMessage::Event(ServerEvent::Output {
+                            session: queued_session,
+                            ..
+                        }) if queued_session == *session
+                    )
+                });
+                queue.dirty.insert(*session, DirtyState::Pending);
+                self.wake.notify_one();
+                return true;
+            }
+        } else if queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.messages.push_back(outbound);
+        self.wake.notify_one();
+        true
+    }
+
+    fn replace_selection(
+        &self,
+        previous: Option<SessionId>,
+        session: SessionId,
+        request_id: u64,
+        size: TerminalSize,
+        bytes: Vec<u8>,
+    ) -> bool {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return false;
+        }
+        let discard = previous
+            .into_iter()
+            .chain(std::iter::once(session))
+            .collect::<HashSet<_>>();
+        queue.messages.retain(|queued| {
+            !matches!(
+                queued.message,
+                ServerMessage::Event(ServerEvent::Output { session, .. }) if discard.contains(&session)
+            )
+        });
+        for id in discard {
+            queue.dirty.remove(&id);
+        }
+        if queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.messages.push_back(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id,
+                response: Response::Screen {
+                    session,
+                    size,
+                    bytes,
+                },
+            },
+            completion: None,
+        });
+        self.wake.notify_one();
+        true
+    }
+
+    fn next(&self) -> Option<DashboardDelivery> {
+        let mut queue = self.queue.lock().unwrap();
+        loop {
+            if queue.closed {
+                return None;
+            }
+            if let Some(message) = queue.messages.pop_front() {
+                return Some(DashboardDelivery::Message(message));
+            }
+            if let Some((session, state)) = queue
+                .dirty
+                .iter_mut()
+                .find(|(_, state)| **state == DirtyState::Pending)
+            {
+                *state = DirtyState::Sending;
+                return Some(DashboardDelivery::Dirty(*session));
+            }
+            queue = self.wake.wait(queue).unwrap();
+        }
+    }
+
+    fn dirty_sent(&self, session: SessionId) {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.dirty.get(&session) == Some(&DirtyState::Sending) {
+            queue.dirty.insert(session, DirtyState::Sent);
+        }
+    }
+
+    fn close(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.closed = true;
+        self.wake.notify_all();
+    }
+}
+
 struct DashboardSlot {
-    sender: SyncSender<DashboardOutbound>,
+    sink: Arc<DashboardSink>,
     identity: Arc<()>,
     stream: UnixStream,
 }
 
 struct DashboardSnapshot {
-    sender: SyncSender<DashboardOutbound>,
+    sink: Arc<DashboardSink>,
     identity: Arc<()>,
     stream: UnixStream,
 }
@@ -498,8 +683,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     drop(startup_lock);
     let registry = Registry::load(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
-    let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(EVENT_QUEUE);
+    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
     let state = Arc::new(ServerState {
         socket: paths.socket.clone(),
         registry_path,
@@ -511,6 +696,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
         dashboard_slot: Mutex::new(None),
     });
@@ -537,7 +724,9 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
             Err(error) => return Err(error).context("accept server client"),
         }
     }
-    *state.dashboard.lock().unwrap() = None;
+    if let Some(snapshot) = dashboard_snapshot(&state) {
+        disconnect_dashboard(&state, snapshot);
+    }
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()
@@ -568,7 +757,8 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
                 request_id,
                 session,
                 size,
-            } => dispatch_select(&state, request_id, session, size),
+                completion,
+            } => dispatch_select(&state, request_id, session, size, completion),
             DispatchMessage::Stop => break,
         }
     }
@@ -604,7 +794,13 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     }
 }
 
-fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, size: TerminalSize) {
+fn dispatch_select(
+    state: &ServerState,
+    request_id: u64,
+    id: SessionId,
+    size: TerminalSize,
+    completion: SyncSender<()>,
+) {
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else {
         dashboard_try_send(
@@ -617,6 +813,7 @@ fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, siz
                 },
             ),
         );
+        let _ = completion.send(());
         return;
     };
     if let Err(error) = session.resize(size) {
@@ -630,27 +827,48 @@ fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, siz
                 },
             ),
         );
+        let _ = completion.send(());
+        return;
+    }
+    let previous = *state.selected.lock().unwrap();
+    let Some(snapshot) = dashboard_snapshot(state) else {
+        let _ = completion.send(());
+        return;
+    };
+    set_dashboard_geometry(state, &snapshot.identity, size);
+    if !snapshot
+        .sink
+        .replace_selection(previous, id, request_id, size, session.current_screen())
+    {
+        disconnect_dashboard(state, snapshot);
+        let _ = completion.send(());
         return;
     }
     *state.selected.lock().unwrap() = Some(id);
-    dashboard_try_send(
-        state,
-        response_message(
-            request_id,
-            Response::Screen {
-                session: id,
-                size,
-                bytes: session.current_screen(),
-            },
-        ),
-    );
+    let _ = completion.send(());
+}
+
+fn set_dashboard_geometry(state: &ServerState, owner: &Arc<()>, size: TerminalSize) {
+    *state.dashboard_size.lock().unwrap() = Some(DashboardGeometry {
+        owner: Arc::clone(owner),
+        size,
+    });
+}
+
+fn clear_dashboard_geometry(state: &ServerState, owner: &Arc<()>) {
+    let mut geometry = state.dashboard_size.lock().unwrap();
+    if geometry
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.owner, owner))
+    {
+        *geometry = None;
+    }
 }
 
 fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let mut role = ClientRole::Control;
     let mut dashboard_identity = None;
-    let (dashboard_tx, dashboard_rx) = mpsc::sync_channel(DASHBOARD_QUEUE);
-    let mut dashboard_rx = Some(dashboard_rx);
+    let dashboard_sink = DashboardSink::new();
     let mut writer: Option<JoinHandle<()>> = None;
     while !state.shutdown.load(Ordering::Acquire) {
         let message = match read_frame::<ClientMessage>(&mut stream) {
@@ -693,30 +911,59 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
                 break;
             }
             *slot = Some(DashboardSlot {
-                sender: dashboard_tx.clone(),
+                sink: Arc::clone(&dashboard_sink),
                 identity: identity.clone(),
                 stream: close_stream,
             });
             drop(slot);
-            *state.dashboard.lock().unwrap() = Some(dashboard_tx.clone());
-            dashboard_identity = Some(identity);
+            *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
+            dashboard_identity = Some(Arc::clone(&identity));
             role = ClientRole::Dashboard;
             let mut output = stream.try_clone().ok();
-            let writer_receiver = dashboard_rx.take().expect("dashboard writer receiver");
+            let writer_sink = Arc::clone(&dashboard_sink);
+            let writer_state = Arc::clone(&state);
+            let writer_identity = Arc::clone(&identity);
+            let writer_close_stream = stream.try_clone().expect("clone dashboard close stream");
             writer = Some(
                 thread::Builder::new()
                     .name("ovrcr-dashboard-writer".into())
                     .spawn(move || {
-                        while let Ok(outbound) = writer_receiver.recv() {
+                        while let Some(delivery) = writer_sink.next() {
+                            let (message, completion, dirty) = match delivery {
+                                DashboardDelivery::Message(outbound) => {
+                                    (outbound.message, outbound.completion, None)
+                                }
+                                DashboardDelivery::Dirty(session) => (
+                                    ServerMessage::Event(ServerEvent::ScreenDirty { session }),
+                                    None,
+                                    Some(session),
+                                ),
+                            };
                             let result = match output.as_mut() {
-                                Some(stream) => write_frame(stream, &outbound.message)
-                                    .map_err(|error| error.to_string()),
+                                Some(stream) => {
+                                    write_frame(stream, &message).map_err(|error| error.to_string())
+                                }
                                 None => Err("dashboard writer stream unavailable".into()),
                             };
-                            if let Some(completion) = outbound.completion {
+                            if result.is_ok()
+                                && let Some(session) = dirty
+                            {
+                                writer_sink.dirty_sent(session);
+                            }
+                            if let Some(completion) = completion {
                                 let _ = completion.send(result.clone());
                             }
                             if result.is_err() {
+                                writer_sink.close();
+                                let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
+                                disconnect_dashboard(
+                                    &writer_state,
+                                    DashboardSnapshot {
+                                        sink: writer_sink,
+                                        identity: writer_identity,
+                                        stream: writer_close_stream,
+                                    },
+                                );
                                 break;
                             }
                         }
@@ -788,12 +1035,15 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
                 .is_some_and(|current| Arc::ptr_eq(&current.identity, identity))
         });
         if owns_dashboard {
-            let _ = slot.take();
+            if let Some(current) = slot.take() {
+                current.sink.close();
+            }
             *state.dashboard.lock().unwrap() = None;
             *state.selected.lock().unwrap() = None;
+            clear_dashboard_geometry(&state, dashboard_identity.as_ref().unwrap());
         }
     }
-    drop(dashboard_tx);
+    dashboard_sink.close();
     if let Some(writer) = writer {
         let _ = writer.join();
     }
@@ -815,11 +1065,20 @@ fn handle_request_with_id(
                     "Select requires a dashboard connection",
                 );
             }
-            let _ = state.dispatch.send(DispatchMessage::Select {
-                request_id,
-                session,
-                size,
-            });
+            let (sender, receiver) = mpsc::sync_channel(1);
+            if state
+                .dispatch
+                .send(DispatchMessage::Select {
+                    request_id,
+                    session,
+                    size,
+                    completion: sender,
+                })
+                .is_err()
+            {
+                return error_response(ErrorCode::Internal, "dispatcher is unavailable");
+            }
+            let _ = receiver.recv();
             Response::Ok
         }
         Request::Input { session, bytes } => {
@@ -829,7 +1088,8 @@ fn handle_request_with_id(
                     "input is only accepted for the selected dashboard session",
                 );
             }
-            match state.sessions.lock().unwrap().get(&session).cloned() {
+            let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
+            match selected_session {
                 Some(session) => session.write(&bytes).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
                     |_| Response::Ok,
@@ -847,10 +1107,17 @@ fn handle_request_with_id(
                     "resize is only accepted for the selected dashboard session",
                 );
             }
-            match state.sessions.lock().unwrap().get(&session).cloned() {
+            let geometry_owner = dashboard_snapshot(state).map(|snapshot| snapshot.identity);
+            let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
+            match selected_session {
                 Some(session) => session.resize(size).map_or_else(
                     |error| error_response(ErrorCode::Internal, error.to_string()),
-                    |_| Response::Ok,
+                    |_| {
+                        if let Some(owner) = geometry_owner.as_ref() {
+                            set_dashboard_geometry(state, owner, size);
+                        }
+                        Response::Ok
+                    },
                 ),
                 None => error_response(
                     ErrorCode::NotFound,
@@ -921,7 +1188,7 @@ fn handle_request_with_id(
                 })
         }
         Request::KillSession { session } => state
-            .kill_session(session, Duration::from_secs(5))
+            .kill_session(session, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
         Request::RemoveSession { session } => {
             state
@@ -938,16 +1205,45 @@ fn handle_request_with_id(
             *role = ClientRole::Dashboard;
             Response::Ok
         }
+        Request::DashboardGeometry { size } => {
+            if !dashboard {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "DashboardGeometry requires a dashboard connection",
+                );
+            }
+            let _mutation = state.mutation_lock.lock().unwrap();
+            if let Some(snapshot) = dashboard_snapshot(state) {
+                set_dashboard_geometry(state, &snapshot.identity, size);
+                Response::Ok
+            } else {
+                error_response(ErrorCode::Conflict, "dashboard is disconnected")
+            }
+        }
     }
 }
 
 fn error_for_lifecycle(error: anyhow::Error) -> Response {
-    let message = error.to_string();
+    let message = error_chain_string(&error);
     let code = error
-        .downcast_ref::<LifecycleFailure>()
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
         .map(|failure| failure.code.clone())
         .unwrap_or(ErrorCode::Conflict);
     error_response(code, message)
+}
+
+fn error_chain_string(error: &anyhow::Error) -> String {
+    let mut chain = error.chain().map(ToString::to_string);
+    chain.next().map_or_else(String::new, |first| {
+        chain.fold(first, |mut message, cause| {
+            if !message.contains(&cause) {
+                message.push_str(": ");
+                message.push_str(&cause);
+            }
+            message
+        })
+    })
 }
 
 fn lifecycle_response_with_partial_hierarchy(
@@ -968,48 +1264,7 @@ fn lifecycle_response_with_partial_hierarchy(
 }
 
 fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
-    let Some(slot) = state.dashboard_slot.lock().unwrap().as_ref().map(|slot| {
-        (
-            slot.sender.clone(),
-            slot.identity.clone(),
-            slot.stream.try_clone().ok(),
-        )
-    }) else {
-        return false;
-    };
-    let Some(stream) = slot.2 else {
-        return false;
-    };
-    let snapshot = DashboardSnapshot {
-        sender: slot.0,
-        identity: slot.1,
-        stream,
-    };
-    if snapshot
-        .sender
-        .try_send(DashboardOutbound {
-            message,
-            completion: None,
-        })
-        .is_err()
-    {
-        disconnect_dashboard_ref(state, snapshot);
-        return false;
-    }
-    true
-}
-
-fn disconnect_dashboard_ref(state: &ServerState, snapshot: DashboardSnapshot) {
-    let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
-    let mut slot = state.dashboard_slot.lock().unwrap();
-    if slot
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, &snapshot.identity))
-    {
-        let _ = slot.take();
-        *state.dashboard.lock().unwrap() = None;
-        *state.selected.lock().unwrap() = None;
-    }
+    dashboard_send(state, message, None)
 }
 
 #[cfg(test)]
@@ -1036,7 +1291,11 @@ where
         let mut failures = Vec::new();
         for session in sessions {
             if let Err(error) = terminate(&session) {
-                failures.push(format!("session {}: {error}", session.summary().id.0));
+                failures.push(format!(
+                    "session {}: {}",
+                    session.summary().id.0,
+                    error_chain_string(&error)
+                ));
             }
         }
         if !failures.is_empty() {
@@ -1052,6 +1311,16 @@ fn error_response(code: ErrorCode, message: impl std::fmt::Display) -> Response 
         message: message.to_string(),
     }
 }
+
+fn requested_kill_grace() -> Duration {
+    // Integration tests use this per-server-process seam to exercise the short
+    // escalation path without changing the normal five-second CLI behavior.
+    std::env::var("OVRCR_KILL_GRACE_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_secs(5))
+}
 fn response_message(request_id: u64, response: Response) -> ServerMessage {
     ServerMessage::Response {
         request_id,
@@ -1062,43 +1331,41 @@ fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> 
     write_frame(stream, &response_message(request_id, response))
 }
 
-fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) -> bool {
+fn dashboard_try_send(state: &ServerState, message: ServerMessage) -> bool {
     dashboard_send(state, message, None)
 }
 
 fn dashboard_send(
-    state: &Arc<ServerState>,
+    state: &ServerState,
     message: ServerMessage,
     completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
     let Some(snapshot) = dashboard_snapshot(state) else {
         return false;
     };
-    if matches!(
-        snapshot.sender.try_send(DashboardOutbound {
-            message,
-            completion,
-        }),
-        Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
-    ) {
+    if !snapshot.sink.enqueue(DashboardOutbound {
+        message,
+        completion,
+    }) {
         disconnect_dashboard(state, snapshot);
         return false;
     }
     true
 }
 
-fn dashboard_snapshot(state: &Arc<ServerState>) -> Option<DashboardSnapshot> {
+fn dashboard_snapshot(state: &ServerState) -> Option<DashboardSnapshot> {
     let slot = state.dashboard_slot.lock().unwrap();
     let slot = slot.as_ref()?;
     Some(DashboardSnapshot {
-        sender: slot.sender.clone(),
+        sink: slot.sink.clone(),
         identity: slot.identity.clone(),
         stream: slot.stream.try_clone().ok()?,
     })
 }
 
-fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
+fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {
     let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
+    snapshot.sink.close();
     let mut slot = state.dashboard_slot.lock().unwrap();
     if slot
         .as_ref()
@@ -1107,6 +1374,7 @@ fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
         let _ = slot.take();
         *state.dashboard.lock().unwrap() = None;
         *state.selected.lock().unwrap() = None;
+        clear_dashboard_geometry(state, &snapshot.identity);
     }
 }
 
@@ -1227,13 +1495,57 @@ mod tests {
     use super::*;
     use crate::protocol::{ServerEvent, ServerMessage};
     use std::io::Read;
+    use std::net::Shutdown;
+
+    #[test]
+    fn raw_event_and_dispatch_queues_reject_the_65th_item() {
+        let (event_sender, _event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
+            event_sender
+                .try_send(SessionEvent::Output {
+                    id: SessionId(1),
+                    bytes: Vec::new(),
+                })
+                .unwrap();
+        }
+        assert!(matches!(
+            event_sender.try_send(SessionEvent::Output {
+                id: SessionId(1),
+                bytes: Vec::new(),
+            }),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+
+        let (dispatch_sender, _dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+            dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
+        }
+        assert!(matches!(
+            dispatch_sender.try_send(DispatchMessage::Stop),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+    }
+
+    #[test]
+    fn lifecycle_response_preserves_error_chain_and_code() {
+        let error =
+            lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session");
+        let response = error_for_lifecycle(error);
+        assert_eq!(
+            response,
+            Response::Error {
+                code: ErrorCode::NotFound,
+                message: "spawn session: missing executable".into(),
+            }
+        );
+    }
 
     fn test_state(
-        dashboard: Option<SyncSender<DashboardOutbound>>,
+        dashboard: Option<Arc<DashboardSink>>,
         stream: Option<(Arc<()>, UnixStream)>,
     ) -> Arc<ServerState> {
-        let (events, _) = mpsc::sync_channel(EVENT_QUEUE);
-        let (dispatch, _) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
         Arc::new(ServerState {
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
             registry_path: PathBuf::from("config.toml"),
@@ -1245,9 +1557,11 @@ mod tests {
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
-                sender: dashboard.as_ref().unwrap().clone(),
+                sink: dashboard.as_ref().unwrap().clone(),
                 identity,
                 stream,
             })),
@@ -1260,17 +1574,17 @@ mod tests {
         client_stream
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        sender
-            .send(DashboardOutbound {
-                message: ServerMessage::Event(ServerEvent::ScreenDirty {
-                    session: SessionId(1),
-                }),
+        let sink = DashboardSink::new();
+        for _ in 0..DASHBOARD_QUEUE {
+            assert!(sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                },)),
                 completion: None,
-            })
-            .unwrap();
+            }));
+        }
         let identity = Arc::new(());
-        let state = test_state(Some(sender), Some((identity, server_stream)));
+        let state = test_state(Some(sink), Some((identity, server_stream)));
         dashboard_try_send(
             &state,
             ServerMessage::Event(ServerEvent::ScreenDirty {
@@ -1280,7 +1594,6 @@ mod tests {
         let mut byte = [0_u8; 1];
         assert_eq!(client_stream.read(&mut byte).unwrap(), 0);
         assert!(state.dashboard.lock().unwrap().is_none());
-        drop(receiver);
     }
 
     #[test]
@@ -1291,20 +1604,20 @@ mod tests {
         old_client
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
-        let (old_sender, _) = mpsc::sync_channel(1);
+        let old_sink = DashboardSink::new();
         let old_identity = Arc::new(());
-        let state = test_state(Some(old_sender), Some((old_identity, old_server)));
+        let state = test_state(Some(old_sink), Some((old_identity, old_server)));
         let old_snapshot = dashboard_snapshot(&state).unwrap();
 
         let (new_server, _new_client) = UnixStream::pair().unwrap();
-        let (new_sender, _) = mpsc::sync_channel(1);
+        let new_sink = DashboardSink::new();
         let new_identity = Arc::new(());
         *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
-            sender: new_sender.clone(),
+            sink: new_sink.clone(),
             identity: new_identity,
             stream: new_server,
         });
-        *state.dashboard.lock().unwrap() = Some(new_sender);
+        *state.dashboard.lock().unwrap() = Some(new_sink);
         disconnect_dashboard(&state, old_snapshot);
 
         assert!(state.dashboard.lock().unwrap().is_some());
@@ -1375,10 +1688,118 @@ mod tests {
     }
 
     #[test]
+    fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
+        let (dashboard_server, mut dashboard_client) = UnixStream::pair().unwrap();
+        let send_buffer = 1_i32;
+        let result = unsafe {
+            libc::setsockopt(
+                dashboard_server.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&send_buffer as *const i32).cast(),
+                std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+            )
+        };
+        assert_eq!(result, 0);
+        let state = test_state(None, None);
+        state.registry.lock().unwrap().projects = (0..256)
+            .map(|index| crate::config::ProjectRecord {
+                name: format!("project-{index}-{}", "x".repeat(2_000)),
+                repo: PathBuf::from(format!("/repo/{index}")),
+                workspace_root: PathBuf::from(format!("/workspace/{index}")),
+                workspaces: Vec::new(),
+            })
+            .collect();
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .projects
+            .push(crate::config::ProjectRecord {
+                name: "late".into(),
+                repo: PathBuf::from("/repo/late"),
+                workspace_root: PathBuf::from("/workspace/late"),
+                workspaces: Vec::new(),
+            });
+        let dashboard_state = Arc::clone(&state);
+        let dashboard_handler =
+            thread::spawn(move || handle_connection(dashboard_state, dashboard_server));
+        let (control_server, mut control_client) = UnixStream::pair().unwrap();
+        let control_state = Arc::clone(&state);
+        let control_handler =
+            thread::spawn(move || handle_connection(control_state, control_server));
+        write_frame(
+            &mut dashboard_client,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        write_frame(
+            &mut dashboard_client,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::Shutdown { kill: false },
+            },
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.stopping.load(Ordering::Acquire) {
+            assert!(
+                Instant::now() < deadline,
+                "shutdown did not enter stopping state"
+            );
+            thread::yield_now();
+        }
+        control_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write_frame(
+            &mut control_client,
+            &ClientMessage {
+                request_id: 3,
+                request: Request::RemoveProject {
+                    name: "late".into(),
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut control_client).unwrap(),
+            ServerMessage::Response {
+                request_id: 3,
+                response: Response::Error {
+                    code: ErrorCode::Conflict,
+                    message: "server is stopping".into(),
+                },
+            }
+        );
+        dashboard_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        loop {
+            if matches!(
+                read_frame::<ServerMessage>(&mut dashboard_client).unwrap(),
+                ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok,
+                }
+            ) {
+                break;
+            }
+        }
+        dashboard_handler.join().unwrap();
+        let _ = control_client.shutdown(Shutdown::Both);
+        control_handler.join().unwrap();
+        assert!(state.shutdown.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn uncommitted_partial_failure_does_not_publish_hierarchy() {
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let sink = DashboardSink::new();
         let (server_stream, _client_stream) = UnixStream::pair().unwrap();
-        let state = test_state(Some(sender), Some((Arc::new(()), server_stream)));
+        let state = test_state(Some(sink.clone()), Some((Arc::new(()), server_stream)));
         let response = lifecycle_response_with_partial_hierarchy(
             &state,
             lifecycle_error(
@@ -1394,7 +1815,7 @@ mod tests {
             }
         ));
         assert!(
-            receiver.try_recv().is_err(),
+            sink.queue.lock().unwrap().messages.is_empty(),
             "uncommitted partial failure must not publish unchanged hierarchy"
         );
     }
@@ -1402,7 +1823,7 @@ mod tests {
     #[test]
     fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         let cwd = tempfile::tempdir().unwrap();
-        let (events, receiver) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
         let session = Session::spawn(
             SessionId(7),
             crate::session::SessionSpec {
@@ -1452,8 +1873,8 @@ mod tests {
     #[test]
     fn registration_holds_sessions_guard_until_spawn_returns() {
         let root = tempfile::tempdir().unwrap();
-        let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE);
-        let (dispatch, dispatch_receiver) = mpsc::sync_channel(EVENT_QUEUE);
+        let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
         let workspace = root.path().join("workspace");
         std::fs::create_dir(&workspace).unwrap();
         let registry = Registry {
@@ -1479,6 +1900,8 @@ mod tests {
             mutation_lock: Mutex::new(()),
             dispatch: dispatch.clone(),
             shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
             dashboard_slot: Mutex::new(None),
         });
