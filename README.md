@@ -75,6 +75,107 @@ Detaching leaves the server, PTYs, and child process groups running. Run
 screen. Reattach works while the original dashboard is gone; the MVP does not
 restore a PTY after a server crash or reboot.
 
+## Control terminals from scripts
+
+The `project`, `workspace`, and `terminal` groups also accept the plural names
+`projects`, `workspaces`, and `terminals`. `project create` aliases `project add`;
+`project delete` and `workspace delete` alias their guarded `remove` commands.
+
+```sh
+ovrcr project list
+ovrcr project get consigint
+ovrcr workspace list --project consigint
+ovrcr workspace get --project consigint --name cleanup
+ovrcr terminal list --project consigint --workspace cleanup
+```
+
+`project list` shows projects only. `ovrcr list` retains the complete hierarchy.
+Terminal lists include running sessions and retained exited records. A workspace
+filter requires `--project`. Names and terminal IDs are explicit; commands do
+not infer a target from the current directory.
+
+Read commands do not start a server. When the server is absent, project and
+workspace queries read the persisted registry and terminal lists are empty.
+Reading or controlling a missing terminal returns an error.
+
+### Launch, send, read, and close
+
+This example starts with an existing registered repository and creates a clean
+worktree. Replace the repository and workspace-root paths with your own:
+
+```sh
+ovrcr project add example /path/to/repo --workspace-root /path/to/workspaces
+ovrcr workspace create --project example --name cli-demo \
+  --new-branch feature/cli-demo --base main
+terminal_id=$(ovrcr terminal create --project example --workspace cli-demo \
+  --name shell -- /bin/sh)
+ovrcr terminal send "$terminal_id" --text "printf 'hello from CLI\\n'"
+ovrcr terminal read "$terminal_id"
+ovrcr terminal read "$terminal_id" --max-lines 5
+ovrcr terminal close "$terminal_id"
+# Workspace creation also started a terminal named local. Find and close it:
+ovrcr terminal list --project example --workspace cli-demo
+ovrcr terminal close LOCAL_TERMINAL_ID
+ovrcr workspace remove --project example --name cli-demo
+ovrcr project remove example
+```
+
+Arguments after `--` are passed directly to the executable. With no executable,
+`terminal create` launches `$SHELL`. Sessions start at the workspace root.
+
+`terminal send` respects bracketed-paste mode and then sends Enter. Add
+`--no-submit` to omit that final Enter. Embedded newlines remain part of the
+text, so a program without bracketed-paste support may process those newlines
+as input. A successful send means the input was written; it does not establish
+program readiness or completion. A read immediately after send can therefore
+show the earlier screen; read again to observe subsequent output.
+
+`terminal read` returns plain text from the current active screen, including
+an exited terminal's retained final screen. `--max-lines N` selects the last N
+text lines and requires a positive number. It does not expose scrollback.
+CLI reads and sends do not select or resize the dashboard terminal.
+
+`terminal close` stops the whole process group, waits for cleanup, and removes
+its record. Cleanup failure leaves the record available. To retain the final
+screen, use `terminal kill ID`, then `terminal remove ID` when finished.
+The legacy `kill ID` and `session remove ID` commands remain available.
+
+### JSON output
+
+Add `--json` to resource commands for machine-readable output. The mode is
+explicit and is not selected automatically in CI or an agent environment.
+
+```sh
+ovrcr project list --json
+ovrcr workspace get --project consigint --name cleanup --json
+ovrcr terminal list --project consigint --json
+ovrcr terminal read 7 --json
+```
+
+Resource lists return arrays. `ovrcr list --json` returns the legacy hierarchy as
+an array of projects with nested `workspaces`, each containing `terminals`.
+Get commands and terminal creation return objects. Other
+successful mutations return `{"ok":true}`. Project records include `name`,
+`repo`, `workspace_root`, and `workspace_count`; workspace records include
+`project`, `name`, `path`, `branch`, and `terminal_count`. Terminal records use
+numeric `id`, `phase` (`running` or `exited`), and nullable `exit_code` and
+`exit_signal`, alongside ownership, label, PID, and start time. Screen reads
+return `id`, `rows`, `cols`, and `text`.
+
+Runtime errors exit 1 and, with `--json`, write an
+`{"error":{"code":"NotFound","message":"…"}}` object to stderr. Successful
+results go to stdout. Argument errors retain normal help diagnostics and exit
+2, including with `--json`.
+
+### Upgrading a running server
+
+The new control commands require the updated server binary. An already-running
+server continues running its original version after a rebuild. Close its
+terminals and run `ovrcr shutdown`, then launch the updated binary. If you
+intend to stop all sessions together, the existing `ovrcr shutdown --kill`
+command does that. The CLI never stops an old server automatically or restores
+its lost PTYs. The project/workspace registry requires no migration.
+
 ## Session lifecycle
 
 List sessions, stop a process group, and remove an exited record:

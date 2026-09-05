@@ -307,7 +307,7 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
 }
 
 #[test]
-fn backpressured_input_does_not_block_list_or_kill() {
+fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();
     assert_eq!(
@@ -410,6 +410,48 @@ fn backpressured_input_does_not_block_list_or_kill() {
         "input response unexpectedly completed while PTY stdin was backpressured"
     );
 
+    let mut blocked_send = UnixStream::connect(&fixture.socket).unwrap();
+    blocked_send
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    write_frame(
+        &mut blocked_send,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::SendTerminal {
+                session,
+                text: "queued behind blocked input".into(),
+                submit: false,
+            },
+        },
+    )
+    .unwrap();
+    assert!(
+        read_frame::<ServerMessage>(&mut blocked_send).is_err(),
+        "SendTerminal unexpectedly completed while PTY stdin was backpressured"
+    );
+
+    let mut inspect = UnixStream::connect(&fixture.socket).unwrap();
+    inspect
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut inspect,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::Inspect,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut inspect).unwrap(),
+        ServerMessage::Response {
+            request_id: 21,
+            response: Response::Inventory { .. },
+        }
+    ));
+    drop(inspect);
+
     let mut control = UnixStream::connect(&fixture.socket).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -449,6 +491,7 @@ fn backpressured_input_does_not_block_list_or_kill() {
             response: Response::Ok,
         }
     );
+    drop(blocked_send);
     drop(dashboard);
     fixture.request(Request::Shutdown { kill: true });
     fixture.join();
@@ -826,6 +869,363 @@ fn slow_dashboard_recovers_after_output_burst() {
         name: "fixture".into(),
     });
     fixture.request(Request::Shutdown { kill: false });
+    fixture.join();
+}
+
+#[test]
+fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/concurrent-send".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session(
+        "concurrent",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty raw -echo; printf '\033[?2004hREADY\r\n'; dd bs=1 count=34 2>/dev/null | od -An -tx1; printf '\r\nTAIL\r\n'"#.into(),
+        ],
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match fixture.request(Request::ReadTerminal {
+            session,
+            max_lines: None,
+        }) {
+            Response::TerminalText { text, .. } if text.contains("READY") => break,
+            _ if Instant::now() < deadline => thread::park_timeout(Duration::from_millis(10)),
+            response => panic!("concurrent terminal was not ready: {response:?}"),
+        }
+    }
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let workers = ["AA\nA", "BB\nB"].map(|text| {
+        let socket = fixture.socket.clone();
+        let barrier = std::sync::Arc::clone(&barrier);
+        thread::spawn(move || {
+            let mut stream = UnixStream::connect(socket).unwrap();
+            barrier.wait();
+            write_frame(
+                &mut stream,
+                &ClientMessage {
+                    request_id: 1,
+                    request: Request::SendTerminal {
+                        session,
+                        text: text.into(),
+                        submit: true,
+                    },
+                },
+            )
+            .unwrap();
+            match read_frame::<ServerMessage>(&mut stream).unwrap() {
+                ServerMessage::Response {
+                    response: Response::Ok,
+                    ..
+                } => {}
+                response => panic!("unexpected send response: {response:?}"),
+            }
+        })
+    });
+    barrier.wait();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+
+    fixture.wait_exited(session);
+    let text = match fixture.request(Request::ReadTerminal {
+        session,
+        max_lines: None,
+    }) {
+        Response::TerminalText { text, .. } => text,
+        response => panic!("unexpected terminal read: {response:?}"),
+    };
+    let hex = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let a = "1b 5b 32 30 30 7e 41 41 0a 41 1b 5b 32 30 31 7e 0d";
+    let b = "1b 5b 32 30 30 7e 42 42 0a 42 1b 5b 32 30 31 7e 0d";
+    assert!(
+        hex.contains(&format!("{a} {b}")) || hex.contains(&format!("{b} {a}")),
+        "concurrent paste bytes interleaved: {text:?}"
+    );
+
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
+fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/resource-terminal".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    let background = fixture.create_session(
+        "background",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"printf '\033[?2004hREADY\r\n'; IFS= read -r line; printf '\r\nACK\r\n'; printf '%s' "$line" | od -An -tx1; printf 'TAIL\r\n'"#.into(),
+        ],
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let (background_size, initial_text) = loop {
+        match fixture.request(Request::ReadTerminal {
+            session: background,
+            max_lines: None,
+        }) {
+            Response::TerminalText { size, text, .. } if text.contains("READY") => {
+                break (size, text);
+            }
+            _ if Instant::now() < deadline => thread::park_timeout(Duration::from_millis(10)),
+            response => panic!("background terminal was not ready: {response:?}"),
+        }
+    };
+    assert_eq!(
+        background_size,
+        ovrcr::session::TerminalSize {
+            rows: 40,
+            cols: 120
+        }
+    );
+    assert!(!initial_text.contains("ACK"));
+    assert!(matches!(
+        fixture.request(Request::ReadTerminal {
+            session: background,
+            max_lines: Some(0),
+        }),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    assert!(matches!(
+        fixture.request(Request::ReadTerminal {
+            session: SessionId(u64::MAX),
+            max_lines: None,
+        }),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            ..
+        }
+    ));
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session: local,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Screen { .. },
+            }
+        ) {
+            break;
+        }
+    }
+
+    let background_pid = match fixture.request(Request::Inspect) {
+        Response::Inventory { registry, sessions } => {
+            assert_eq!(registry.projects.len(), 1);
+            assert_eq!(sessions.len(), 2);
+            sessions
+                .into_iter()
+                .find(|session| session.id == background)
+                .and_then(|session| session.pid)
+                .expect("running background PID")
+        }
+        response => panic!("unexpected inventory response: {response:?}"),
+    };
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: background,
+            text: "alpha".into(),
+            submit: false,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: background,
+            text: " beta".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let final_text = loop {
+        match fixture.request(Request::ReadTerminal {
+            session: background,
+            max_lines: None,
+        }) {
+            Response::TerminalText { size, text, .. } if text.contains("TAIL") => {
+                assert_eq!(size, background_size, "background send resized the PTY");
+                break text;
+            }
+            _ if Instant::now() < deadline => thread::park_timeout(Duration::from_millis(10)),
+            response => panic!("background terminal did not acknowledge input: {response:?}"),
+        }
+    };
+    let hex = final_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        hex.contains("1b 5b 32 30 30 7e 61 6c 70 68 61 1b 5b 32 30 31 7e"),
+        "first send was not bracketed: {final_text:?}"
+    );
+    assert!(
+        hex.contains("1b 5b 32 30 30 7e 20 62 65 74 61 1b 5b 32 30 31 7e"),
+        "submitted send was not bracketed: {final_text:?}"
+    );
+    assert!(matches!(
+        fixture.request(Request::ReadTerminal {
+            session: background,
+            max_lines: Some(1),
+        }),
+        Response::TerminalText { text, .. } if text == "TAIL"
+    ));
+
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::Input {
+                session: local,
+                bytes: b"printf SELECTED_OK\r".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 3,
+                response: Response::Ok,
+            }
+        ) {
+            break;
+        }
+    }
+
+    fixture.wait_exited(background);
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: background,
+        }),
+        Response::Ok
+    );
+    wait_for_group_absent(background_pid as libc::pid_t, Duration::from_secs(2));
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    assert!(matches!(
+        fixture.request(Request::CloseTerminal {
+            session: background,
+        }),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            ..
+        }
+    ));
+    drop(dashboard);
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
     fixture.join();
 }
 

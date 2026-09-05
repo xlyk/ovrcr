@@ -119,6 +119,88 @@ impl ServerState {
         snapshot_from_state(self)
     }
 
+    pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        let registry = self.registry.lock().unwrap().clone();
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .map(|session| session.summary())
+            .collect();
+        (registry, sessions)
+    }
+
+    pub fn read_terminal(
+        &self,
+        id: SessionId,
+        max_lines: Option<usize>,
+    ) -> Result<(TerminalSize, String)> {
+        if max_lines == Some(0) {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                "max_lines must be greater than zero",
+            ));
+        }
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
+            })?;
+        let (size, text) = session.terminal_text();
+        let text = match max_lines {
+            Some(max_lines) => {
+                let lines = text.lines().collect::<Vec<_>>();
+                lines[lines.len().saturating_sub(max_lines)..].join("\n")
+            }
+            None => text,
+        };
+        Ok((size, text))
+    }
+
+    pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
+            })?;
+        if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
+            return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
+        }
+        session.send_text(text, submit).map_err(|error| {
+            if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
+                lifecycle_error(ErrorCode::Conflict, "session has exited")
+            } else {
+                lifecycle_error(ErrorCode::Internal, error_chain_string(&error))
+            }
+        })
+    }
+
+    pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
+            })?;
+        session.terminate(grace)?;
+        self.remove_session_locked(id)
+    }
+
     pub fn handle_request(&self, role: &mut ClientRole, request: Request) -> Response {
         handle_request_with_id(self, role, request, 0)
     }
@@ -229,6 +311,10 @@ impl ServerState {
     pub fn remove_session(&self, id: SessionId) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.remove_session_locked(id)
+    }
+
+    fn remove_session_locked(&self, id: SessionId) -> Result<()> {
         let session = self
             .sessions
             .lock()
@@ -245,8 +331,9 @@ impl ServerState {
             ));
         }
         self.sessions.lock().unwrap().remove(&id);
-        if self.selected.lock().unwrap().as_ref() == Some(&id) {
-            *self.selected.lock().unwrap() = None;
+        let mut selected = self.selected.lock().unwrap();
+        if selected.as_ref() == Some(&id) {
+            *selected = None;
         }
         Ok(())
     }
@@ -1058,6 +1145,33 @@ fn handle_request_with_id(
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
         Request::List => Response::Hierarchy(state.hierarchy()),
+        Request::Inspect => {
+            let (registry, sessions) = state.inventory();
+            Response::Inventory { registry, sessions }
+        }
+        Request::ReadTerminal { session, max_lines } => state
+            .read_terminal(session, max_lines)
+            .map_or_else(error_for_lifecycle, |(size, text)| Response::TerminalText {
+                session,
+                size,
+                text,
+            }),
+        Request::SendTerminal {
+            session,
+            text,
+            submit,
+        } => state
+            .send_terminal(session, &text, submit)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::CloseTerminal { session } => state
+            .close_terminal(session, requested_kill_grace())
+            .map_or_else(error_for_lifecycle, |_| {
+                dashboard_try_send_arc(
+                    state,
+                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+                );
+                Response::Ok
+            }),
         Request::Select { session, size } => {
             if !dashboard {
                 return error_response(
@@ -1868,6 +1982,58 @@ mod tests {
         assert!(matches!(session.summary().phase, SessionPhase::Running));
         session.terminate(Duration::from_secs(2)).unwrap();
         waiter.join().unwrap();
+    }
+
+    #[test]
+    fn close_failure_retains_record_until_cleanup_can_finish() {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let id = SessionId(17);
+        let session = Session::spawn(
+            id,
+            crate::session::SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "retained".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec!["sh".into()],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+        )
+        .unwrap();
+        let state = test_state(None, None);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(id, Arc::clone(&session));
+        *state.selected.lock().unwrap() = Some(id);
+
+        let error = state
+            .close_terminal(id, Duration::from_millis(20))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("timed out waiting for session exit"),
+            "unexpected close failure: {error:#}"
+        );
+        assert!(state.sessions.lock().unwrap().contains_key(&id));
+        assert_eq!(*state.selected.lock().unwrap(), Some(id));
+
+        loop {
+            let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+        state.close_terminal(id, Duration::from_millis(20)).unwrap();
+        assert!(!state.sessions.lock().unwrap().contains_key(&id));
+        assert_eq!(*state.selected.lock().unwrap(), None);
     }
 
     #[test]
