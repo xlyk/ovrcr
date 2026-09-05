@@ -264,6 +264,8 @@ rtk cargo test --test terminal_acceptance -- --nocapture
 
 ## Test in a GUI window (macOS)
 
+Agents: follow the [computer-use testing guide](docs/testing-computer-use.md) for the smoke check and cleanup evidence.
+
 Run the optional development helper with Rust 1.95 or newer, `just`, and `rtk`:
 
 ```sh
