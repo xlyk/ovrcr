@@ -2,7 +2,205 @@ use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_fram
 use ovrcr::session::{SessionId, SessionPhase};
 use std::os::unix::net::UnixStream;
 use std::process::Command;
+
 use std::time::{Duration, Instant};
+
+fn isolated_command(root: &tempfile::TempDir) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+    command
+        .env("OVRCR_CONFIG", root.path().join("config.toml"))
+        .env("OVRCR_SOCKET", root.path().join("server.sock"));
+    command
+}
+
+#[test]
+fn resource_aliases_are_visible_and_parse_as_commands() {
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        &["projects", "--help"][..],
+        &["project", "create", "--help"],
+        &["project", "delete", "--help"],
+        &["workspaces", "delete", "--help"],
+        &["terminals", "create", "--help"],
+    ] {
+        let output = isolated_command(&root).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn terminal_workspace_filter_requires_project() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(&root)
+        .args(["terminal", "list", "--workspace", "work"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--project"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn offline_project_inspection_reads_and_sorts_the_registry_without_starting_server() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.toml"),
+        r#"
+[[projects]]
+name = "zeta"
+repo = "/repos/zeta"
+workspace_root = "/workspaces/zeta"
+
+[[projects]]
+name = "alpha"
+repo = "/repos/alpha"
+workspace_root = "/workspaces/alpha"
+"#,
+    )
+    .unwrap();
+
+    let output = isolated_command(&root)
+        .args(["--json", "project", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        serde_json::json!([
+            {
+                "name": "alpha",
+                "repo": "/repos/alpha",
+                "workspace_root": "/workspaces/alpha",
+                "workspace_count": 0
+            },
+            {
+                "name": "zeta",
+                "repo": "/repos/zeta",
+                "workspace_root": "/workspaces/zeta",
+                "workspace_count": 0
+            }
+        ])
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn offline_json_commands_keep_errors_structured_and_do_not_start_server() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config.toml");
+    std::fs::write(
+        &config,
+        r#"
+[[projects]]
+name = "alpha"
+repo = "/repos/alpha"
+workspace_root = "/workspaces/alpha"
+
+[[projects.workspaces]]
+name = "one"
+path = "/workspaces/alpha/one"
+branch = "feature/one"
+"#,
+    )
+    .unwrap();
+
+    for args in [
+        &["project", "get", "missing", "--json"][..],
+        &["workspace", "list", "--project", "missing", "--json"],
+        &[
+            "workspace",
+            "get",
+            "--project",
+            "alpha",
+            "--name",
+            "missing",
+            "--json",
+        ],
+        &[
+            "terminal",
+            "list",
+            "--project",
+            "alpha",
+            "--workspace",
+            "missing",
+            "--json",
+        ],
+        &["terminal", "read", "99", "--json"],
+        &["terminal", "send", "99", "--text", "hello", "--json"],
+        &["terminal", "close", "99", "--json"],
+    ] {
+        let output = isolated_command(&root).args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}: {:?}", output.stdout);
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "NotFound", "{args:?}: {error}");
+        assert!(!root.path().join("server.sock").exists(), "{args:?}");
+    }
+}
+
+#[test]
+fn malformed_offline_registry_is_reported_without_replacing_it() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config.toml");
+    let malformed = "this is not = valid TOML [[[";
+    std::fs::write(&config, malformed).unwrap();
+
+    let output = isolated_command(&root)
+        .args(["project", "list", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "Internal");
+    assert_eq!(std::fs::read_to_string(config).unwrap(), malformed);
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn max_lines_must_be_positive_and_legacy_offline_json_is_valid() {
+    let root = tempfile::tempdir().unwrap();
+    for value in ["0", "-1"] {
+        let output = isolated_command(&root)
+            .args(["terminal", "read", "1", "--max-lines", value])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{value}");
+        assert!(!root.path().join("server.sock").exists());
+    }
+
+    let listed = isolated_command(&root)
+        .args(["list", "--json"])
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&listed.stdout).unwrap(),
+        serde_json::json!([])
+    );
+
+    let shutdown = isolated_command(&root)
+        .args(["shutdown", "--json"])
+        .output()
+        .unwrap();
+    assert!(shutdown.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&shutdown.stdout).unwrap(),
+        serde_json::json!({ "ok": true })
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
 
 #[test]
 fn new_and_existing_branch_flags_are_exclusive() {
@@ -128,7 +326,7 @@ fn session_command_keeps_arguments_after_separator() {
         "-c",
         "printf '%s\\n' \"$0\" \"$@\"",
         "agent",
-        "--looks-like-flag",
+        "--json",
     ]);
     let id: u64 = String::from_utf8_lossy(&created.stdout)
         .trim()
@@ -218,7 +416,7 @@ fn session_command_keeps_arguments_after_separator() {
     let text = String::from_utf8_lossy(&screen);
     assert_eq!(
         received,
-        ["agent", "--looks-like-flag"],
+        ["agent", "--json"],
         "retained screen did not contain exact argv: {text:?}"
     );
     cleanup.confirm();

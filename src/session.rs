@@ -267,6 +267,33 @@ impl Session {
         self.parser.lock().unwrap().screen().state_formatted()
     }
 
+    pub fn terminal_text(&self) -> (TerminalSize, String) {
+        let parser = self.parser.lock().unwrap();
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        (TerminalSize { rows, cols }, screen.contents())
+    }
+
+    pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
+        let bytes = {
+            let parser = self.parser.lock().unwrap();
+            crate::tui::encode_paste(text, parser.screen().bracketed_paste())
+        };
+        if matches!(
+            self.state.lock().unwrap().phase,
+            SessionPhase::Exited { .. }
+        ) {
+            bail!("session has exited")
+        }
+        let mut writer = self.writer.lock().unwrap();
+        writer.write_all(&bytes).context("write text to PTY")?;
+        if submit {
+            writer.write_all(b"\r").context("submit text to PTY")?;
+        }
+        writer.flush().context("flush PTY")?;
+        Ok(())
+    }
+
     pub fn wait_for_output(&self, timeout: Duration) {
         let revision = self.parser_revision.lock().unwrap();
         if *revision == 0 {

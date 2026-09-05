@@ -1,0 +1,343 @@
+use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
+use std::os::unix::net::UnixStream;
+use std::process::{Command, Output};
+use std::time::{Duration, Instant};
+
+struct Fixture {
+    root: tempfile::TempDir,
+    pgids: Vec<i32>,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let fixture = Self {
+            root: tempfile::tempdir().unwrap(),
+            pgids: Vec::new(),
+        };
+        std::fs::create_dir(fixture.root.path().join("repo")).unwrap();
+        std::fs::create_dir(fixture.root.path().join("workspaces")).unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec!["config", "user.name", "OVRCR Tests"],
+            vec!["config", "user.email", "tests@example.invalid"],
+            vec!["commit", "--allow-empty", "-m", "fixture"],
+        ] {
+            fixture.git(&args);
+        }
+        fixture.ok(&[
+            "project",
+            "add",
+            "fixture",
+            fixture.root.path().join("repo").to_str().unwrap(),
+            "--workspace-root",
+            fixture.root.path().join("workspaces").to_str().unwrap(),
+        ]);
+        fixture.ok(&[
+            "workspace",
+            "create",
+            "--project",
+            "fixture",
+            "--name",
+            "demo",
+            "--new-branch",
+            "feature/demo",
+            "--base",
+            "main",
+        ]);
+        fixture
+    }
+
+    fn git(&self, args: &[&str]) {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(self.root.path().join("repo"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(args)
+            .env("OVRCR_CONFIG", self.root.path().join("config.toml"))
+            .env("OVRCR_SOCKET", self.root.path().join("server.sock"))
+            .env("SHELL", "/bin/sh")
+            .output()
+            .unwrap()
+    }
+
+    fn ok(&self, args: &[&str]) -> String {
+        let out = self.run(args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stderr.is_empty(), "unexpected stderr: {:?}", out.stderr);
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn json(&self, args: &[&str]) -> serde_json::Value {
+        let mut cli_args = vec!["--json"];
+        cli_args.extend_from_slice(args);
+        serde_json::from_str(&self.ok(&cli_args)).unwrap()
+    }
+
+    fn sessions(&self) -> Vec<SessionSummary> {
+        let mut stream = UnixStream::connect(self.root.path().join("server.sock")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::List,
+            },
+        )
+        .unwrap();
+        let ServerMessage::Response {
+            response: Response::Hierarchy(snapshot),
+            ..
+        } = read_frame(&mut stream).unwrap()
+        else {
+            panic!("expected hierarchy")
+        };
+        snapshot
+            .projects
+            .into_iter()
+            .flat_map(|p| p.workspaces)
+            .flat_map(|w| w.sessions)
+            .collect()
+    }
+
+    fn capture(&mut self) {
+        for summary in self.sessions() {
+            if let Some(pid) = summary.pid {
+                let pgid = unsafe { libc::getpgid(pid as i32) };
+                if pgid > 1 && !self.pgids.contains(&pgid) {
+                    self.pgids.push(pgid);
+                }
+            }
+        }
+    }
+
+    fn wait_text(&self, id: &str, marker: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let text = self.ok(&["terminal", "read", id]);
+            if text.contains(marker) {
+                return text;
+            }
+            assert!(Instant::now() < deadline, "missing {marker:?}: {text:?}");
+            std::thread::yield_now();
+        }
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let out = self.run(&["shutdown", "--kill"]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.root.path().join("server.sock").exists() && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        let clean = out.status.success()
+            && !self.root.path().join("server.sock").exists()
+            && self
+                .pgids
+                .iter()
+                .all(|pgid| unsafe { libc::kill(-*pgid, 0) } == -1);
+        if !clean {
+            eprintln!("cleanup failed: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                std::thread::panicking(),
+                "fixture server or process group remained"
+            );
+        }
+    }
+}
+
+#[test]
+fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
+    let mut fixture = Fixture::new();
+    fixture.capture();
+    let id = fixture.ok(&["terminals", "create", "--project", "fixture", "--workspace", "demo", "--name", "reader", "--", "/bin/sh", "-c", "stty -echo; printf '\\033[?1049h\\033[2J\\033[HREADY\\n'; IFS= read -r value; printf '\\033[2J\\033[Hfirst\\nACK:%s\\n' \"$value\""]);
+    let id = id.trim().to_owned();
+    let numeric_id: u64 = id.parse().unwrap();
+    fixture.capture();
+    assert!(fixture.ok(&["projects", "get", "fixture"]).contains("repo"));
+    assert!(
+        fixture
+            .ok(&[
+                "workspaces",
+                "get",
+                "--project",
+                "fixture",
+                "--name",
+                "demo"
+            ])
+            .contains("feature/demo")
+    );
+    let project = fixture.json(&["project", "get", "fixture"]);
+    assert_eq!(project["workspace_count"], 1);
+    assert_eq!(
+        project["repo"],
+        fixture
+            .root
+            .path()
+            .join("repo")
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    let workspace = fixture.json(&["workspace", "get", "--project", "fixture", "--name", "demo"]);
+    assert_eq!(workspace["branch"], "feature/demo");
+    assert_eq!(workspace["terminal_count"], 2);
+    let terminals = fixture.json(&[
+        "terminal",
+        "list",
+        "--project",
+        "fixture",
+        "--workspace",
+        "demo",
+    ]);
+    let terminals = terminals.as_array().unwrap();
+    assert_eq!(terminals.len(), 2);
+    assert!(terminals[0]["id"].as_u64().unwrap() < terminals[1]["id"].as_u64().unwrap());
+    let hierarchy = fixture.json(&["list"]);
+    assert_eq!(
+        hierarchy[0]["workspaces"][0]["terminals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let refused_shutdown = fixture.run(&["shutdown", "--json"]);
+    assert_eq!(refused_shutdown.status.code(), Some(1));
+    assert!(refused_shutdown.stdout.is_empty());
+    let refusal: serde_json::Value = serde_json::from_slice(&refused_shutdown.stderr).unwrap();
+    assert_eq!(refusal["error"]["code"], "SessionsRemain");
+    fixture.wait_text(&id, "READY");
+    fixture.ok(&["terminal", "send", &id, "--text", "hello ", "--no-submit"]);
+    fixture.ok(&["terminal", "send", &id, "--text", "λ"]);
+    fixture.wait_text(&id, "ACK:hello λ");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if fixture.sessions().iter().any(|s| {
+            s.id == SessionId(numeric_id) && matches!(s.phase, SessionPhase::Exited { .. })
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "terminal did not exit");
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        fixture
+            .ok(&["terminal", "read", &id, "--max-lines", "1"])
+            .trim_end(),
+        "ACK:hello λ"
+    );
+    let screen = fixture.json(&["terminal", "read", &id]);
+    assert_eq!(screen["id"], numeric_id);
+    assert_eq!(screen["rows"], 40);
+    assert_eq!(screen["cols"], 120);
+    assert!(screen["text"].as_str().unwrap().contains("ACK:hello λ"));
+    let retained = fixture.json(&["terminal", "list", "--project", "fixture"]);
+    let retained = retained
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == numeric_id)
+        .unwrap();
+    assert_eq!(retained["phase"], "exited");
+    assert_eq!(retained["exit_code"], 0);
+    assert!(retained["pid"].is_null());
+    let exited_send = fixture.run(&["terminal", "send", &id, "--text", "again", "--json"]);
+    assert_eq!(exited_send.status.code(), Some(1));
+    assert!(exited_send.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&exited_send.stderr).contains("Conflict"));
+    let occupied = fixture.run(&[
+        "workspace",
+        "delete",
+        "--project",
+        "fixture",
+        "--name",
+        "demo",
+    ]);
+    assert!(!occupied.status.success());
+    fixture.ok(&["terminal", "close", &id]);
+    assert!(
+        !fixture
+            .sessions()
+            .iter()
+            .any(|s| s.id == SessionId(numeric_id))
+    );
+    let active = fixture.json(&[
+        "terminal",
+        "create",
+        "--project",
+        "fixture",
+        "--workspace",
+        "demo",
+        "--name",
+        "group",
+        "--",
+        "/bin/sh",
+        "-c",
+        "sleep 300 & wait",
+    ]);
+    assert_eq!(active["phase"], "running");
+    let active = active["id"].as_u64().unwrap().to_string();
+    fixture.capture();
+    let pid = fixture
+        .sessions()
+        .into_iter()
+        .find(|s| s.id.0.to_string() == active)
+        .unwrap()
+        .pid
+        .unwrap() as i32;
+    assert_eq!(
+        fixture.json(&["terminal", "close", &active]),
+        serde_json::json!({"ok": true})
+    );
+    assert_eq!(unsafe { libc::kill(-pid, 0) }, -1, "closed group remains");
+    for session in fixture.sessions() {
+        fixture.ok(&["terminal", "close", &session.id.0.to_string()]);
+    }
+    let worktree = fixture.root.path().join("workspaces/demo");
+    std::fs::write(worktree.join("dirty"), "preserve me").unwrap();
+    let dirty = fixture.run(&[
+        "workspace",
+        "delete",
+        "--project",
+        "fixture",
+        "--name",
+        "demo",
+        "--json",
+    ]);
+    assert_eq!(dirty.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&dirty.stderr).contains("DirtyWorktree"));
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("dirty")).unwrap(),
+        "preserve me"
+    );
+    std::fs::remove_file(worktree.join("dirty")).unwrap();
+    fixture.ok(&[
+        "workspace",
+        "delete",
+        "--project",
+        "fixture",
+        "--name",
+        "demo",
+    ]);
+    assert!(!worktree.exists());
+    fixture.git(&["show-ref", "--verify", "refs/heads/feature/demo"]);
+    fixture.ok(&["project", "delete", "fixture"]);
+}

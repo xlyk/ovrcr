@@ -423,6 +423,33 @@ impl OuterDashboard {
         )
     }
 
+    fn wait_for_output(&mut self, needle: &[u8], timeout: Duration) -> Result<Vec<u8>> {
+        let deadline = Instant::now() + timeout;
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .received
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
+                Ok(bytes) => {
+                    self.parser.process(&bytes);
+                    output.extend_from_slice(&bytes);
+                    if output.windows(needle.len()).any(|window| window == needle) {
+                        return Ok(output);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        bail!(
+            "outer terminal did not emit {:?}: {}",
+            String::from_utf8_lossy(needle),
+            String::from_utf8_lossy(&output)
+        )
+    }
+
     fn rendered(&self) -> String {
         self.parser.screen().contents()
     }
@@ -542,11 +569,12 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
-    dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
-    dashboard.send(b"j")?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
     dashboard.send(b"\r")?;
-    dashboard.wait_for(b"TERMINAL", Duration::from_secs(3))?;
     dashboard.send(b"\x1b[200~PASTE_TOKEN\x1b[201~")?;
     dashboard.send(b"\r")?;
     dashboard.wait_for(b"PASTE_ACK", Duration::from_secs(3))?;
@@ -596,29 +624,28 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "single-key visible echo exceeded 100ms: {sorted_single_key:?}"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
-    dashboard.send(b"\x1b[<0;5;7M")?;
+    dashboard.wait_for_output(b"\x1b[?1000h", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b[<0;5;10M")?;
     dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
     dashboard.send(b"\r")?;
-    dashboard.wait_for(b"TERMINAL", Duration::from_secs(3))?;
     dashboard.send(b"MOUSE_TOKEN\r")?;
     dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
     dashboard.resize(40, 120)?;
     dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard.wait_for(b"SIZE_ACK_34 ", Duration::from_secs(3))?;
+    dashboard.wait_for(b"SIZE_ACK_36 80", Duration::from_secs(3))?;
     let rendered = dashboard.rendered();
     let resize_ack = rendered
-        .split("SIZE_ACK_34 ")
+        .split("SIZE_ACK_36 ")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|cols| cols.parse::<u16>().ok())
         .context("rendered resize acknowledgement missing columns")?;
     assert_eq!(
-        resize_ack, 88,
+        resize_ack, 80,
         "rendered resized pane geometry changed unexpectedly"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
     dashboard.detach()?;
 
     let mut reattached = OuterDashboard::start(
@@ -631,7 +658,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         },
     )?;
     reattached.wait_for(b"mouse", Duration::from_secs(3))?;
-    reattached.wait_for(b"BROWSE", Duration::from_secs(3))?;
+    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
     reattached.send(b"j")?;
     reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
     reattached.detach()?;

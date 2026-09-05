@@ -1,3 +1,4 @@
+use crate::config::Registry;
 use crate::session::{SessionEvent, SessionId, SessionSummary, TerminalSize};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
@@ -87,6 +88,19 @@ pub enum Request {
     Shutdown {
         kill: bool,
     },
+    Inspect,
+    ReadTerminal {
+        session: SessionId,
+        max_lines: Option<usize>,
+    },
+    SendTerminal {
+        session: SessionId,
+        text: String,
+        submit: bool,
+    },
+    CloseTerminal {
+        session: SessionId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +148,15 @@ pub enum Response {
     Error {
         code: ErrorCode,
         message: String,
+    },
+    Inventory {
+        registry: Registry,
+        sessions: Vec<SessionSummary>,
+    },
+    TerminalText {
+        session: SessionId,
+        size: TerminalSize,
+        text: String,
     },
 }
 
@@ -223,5 +246,32 @@ mod tests {
                 .to_string()
                 .contains("frame too large")
         );
+    }
+
+    #[test]
+    fn appended_resource_requests_round_trip() {
+        for request in [
+            Request::Inspect,
+            Request::ReadTerminal {
+                session: SessionId(3),
+                max_lines: Some(7),
+            },
+            Request::SendTerminal {
+                session: SessionId(3),
+                text: "hello\nworld".into(),
+                submit: false,
+            },
+            Request::CloseTerminal {
+                session: SessionId(3),
+            },
+        ] {
+            let (mut left, mut right) = UnixStream::pair().unwrap();
+            let message = ClientMessage {
+                request_id: 11,
+                request,
+            };
+            write_frame(&mut left, &message).unwrap();
+            assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), message);
+        }
     }
 }
