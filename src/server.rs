@@ -9,7 +9,7 @@ use crate::session::{
     Session, SessionEvent, SessionId, SessionPhase, SessionSpec, SessionSummary, TerminalSize,
 };
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
@@ -18,8 +18,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -97,7 +97,7 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub selected: Mutex<Option<SessionId>>,
-    pub dashboard: Mutex<Option<SyncSender<DashboardOutbound>>>,
+    pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
     pub dispatch: SyncSender<DispatchMessage>,
@@ -445,14 +445,162 @@ pub struct DashboardOutbound {
     completion: Option<SyncSender<Result<(), String>>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirtyState {
+    Pending,
+    Sending,
+    Sent,
+}
+
+struct DashboardQueue {
+    messages: VecDeque<DashboardOutbound>,
+    dirty: HashMap<SessionId, DirtyState>,
+    closed: bool,
+}
+
+pub struct DashboardSink {
+    queue: Mutex<DashboardQueue>,
+    wake: Condvar,
+}
+
+enum DashboardDelivery {
+    Message(DashboardOutbound),
+    Dirty(SessionId),
+}
+
+impl DashboardSink {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            queue: Mutex::new(DashboardQueue {
+                messages: VecDeque::with_capacity(DASHBOARD_QUEUE),
+                dirty: HashMap::new(),
+                closed: false,
+            }),
+            wake: Condvar::new(),
+        })
+    }
+
+    fn enqueue(&self, outbound: DashboardOutbound) -> bool {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return false;
+        }
+        if let ServerMessage::Event(ServerEvent::Output { session, .. }) = &outbound.message {
+            if queue.dirty.contains_key(session) {
+                return true;
+            }
+            if queue.messages.len() == DASHBOARD_QUEUE {
+                queue.messages.retain(|queued| {
+                    !matches!(
+                        queued.message,
+                        ServerMessage::Event(ServerEvent::Output {
+                            session: queued_session,
+                            ..
+                        }) if queued_session == *session
+                    )
+                });
+                queue.dirty.insert(*session, DirtyState::Pending);
+                self.wake.notify_one();
+                return true;
+            }
+        } else if queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.messages.push_back(outbound);
+        self.wake.notify_one();
+        true
+    }
+
+    fn replace_selection(
+        &self,
+        previous: Option<SessionId>,
+        session: SessionId,
+        request_id: u64,
+        size: TerminalSize,
+        bytes: Vec<u8>,
+    ) -> bool {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed {
+            return false;
+        }
+        let discard = previous
+            .into_iter()
+            .chain(std::iter::once(session))
+            .collect::<HashSet<_>>();
+        queue.messages.retain(|queued| {
+            !matches!(
+                queued.message,
+                ServerMessage::Event(ServerEvent::Output { session, .. }) if discard.contains(&session)
+            )
+        });
+        for id in discard {
+            queue.dirty.remove(&id);
+        }
+        if queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.messages.push_back(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id,
+                response: Response::Screen {
+                    session,
+                    size,
+                    bytes,
+                },
+            },
+            completion: None,
+        });
+        self.wake.notify_one();
+        true
+    }
+
+    fn next(&self) -> Option<DashboardDelivery> {
+        let mut queue = self.queue.lock().unwrap();
+        loop {
+            if queue.closed {
+                return None;
+            }
+            if let Some(message) = queue.messages.pop_front() {
+                return Some(DashboardDelivery::Message(message));
+            }
+            if let Some((session, state)) = queue
+                .dirty
+                .iter_mut()
+                .find(|(_, state)| **state == DirtyState::Pending)
+            {
+                *state = DirtyState::Sending;
+                return Some(DashboardDelivery::Dirty(*session));
+            }
+            queue = self.wake.wait(queue).unwrap();
+        }
+    }
+
+    fn dirty_sent(&self, session: SessionId) {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.dirty.get(&session) == Some(&DirtyState::Sending) {
+            queue.dirty.insert(session, DirtyState::Sent);
+        }
+    }
+
+    fn close(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.closed = true;
+        self.wake.notify_all();
+    }
+}
+
 struct DashboardSlot {
-    sender: SyncSender<DashboardOutbound>,
+    sink: Arc<DashboardSink>,
     identity: Arc<()>,
     stream: UnixStream,
 }
 
 struct DashboardSnapshot {
-    sender: SyncSender<DashboardOutbound>,
+    sink: Arc<DashboardSink>,
     identity: Arc<()>,
     stream: UnixStream,
 }
@@ -537,7 +685,9 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
             Err(error) => return Err(error).context("accept server client"),
         }
     }
-    *state.dashboard.lock().unwrap() = None;
+    if let Some(snapshot) = dashboard_snapshot(&state) {
+        disconnect_dashboard(&state, snapshot);
+    }
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher
         .join()
@@ -632,25 +782,24 @@ fn dispatch_select(state: &Arc<ServerState>, request_id: u64, id: SessionId, siz
         );
         return;
     }
+    let previous = *state.selected.lock().unwrap();
+    let Some(snapshot) = dashboard_snapshot(state) else {
+        return;
+    };
+    if !snapshot
+        .sink
+        .replace_selection(previous, id, request_id, size, session.current_screen())
+    {
+        disconnect_dashboard(state, snapshot);
+        return;
+    }
     *state.selected.lock().unwrap() = Some(id);
-    dashboard_try_send(
-        state,
-        response_message(
-            request_id,
-            Response::Screen {
-                session: id,
-                size,
-                bytes: session.current_screen(),
-            },
-        ),
-    );
 }
 
 fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let mut role = ClientRole::Control;
     let mut dashboard_identity = None;
-    let (dashboard_tx, dashboard_rx) = mpsc::sync_channel(DASHBOARD_QUEUE);
-    let mut dashboard_rx = Some(dashboard_rx);
+    let dashboard_sink = DashboardSink::new();
     let mut writer: Option<JoinHandle<()>> = None;
     while !state.shutdown.load(Ordering::Acquire) {
         let message = match read_frame::<ClientMessage>(&mut stream) {
@@ -693,30 +842,59 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
                 break;
             }
             *slot = Some(DashboardSlot {
-                sender: dashboard_tx.clone(),
+                sink: Arc::clone(&dashboard_sink),
                 identity: identity.clone(),
                 stream: close_stream,
             });
             drop(slot);
-            *state.dashboard.lock().unwrap() = Some(dashboard_tx.clone());
-            dashboard_identity = Some(identity);
+            *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
+            dashboard_identity = Some(Arc::clone(&identity));
             role = ClientRole::Dashboard;
             let mut output = stream.try_clone().ok();
-            let writer_receiver = dashboard_rx.take().expect("dashboard writer receiver");
+            let writer_sink = Arc::clone(&dashboard_sink);
+            let writer_state = Arc::clone(&state);
+            let writer_identity = Arc::clone(&identity);
+            let writer_close_stream = stream.try_clone().expect("clone dashboard close stream");
             writer = Some(
                 thread::Builder::new()
                     .name("ovrcr-dashboard-writer".into())
                     .spawn(move || {
-                        while let Ok(outbound) = writer_receiver.recv() {
+                        while let Some(delivery) = writer_sink.next() {
+                            let (message, completion, dirty) = match delivery {
+                                DashboardDelivery::Message(outbound) => {
+                                    (outbound.message, outbound.completion, None)
+                                }
+                                DashboardDelivery::Dirty(session) => (
+                                    ServerMessage::Event(ServerEvent::ScreenDirty { session }),
+                                    None,
+                                    Some(session),
+                                ),
+                            };
                             let result = match output.as_mut() {
-                                Some(stream) => write_frame(stream, &outbound.message)
-                                    .map_err(|error| error.to_string()),
+                                Some(stream) => {
+                                    write_frame(stream, &message).map_err(|error| error.to_string())
+                                }
                                 None => Err("dashboard writer stream unavailable".into()),
                             };
-                            if let Some(completion) = outbound.completion {
+                            if result.is_ok()
+                                && let Some(session) = dirty
+                            {
+                                writer_sink.dirty_sent(session);
+                            }
+                            if let Some(completion) = completion {
                                 let _ = completion.send(result.clone());
                             }
                             if result.is_err() {
+                                writer_sink.close();
+                                let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
+                                disconnect_dashboard(
+                                    &writer_state,
+                                    DashboardSnapshot {
+                                        sink: writer_sink,
+                                        identity: writer_identity,
+                                        stream: writer_close_stream,
+                                    },
+                                );
                                 break;
                             }
                         }
@@ -788,12 +966,14 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
                 .is_some_and(|current| Arc::ptr_eq(&current.identity, identity))
         });
         if owns_dashboard {
-            let _ = slot.take();
+            if let Some(current) = slot.take() {
+                current.sink.close();
+            }
             *state.dashboard.lock().unwrap() = None;
             *state.selected.lock().unwrap() = None;
         }
     }
-    drop(dashboard_tx);
+    dashboard_sink.close();
     if let Some(writer) = writer {
         let _ = writer.join();
     }
@@ -968,48 +1148,7 @@ fn lifecycle_response_with_partial_hierarchy(
 }
 
 fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
-    let Some(slot) = state.dashboard_slot.lock().unwrap().as_ref().map(|slot| {
-        (
-            slot.sender.clone(),
-            slot.identity.clone(),
-            slot.stream.try_clone().ok(),
-        )
-    }) else {
-        return false;
-    };
-    let Some(stream) = slot.2 else {
-        return false;
-    };
-    let snapshot = DashboardSnapshot {
-        sender: slot.0,
-        identity: slot.1,
-        stream,
-    };
-    if snapshot
-        .sender
-        .try_send(DashboardOutbound {
-            message,
-            completion: None,
-        })
-        .is_err()
-    {
-        disconnect_dashboard_ref(state, snapshot);
-        return false;
-    }
-    true
-}
-
-fn disconnect_dashboard_ref(state: &ServerState, snapshot: DashboardSnapshot) {
-    let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
-    let mut slot = state.dashboard_slot.lock().unwrap();
-    if slot
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, &snapshot.identity))
-    {
-        let _ = slot.take();
-        *state.dashboard.lock().unwrap() = None;
-        *state.selected.lock().unwrap() = None;
-    }
+    dashboard_send(state, message, None)
 }
 
 #[cfg(test)]
@@ -1062,43 +1201,41 @@ fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> 
     write_frame(stream, &response_message(request_id, response))
 }
 
-fn dashboard_try_send(state: &Arc<ServerState>, message: ServerMessage) -> bool {
+fn dashboard_try_send(state: &ServerState, message: ServerMessage) -> bool {
     dashboard_send(state, message, None)
 }
 
 fn dashboard_send(
-    state: &Arc<ServerState>,
+    state: &ServerState,
     message: ServerMessage,
     completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
     let Some(snapshot) = dashboard_snapshot(state) else {
         return false;
     };
-    if matches!(
-        snapshot.sender.try_send(DashboardOutbound {
-            message,
-            completion,
-        }),
-        Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_))
-    ) {
+    if !snapshot.sink.enqueue(DashboardOutbound {
+        message,
+        completion,
+    }) {
         disconnect_dashboard(state, snapshot);
         return false;
     }
     true
 }
 
-fn dashboard_snapshot(state: &Arc<ServerState>) -> Option<DashboardSnapshot> {
+fn dashboard_snapshot(state: &ServerState) -> Option<DashboardSnapshot> {
     let slot = state.dashboard_slot.lock().unwrap();
     let slot = slot.as_ref()?;
     Some(DashboardSnapshot {
-        sender: slot.sender.clone(),
+        sink: slot.sink.clone(),
         identity: slot.identity.clone(),
         stream: slot.stream.try_clone().ok()?,
     })
 }
 
-fn disconnect_dashboard(state: &Arc<ServerState>, snapshot: DashboardSnapshot) {
+fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {
     let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
+    snapshot.sink.close();
     let mut slot = state.dashboard_slot.lock().unwrap();
     if slot
         .as_ref()
@@ -1229,7 +1366,7 @@ mod tests {
     use std::io::Read;
 
     fn test_state(
-        dashboard: Option<SyncSender<DashboardOutbound>>,
+        dashboard: Option<Arc<DashboardSink>>,
         stream: Option<(Arc<()>, UnixStream)>,
     ) -> Arc<ServerState> {
         let (events, _) = mpsc::sync_channel(EVENT_QUEUE);
@@ -1247,7 +1384,7 @@ mod tests {
             shutdown: AtomicBool::new(false),
             events: Mutex::new(Some(events)),
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
-                sender: dashboard.as_ref().unwrap().clone(),
+                sink: dashboard.as_ref().unwrap().clone(),
                 identity,
                 stream,
             })),
@@ -1260,17 +1397,17 @@ mod tests {
         client_stream
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        sender
-            .send(DashboardOutbound {
-                message: ServerMessage::Event(ServerEvent::ScreenDirty {
-                    session: SessionId(1),
-                }),
+        let sink = DashboardSink::new();
+        for _ in 0..DASHBOARD_QUEUE {
+            assert!(sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                },)),
                 completion: None,
-            })
-            .unwrap();
+            }));
+        }
         let identity = Arc::new(());
-        let state = test_state(Some(sender), Some((identity, server_stream)));
+        let state = test_state(Some(sink), Some((identity, server_stream)));
         dashboard_try_send(
             &state,
             ServerMessage::Event(ServerEvent::ScreenDirty {
@@ -1280,7 +1417,6 @@ mod tests {
         let mut byte = [0_u8; 1];
         assert_eq!(client_stream.read(&mut byte).unwrap(), 0);
         assert!(state.dashboard.lock().unwrap().is_none());
-        drop(receiver);
     }
 
     #[test]
@@ -1291,20 +1427,20 @@ mod tests {
         old_client
             .set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
-        let (old_sender, _) = mpsc::sync_channel(1);
+        let old_sink = DashboardSink::new();
         let old_identity = Arc::new(());
-        let state = test_state(Some(old_sender), Some((old_identity, old_server)));
+        let state = test_state(Some(old_sink), Some((old_identity, old_server)));
         let old_snapshot = dashboard_snapshot(&state).unwrap();
 
         let (new_server, _new_client) = UnixStream::pair().unwrap();
-        let (new_sender, _) = mpsc::sync_channel(1);
+        let new_sink = DashboardSink::new();
         let new_identity = Arc::new(());
         *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
-            sender: new_sender.clone(),
+            sink: new_sink.clone(),
             identity: new_identity,
             stream: new_server,
         });
-        *state.dashboard.lock().unwrap() = Some(new_sender);
+        *state.dashboard.lock().unwrap() = Some(new_sink);
         disconnect_dashboard(&state, old_snapshot);
 
         assert!(state.dashboard.lock().unwrap().is_some());
@@ -1376,9 +1512,9 @@ mod tests {
 
     #[test]
     fn uncommitted_partial_failure_does_not_publish_hierarchy() {
-        let (sender, receiver) = mpsc::sync_channel(1);
+        let sink = DashboardSink::new();
         let (server_stream, _client_stream) = UnixStream::pair().unwrap();
-        let state = test_state(Some(sender), Some((Arc::new(()), server_stream)));
+        let state = test_state(Some(sink.clone()), Some((Arc::new(()), server_stream)));
         let response = lifecycle_response_with_partial_hierarchy(
             &state,
             lifecycle_error(
@@ -1394,7 +1530,7 @@ mod tests {
             }
         ));
         assert!(
-            receiver.try_recv().is_err(),
+            sink.queue.lock().unwrap().messages.is_empty(),
             "uncommitted partial failure must not publish unchanged hierarchy"
         );
     }
