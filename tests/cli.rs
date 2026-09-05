@@ -198,13 +198,13 @@ fn session_command_keeps_arguments_after_separator() {
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
     let screen = loop {
-        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
-            ServerMessage::Response {
-                request_id: 2,
-                response: Response::Screen { bytes, .. },
-                ..
-            } => break bytes,
-            _ => {}
+        if let ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen { bytes, .. },
+            ..
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            break bytes;
         }
     };
     let mut parser = vt100::Parser::new(24, 80, 0);
@@ -318,10 +318,10 @@ impl<'a> CleanupGuard<'a> {
 
 impl Drop for CleanupGuard<'_> {
     fn drop(&mut self) {
-        if !self.cleaned {
-            if let Err(error) = self.cleanup() {
-                eprintln!("cleanup confirmation failed during unwind: {error}");
-            }
+        if !self.cleaned
+            && let Err(error) = self.cleanup()
+        {
+            eprintln!("cleanup confirmation failed during unwind: {error}");
         }
     }
 }
