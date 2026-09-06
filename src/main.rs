@@ -551,6 +551,7 @@ fn workspace_value(
 fn terminal_value(session: &SessionSummary) -> Value {
     let (phase, exit_code, exit_signal) = match &session.phase {
         SessionPhase::Running => ("running", Value::Null, Value::Null),
+        SessionPhase::Paused => ("paused", Value::Null, Value::Null),
         SessionPhase::Exited { code, signal } => (
             "exited",
             code.map_or(Value::Null, |code| json!(code)),
