@@ -337,6 +337,13 @@ impl Session {
 
         if should_signal_group(self)? {
             signal_group(self.pgid, libc::SIGTERM)?;
+            if should_signal_group(self)? && signal_group(self.pgid, libc::SIGCONT)? {
+                let mut state = self.state.lock().unwrap();
+                if matches!(state.phase, SessionPhase::Paused) {
+                    state.phase = SessionPhase::Running;
+                    self.state_changed.notify_all();
+                }
+            }
         }
         let deadline = Instant::now() + grace;
         if !wait_for_group_exit(self.pgid, deadline)? && group_exists(self.pgid)? {
@@ -556,6 +563,7 @@ fn wait_for_group_exit(pgid: libc::pid_t, deadline: Instant) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
     use std::sync::mpsc::{self, Receiver};
 
     struct TerminationGuard(Arc<Session>);
@@ -691,6 +699,109 @@ mod tests {
         session.terminate(Duration::from_millis(200)).unwrap();
         assert!(session.set_paused(true).is_err());
         assert!(session.set_paused(false).is_err());
+    }
+
+    #[test]
+    fn pause_resume_terminate_runs_term_handler() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let session = Session::spawn(
+            SessionId(5),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "term-handler".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap 'printf TERM_HANDLED; exit 0' TERM; printf READY; while :; do read line; done"
+                        .into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+        )
+        .unwrap();
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+        assert!(session.set_paused(true).unwrap());
+        session.terminate(Duration::from_millis(200)).unwrap();
+        dispatcher.join().unwrap();
+
+        assert!(String::from_utf8_lossy(&session.current_screen()).contains("TERM_HANDLED"));
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn pause_resume_terminate_serializes_competing_controls() {
+        let session = spawn_test_shell();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let gate = Arc::new(Barrier::new(3));
+        let (results, received) = mpsc::sync_channel(3);
+
+        let pause_gate = Arc::clone(&gate);
+        let pause_session = Arc::clone(&session);
+        let pause_results = results.clone();
+        let pause = thread::spawn(move || {
+            pause_gate.wait();
+            let result = pause_session
+                .set_paused(true)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            pause_results.send(("pause", result)).unwrap();
+        });
+
+        let resume_gate = Arc::clone(&gate);
+        let resume_session = Arc::clone(&session);
+        let resume_results = results.clone();
+        let resume = thread::spawn(move || {
+            resume_gate.wait();
+            let result = resume_session
+                .set_paused(false)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            resume_results.send(("resume", result)).unwrap();
+        });
+
+        let terminate_gate = Arc::clone(&gate);
+        let terminate_session = Arc::clone(&session);
+        let terminate = thread::spawn(move || {
+            terminate_gate.wait();
+            let result = terminate_session
+                .terminate(Duration::from_millis(200))
+                .map_err(|error| error.to_string());
+            results.send(("terminate", result)).unwrap();
+        });
+
+        let mut outcomes = Vec::new();
+        for _ in 0..3 {
+            outcomes.push(
+                received
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("competing controls must finish promptly"),
+            );
+        }
+        pause.join().unwrap();
+        resume.join().unwrap();
+        terminate.join().unwrap();
+
+        assert!(
+            outcomes
+                .iter()
+                .any(|(name, result)| { *name == "terminate" && result.is_ok() })
+        );
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
     }
 
     #[test]
