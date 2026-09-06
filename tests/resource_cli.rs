@@ -341,3 +341,58 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     fixture.git(&["show-ref", "--verify", "refs/heads/feature/demo"]);
     fixture.ok(&["project", "delete", "fixture"]);
 }
+
+#[test]
+fn pause_resume_resource_cli_preserves_input_and_close_contract() {
+    let mut fixture = Fixture::new();
+    let id = fixture
+        .ok(&[
+            "terminals",
+            "create",
+            "--project",
+            "fixture",
+            "--workspace",
+            "demo",
+            "--name",
+            "pause-resume",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf 'READY\\n'; IFS= read -r value; printf 'ACK:%s\\n' \"$value\"",
+        ])
+        .trim()
+        .to_owned();
+    fixture.capture();
+    let numeric_id: u64 = id.parse().unwrap();
+    fixture.wait_text(&id, "READY");
+
+    fixture.ok(&["pause", &id]);
+    let paused = fixture.json(&["terminal", "list"]);
+    let paused = paused
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == numeric_id)
+        .unwrap();
+    assert_eq!(paused["phase"], "paused");
+    assert!(paused["exit_code"].is_null());
+    assert!(paused["exit_signal"].is_null());
+
+    let refused = fixture.run(&["terminal", "send", &id, "--text", "blocked", "--json"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&refused.stderr).unwrap()["error"]["code"],
+        "Conflict"
+    );
+
+    fixture.ok(&["resume", &id]);
+    fixture.ok(&["terminal", "send", &id, "--text", "hello"]);
+    fixture.wait_text(&id, "ACK:hello");
+    fixture.ok(&["terminal", "close", &id]);
+    assert!(
+        !fixture
+            .sessions()
+            .iter()
+            .any(|session| session.id == SessionId(numeric_id))
+    );
+}

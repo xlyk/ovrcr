@@ -37,6 +37,23 @@ pub enum SessionPhase {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputAdmissionError {
+    Paused,
+    Exited,
+}
+
+impl std::fmt::Display for InputAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Paused => "session is paused; resume it before sending input",
+            Self::Exited => "session has exited",
+        })
+    }
+}
+
+impl std::error::Error for InputAdmissionError {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: SessionId,
@@ -236,19 +253,17 @@ impl Session {
         Ok(changed)
     }
 
-    fn admit_input(&self) -> Result<()> {
+    fn admit_input(&self) -> std::result::Result<(), InputAdmissionError> {
         let phase = self.state.lock().unwrap().phase.clone();
         match phase {
             SessionPhase::Running => Ok(()),
-            SessionPhase::Paused => {
-                bail!("session is paused; resume it before sending input")
-            }
-            SessionPhase::Exited { .. } => bail!("session has exited"),
+            SessionPhase::Paused => Err(InputAdmissionError::Paused),
+            SessionPhase::Exited { .. } => Err(InputAdmissionError::Exited),
         }
     }
 
     pub fn write(&self, bytes: &[u8]) -> Result<()> {
-        self.admit_input()?;
+        self.admit_input().map_err(anyhow::Error::new)?;
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(bytes).context("write to PTY")?;
         writer.flush().context("flush PTY")?;
@@ -304,7 +319,7 @@ impl Session {
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
-        self.admit_input()?;
+        self.admit_input().map_err(anyhow::Error::new)?;
         let bytes = {
             let parser = self.parser.lock().unwrap();
             crate::tui::encode_paste(text, parser.screen().bracketed_paste())

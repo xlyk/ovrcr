@@ -710,6 +710,196 @@ fn fast_exit_session_is_retained_as_exited() {
 }
 
 #[test]
+fn pause_resume_server_refuses_removal_and_late_mutation() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/pause-resume".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+    let session = fixture.create_session("pause-resume", vec!["sh".into()]);
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 9,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+
+    assert_eq!(
+        fixture.request(Request::PauseSession { session }),
+        Response::Ok
+    );
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::SessionChanged(summary))
+                if summary.id == session && matches!(summary.phase, SessionPhase::Paused)
+        ) {
+            break;
+        }
+    }
+    assert!(matches!(
+        fixture.request(Request::List),
+        Response::Hierarchy(ref snapshot)
+            if snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .any(|summary| summary.id == session && matches!(summary.phase, SessionPhase::Paused))
+    ));
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 10,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 10,
+                response: Response::Screen { .. },
+            }
+        ) {
+            break;
+        }
+    }
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 11,
+            request: Request::Input {
+                session,
+                bytes: b"paused".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 11,
+                response: Response::Error {
+                    code: ErrorCode::Conflict,
+                    ..
+                },
+            }
+        ) {
+            break;
+        }
+    }
+    assert!(matches!(
+        fixture.request(Request::RemoveSession { session }),
+        Response::Error {
+            code: ErrorCode::SessionRunning,
+            ..
+        }
+    ));
+    assert!(matches!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "paused".into(),
+            submit: true,
+        }),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::ResumeSession { session }),
+        Response::Ok
+    );
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::SessionChanged(summary))
+                if summary.id == session && matches!(summary.phase, SessionPhase::Running)
+        ) {
+            break;
+        }
+    }
+    assert!(matches!(
+        fixture.request(Request::List),
+        Response::Hierarchy(ref snapshot)
+            if snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .any(|summary| summary.id == session && matches!(summary.phase, SessionPhase::Running))
+    ));
+
+    assert_eq!(
+        fixture.request(Request::KillSession { session }),
+        Response::Ok
+    );
+    fixture.wait_exited(session);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    drop(dashboard);
+    fixture.join();
+}
+
+#[test]
 fn slow_dashboard_recovers_after_output_burst() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);

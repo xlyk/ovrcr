@@ -73,6 +73,12 @@ pub enum Request {
     KillSession {
         session: SessionId,
     },
+    PauseSession {
+        session: SessionId,
+    },
+    ResumeSession {
+        session: SessionId,
+    },
     Select {
         session: SessionId,
         size: TerminalSize,
@@ -170,6 +176,9 @@ pub enum ServerEvent {
 
 pub enum DispatchMessage {
     Session(SessionEvent),
+    RefreshSession {
+        session: SessionId,
+    },
     Select {
         request_id: u64,
         session: SessionId,
@@ -273,5 +282,41 @@ mod tests {
             write_frame(&mut left, &message).unwrap();
             assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), message);
         }
+    }
+
+    #[test]
+    fn pause_resume_requests_round_trip() {
+        let requests = [
+            Request::PauseSession {
+                session: SessionId(3),
+            },
+            Request::ResumeSession {
+                session: SessionId(3),
+            },
+        ];
+        for request in requests {
+            let (mut left, mut right) = UnixStream::pair().unwrap();
+            let message = ClientMessage {
+                request_id: 12,
+                request,
+            };
+            write_frame(&mut left, &message).unwrap();
+            assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), message);
+        }
+
+        let paused = SessionSummary {
+            id: SessionId(3),
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "session".into(),
+            label: "sh".into(),
+            pid: Some(42),
+            started_unix_ms: 7,
+            phase: crate::session::SessionPhase::Paused,
+        };
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        let message = ServerMessage::Event(ServerEvent::SessionChanged(paused));
+        write_frame(&mut left, &message).unwrap();
+        assert_eq!(read_frame::<ServerMessage>(&mut right).unwrap(), message);
     }
 }

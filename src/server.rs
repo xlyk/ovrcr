@@ -6,7 +6,8 @@ use crate::protocol::{
     write_frame,
 };
 use crate::session::{
-    Session, SessionEvent, SessionId, SessionPhase, SessionSpec, SessionSummary, TerminalSize,
+    InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase, SessionSpec,
+    SessionSummary, TerminalSize,
 };
 use anyhow::{Context, Result, bail};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -176,29 +177,28 @@ impl ServerState {
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
         }
-        session.send_text(text, submit).map_err(|error| {
-            if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
-                lifecycle_error(ErrorCode::Conflict, "session has exited")
-            } else {
-                lifecycle_error(ErrorCode::Internal, error_chain_string(&error))
-            }
-        })
+        session
+            .send_text(text, submit)
+            .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
     pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })?;
-        session.terminate(grace)?;
+        let session = self.session_for_control(id)?;
+        let termination = session.terminate(grace).map(|_| ());
+        let refresh = self.refresh_session_locked(id);
+        combine_control_and_refresh(id, termination, refresh)?;
         self.remove_session_locked(id)
+    }
+
+    pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let session = self.session_for_control(id)?;
+        let control = session.set_paused(paused).map(|_| ());
+        let refresh = self.refresh_session_locked(id);
+        combine_control_and_refresh(id, control, refresh)
     }
 
     pub fn handle_request(&self, role: &mut ClientRole, request: Request) -> Response {
@@ -296,16 +296,10 @@ impl ServerState {
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })?;
-        session.terminate(grace)
+        let session = self.session_for_control(id)?;
+        let termination = session.terminate(grace).map(|_| ());
+        let refresh = self.refresh_session_locked(id);
+        combine_control_and_refresh(id, termination, refresh)
     }
 
     pub fn remove_session(&self, id: SessionId) -> Result<()> {
@@ -324,10 +318,10 @@ impl ServerState {
             .ok_or_else(|| {
                 lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
             })?;
-        if matches!(session.summary().phase, SessionPhase::Running) {
+        if !matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(
                 ErrorCode::SessionRunning,
-                "session is still running",
+                "session is still live; kill it before removal",
             ));
         }
         self.sessions.lock().unwrap().remove(&id);
@@ -356,12 +350,11 @@ impl ServerState {
         if kill {
             let mut failures = Vec::new();
             for session in sessions {
-                if let Err(error) = session.terminate(Duration::from_secs(5)) {
-                    failures.push(format!(
-                        "session {}: {}",
-                        session.summary().id.0,
-                        error_chain_string(&error)
-                    ));
+                let id = session.summary().id;
+                let termination = session.terminate(Duration::from_secs(5)).map(|_| ());
+                let refresh = self.refresh_session_locked(id);
+                if let Err(error) = combine_control_and_refresh(id, termination, refresh) {
+                    failures.push(format!("session {}: {}", id.0, error_chain_string(&error)));
                 }
             }
             if !failures.is_empty() {
@@ -377,6 +370,32 @@ impl ServerState {
             bail!("server is stopping")
         }
         Ok(())
+    }
+
+    fn session_for_control(&self, id: SessionId) -> Result<Arc<Session>> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| {
+                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
+            })
+    }
+
+    fn refresh_session_locked(&self, id: SessionId) -> Result<()> {
+        let error = match self
+            .dispatch
+            .try_send(DispatchMessage::RefreshSession { session: id })
+        {
+            Ok(()) => return Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => "dispatcher queue is full",
+            Err(mpsc::TrySendError::Disconnected(_)) => "dispatcher is unavailable",
+        };
+        if let Some(snapshot) = dashboard_snapshot(self) {
+            disconnect_dashboard(self, snapshot);
+        }
+        bail!("{error}")
     }
 
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
@@ -840,6 +859,9 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
     while let Ok(command) = commands.recv() {
         match command {
             DispatchMessage::Session(event) => dispatch_session_event(&state, event),
+            DispatchMessage::RefreshSession { session } => {
+                dispatch_refresh_session(&state, session)
+            }
             DispatchMessage::Select {
                 request_id,
                 session,
@@ -879,6 +901,15 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
             ServerMessage::Event(ServerEvent::HierarchyChanged(snapshot(state))),
         );
     }
+}
+
+fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
+    let session = state.sessions.lock().unwrap().get(&id).cloned();
+    let Some(session) = session else { return };
+    dashboard_try_send(
+        state,
+        ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
+    );
 }
 
 fn dispatch_select(
@@ -1172,6 +1203,12 @@ fn handle_request_with_id(
                 );
                 Response::Ok
             }),
+        Request::PauseSession { session } => state
+            .set_session_paused(session, true)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::ResumeSession { session } => state
+            .set_session_paused(session, false)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
         Request::Select { session, size } => {
             if !dashboard {
                 return error_response(
@@ -1205,7 +1242,7 @@ fn handle_request_with_id(
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
             match selected_session {
                 Some(session) => session.write(&bytes).map_or_else(
-                    |error| error_response(ErrorCode::Internal, error.to_string()),
+                    |error| error_response(input_error_code(&error), error_chain_string(&error)),
                     |_| Response::Ok,
                 ),
                 None => error_response(
@@ -1347,6 +1384,52 @@ fn error_for_lifecycle(error: anyhow::Error) -> Response {
     error_response(code, message)
 }
 
+fn input_error_code(error: &anyhow::Error) -> ErrorCode {
+    if error
+        .chain()
+        .any(|cause| cause.downcast_ref::<InputAdmissionError>().is_some())
+    {
+        ErrorCode::Conflict
+    } else {
+        ErrorCode::Internal
+    }
+}
+
+fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
+        .map_or(ErrorCode::Conflict, |failure| failure.code.clone())
+}
+
+fn combine_control_and_refresh(
+    id: SessionId,
+    control: Result<()>,
+    refresh: Result<()>,
+) -> Result<()> {
+    match (control, refresh) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(lifecycle_error(
+            ErrorCode::PartialFailure,
+            format!(
+                "session {} refresh failed: {}",
+                id.0,
+                error_chain_string(&error)
+            ),
+        )),
+        (Err(control), Err(refresh)) => Err(lifecycle_error(
+            lifecycle_code(&control),
+            format!(
+                "{}; session {} refresh failed: {}",
+                error_chain_string(&control),
+                id.0,
+                error_chain_string(&refresh)
+            ),
+        )),
+    }
+}
+
 fn error_chain_string(error: &anyhow::Error) -> String {
     let mut chain = error.chain().map(ToString::to_string);
     chain.next().map_or_else(String::new, |first| {
@@ -1395,9 +1478,12 @@ where
         .cloned()
         .collect::<Vec<_>>();
     if !kill
-        && sessions
-            .iter()
-            .any(|session| matches!(session.summary().phase, SessionPhase::Running))
+        && sessions.iter().any(|session| {
+            matches!(
+                session.summary().phase,
+                SessionPhase::Running | SessionPhase::Paused
+            )
+        })
     {
         return error_response(ErrorCode::SessionsRemain, "sessions remain");
     }
@@ -1658,28 +1744,38 @@ mod tests {
         dashboard: Option<Arc<DashboardSink>>,
         stream: Option<(Arc<()>, UnixStream)>,
     ) -> Arc<ServerState> {
+        test_state_with_dispatch(dashboard, stream).0
+    }
+
+    fn test_state_with_dispatch(
+        dashboard: Option<Arc<DashboardSink>>,
+        stream: Option<(Arc<()>, UnixStream)>,
+    ) -> (Arc<ServerState>, Receiver<DispatchMessage>) {
         let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-        let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
-        Arc::new(ServerState {
-            socket: PathBuf::from("/tmp/ovrcr-test.sock"),
-            registry_path: PathBuf::from("config.toml"),
-            registry: Mutex::new(Registry::default()),
-            sessions: Mutex::new(HashMap::new()),
-            selected: Mutex::new(None),
-            dashboard: Mutex::new(dashboard.clone()),
-            next_session_id: AtomicU64::new(1),
-            mutation_lock: Mutex::new(()),
-            dispatch,
-            shutdown: AtomicBool::new(false),
-            stopping: AtomicBool::new(false),
-            dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
-            dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
-                sink: dashboard.as_ref().unwrap().clone(),
-                identity,
-                stream,
-            })),
-        })
+        let (dispatch, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        (
+            Arc::new(ServerState {
+                socket: PathBuf::from("/tmp/ovrcr-test.sock"),
+                registry_path: PathBuf::from("config.toml"),
+                registry: Mutex::new(Registry::default()),
+                sessions: Mutex::new(HashMap::new()),
+                selected: Mutex::new(None),
+                dashboard: Mutex::new(dashboard.clone()),
+                next_session_id: AtomicU64::new(1),
+                mutation_lock: Mutex::new(()),
+                dispatch,
+                shutdown: AtomicBool::new(false),
+                stopping: AtomicBool::new(false),
+                dashboard_size: Mutex::new(None),
+                events: Mutex::new(Some(events)),
+                dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
+                    sink: dashboard.as_ref().unwrap().clone(),
+                    identity,
+                    stream,
+                })),
+            }),
+            receiver,
+        )
     }
 
     #[test]
@@ -1736,6 +1832,40 @@ mod tests {
 
         assert!(state.dashboard.lock().unwrap().is_some());
         assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+    }
+
+    #[test]
+    fn session_refresh_dispatch_failures_disconnect_without_blocking() {
+        let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+        let sink = DashboardSink::new();
+        let identity = Arc::new(());
+        let (state, dispatch_receiver) =
+            test_state_with_dispatch(Some(sink), Some((identity, server_stream)));
+        for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+            state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+        }
+        let started = Instant::now();
+        let error = state
+            .refresh_session_locked(SessionId(3))
+            .unwrap_err()
+            .to_string();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(error.contains("dispatcher queue is full"));
+        assert!(state.dashboard.lock().unwrap().is_none());
+        assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
+        drop(dispatch_receiver);
+
+        let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+        let sink = DashboardSink::new();
+        let identity = Arc::new(());
+        let state = test_state(Some(sink), Some((identity, server_stream)));
+        let error = state
+            .refresh_session_locked(SessionId(3))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("dispatcher is unavailable"));
+        assert!(state.dashboard.lock().unwrap().is_none());
+        assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
     }
 
     #[test]
@@ -1985,6 +2115,52 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_without_kill_rejects_paused_session() {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let session = Session::spawn(
+            SessionId(8),
+            crate::session::SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "paused".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec!["sh".into()],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+        )
+        .unwrap();
+        let dispatch_session = Arc::clone(&session);
+        let waiter = thread::spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                dispatch_session.apply_event(event);
+                if exited {
+                    break;
+                }
+            }
+        });
+        session.set_paused(true).unwrap();
+        let state = test_state(None, None);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SessionId(8), Arc::clone(&session));
+        assert!(matches!(
+            handle_shutdown(&state, false, |_| panic!("paused session was not guarded")),
+            Response::Error {
+                code: ErrorCode::SessionsRemain,
+                ..
+            }
+        ));
+        session.terminate(Duration::from_secs(2)).unwrap();
+        waiter.join().unwrap();
+    }
+
+    #[test]
     fn close_failure_retains_record_until_cleanup_can_finish() {
         let cwd = tempfile::tempdir().unwrap();
         let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
@@ -2003,7 +2179,7 @@ mod tests {
             events,
         )
         .unwrap();
-        let state = test_state(None, None);
+        let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
         state
             .sessions
             .lock()
