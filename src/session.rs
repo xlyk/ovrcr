@@ -568,9 +568,47 @@ mod tests {
 
     struct TerminationGuard(Arc<Session>);
 
+    impl TerminationGuard {
+        fn force_cleanup(&self) -> Result<()> {
+            let pgid = self.0.pgid;
+            if !group_exists(pgid)? {
+                return Ok(());
+            }
+            match verify_owned_group(&self.0) {
+                Ok(()) => {}
+                Err(_error) if !group_exists(pgid)? => return Ok(()),
+                Err(error) => return Err(error),
+            }
+            let _ = signal_group(pgid, libc::SIGTERM)?;
+            let _ = signal_group(pgid, libc::SIGCONT)?;
+            if wait_for_group_exit(pgid, Instant::now() + Duration::from_secs(2))? {
+                return Ok(());
+            }
+            if !group_exists(pgid)? {
+                return Ok(());
+            }
+            verify_owned_group(&self.0)?;
+            let _ = signal_group(pgid, libc::SIGKILL)?;
+            if !wait_for_group_exit(pgid, Instant::now() + Duration::from_secs(2))? {
+                bail!("test cleanup could not remove PTY process group {pgid}");
+            }
+            Ok(())
+        }
+    }
+
     impl Drop for TerminationGuard {
         fn drop(&mut self) {
-            let _ = self.0.terminate(Duration::from_millis(200));
+            let result = if thread::panicking() {
+                self.force_cleanup()
+            } else {
+                self.0.terminate(Duration::from_millis(200))
+            };
+            if let Err(error) = result {
+                eprintln!(
+                    "session test cleanup failed for process group {}: {error}",
+                    self.0.pgid
+                );
+            }
         }
     }
 
@@ -724,6 +762,7 @@ mod tests {
             tx,
         )
         .unwrap();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
         let dispatcher = dispatch_test_events(session.clone(), rx);
 
         assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
