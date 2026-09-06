@@ -366,7 +366,10 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
     let numeric_id: u64 = id.parse().unwrap();
     fixture.wait_text(&id, "READY");
 
-    fixture.ok(&["pause", &id]);
+    assert_eq!(
+        fixture.json(&["pause", &id]),
+        serde_json::json!({"ok": true})
+    );
     let paused = fixture.json(&["terminal", "list"]);
     let paused = paused
         .as_array()
@@ -385,7 +388,10 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
         "Conflict"
     );
 
-    fixture.ok(&["resume", &id]);
+    assert_eq!(
+        fixture.json(&["resume", &id]),
+        serde_json::json!({"ok": true})
+    );
     fixture.ok(&["terminal", "send", &id, "--text", "hello"]);
     fixture.wait_text(&id, "ACK:hello");
     fixture.ok(&["terminal", "close", &id]);

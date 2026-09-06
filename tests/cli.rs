@@ -167,6 +167,8 @@ branch = "feature/one"
         &["terminal", "read", "99", "--json"],
         &["terminal", "send", "99", "--text", "hello", "--json"],
         &["terminal", "close", "99", "--json"],
+        &["pause", "99", "--json"],
+        &["resume", "99", "--json"],
     ] {
         let output = isolated_command(&root).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
