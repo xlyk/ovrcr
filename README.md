@@ -75,6 +75,30 @@ Detaching leaves the server, PTYs, and child process groups running. Run
 screen. Reattach works while the original dashboard is gone; the MVP does not
 restore a PTY after a server crash or reboot.
 
+## Command palette
+
+Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
+command palette. The GUI also supports `Cmd-K`. Type to filter actions or
+search a terminal by its project, workspace, and name. Use the arrow keys to
+select a result, Enter to continue, and Escape to cancel.
+
+The palette can create and switch terminals, create workspaces, register
+projects, close terminals, and remove workspaces or projects. Forms prefill
+the selected terminal's project and workspace. Tab or the arrow keys move
+between fields; Enter advances to the next field and submits at the last
+field. Ctrl-u clears a field; Backspace deletes its last character.
+
+For terminal creation, leave Command blank to start `$SHELL` (or `/bin/sh`
+when unset). A supplied command runs through `/bin/sh -lc`, so quoting and
+shell arguments work. For workspace creation, enter a base to create a new
+branch, or clear Base to use an existing branch. Project registration takes
+the repository and workspace-root paths.
+
+Close and remove actions show their target and require confirmation. Existing
+server safeguards still apply: workspaces must have no terminal records and
+a clean worktree before removal. Errors remain in the palette, with form
+values retained. Input stays in the palette while it is open.
+
 ## Control terminals from scripts
 
 The `project`, `workspace`, and `terminal` groups also accept the plural names
