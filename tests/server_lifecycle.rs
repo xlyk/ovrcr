@@ -11,6 +11,7 @@ use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +40,12 @@ fn hook_child_report_helper() {
     .expect("write private hook identity");
 
     let mut stream = UnixStream::connect(&socket).expect("connect hook socket");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set hook read deadline");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .expect("set hook write deadline");
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -407,6 +414,28 @@ fn agent_hook_startup_registration_is_visible() {
     wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
     assert!(wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
+}
+
+#[test]
+fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let socket = fixture.socket.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = fixture.create_hook_child("failed-ack", "agent-hook-failure");
+        assert_eq!("HOOK_READY", "missing acknowledgement");
+    }));
+    assert!(result.is_err());
+    let pgid = fixture
+        .process_groups
+        .lock()
+        .unwrap()
+        .last()
+        .copied()
+        .expect("failed handshake child ownership was recorded");
+    drop(fixture);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(!socket.exists());
 }
 
 #[test]
@@ -3535,28 +3564,84 @@ impl ControlFixture {
     fn join(&self) {
         self.thread.lock().unwrap().take().unwrap().join().unwrap();
     }
+
+    fn join_bounded(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let finished = self
+                .thread
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|handle| handle.is_finished())
+                .unwrap_or(true);
+            if finished {
+                let handle = self.thread.lock().unwrap().take();
+                return handle.map(|handle| handle.join().is_ok()).unwrap_or(true);
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    }
+
+    fn kill_owned_groups(&self) -> bool {
+        let groups = self.process_groups.lock().unwrap().clone();
+        let mut cleaned = true;
+        for pgid in groups {
+            if !group_exists(pgid) {
+                continue;
+            }
+            if unsafe { libc::kill(-pgid, libc::SIGKILL) } != 0 && group_exists(pgid) {
+                cleaned = false;
+                continue;
+            }
+            if !wait_group_absent(pgid, Duration::from_secs(2)) {
+                cleaned = false;
+            }
+        }
+        cleaned
+    }
 }
 
 impl Drop for ControlFixture {
     fn drop(&mut self) {
-        let thread = self.thread.get_mut().unwrap().take();
-        if let Some(thread) = thread {
-            let _ = request_with_timeout(
+        let mut cleanup_failed = false;
+        if self.thread.get_mut().unwrap().is_some() {
+            let shutdown = request_with_timeout(
                 &self.socket,
                 999,
                 Request::Shutdown { kill: true },
-                Duration::from_millis(500),
+                self.request_timeout.unwrap_or(Duration::from_secs(2)),
             );
-            let _ = thread.join();
-        }
-        let groups = self.process_groups.get_mut().unwrap();
-        for pgid in groups.iter().copied() {
-            if group_exists(pgid) {
-                unsafe {
-                    libc::kill(-pgid, libc::SIGKILL);
-                }
-                let _ = wait_group_absent(pgid, Duration::from_secs(2));
+            if shutdown != Some(Response::Ok) {
+                eprintln!("control fixture shutdown response: {shutdown:?}");
+                cleanup_failed = true;
             }
+        }
+        if !self.kill_owned_groups() {
+            cleanup_failed = true;
+        }
+        if self.thread.get_mut().unwrap().is_some() && !self.join_bounded(Duration::from_secs(2)) {
+            cleanup_failed = true;
+        }
+        if !self
+            .process_groups
+            .get_mut()
+            .unwrap()
+            .iter()
+            .copied()
+            .all(|pgid| !group_exists(pgid))
+        {
+            cleanup_failed = true;
+        }
+        if cleanup_failed {
+            let kept = std::mem::replace(&mut self._root, tempfile::tempdir().unwrap()).keep();
+            eprintln!(
+                "control fixture cleanup incomplete; preserved {}",
+                kept.display()
+            );
         }
     }
 }
