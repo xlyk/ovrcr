@@ -2745,6 +2745,12 @@ mod tests {
             Some(signal_result_hook),
         )
         .unwrap();
+        let original_pgid = {
+            let pid = session.summary().pid.expect("live session PID");
+            let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+            assert_eq!(pgid, pid as libc::pid_t);
+            pgid
+        };
         let event_session = Arc::clone(&session);
         let waiter = thread::spawn(move || {
             while let Ok(event) = receiver.recv() {
@@ -2767,6 +2773,7 @@ mod tests {
             Arc::clone(&session),
             Arc::clone(&refuse_sigcont),
             Arc::clone(&state),
+            original_pgid,
             waiter,
             dispatcher,
         );
@@ -2805,6 +2812,87 @@ mod tests {
 
         assert!(cleanup.finish());
         state.remove_session(SessionId(71)).unwrap();
+    }
+
+    #[test]
+    fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let session = Session::spawn_with_test_hooks(
+            SessionId(72),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "exited-leader".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "(trap '' HUP; while :; do sleep 1; done) & printf READY; kill -KILL $$".into(),
+                ],
+                hook_env: None,
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let original_pgid = {
+            let pid = session.summary().pid.expect("live session PID");
+            let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+            assert_eq!(pgid, pid as libc::pid_t);
+            pgid
+        };
+        let event_session = Arc::clone(&session);
+        let waiter = thread::spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                event_session.apply_event(event);
+                if exited {
+                    break;
+                }
+            }
+        });
+        let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SessionId(72), Arc::clone(&session));
+        let dispatcher_state = Arc::clone(&state);
+        let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+        let refuse_sigcont = Arc::new(AtomicBool::new(false));
+        let mut cleanup = KillFailureCleanup::new(
+            Arc::clone(&session),
+            refuse_sigcont,
+            Arc::clone(&state),
+            original_pgid,
+            waiter,
+            dispatcher,
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while test_pid_exists(original_pgid) && Instant::now() < deadline {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        assert!(!test_pid_exists(original_pgid));
+        assert!(test_group_exists(original_pgid));
+        session.apply_event(SessionEvent::Exited {
+            id: SessionId(72),
+            phase: SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            },
+        });
+        assert!(session.summary().pid.is_none());
+        assert!(cleanup.finish());
+        assert!(wait_test_group_absent(
+            original_pgid,
+            Duration::from_secs(2)
+        ));
+        assert!(!test_group_exists(original_pgid));
     }
 
     #[test]
@@ -2945,9 +3033,19 @@ mod tests {
             dashboard_slot: Mutex::new(None),
         });
         let dispatcher_state = Arc::clone(&state);
-        let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+        let dispatcher_finished = Arc::new(AtomicBool::new(false));
+        let dispatcher_done = Arc::clone(&dispatcher_finished);
+        let dispatcher = thread::spawn(move || {
+            run_dispatcher(dispatcher_state, dispatch_receiver);
+            dispatcher_done.store(true, Ordering::Release);
+        });
         let bridge_dispatch = dispatch.clone();
-        let bridge = thread::spawn(move || bridge_events(event_receiver, bridge_dispatch));
+        let bridge_finished = Arc::new(AtomicBool::new(false));
+        let bridge_done = Arc::clone(&bridge_finished);
+        let bridge = thread::spawn(move || {
+            bridge_events(event_receiver, bridge_dispatch);
+            bridge_done.store(true, Ordering::Release);
+        });
         let (gate, entered) = RegistrationGate::new();
         let identity = root.path().join("held-identity");
         let ready: Arc<dyn Fn() + Send + Sync> = {
@@ -2977,7 +3075,13 @@ mod tests {
                 creator_ready,
             )
         });
-        let mut cleanup = RegistrationCleanup::new(Arc::clone(&gate), Arc::clone(&state), creator);
+        let mut cleanup = RegistrationCleanup::new(
+            Arc::clone(&gate),
+            Arc::clone(&state),
+            creator,
+            dispatcher,
+            bridge,
+        );
         entered.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(
             state.sessions.try_lock().is_err(),
@@ -3025,36 +3129,19 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(session.summary().activity, AgentActivity::Busy);
-        state
-            .kill_session(summary.id, Duration::from_millis(200))
-            .unwrap();
-        session.wait_until_exited(Duration::from_secs(2)).unwrap();
-        let _ = dispatch.send(DispatchMessage::Stop);
-        dispatcher.join().unwrap();
-        state.events.lock().unwrap().take();
-        drop(dispatch);
-        bridge.join().unwrap();
-    }
-
-    #[test]
-    fn registration_cleanup_releases_gate_on_assertion_failure() {
-        let (gate, entered) = RegistrationGate::new();
-        let finished = Arc::new(AtomicBool::new(false));
-        let creator_gate = Arc::clone(&gate);
-        let creator_finished = Arc::clone(&finished);
-        let creator = thread::spawn(move || {
-            creator_gate.wait();
-            creator_finished.store(true, Ordering::Release);
-            Err(anyhow::anyhow!("intentional registration failure"))
-        });
-        let state = test_state(None, None);
+        let original_pgid = summary.pid.expect("creator returned live session") as libc::pid_t;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _cleanup = RegistrationCleanup::new(Arc::clone(&gate), state, creator);
-            entered.recv_timeout(Duration::from_secs(2)).unwrap();
-            panic!("intentional registration assertion failure");
+            assert_eq!(session.summary().activity, AgentActivity::Busy);
+            panic!("intentional registration post-join assertion failure");
         }));
         assert!(result.is_err());
-        assert!(finished.load(Ordering::Acquire));
+        drop(cleanup);
+        assert!(wait_test_group_absent(
+            original_pgid,
+            Duration::from_secs(2)
+        ));
+        assert!(dispatcher_finished.load(Ordering::Acquire));
+        assert!(bridge_finished.load(Ordering::Acquire));
     }
 
     fn parse_test_capability(value: &str) -> [u8; 32] {
@@ -3120,6 +3207,10 @@ mod tests {
         gate: Arc<RegistrationGate>,
         state: Arc<ServerState>,
         creator: Option<JoinHandle<Result<SessionSummary>>>,
+        summary: Option<SessionSummary>,
+        dispatcher: Option<JoinHandle<()>>,
+        bridge: Option<JoinHandle<()>>,
+        complete: bool,
     }
 
     impl RegistrationCleanup {
@@ -3127,28 +3218,94 @@ mod tests {
             gate: Arc<RegistrationGate>,
             state: Arc<ServerState>,
             creator: JoinHandle<Result<SessionSummary>>,
+            dispatcher: JoinHandle<()>,
+            bridge: JoinHandle<()>,
         ) -> Self {
             Self {
                 gate,
                 state,
                 creator: Some(creator),
+                summary: None,
+                dispatcher: Some(dispatcher),
+                bridge: Some(bridge),
+                complete: false,
             }
         }
 
         fn join_creator(&mut self) -> Result<SessionSummary> {
-            self.creator
+            let creator = self
+                .creator
+                .as_ref()
+                .context("registration creator missing")?;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !creator.is_finished() && Instant::now() < deadline {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            if !creator.is_finished() {
+                bail!("registration creator did not finish before deadline");
+            }
+            let result = self
+                .creator
                 .take()
                 .context("registration creator missing")?
                 .join()
-                .map_err(|_| anyhow::anyhow!("registration creator panicked"))?
+                .map_err(|_| anyhow::anyhow!("registration creator panicked"))??;
+            self.summary = Some(result.clone());
+            Ok(result)
         }
-    }
 
-    impl Drop for RegistrationCleanup {
-        fn drop(&mut self) {
+        fn cleanup(&mut self) -> bool {
+            if self.complete {
+                return true;
+            }
             self.gate.cancel();
+            let mut cleaned = self.finish_creator();
+            if let Some(summary) = self.summary.as_ref() {
+                let session = self
+                    .state
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&summary.id)
+                    .cloned();
+                if let Some(session) = session
+                    && session.terminate(Duration::from_secs(2)).is_err()
+                {
+                    cleaned = false;
+                }
+            }
+            self.state.events.lock().unwrap().take();
+            if self.dispatcher.is_some() {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                loop {
+                    match self.state.dispatch.try_send(DispatchMessage::Stop) {
+                        Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => break,
+                        Err(mpsc::TrySendError::Full(_)) if Instant::now() < deadline => {
+                            thread::park_timeout(Duration::from_millis(5));
+                        }
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            cleaned = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !join_test_thread_slot(&mut self.dispatcher, Duration::from_secs(2)) {
+                cleaned = false;
+            }
+            if !join_test_thread_slot(&mut self.bridge, Duration::from_secs(2)) {
+                cleaned = false;
+            }
+            if cleaned {
+                self.summary = None;
+                self.complete = true;
+            }
+            cleaned
+        }
+
+        fn finish_creator(&mut self) -> bool {
             let Some(creator) = self.creator.take() else {
-                return;
+                return true;
             };
             let deadline = Instant::now() + Duration::from_secs(2);
             while !creator.is_finished() && Instant::now() < deadline {
@@ -3156,25 +3313,33 @@ mod tests {
             }
             if !creator.is_finished() {
                 eprintln!("registration cleanup did not finish creator before deadline");
-                return;
+                self.creator = Some(creator);
+                return false;
             }
             let Ok(result) = creator.join() else {
                 eprintln!("registration cleanup creator panicked");
-                return;
+                return false;
             };
-            let Ok(summary) = result else {
-                return;
-            };
-            let session = self
-                .state
-                .sessions
-                .lock()
-                .unwrap()
-                .get(&summary.id)
-                .cloned();
-            if let Some(session) = session {
-                if session.terminate(Duration::from_secs(2)).is_err() {
-                    eprintln!("registration cleanup could not terminate child group");
+            match result {
+                Ok(summary) => {
+                    self.summary = Some(summary);
+                    true
+                }
+                Err(_) => true,
+            }
+        }
+    }
+
+    impl Drop for RegistrationCleanup {
+        fn drop(&mut self) {
+            if !self.complete
+                && (self.creator.is_some()
+                    || self.summary.is_some()
+                    || self.dispatcher.is_some()
+                    || self.bridge.is_some())
+            {
+                if !self.cleanup() {
+                    eprintln!("registration cleanup did not complete before its deadlines");
                 }
             }
         }
@@ -3184,6 +3349,7 @@ mod tests {
         session: Arc<Session>,
         refuse_sigcont: Arc<AtomicBool>,
         state: Arc<ServerState>,
+        original_pgid: libc::pid_t,
         waiter: Option<JoinHandle<()>>,
         dispatcher: Option<JoinHandle<()>>,
     }
@@ -3193,6 +3359,7 @@ mod tests {
             session: Arc<Session>,
             refuse_sigcont: Arc<AtomicBool>,
             state: Arc<ServerState>,
+            original_pgid: libc::pid_t,
             waiter: JoinHandle<()>,
             dispatcher: JoinHandle<()>,
         ) -> Self {
@@ -3200,6 +3367,7 @@ mod tests {
                 session,
                 refuse_sigcont,
                 state,
+                original_pgid,
                 waiter: Some(waiter),
                 dispatcher: Some(dispatcher),
             }
@@ -3211,8 +3379,12 @@ mod tests {
 
         fn cleanup(&mut self) -> bool {
             self.refuse_sigcont.store(false, Ordering::Release);
-            let mut cleaned = self.session.terminate(Duration::from_secs(2)).is_ok();
-            if !cleaned {
+            let group_present = test_group_exists(self.original_pgid);
+            let exited_with_group = group_present
+                && matches!(self.session.summary().phase, SessionPhase::Exited { .. });
+            let mut cleaned =
+                !exited_with_group && self.session.terminate(Duration::from_secs(2)).is_ok();
+            if !cleaned || test_group_exists(self.original_pgid) {
                 cleaned = self.force_kill_owned_group()
                     && self
                         .session
@@ -3249,10 +3421,7 @@ mod tests {
         }
 
         fn force_kill_owned_group(&self) -> bool {
-            let Some(pid) = self.session.summary().pid else {
-                return false;
-            };
-            let pgid = pid as libc::pid_t;
+            let pgid = self.original_pgid;
             if pgid <= 1 {
                 return false;
             }
@@ -3296,5 +3465,49 @@ mod tests {
             thread::park_timeout(Duration::from_millis(5));
         }
         handle.join().is_ok()
+    }
+
+    fn join_test_thread_slot(handle: &mut Option<JoinHandle<()>>, timeout: Duration) -> bool {
+        let Some(handle_ref) = handle.as_ref() else {
+            return true;
+        };
+        let deadline = Instant::now() + timeout;
+        while !handle_ref.is_finished() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        handle.take().unwrap().join().is_ok()
+    }
+
+    fn test_group_exists(pgid: libc::pid_t) -> bool {
+        if pgid <= 1 {
+            return false;
+        }
+        let result = unsafe { libc::kill(-pgid, 0) };
+        if result == 0 {
+            return true;
+        }
+        io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    fn test_pid_exists(pid: libc::pid_t) -> bool {
+        if pid <= 1 {
+            return false;
+        }
+        let result = unsafe { libc::kill(pid, 0) };
+        result == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    fn wait_test_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while test_group_exists(pgid) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        true
     }
 }
