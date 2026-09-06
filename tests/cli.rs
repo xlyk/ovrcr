@@ -1,7 +1,10 @@
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    AgentReport, AgentUpdate, ClientMessage, Request, Response, ServerMessage, read_frame,
+    write_frame,
+};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::os::unix::net::UnixStream;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use std::time::{Duration, Instant};
 
@@ -11,6 +14,149 @@ fn isolated_command(root: &tempfile::TempDir) -> Command {
         .env("OVRCR_CONFIG", root.path().join("config.toml"))
         .env("OVRCR_SOCKET", root.path().join("server.sock"));
     command
+}
+
+#[test]
+fn agent_hook_cli_requires_identity_without_starting_server() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(&root)
+        .args([
+            "--json",
+            "report",
+            "activity",
+            "--state",
+            "busy",
+            "--sequence",
+            "1",
+        ])
+        .env_remove("OVRCR_HOOK_SOCKET")
+        .env_remove("OVRCR_SESSION_ID")
+        .env_remove("OVRCR_HOOK_TOKEN")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("hook identity"));
+    assert!(!root.path().join("server.sock").exists());
+    assert!(!root.path().join("config.toml").exists());
+}
+
+#[test]
+fn agent_hook_cli_reaches_managed_session() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("hook.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = accept_with_deadline(&listener);
+        let message = read_frame::<ClientMessage>(&mut stream).unwrap();
+        assert_eq!(message.request_id, 1);
+        assert_eq!(
+            message.request,
+            Request::AgentReport(AgentReport {
+                session: SessionId(7),
+                capability: [0xab; 32],
+                sequence: Some(1),
+                update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+            })
+        );
+        write_frame(
+            &mut stream,
+            &ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+        )
+        .unwrap();
+    });
+    let output = isolated_command(&root)
+        .args([
+            "--json",
+            "report",
+            "activity",
+            "--state",
+            "busy",
+            "--sequence",
+            "1",
+        ])
+        .env("OVRCR_HOOK_SOCKET", &socket)
+        .env("OVRCR_SESSION_ID", "7")
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn agent_hook_cli_timeout_is_bounded() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("hook.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = accept_with_deadline(&listener);
+        let _ = read_frame::<ClientMessage>(&mut stream).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            std::thread::park_timeout(Duration::from_millis(5));
+        }
+    });
+    let started = Instant::now();
+    let output = isolated_command(&root)
+        .args(["report", "activity", "--state", "busy"])
+        .env("OVRCR_HOOK_SOCKET", &socket)
+        .env("OVRCR_SESSION_ID", "7")
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    server.join().unwrap();
+    assert!(!output.status.success());
+    assert!(elapsed < Duration::from_secs(2));
+    assert!(output.stdout.is_empty());
+
+    let mut command = isolated_command(&root);
+    command
+        .args(["report", "claude", "--stdin-json"])
+        .env("OVRCR_HOOK_SOCKET", &socket)
+        .env("OVRCR_SESSION_ID", "7")
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = Instant::now();
+    let mut child = command.spawn().unwrap();
+    let held_open = child.stdin.take().unwrap();
+    let output = child.wait_with_output().unwrap();
+    drop(held_open);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
+fn accept_with_deadline(
+    listener: &std::os::unix::net::UnixListener,
+) -> (UnixStream, std::os::unix::net::SocketAddr) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match listener.accept() {
+            Ok(pair) => return pair,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(
+                    Instant::now() < deadline,
+                    "listener did not receive hook report"
+                );
+                std::thread::park_timeout(Duration::from_millis(5));
+            }
+            Err(error) => panic!("accept hook report: {error}"),
+        }
+    }
 }
 
 #[test]

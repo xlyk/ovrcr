@@ -2,16 +2,18 @@ use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord};
 use ovrcr::protocol::{
-    BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
+    AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
     ServerMessage, read_frame, write_frame,
 };
+use ovrcr::report;
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
-use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
+use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary};
 use ovrcr::tui::run_dashboard;
 use serde_json::{Value, json};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "ovrcr")]
@@ -58,6 +60,26 @@ enum Command {
     Shutdown {
         #[arg(long)]
         kill: bool,
+    },
+    Report {
+        #[command(subcommand)]
+        command: ReportCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReportCommand {
+    Activity {
+        #[arg(long, value_parser = parse_activity_state)]
+        state: AgentActivity,
+        #[arg(long)]
+        sequence: Option<u64>,
+    },
+    Claude {
+        #[arg(long)]
+        stdin_json: bool,
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -272,6 +294,67 @@ fn run(cli: Cli) -> AppResult<()> {
             },
             json_output,
         ),
+        Command::Report { command } => run_report(command),
+    }
+}
+
+fn run_report(command: ReportCommand) -> AppResult<()> {
+    match command {
+        ReportCommand::Activity { state, sequence } => {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            report::send_report(AgentUpdate::Activity(state), sequence, deadline)
+                .map_err(report_runtime_error)
+        }
+        ReportCommand::Claude {
+            stdin_json,
+            verbose,
+        } => run_report_claude(stdin_json, verbose),
+    }
+}
+
+fn run_report_claude(stdin_json: bool, verbose: bool) -> AppResult<()> {
+    if !stdin_json {
+        return Err(RuntimeError::new(
+            ErrorCode::InvalidRequest,
+            "--stdin-json is required",
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let input = match report::read_hook_stdin(deadline) {
+        Ok(input) => input,
+        Err(_) => {
+            if verbose {
+                eprintln!("hook adapter: stdin unavailable or timed out");
+            }
+            return Ok(());
+        }
+    };
+    let activity = match report::claude_activity(&input) {
+        Ok(activity) => activity,
+        Err(_) => {
+            if verbose {
+                eprintln!("hook adapter: provider input invalid");
+            }
+            return Ok(());
+        }
+    };
+    let Some(activity) = activity else {
+        return Ok(());
+    };
+    if report::send_report(AgentUpdate::Activity(activity), None, deadline).is_err() && verbose {
+        eprintln!("hook adapter: report transport failed");
+    }
+    Ok(())
+}
+
+fn report_runtime_error(error: anyhow::Error) -> RuntimeError {
+    if let Some(report_error) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<report::ReportError>())
+    {
+        RuntimeError::new(report_error.code(), report_error.to_string())
+    } else {
+        RuntimeError::new(ErrorCode::Internal, "hook report failed")
     }
 }
 
@@ -828,5 +911,16 @@ fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
         Err("must be greater than zero".to_owned())
     } else {
         Ok(value)
+    }
+}
+
+fn parse_activity_state(value: &str) -> std::result::Result<AgentActivity, String> {
+    match value {
+        "unknown" => Ok(AgentActivity::Unknown),
+        "idle" => Ok(AgentActivity::Idle),
+        "busy" => Ok(AgentActivity::Busy),
+        "waiting-input" => Ok(AgentActivity::WaitingInput),
+        "error" => Ok(AgentActivity::Error),
+        _ => Err("must be one of: unknown, idle, busy, waiting-input, error".into()),
     }
 }

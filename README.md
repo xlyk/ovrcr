@@ -186,6 +186,63 @@ Runtime errors exit 1 and, with `--json`, write an
 results go to stdout. Argument errors retain normal help diagnostics and exit
 2, including with `--json`.
 
+### Agent hook reporting
+
+Managed sessions receive `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
+`OVRCR_HOOK_TOKEN` in their child environment. A provider hook can report an
+explicit activity state with:
+
+```sh
+ovrcr report activity --state busy --sequence 1
+ovrcr report activity --state waiting-input --sequence 2
+ovrcr report activity --state idle --sequence 3
+```
+
+The report command requires those inherited identity variables, uses only the
+inherited hook socket, and has a one-second total deadline. Successful reports
+are silent, including with `--json`. The accepted states are `unknown`, `idle`,
+`busy`, `waiting-input`, and `error`.
+
+Claude Code command hooks can translate supported hook events into activity
+reports. Add these entries manually to the existing `~/.claude/settings.json`;
+retain unrelated settings and handlers. If `ovrcr` is not on the provider's
+`PATH`, replace it with the installed absolute OVRCR path.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PreToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PermissionRequest": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PostToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PostToolUseFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "Stop": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "StopFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "SessionEnd": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}]
+  }
+}
+```
+
+The adapter reads only the provider JSON on standard input. It maps
+`SessionStart` and `Stop` to `idle`, prompt and tool events to `busy`,
+`PermissionRequest` to `waiting-input`, `StopFailure` to `error`, and
+`SessionEnd` to `unknown`. Events containing `agent_id`, unknown events, and
+notifications are ignored. Malformed input, an unavailable server, and report
+timeouts are fail-open and produce no stdout; add `--verbose` for a bounded
+diagnostic on stderr.
+
+Start each root provider process as its own managed session so its inherited
+capability identifies the correct PTY:
+
+```sh
+ovrcr new --project demo --workspace hooks --name agent -- claude
+```
+
+Do not share one OVRCR PTY between independent agent roots. To uninstall,
+remove only these handlers from the existing settings file and restart the
+agent session. OVRCR does not install or modify provider settings.
+
 ### Upgrading a running server
 
 The new control commands require the updated server binary. An already-running
@@ -342,7 +399,7 @@ Future additions, with priorities and release dates still to be decided:
 - [ ] Historical scrollback to revisit output beyond the current screen.
 - [ ] Copy mode to select and copy terminal output with the keyboard.
 - [x] Pause and resume controls for sessions.
-- [ ] Agent hooks to report agent-specific activity and status.
+- [x] Agent hooks to report agent-specific activity and status.
 - [ ] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
 - [ ] Multiple dashboards connected to the same server.
