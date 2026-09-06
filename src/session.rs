@@ -1178,6 +1178,12 @@ mod tests {
                 .apply_agent_report(&report(capability, Some(2), AgentActivity::Busy))
                 .unwrap()
         );
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(2), AgentActivity::Idle))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
         session.set_paused(true).unwrap();
         assert!(
             session

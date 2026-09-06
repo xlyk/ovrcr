@@ -1932,13 +1932,21 @@ mod tests {
                 }
             }
         });
+        let expected_identity = expected.to_string_lossy().into_owned();
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !identity.exists() && Instant::now() < deadline {
+        let mut identity_contents = None;
+        while Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(&identity) {
+                if contents == expected_identity {
+                    identity_contents = Some(contents);
+                    break;
+                }
+            }
             thread::park_timeout(Duration::from_millis(5));
         }
         assert_eq!(
-            std::fs::read_to_string(&identity).unwrap(),
-            expected.to_string_lossy()
+            identity_contents.as_deref(),
+            Some(expected_identity.as_str())
         );
         session.wait_until_exited(Duration::from_secs(2)).unwrap();
         event_thread.join().unwrap();
@@ -3102,10 +3110,31 @@ mod tests {
             "registration must hold sessions guard while Session::spawn is paused"
         );
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !identity.exists() && Instant::now() < deadline {
+        let mut identity_contents = None;
+        while Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(&identity) {
+                let mut identity_lines = contents.lines();
+                let complete = match (
+                    identity_lines.next(),
+                    identity_lines.next(),
+                    identity_lines.next(),
+                ) {
+                    (Some(session_id), Some(capability), None) => {
+                        session_id.parse::<u64>().is_ok()
+                            && capability.len() == 64
+                            && capability.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    }
+                    _ => false,
+                };
+                if complete {
+                    identity_contents = Some(contents);
+                    break;
+                }
+            }
             thread::park_timeout(Duration::from_millis(5));
         }
-        let identity_contents = std::fs::read_to_string(&identity).unwrap();
+        let identity_contents =
+            identity_contents.expect("managed identity contents did not complete");
         let mut identity_lines = identity_contents.lines();
         let session_id = identity_lines
             .next()

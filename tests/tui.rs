@@ -268,6 +268,60 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
 }
 
 #[test]
+fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(1));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let metadata = |terminal: &Terminal<TestBackend>| {
+        (40..120)
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    };
+
+    for (activity, expected) in [
+        (
+            AgentActivity::Unknown,
+            "pid: 111  elapsed: 0m  agent unknown",
+        ),
+        (AgentActivity::Idle, "pid: 111  elapsed: 0m  agent idle"),
+        (AgentActivity::Busy, "pid: 111  elapsed: 0m  agent busy"),
+        (
+            AgentActivity::WaitingInput,
+            "pid: 111  elapsed: 0m  agent waiting input",
+        ),
+        (AgentActivity::Error, "pid: 111  elapsed: 0m  agent error"),
+    ] {
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = activity;
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Running;
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        assert_eq!(metadata(&terminal), expected);
+    }
+
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Paused;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        metadata(&terminal),
+        "pid: 111  elapsed: 0m  agent error  paused"
+    );
+
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].pid = None;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m");
+}
+
+#[test]
 fn agent_hook_sidebar_states_are_literal() {
     let mut dashboard = dashboard_fixture();
     dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity = AgentActivity::Unknown;

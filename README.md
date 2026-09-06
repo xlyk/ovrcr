@@ -70,8 +70,11 @@ Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
 their status slot blank; busy sessions animate the braille spinner, waiting
 sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
 blank and are dimmed. The selected metadata line shows `pid: closed` after the
-managed process exits. Terminal output, elapsed silence, keyboard input, and
-process liveness do not imply that an agent is busy or idle.
+managed process exits. Live selected metadata labels the same observation as
+`agent unknown`, `agent idle`, `agent busy`, `agent waiting input`, or
+`agent error`; paused sessions retain their last label and add `paused`, while
+exited sessions omit the live activity label. Terminal output, elapsed silence,
+keyboard input, and process liveness do not imply that an agent is busy or idle.
 In Browse mode, press `p` to pause the selected live session or `r` to resume
 it. The server is authoritative for the phase, so a paused row is shown only
 after the server's session refresh is applied. Enter on a paused row stays in Browse
@@ -209,10 +212,12 @@ inherited hook socket, and has a one-second total deadline. Successful reports
 are silent, including with `--json`. The accepted states are `unknown`, `idle`,
 `busy`, `waiting-input`, and `error`. OVRCR retains the last accepted report in
 memory and exposes that observation after dashboard detach and reconnect.
-Receipt-order reports are accepted in arrival order; sequenced reports must
-advance their session sequence. This provides ordering checks, without causal
-ordering, exactly-once delivery, health claims, retries, or an implicit timeout
-meaning for provider work.
+Receipt-order reports are accepted in arrival order; omitting `--sequence`
+selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects
+sequenced mode, which must advance its session sequence; the two modes cannot
+mix, and sequence counters cannot restart between turns. This provides ordering
+checks, without causal ordering, exactly-once delivery, health claims, retries,
+or an implicit timeout meaning for provider work.
 
 Claude Code command hooks can translate supported hook events into activity
 reports. Add these entries manually to the existing `~/.claude/settings.json`;
@@ -415,7 +420,7 @@ Future additions, with priorities and release dates still to be decided:
 - [ ] Historical scrollback to revisit output beyond the current screen.
 - [ ] Copy mode to select and copy terminal output with the keyboard.
 - [x] Pause and resume controls for sessions.
-- [x] Agent hooks to report agent-specific activity and status.
+- [ ] Agent hooks to report agent-specific activity and status.
 - [ ] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
 - [ ] Multiple dashboards connected to the same server.

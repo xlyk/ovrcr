@@ -49,7 +49,6 @@ fn report_error(code: ErrorCode, failure: ReportFailure) -> anyhow::Error {
     anyhow::Error::new(ReportError { code, failure })
 }
 
-#[derive(Debug)]
 struct HookIdentity {
     socket: std::path::PathBuf,
     session: SessionId,

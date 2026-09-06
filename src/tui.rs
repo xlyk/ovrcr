@@ -1371,6 +1371,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     .pid
                     .map_or_else(|| "—".to_string(), |pid| pid.to_string())
             };
+            let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                Span::raw("")
+            } else {
+                let label = match session.activity {
+                    AgentActivity::Unknown => "agent unknown",
+                    AgentActivity::Idle => "agent idle",
+                    AgentActivity::Busy => "agent busy",
+                    AgentActivity::WaitingInput => "agent waiting input",
+                    AgentActivity::Error => "agent error",
+                };
+                Span::styled(format!("  {label}"), Style::default().fg(TEAL))
+            };
             Line::from(vec![
                 Span::styled("pid: ", Style::default().fg(MUTED)),
                 Span::styled(pid, Style::default().fg(TEAL)),
@@ -1379,6 +1391,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     format_elapsed_at(session.started_unix_ms, now_unix_ms),
                     Style::default().fg(TEAL),
                 ),
+                activity,
                 if matches!(session.phase, SessionPhase::Paused) {
                     Span::styled("  paused", Style::default().fg(PEACH))
                 } else {
