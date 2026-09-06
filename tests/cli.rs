@@ -1,8 +1,9 @@
 use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
 use ovrcr::session::{SessionId, SessionPhase};
-use std::io::Write;
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
 use std::time::{Duration, Instant};
 
@@ -12,6 +13,61 @@ fn isolated_command(root: &tempfile::TempDir) -> Command {
         .env("OVRCR_CONFIG", root.path().join("config.toml"))
         .env("OVRCR_SOCKET", root.path().join("server.sock"));
     command
+}
+
+struct CapturedChild {
+    child: Child,
+    stdout: File,
+    stderr: File,
+}
+
+fn spawn_captured(mut command: Command) -> io::Result<CapturedChild> {
+    let stdout = tempfile::tempfile()?;
+    let stderr = tempfile::tempfile()?;
+    command
+        .stdout(stdout.try_clone()?)
+        .stderr(stderr.try_clone()?);
+    Ok(CapturedChild {
+        child: command.spawn()?,
+        stdout,
+        stderr,
+    })
+}
+
+fn captured_bytes(file: &File) -> io::Result<Vec<u8>> {
+    let mut file = file.try_clone()?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.take(65_536).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+fn wait_captured(captured: &mut CapturedChild, deadline: Instant) -> io::Result<Output> {
+    let status = match wait_child_bounded(&mut captured.child, deadline) {
+        Ok(status) => status,
+        Err(error) => {
+            let stdout = captured_bytes(&captured.stdout).unwrap_or_default();
+            let stderr = captured_bytes(&captured.stderr).unwrap_or_default();
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}; stdout={:?}; stderr={:?}",
+                    String::from_utf8_lossy(&stdout),
+                    String::from_utf8_lossy(&stderr)
+                ),
+            ));
+        }
+    };
+    Ok(Output {
+        status,
+        stdout: captured_bytes(&captured.stdout)?,
+        stderr: captured_bytes(&captured.stderr)?,
+    })
+}
+
+fn run_cli_bounded(command: Command) -> io::Result<Output> {
+    let mut captured = spawn_captured(command)?;
+    wait_captured(&mut captured, Instant::now() + Duration::from_secs(5))
 }
 
 #[test]
@@ -51,31 +107,34 @@ fn agent_hook_cli_reaches_managed_session() {
         vec!["config", "user.name", "OVRCR Tests"],
         vec!["config", "user.email", "tests@example.invalid"],
     ] {
+        let mut command = Command::new("git");
+        command.args(args).current_dir(&repo);
+        let output = run_cli_bounded(command).unwrap();
         assert!(
-            Command::new("git")
-                .args(args)
-                .current_dir(&repo)
-                .status()
-                .unwrap()
-                .success()
+            output.status.success(),
+            "git setup: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
     std::fs::write(repo.join("README"), "fixture\n").unwrap();
+    let mut command = Command::new("git");
+    command.args(["add", "README"]).current_dir(&repo);
+    let output = run_cli_bounded(command).unwrap();
     assert!(
-        Command::new("git")
-            .args(["add", "README"])
-            .current_dir(&repo)
-            .status()
-            .unwrap()
-            .success()
+        output.status.success(),
+        "git add: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+    let mut command = Command::new("git");
+    command.args(["commit", "-m", "initial"]).current_dir(&repo);
+    let output = run_cli_bounded(command).unwrap();
     assert!(
-        Command::new("git")
-            .args(["commit", "-m", "initial"])
-            .current_dir(&repo)
-            .status()
-            .unwrap()
-            .success()
+        output.status.success(),
+        "git commit: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let config = root.path().join("config.toml");
@@ -83,11 +142,14 @@ fn agent_hook_cli_reaches_managed_session() {
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CleanupGuard::new(bin, &config, &socket);
     let run = |args: &[&str]| {
-        let output = isolated_command(&root).args(args).output().unwrap();
+        let mut command = isolated_command(&root);
+        command.args(args);
+        let output = run_cli_bounded(command).unwrap();
         assert!(
             output.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "{args:?}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         );
         output
     };
@@ -114,7 +176,8 @@ fn agent_hook_cli_reaches_managed_session() {
     cleanup.capture_live_process_groups(&socket);
 
     let marker = root.path().join("hook-child.marker");
-    let script = r#"printf CHILD_READY > "$2"; "$1" report activity --state busy --sequence 1; printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#;
+    let report_stdout = root.path().join("hook-report.stdout");
+    let script = r#"printf CHILD_READY > "$2"; "$1" --json report activity --state busy --sequence 1 > "$3"; printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#;
     let created = run(&[
         "new",
         "--project",
@@ -130,6 +193,7 @@ fn agent_hook_cli_reaches_managed_session() {
         "hook-child",
         bin,
         marker.to_str().unwrap(),
+        report_stdout.to_str().unwrap(),
     ]);
     let id: u64 = String::from_utf8_lossy(&created.stdout)
         .trim()
@@ -166,10 +230,17 @@ fn agent_hook_cli_reaches_managed_session() {
         std::thread::park_timeout(Duration::from_millis(10));
     }
     assert!(observed_busy, "managed server never observed Busy activity");
+    let completion_deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&marker).unwrap_or_default() != "CHILD_READYHOOK_DONE"
+        && Instant::now() < completion_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
     assert_eq!(
         std::fs::read_to_string(&marker).unwrap(),
         "CHILD_READYHOOK_DONE"
     );
+    assert!(std::fs::read(&report_stdout).unwrap().is_empty());
     cleanup.confirm();
 }
 
@@ -193,18 +264,16 @@ fn agent_hook_cli_timeout_is_bounded() {
     let started = Instant::now();
     let mut generic = isolated_command(&root);
     generic
-        .args(["report", "activity", "--state", "busy"])
+        .args(["--json", "report", "activity", "--state", "busy"])
         .env("OVRCR_HOOK_SOCKET", &socket)
         .env("OVRCR_SESSION_ID", "7")
-        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut generic = generic.spawn().unwrap();
-    let status = wait_child_bounded(&mut generic, Instant::now() + Duration::from_secs(2))
-        .expect("generic report did not exit within watchdog");
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32));
+    let output = run_cli_bounded(generic).unwrap();
+    let status = output.status;
     let elapsed = started.elapsed();
     server.join().unwrap();
     assert!(!status.success());
+    assert!(output.stdout.is_empty());
     assert!(elapsed < Duration::from_secs(2));
 
     let mut command = isolated_command(&root);
@@ -213,17 +282,16 @@ fn agent_hook_cli_timeout_is_bounded() {
         .env("OVRCR_HOOK_SOCKET", &socket)
         .env("OVRCR_SESSION_ID", "7")
         .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdin(Stdio::piped());
     let started = Instant::now();
-    let mut child = command.spawn().unwrap();
-    let held_open = child.stdin.take().unwrap();
-    let status = wait_child_bounded(&mut child, Instant::now() + Duration::from_secs(2))
+    let mut captured = spawn_captured(command).unwrap();
+    let held_open = captured.child.stdin.take().unwrap();
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(2))
         .expect("adapter did not exit within watchdog");
     drop(held_open);
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(status.success());
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
 }
 
 #[test]
@@ -235,7 +303,7 @@ fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
     let server = std::thread::spawn(move || {
         let (mut stream, _) = accept_with_deadline(&listener);
         stream
-            .set_read_timeout(Some(Duration::from_secs(1)))
+            .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         stream
             .set_write_timeout(Some(Duration::from_millis(200)))
@@ -267,27 +335,26 @@ fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
         .env("OVRCR_HOOK_SOCKET", &socket)
         .env("OVRCR_SESSION_ID", "7")
         .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdin(Stdio::piped());
     let started = Instant::now();
-    let mut child = command.spawn().unwrap();
-    let mut stdin = child.stdin.take().unwrap();
+    let mut captured = spawn_captured(command).unwrap();
+    let mut stdin = captured.child.stdin.take().unwrap();
     stdin
         .write_all(br#"{"hook_event_name":"Stop","session_id":"root-1"}"#)
         .unwrap();
-    let input_deadline = Instant::now() + Duration::from_millis(350);
+    let input_deadline = Instant::now() + Duration::from_millis(900);
     while Instant::now() < input_deadline {
         std::thread::park_timeout(Duration::from_millis(5));
     }
     drop(stdin);
-    let status = wait_child_bounded(&mut child, Instant::now() + Duration::from_secs(2))
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(2))
         .expect("dripped response helper did not exit within watchdog");
     let elapsed = started.elapsed();
     server.join().unwrap();
-    assert!(status.success());
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
     assert!(
-        elapsed >= Duration::from_millis(800) && elapsed < Duration::from_millis(1800),
+        elapsed >= Duration::from_millis(900) && elapsed < Duration::from_millis(1750),
         "combined deadline took {elapsed:?}"
     );
 }
@@ -298,7 +365,12 @@ fn accept_with_deadline(
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         match listener.accept() {
-            Ok(pair) => return pair,
+            Ok((stream, address)) => {
+                stream
+                    .set_nonblocking(false)
+                    .expect("make accepted fixture stream blocking");
+                return (stream, address);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(
                     Instant::now() < deadline,
