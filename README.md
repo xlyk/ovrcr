@@ -298,12 +298,22 @@ The GUI dependency is enabled only by the `gui` feature. Ordinary builds and
 rtk proxy cargo test --features gui --test gui
 ```
 
-## MVP limits
+## Feature roadmap
 
-OVRCR uses blocking I/O and threads, one dashboard, and supports the tested
-50-session scale. It retains only each session's current terminal screen.
-There is no split-pane layout, historical scrollback, copy mode, pause state,
-agent-specific status, context accounting, terminal mouse forwarding, or
-multiple dashboards. Live PTYs and session metadata are in memory; a server
-crash or reboot loses them. Reattach connects to a surviving PTY. Restore,
-which would recreate a lost PTY or resume an agent conversation, is deferred.
+Future additions, with priorities and release dates still to be decided:
+
+- [ ] Split panes to view multiple sessions side by side.
+- [ ] Historical scrollback to revisit output beyond the current screen.
+- [ ] Copy mode to select and copy terminal output with the keyboard.
+- [ ] Pause and resume controls for sessions.
+- [ ] Agent hooks to report agent-specific activity and status.
+- [ ] Context usage accounting for agent sessions.
+- [ ] Mouse forwarding to applications running inside a terminal.
+- [ ] Multiple dashboards connected to the same server.
+- [ ] Session restore after a server crash or reboot, including saved session
+  metadata, new PTYs, and agent conversation resumption where supported.
+
+The current release supports one dashboard at the tested 50-session scale
+using blocking I/O and threads. It retains each session's current terminal
+screen and keeps live PTYs and session metadata in memory. Reattach connects
+to a surviving PTY; a server crash or reboot loses those live sessions.
