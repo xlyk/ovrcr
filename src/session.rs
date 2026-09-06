@@ -175,7 +175,7 @@ impl Session {
     }
 
     #[cfg(test)]
-    fn spawn_with_test_hooks(
+    pub(crate) fn spawn_with_test_hooks(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,

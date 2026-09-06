@@ -6,7 +6,7 @@ use ovrcr::protocol::{
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
@@ -19,6 +19,62 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+#[ignore]
+fn hook_child_report_helper() {
+    let identity_path =
+        std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+    let socket = std::env::var_os("OVRCR_HOOK_SOCKET").expect("hook socket");
+    let session = std::env::var("OVRCR_SESSION_ID")
+        .expect("hook session")
+        .parse::<u64>()
+        .expect("hook session is decimal");
+    let token = std::env::var("OVRCR_HOOK_TOKEN").expect("hook token");
+    let capability = parse_hook_capability(&token).expect("hook token is 64 lowercase hex");
+    std::fs::write(
+        identity_path,
+        format!("{}\n{}\n{}\n", socket.to_string_lossy(), session, token),
+    )
+    .expect("write private hook identity");
+
+    let mut stream = UnixStream::connect(&socket).expect("connect hook socket");
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::AgentReport(AgentReport {
+                session: SessionId(session),
+                capability,
+                sequence: None,
+                update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+            }),
+        },
+    )
+    .expect("write hook report");
+    let response = read_frame::<ServerMessage>(&mut stream).expect("read hook response");
+    assert_eq!(
+        response,
+        ServerMessage::Response {
+            request_id: 1,
+            response: Response::Ok,
+        }
+    );
+    let identity_path =
+        std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(identity_path)
+        .and_then(|mut file| file.write_all(b"REPORTED\n"))
+        .expect("record private hook report acknowledgement");
+    let mut stdout = std::io::stdout();
+    stdout.write_all(b"HOOK_READY\n").expect("write hook ready");
+    stdout.flush().expect("flush hook ready");
+
+    let mut stdin = std::io::stdin();
+    let mut byte = [0_u8; 1];
+    let _ = stdin.read(&mut byte);
+}
 
 struct ServerFixture {
     root: tempfile::TempDir,
@@ -107,6 +163,8 @@ fn agent_hook_sequence_does_not_regress_state() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("ordered", "agent-hook-order");
+    let pgid = fixture.original_pgid(identity.session);
+    fixture.wait_terminal_contains(identity.session, "HOOK_READY");
     let busy = AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy);
     assert_eq!(
         fixture.request(Request::AgentReport(AgentReport {
@@ -188,7 +246,8 @@ fn agent_hook_sequence_does_not_regress_state() {
         }),
         Response::Ok
     );
-    fixture.wait_exited(identity.session);
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: identity.session,
@@ -210,6 +269,10 @@ fn agent_hook_capability_and_exit_are_enforced() {
     let fixture = ControlFixture::new_bounded();
     let first = fixture.create_hook_child("agent-a", "agent-hook-auth-a");
     let second = fixture.create_hook_child("agent-b", "agent-hook-auth-b");
+    let first_pgid = fixture.original_pgid(first.session);
+    let second_pgid = fixture.original_pgid(second.session);
+    fixture.wait_terminal_contains(first.session, "HOOK_READY");
+    fixture.wait_terminal_contains(second.session, "HOOK_READY");
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: second.session,
@@ -288,6 +351,7 @@ fn agent_hook_capability_and_exit_are_enforced() {
         }),
         Response::Ok
     );
+    assert!(wait_group_absent(first_pgid, Duration::from_secs(2)));
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: first.session,
@@ -300,10 +364,26 @@ fn agent_hook_capability_and_exit_are_enforced() {
             ..
         }
     ));
-    fixture.request(Request::KillSession {
-        session: second.session,
-    });
-    fixture.wait_exited(second.session);
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: second.session,
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, second.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(second_pgid, Duration::from_secs(2)));
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: second.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
     fixture.shutdown_kill();
 }
 
@@ -311,27 +391,21 @@ fn agent_hook_capability_and_exit_are_enforced() {
 fn agent_hook_startup_registration_is_visible() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new_bounded();
-    let identity = fixture.create_hook_child("startup", "agent-hook-startup");
-    assert_eq!(
-        fixture.request(Request::AgentReport(AgentReport {
-            session: identity.session,
-            capability: identity.capability,
-            sequence: None,
-            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
-        })),
-        Response::Ok
-    );
+    let identity = fixture.create_hook_child_with_report("startup", "agent-hook-startup");
     assert_eq!(
         fixture.session_activity(identity.session),
         ovrcr::session::AgentActivity::Busy
     );
+    let pgid = fixture.original_pgid(identity.session);
+    fixture.wait_terminal_contains(identity.session, "HOOK_READY");
     assert_eq!(
         fixture.request(Request::KillSession {
             session: identity.session
         }),
         Response::Ok
     );
-    fixture.wait_exited(identity.session);
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -3126,6 +3200,7 @@ struct ControlFixture {
     workspace_root: std::path::PathBuf,
     socket: std::path::PathBuf,
     thread: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
+    process_groups: std::sync::Mutex<Vec<libc::pid_t>>,
     request_timeout: Option<Duration>,
     workspace_ready: std::sync::Mutex<bool>,
 }
@@ -3189,6 +3264,7 @@ impl ControlFixture {
             workspace_root: workspace_root.canonicalize().unwrap(),
             socket,
             thread: std::sync::Mutex::new(Some(thread)),
+            process_groups: std::sync::Mutex::new(Vec::new()),
             request_timeout: None,
             workspace_ready: std::sync::Mutex::new(false),
         };
@@ -3250,6 +3326,14 @@ impl ControlFixture {
     }
 
     fn create_hook_child(&self, name: &str, marker: &str) -> HookIdentity {
+        self.create_hook_child_inner(name, marker, false)
+    }
+
+    fn create_hook_child_with_report(&self, name: &str, marker: &str) -> HookIdentity {
+        self.create_hook_child_inner(name, marker, true)
+    }
+
+    fn create_hook_child_inner(&self, name: &str, marker: &str, report: bool) -> HookIdentity {
         let mut workspace_ready = self.workspace_ready.lock().unwrap();
         if !*workspace_ready {
             assert_eq!(
@@ -3275,16 +3359,24 @@ impl ControlFixture {
         }
         drop(workspace_ready);
         let identity_path = self._root.path().join(format!("{marker}.identity"));
-        let summary = self.create_session_summary(
-            name,
-            vec![
-                "sh".into(),
-                "-c".into(),
-                r#"printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$1"; printf HOOK_READY; while IFS= read -r line; do :; done"#.into(),
-                "ovrcr-hook-child".into(),
-                identity_path.clone().into_os_string(),
-            ],
-        );
+        let child = std::env::current_exe().unwrap();
+        let script = if report {
+            r#"OVRCR_AGENT_HOOK_IDENTITY_PATH="$1" exec "$2" --ignored --exact hook_child_report_helper --nocapture"#
+        } else {
+            r#"printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$1"; printf HOOK_READY; while IFS= read -r line; do :; done"#
+        };
+        let mut argv = vec![
+            "sh".into(),
+            "-c".into(),
+            script.into(),
+            "ovrcr-hook-child".into(),
+            identity_path.clone().into_os_string(),
+        ];
+        if report {
+            argv.push(child.into_os_string());
+        }
+        let summary = self.create_session_summary(name, argv);
+        self.record_process_group(&summary);
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             if let Ok(contents) = std::fs::read_to_string(&identity_path) {
@@ -3302,6 +3394,10 @@ impl ControlFixture {
                         .join(self.socket.file_name().unwrap());
                     assert_eq!(socket, expected_socket.to_string_lossy());
                     assert_eq!(session, summary.id.0);
+                    if report && !contents.lines().any(|line| line == "REPORTED") {
+                        thread::park_timeout(Duration::from_millis(5));
+                        continue;
+                    }
                     return HookIdentity {
                         session: summary.id,
                         capability,
@@ -3311,6 +3407,19 @@ impl ControlFixture {
             thread::park_timeout(Duration::from_millis(5));
         }
         panic!("managed hook child did not publish its private identity");
+    }
+
+    fn record_process_group(&self, summary: &ovrcr::session::SessionSummary) {
+        if let Some(pid) = summary.pid {
+            self.process_groups.lock().unwrap().push(pid as libc::pid_t);
+        }
+    }
+
+    fn original_pgid(&self, id: SessionId) -> libc::pid_t {
+        let pid = self.session_summary(id).pid.expect("live session PID");
+        let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+        assert_eq!(pgid, pid as libc::pid_t);
+        pgid
     }
 
     fn session_summary(&self, id: SessionId) -> ovrcr::session::SessionSummary {
@@ -3332,6 +3441,27 @@ impl ControlFixture {
 
     fn session_phase(&self, id: SessionId) -> SessionPhase {
         self.session_summary(id).phase
+    }
+
+    fn wait_terminal_contains(&self, id: SessionId, marker: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Some(Response::TerminalText { text, .. }) = request_with_timeout(
+                &self.socket,
+                401,
+                Request::ReadTerminal {
+                    session: id,
+                    max_lines: None,
+                },
+                Duration::from_millis(250),
+            ) {
+                if text.contains(marker) {
+                    return;
+                }
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("session {id:?} did not produce terminal marker");
     }
 
     fn shutdown_kill(&self) {
@@ -3404,6 +3534,30 @@ impl ControlFixture {
     }
     fn join(&self) {
         self.thread.lock().unwrap().take().unwrap().join().unwrap();
+    }
+}
+
+impl Drop for ControlFixture {
+    fn drop(&mut self) {
+        let thread = self.thread.get_mut().unwrap().take();
+        if let Some(thread) = thread {
+            let _ = request_with_timeout(
+                &self.socket,
+                999,
+                Request::Shutdown { kill: true },
+                Duration::from_millis(500),
+            );
+            let _ = thread.join();
+        }
+        let groups = self.process_groups.get_mut().unwrap();
+        for pgid in groups.iter().copied() {
+            if group_exists(pgid) {
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+                let _ = wait_group_absent(pgid, Duration::from_secs(2));
+            }
+        }
     }
 }
 

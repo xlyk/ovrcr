@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -114,6 +114,16 @@ fn resolve_bound_socket(socket: &Path) -> Result<PathBuf> {
     Ok(fs::canonicalize(parent)
         .with_context(|| format!("resolve server socket parent {}", parent.display()))?
         .join(leaf))
+}
+
+fn validate_bound_socket(socket: &Path) -> Result<PathBuf> {
+    let resolved = resolve_bound_socket(socket)?;
+    let metadata = fs::symlink_metadata(socket)
+        .with_context(|| format!("inspect bound server socket {}", socket.display()))?;
+    if !metadata.file_type().is_socket() {
+        bail!("bound server socket is not a Unix socket")
+    }
+    Ok(resolved)
 }
 
 fn generate_hook_capability() -> Result<[u8; 32]> {
@@ -302,7 +312,7 @@ impl ServerState {
             cwd,
             argv: request.argv,
             hook_env: Some(HookEnvironment {
-                socket: resolve_bound_socket(&self.socket)?,
+                socket: validate_bound_socket(&self.socket)?,
                 session: id,
                 capability: generate_hook_capability()?,
             }),
@@ -1861,6 +1871,95 @@ mod tests {
     }
 
     #[test]
+    fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
+        let root = tempfile::tempdir().unwrap();
+        let child_cwd = root.path().join("child");
+        std::fs::create_dir(&child_cwd).unwrap();
+        let socket = PathBuf::from(format!(".ovrcr-task2-relative-{}.sock", std::process::id()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let expected = std::env::current_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join(socket.file_name().unwrap());
+        assert_eq!(validate_bound_socket(&socket).unwrap(), expected);
+
+        let identity = root.path().join("identity");
+        let registry = Registry {
+            projects: vec![crate::config::ProjectRecord {
+                name: "project".into(),
+                repo: root.path().to_path_buf(),
+                workspace_root: root.path().to_path_buf(),
+                workspaces: vec![crate::config::WorkspaceRecord {
+                    name: "workspace".into(),
+                    path: child_cwd.clone(),
+                    branch: "main".into(),
+                }],
+            }],
+        };
+        let (state, _dispatch_receiver, event_receiver) =
+            test_state_with_socket(socket.clone(), registry);
+        let summary = state
+            .create_session(crate::protocol::CreateSessionRequest {
+                project: "project".into(),
+                workspace: "workspace".into(),
+                name: "relative".into(),
+                label: None,
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "printf '%s' \"$OVRCR_HOOK_SOCKET\" > \"$1\"".into(),
+                    "ovrcr-relative".into(),
+                    identity.clone().into_os_string(),
+                ],
+            })
+            .unwrap();
+        assert_ne!(child_cwd, std::env::current_dir().unwrap());
+        let session = state
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&summary.id)
+            .cloned()
+            .unwrap();
+        let event_session = Arc::clone(&session);
+        let event_thread = thread::spawn(move || {
+            while let Ok(event) = event_receiver.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                event_session.apply_event(event);
+                if exited {
+                    break;
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !identity.exists() && Instant::now() < deadline {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        assert_eq!(
+            std::fs::read_to_string(&identity).unwrap(),
+            expected.to_string_lossy()
+        );
+        session.wait_until_exited(Duration::from_secs(2)).unwrap();
+        event_thread.join().unwrap();
+        state.remove_session(summary.id).unwrap();
+
+        drop(listener);
+        std::fs::remove_file(&socket).unwrap();
+        let error = state
+            .create_session(crate::protocol::CreateSessionRequest {
+                project: "project".into(),
+                workspace: "workspace".into(),
+                name: "missing".into(),
+                label: None,
+                argv: vec!["sh".into()],
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("bound server socket"));
+        assert!(state.sessions.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn lifecycle_response_preserves_error_chain_and_code() {
         let error =
             lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session");
@@ -1909,6 +2008,38 @@ mod tests {
                 })),
             }),
             receiver,
+        )
+    }
+
+    fn test_state_with_socket(
+        socket: PathBuf,
+        registry: Registry,
+    ) -> (
+        Arc<ServerState>,
+        Receiver<DispatchMessage>,
+        Receiver<SessionEvent>,
+    ) {
+        let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        (
+            Arc::new(ServerState {
+                socket,
+                registry_path: PathBuf::from("config.toml"),
+                registry: Mutex::new(registry),
+                sessions: Mutex::new(HashMap::new()),
+                selected: Mutex::new(None),
+                dashboard: Mutex::new(None),
+                next_session_id: AtomicU64::new(1),
+                mutation_lock: Mutex::new(()),
+                dispatch,
+                shutdown: AtomicBool::new(false),
+                stopping: AtomicBool::new(false),
+                dashboard_size: Mutex::new(None),
+                events: Mutex::new(Some(events)),
+                dashboard_slot: Mutex::new(None),
+            }),
+            dispatch_receiver,
+            event_receiver,
         )
     }
 
@@ -2573,6 +2704,107 @@ mod tests {
     }
 
     #[test]
+    fn kill_session_termination_failure_revokes_and_retains_session() {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let capability = [0x5a; 32];
+        let refuse_sigcont = Arc::new(AtomicBool::new(true));
+        let refusal = Arc::clone(&refuse_sigcont);
+        let signal_result_hook = Arc::new(move || {
+            if refusal.load(Ordering::Acquire) {
+                Some(anyhow::anyhow!(
+                    "signal PTY process group: Operation not permitted (os error 1)"
+                ))
+            } else {
+                None
+            }
+        });
+        let session = Session::spawn_with_test_hooks(
+            SessionId(71),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "kill-failure".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap '' TERM; printf READY; while :; do read line; done".into(),
+                ],
+                hook_env: Some(HookEnvironment {
+                    socket: PathBuf::from("/private/test/ovrcr.sock"),
+                    session: SessionId(71),
+                    capability,
+                }),
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+            None,
+            None,
+            Some(signal_result_hook),
+        )
+        .unwrap();
+        let event_session = Arc::clone(&session);
+        let waiter = thread::spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                event_session.apply_event(event);
+                if exited {
+                    break;
+                }
+            }
+        });
+        let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(SessionId(71), Arc::clone(&session));
+        let dispatcher_state = Arc::clone(&state);
+        let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !String::from_utf8_lossy(&session.current_screen()).contains("READY") {
+            assert!(
+                Instant::now() < deadline,
+                "termination failure session did not start"
+            );
+            thread::park_timeout(Duration::from_millis(5));
+        }
+
+        let error = state
+            .kill_session(SessionId(71), Duration::from_millis(50))
+            .unwrap_err();
+        assert!(error.to_string().contains("Operation not permitted"));
+        assert!(state.sessions.lock().unwrap().contains_key(&SessionId(71)));
+        assert!(matches!(session.summary().phase, SessionPhase::Running));
+        assert!(unsafe { libc::kill(-(session.summary().pid.unwrap() as libc::pid_t), 0) } == 0);
+        let mut role = ClientRole::Control;
+        assert!(matches!(
+            state.handle_request(
+                &mut role,
+                Request::AgentReport(AgentReport {
+                    session: SessionId(71),
+                    capability,
+                    sequence: None,
+                    update: crate::protocol::AgentUpdate::Activity(AgentActivity::Busy),
+                }),
+            ),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+
+        refuse_sigcont.store(false, Ordering::Release);
+        session.terminate(Duration::from_millis(200)).unwrap();
+        waiter.join().unwrap();
+        state.remove_session(SessionId(71)).unwrap();
+        state.dispatch.send(DispatchMessage::Stop).unwrap();
+        dispatcher.join().unwrap();
+    }
+
+    #[test]
     fn shutdown_without_kill_rejects_paused_session() {
         let cwd = tempfile::tempdir().unwrap();
         let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
@@ -2715,6 +2947,7 @@ mod tests {
         let bridge = thread::spawn(move || bridge_events(event_receiver, bridge_dispatch));
         let entered = Arc::new(std::sync::Barrier::new(2));
         let release = Arc::new(std::sync::Barrier::new(2));
+        let identity = root.path().join("held-identity");
         let ready: Arc<dyn Fn() + Send + Sync> = {
             let entered = Arc::clone(&entered);
             let release = Arc::clone(&release);
@@ -2725,6 +2958,7 @@ mod tests {
         };
         let creator_state = Arc::clone(&state);
         let creator_ready = Arc::clone(&ready);
+        let creator_identity = identity.clone();
         let creator = thread::spawn(move || {
             creator_state.create_session_with_ready(
                 crate::protocol::CreateSessionRequest {
@@ -2732,7 +2966,13 @@ mod tests {
                     workspace: "workspace".into(),
                     name: "fast".into(),
                     label: None,
-                    argv: vec!["sh".into(), "-c".into(), "printf retained".into()],
+                    argv: vec![
+                        "sh".into(),
+                        "-c".into(),
+                        "printf '%s\\n%s\\n' \"$OVRCR_SESSION_ID\" \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(),
+                        "ovrcr-held".into(),
+                        creator_identity.into_os_string(),
+                    ],
                 },
                 creator_ready,
             )
@@ -2742,10 +2982,40 @@ mod tests {
             state.sessions.try_lock().is_err(),
             "registration must hold sessions guard while Session::spawn is paused"
         );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !identity.exists() && Instant::now() < deadline {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        let identity_contents = std::fs::read_to_string(&identity).unwrap();
+        let mut identity_lines = identity_contents.lines();
+        let session_id = identity_lines
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap();
+        let capability_text = identity_lines.next().unwrap();
+        let capability = parse_test_capability(capability_text);
+        let (completion, completion_result) = mpsc::sync_channel(1);
+        dispatch
+            .try_send(DispatchMessage::AgentReport {
+                report: AgentReport {
+                    session: SessionId(session_id),
+                    capability,
+                    sequence: None,
+                    update: crate::protocol::AgentUpdate::Activity(AgentActivity::Busy),
+                },
+                completion,
+            })
+            .unwrap();
         release.wait();
         let summary = creator.join().unwrap().unwrap();
         assert_eq!(summary.name, "fast");
         assert!(state.sessions.lock().unwrap().contains_key(&summary.id));
+        assert_eq!(
+            completion_result
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            Response::Ok
+        );
         let session = state
             .sessions
             .lock()
@@ -2753,11 +3023,24 @@ mod tests {
             .get(&summary.id)
             .cloned()
             .unwrap();
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
+        state
+            .kill_session(summary.id, Duration::from_millis(200))
+            .unwrap();
         session.wait_until_exited(Duration::from_secs(2)).unwrap();
         let _ = dispatch.send(DispatchMessage::Stop);
         dispatcher.join().unwrap();
         state.events.lock().unwrap().take();
         drop(dispatch);
         bridge.join().unwrap();
+    }
+
+    fn parse_test_capability(value: &str) -> [u8; 32] {
+        assert_eq!(value.len(), 64);
+        let mut capability = [0_u8; 32];
+        for (index, byte) in capability.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
+        }
+        capability
     }
 }
