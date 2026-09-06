@@ -556,7 +556,6 @@ fn wait_for_group_exit(pgid: libc::pid_t, deadline: Instant) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Barrier;
     use std::sync::mpsc::{self, Receiver};
 
     struct TerminationGuard(Arc<Session>);
@@ -564,6 +563,63 @@ mod tests {
     impl Drop for TerminationGuard {
         fn drop(&mut self) {
             let _ = self.0.terminate(Duration::from_millis(200));
+        }
+    }
+
+    struct CancellableBarrier {
+        state: Mutex<CancellableBarrierState>,
+        changed: Condvar,
+    }
+
+    struct CancellableBarrierState {
+        waiting: usize,
+        generation: u64,
+        cancelled: bool,
+    }
+
+    impl CancellableBarrier {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(CancellableBarrierState {
+                    waiting: 0,
+                    generation: 0,
+                    cancelled: false,
+                }),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn wait(&self) -> bool {
+            let mut state = self.state.lock().unwrap();
+            if state.cancelled {
+                return false;
+            }
+            let generation = state.generation;
+            state.waiting += 1;
+            if state.waiting == 2 {
+                state.waiting = 0;
+                state.generation = state.generation.wrapping_add(1);
+                self.changed.notify_all();
+                return true;
+            }
+            while !state.cancelled && state.generation == generation {
+                state = self.changed.wait(state).unwrap();
+            }
+            !state.cancelled
+        }
+
+        fn cancel(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.cancelled = true;
+            self.changed.notify_all();
+        }
+    }
+
+    struct BarrierGuard(Arc<CancellableBarrier>);
+
+    impl Drop for BarrierGuard {
+        fn drop(&mut self) {
+            self.0.cancel();
         }
     }
 
@@ -616,7 +672,7 @@ mod tests {
     fn pause_resume_phase_and_input_admission() {
         let session = spawn_test_shell();
         let _cleanup = TerminationGuard(Arc::clone(&session));
-        session.write(b"printf 'READY\\n'\r").unwrap();
+        session.write(b"printf 'REA%s\\n' DY\r").unwrap();
         assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
 
         assert!(session.set_paused(true).unwrap());
@@ -649,21 +705,33 @@ mod tests {
                 name: "exit-race".into(),
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
-                argv: vec!["sh".into(), "-c".into(), "printf EXIT_READY".into()],
+                argv: vec!["sh".into(), "-c".into(), "printf 'EXIT_%s' READY".into()],
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
         )
         .unwrap();
         let _cleanup = TerminationGuard(Arc::clone(&session));
-        let gate = Arc::new(Barrier::new(2));
-        let dispatcher =
-            dispatch_test_events_with_exit_gate(Arc::clone(&session), rx, Arc::clone(&gate));
+        let gate = Arc::new(CancellableBarrier::new());
+        let _gate_cleanup = BarrierGuard(Arc::clone(&gate));
+        let (exit_ready, exit_ready_receiver) = mpsc::sync_channel(1);
+        let (dispatch_done, dispatch_done_receiver) = mpsc::sync_channel(1);
+        let (control_result, control_result_receiver) = mpsc::sync_channel(1);
+        let dispatcher = dispatch_test_events_with_exit_gate(
+            Arc::clone(&session),
+            rx,
+            Arc::clone(&gate),
+            exit_ready,
+            dispatch_done,
+        );
         let control_gate = Arc::clone(&gate);
         let control_session = Arc::clone(&session);
         let control = thread::spawn(move || {
-            control_gate.wait();
-            control_session.set_paused(true)
+            if !control_gate.wait() {
+                let _ = control_result.send(None);
+                return;
+            }
+            let _ = control_result.send(Some(control_session.set_paused(true)));
         });
 
         assert!(wait_for_screen(
@@ -671,7 +739,23 @@ mod tests {
             "EXIT_READY",
             Duration::from_secs(2)
         ));
-        assert!(matches!(control.join().unwrap(), Err(_)));
+        assert!(
+            exit_ready_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+        assert!(matches!(
+            control_result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            Some(Err(_))
+        ));
+        assert!(
+            dispatch_done_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+        control.join().unwrap();
         dispatcher.join().unwrap();
         assert!(matches!(
             session.summary().phase,
@@ -682,16 +766,20 @@ mod tests {
     fn dispatch_test_events_with_exit_gate(
         session: Arc<Session>,
         rx: Receiver<SessionEvent>,
-        gate: Arc<Barrier>,
+        gate: Arc<CancellableBarrier>,
+        exit_ready: mpsc::SyncSender<()>,
+        dispatch_done: mpsc::SyncSender<()>,
     ) -> JoinHandle<()> {
         thread::spawn(move || {
             while let Ok(event) = rx.recv() {
                 let exited = matches!(event, SessionEvent::Exited { .. });
                 if exited {
+                    let _ = exit_ready.send(());
                     gate.wait();
                 }
                 session.apply_event(event);
                 if exited {
+                    let _ = dispatch_done.send(());
                     break;
                 }
             }
