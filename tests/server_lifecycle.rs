@@ -912,8 +912,10 @@ struct PausePeer {
 struct PauseHarness {
     fixture: ControlFixture,
     dir: PathBuf,
+    control_path: PathBuf,
     control: UnixDatagram,
     pgids: Vec<libc::pid_t>,
+    next_endpoint: usize,
 }
 
 impl PauseHarness {
@@ -951,22 +953,39 @@ impl PauseHarness {
 
         let dir = fixture._root.path().join("pause-resume");
         std::fs::create_dir(&dir).unwrap();
-        let control = UnixDatagram::bind(dir.join("parent.sock")).unwrap();
+        let control_path = dir.join("parent.sock");
+        let control = UnixDatagram::bind(&control_path).unwrap();
         control
             .set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         Self {
             fixture,
             dir,
+            control_path,
             control,
             pgids: Vec::new(),
+            next_endpoint: 0,
         }
     }
 
     fn create_session(&mut self, name: &str) -> (SessionId, PausePeer, PausePeer) {
-        let session = self
-            .fixture
-            .create_session(name, pause_session_argv(&self.dir));
+        self.create_session_with_options(name, false)
+    }
+
+    fn create_session_with_options(
+        &mut self,
+        name: &str,
+        ignore_sighup: bool,
+    ) -> (SessionId, PausePeer, PausePeer) {
+        let endpoint_dir = self.dir.join(format!("session-{}", self.next_endpoint));
+        self.next_endpoint += 1;
+        std::fs::create_dir(&endpoint_dir).unwrap();
+        let summary = self.fixture.create_session_summary(
+            name,
+            pause_session_argv(&endpoint_dir, &self.control_path, ignore_sighup),
+        );
+        self.record_created_pgid(&summary);
+        let session = summary.id;
         let first = recv_pause_ready(&self.control);
         let second = recv_pause_ready(&self.control);
         assert_eq!(
@@ -983,7 +1002,6 @@ impl PauseHarness {
             second.pgid,
             "descendant READY reported a stale PGID"
         );
-        self.pgids.push(first.pgid);
         let (leader, descendant) = if first
             .address
             .file_name()
@@ -994,6 +1012,16 @@ impl PauseHarness {
             (second, first)
         };
         (session, leader, descendant)
+    }
+
+    fn record_created_pgid(&mut self, summary: &ovrcr::session::SessionSummary) {
+        let pid = summary
+            .pid
+            .expect("successful session creation must report a process ID");
+        // Session::spawn requires the PTY leader to own its process group, so
+        // the creation response gives us the group ID before any handshake
+        // assertions can fail.
+        self.pgids.push(pid as libc::pid_t);
     }
 
     fn finish(&self) {
@@ -1007,7 +1035,32 @@ impl PauseHarness {
                 ),
                 Some(Response::Ok)
             );
-            self.fixture.join();
+            assert!(
+                self.join_bounded(Duration::from_secs(2)),
+                "control server did not finish within cleanup deadline"
+            );
+        }
+    }
+
+    fn join_bounded(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let finished = self
+                .fixture
+                .thread
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|handle| handle.is_finished())
+                .unwrap_or(true);
+            if finished {
+                let handle = self.fixture.thread.lock().unwrap().take();
+                return handle.map(|handle| handle.join().is_ok()).unwrap_or(true);
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
         }
     }
 }
@@ -1030,7 +1083,9 @@ impl Drop for PauseHarness {
                     libc::kill(-*pgid, libc::SIGKILL);
                 }
             }
-            self.fixture.join();
+            if !self.join_bounded(Duration::from_secs(2)) {
+                cleanup_failed = true;
+            }
         }
         for pgid in &self.pgids {
             if !wait_group_absent(*pgid, Duration::from_secs(2)) {
@@ -1048,17 +1103,24 @@ impl Drop for PauseHarness {
     }
 }
 
-fn pause_session_argv(dir: &Path) -> Vec<OsString> {
-    vec![
+fn pause_session_argv(dir: &Path, parent: &Path, ignore_sighup: bool) -> Vec<OsString> {
+    let mut argv = vec![
         OsString::from("env"),
         OsString::from("OVRCR_PAUSE_ROLE=leader"),
         OsString::from(format!("OVRCR_PAUSE_DIR={}", dir.display())),
+        OsString::from(format!("OVRCR_PAUSE_PARENT={}", parent.display())),
+    ];
+    if ignore_sighup {
+        argv.push(OsString::from("OVRCR_PAUSE_IGNORE_SIGHUP=1"));
+    }
+    argv.extend([
         std::env::current_exe().unwrap().into_os_string(),
         "--ignored".into(),
         "--exact".into(),
         "pause_resume_child_fixture".into(),
         "--nocapture".into(),
-    ]
+    ]);
+    argv
 }
 
 fn request_with_timeout(
@@ -1146,7 +1208,21 @@ fn dashboard_request(stream: &mut UnixStream, request_id: u64, request: Request)
 
 fn recv_pause_ready(socket: &UnixDatagram) -> PausePeer {
     let mut bytes = [0_u8; 4096];
-    let size = socket.recv(&mut bytes).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let size = loop {
+        match socket.recv(&mut bytes) {
+            Ok(size) => break size,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && Instant::now() < deadline =>
+            {
+                thread::yield_now();
+            }
+            Err(error) => panic!("read helper READY datagram: {error}"),
+        }
+    };
     let message = std::str::from_utf8(&bytes[..size]).unwrap();
     let mut fields = message.splitn(5, ':');
     assert_eq!(
@@ -1249,21 +1325,68 @@ fn expect_pty_input(socket: &UnixDatagram, token: &str) {
     assert_eq!(&bytes[4..], token.as_bytes());
 }
 
-fn expect_term_acks(socket: &UnixDatagram, peers: &[&PausePeer]) {
+fn expect_term_acks_and_descendant_final(
+    socket: &UnixDatagram,
+    peers: &[&PausePeer],
+    descendants: &[&PausePeer],
+) -> bool {
     let mut seen = Vec::new();
-    for _ in peers {
-        let bytes = expect_datagram_prefix(socket, "TERM_ACK:");
-        let pid = std::str::from_utf8(&bytes[9..])
-            .unwrap()
-            .parse::<libc::pid_t>()
-            .unwrap();
-        assert!(
-            peers.iter().any(|peer| peer.pid == pid),
-            "unknown TERM_ACK pid {pid}"
-        );
-        assert!(!seen.contains(&pid), "duplicate TERM_ACK pid {pid}");
-        seen.push(pid);
+    let mut final_seen = Vec::new();
+    let mut drain_ok = true;
+    let mut drain_seen = Vec::new();
+    while seen.len() < peers.len()
+        || final_seen.len() < descendants.len()
+        || drain_seen.len() < descendants.len()
+    {
+        let bytes = recv_pause_datagram(socket);
+        if bytes.starts_with(b"TERM_ACK:") {
+            let pid = std::str::from_utf8(&bytes[9..])
+                .unwrap()
+                .parse::<libc::pid_t>()
+                .unwrap();
+            assert!(
+                peers.iter().any(|peer| peer.pid == pid),
+                "unknown TERM_ACK pid {pid}"
+            );
+            assert!(!seen.contains(&pid), "duplicate TERM_ACK pid {pid}");
+            seen.push(pid);
+        } else if bytes.starts_with(b"FINAL_DESCENDANT_AFTER_TERM:") {
+            let pid = std::str::from_utf8(&bytes[b"FINAL_DESCENDANT_AFTER_TERM:".len()..])
+                .unwrap()
+                .parse::<libc::pid_t>()
+                .unwrap();
+            assert!(
+                descendants.iter().any(|peer| peer.pid == pid),
+                "final marker came from an unexpected peer {pid}"
+            );
+            assert!(
+                !final_seen.contains(&pid),
+                "duplicate descendant final marker"
+            );
+            final_seen.push(pid);
+        } else if bytes.starts_with(b"DESCENDANT_STDOUT_RESULT:") {
+            let prefix = b"DESCENDANT_STDOUT_RESULT:";
+            let evidence = std::str::from_utf8(&bytes[prefix.len()..]).unwrap();
+            let (pid, result) = evidence.split_once(":drain=").unwrap();
+            let pid = pid.parse::<libc::pid_t>().unwrap();
+            assert!(
+                descendants.iter().any(|peer| peer.pid == pid),
+                "drainage evidence came from an unexpected peer {pid}"
+            );
+            assert!(
+                !drain_seen.contains(&pid),
+                "duplicate descendant drainage evidence"
+            );
+            drain_seen.push(pid);
+            drain_ok &= result == "ok";
+        } else {
+            panic!(
+                "unexpected termination evidence: {:?}",
+                String::from_utf8_lossy(&bytes)
+            );
+        }
     }
+    drain_ok
 }
 
 fn wait_pid_absent(pid: libc::pid_t, timeout: Duration) {
@@ -1305,19 +1428,58 @@ fn session_summary(fixture: &ControlFixture, session: SessionId) -> ovrcr::sessi
     }
 }
 
-fn read_terminal_until(fixture: &ControlFixture, session: SessionId, marker: &str) -> String {
+fn wait_exited_and_assert_terminal_contains(
+    fixture: &ControlFixture,
+    session: SessionId,
+    markers: &[&str],
+) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        match fixture.request(Request::ReadTerminal {
-            session,
-            max_lines: None,
-        }) {
-            Response::TerminalText { text, .. } if text.contains(marker) => return text,
-            response if Instant::now() >= deadline => {
-                panic!("terminal did not render {marker:?}: {response:?}")
+        let response = request_with_timeout(
+            &fixture.socket,
+            401,
+            Request::List,
+            Duration::from_millis(250),
+        );
+        if let Some(Response::Hierarchy(snapshot)) = response {
+            let exited = snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .any(|summary| {
+                    summary.id == session && matches!(summary.phase, SessionPhase::Exited { .. })
+                });
+            if exited {
+                let terminal = request_with_timeout(
+                    &fixture.socket,
+                    402,
+                    Request::ReadTerminal {
+                        session,
+                        max_lines: None,
+                    },
+                    Duration::from_secs(1),
+                )
+                .unwrap_or_else(|| panic!("terminal read failed at first Exited observation"));
+                let Response::TerminalText { text, .. } = terminal else {
+                    panic!(
+                        "unexpected terminal response at first Exited observation: {terminal:?}"
+                    );
+                };
+                for marker in markers {
+                    assert!(
+                        text.contains(marker),
+                        "terminal omitted final marker {marker:?} at first Exited observation: {text:?}"
+                    );
+                }
+                return;
             }
-            _ => thread::yield_now(),
         }
+        assert!(
+            Instant::now() < deadline,
+            "session {session:?} did not exit before terminal assertion deadline"
+        );
+        thread::yield_now();
     }
 }
 
@@ -1396,8 +1558,16 @@ fn pause_resume_stops_group_and_rejects_input() {
         harness.fixture.request(Request::KillSession { session }),
         Response::Ok
     );
-    expect_term_acks(&harness.control, &[&leader, &descendant]);
-    harness.fixture.wait_exited(session);
+    assert!(expect_term_acks_and_descendant_final(
+        &harness.control,
+        &[&leader, &descendant],
+        &[&descendant],
+    ));
+    wait_exited_and_assert_terminal_contains(
+        &harness.fixture,
+        session,
+        &["FINAL_AFTER_TERM", "FINAL_DESCENDANT_AFTER_TERM"],
+    );
     assert_eq!(
         harness.fixture.request(Request::RemoveSession { session }),
         Response::Ok
@@ -1422,10 +1592,16 @@ fn pause_resume_kill_runs_group_handlers() {
         harness.fixture.request(Request::KillSession { session }),
         Response::Ok
     );
-    expect_term_acks(&harness.control, &[&leader, &descendant]);
-    harness.fixture.wait_exited(session);
-    let final_text = read_terminal_until(&harness.fixture, session, "FINAL_AFTER_TERM");
-    assert!(final_text.contains("FINAL_AFTER_TERM"));
+    assert!(expect_term_acks_and_descendant_final(
+        &harness.control,
+        &[&leader, &descendant],
+        &[&descendant],
+    ));
+    wait_exited_and_assert_terminal_contains(
+        &harness.fixture,
+        session,
+        &["FINAL_AFTER_TERM", "FINAL_DESCENDANT_AFTER_TERM"],
+    );
     assert!(wait_group_absent(leader.pgid, Duration::from_secs(2)));
     assert_eq!(
         harness.fixture.request(Request::RemoveSession { session }),
@@ -1450,11 +1626,15 @@ fn pause_resume_kill_runs_group_handlers() {
             .request(Request::KillSession { session: external }),
         Response::Ok
     );
-    expect_term_acks(&harness.control, &[&external_leader, &external_descendant]);
-    harness.fixture.wait_exited(external);
-    assert!(
-        read_terminal_until(&harness.fixture, external, "FINAL_AFTER_TERM")
-            .contains("FINAL_AFTER_TERM")
+    assert!(expect_term_acks_and_descendant_final(
+        &harness.control,
+        &[&external_leader, &external_descendant],
+        &[&external_descendant],
+    ));
+    wait_exited_and_assert_terminal_contains(
+        &harness.fixture,
+        external,
+        &["FINAL_AFTER_TERM", "FINAL_DESCENDANT_AFTER_TERM"],
     );
     assert!(wait_group_absent(
         external_leader.pgid,
@@ -1494,7 +1674,7 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
         harness.fixture.request(Request::Shutdown { kill: true }),
         Response::Ok
     );
-    expect_term_acks(
+    assert!(expect_term_acks_and_descendant_final(
         &harness.control,
         &[
             &first_leader,
@@ -1502,13 +1682,17 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
             &second_leader,
             &second_descendant,
         ],
-    );
+        &[&first_descendant, &second_descendant],
+    ));
     assert!(wait_group_absent(first_leader.pgid, Duration::from_secs(2)));
     assert!(wait_group_absent(
         second_leader.pgid,
         Duration::from_secs(2)
     ));
-    harness.fixture.join();
+    assert!(
+        harness.join_bounded(Duration::from_secs(2)),
+        "control server did not finish after shutdown"
+    );
     assert!(!harness.fixture.socket.exists());
 }
 
@@ -1561,11 +1745,15 @@ fn pause_resume_control_races_body() {
             Response::Ok
         );
     }
-    expect_term_acks(&harness.control, &[&leader, &descendant]);
-    harness.fixture.wait_exited(session);
-    assert!(
-        read_terminal_until(&harness.fixture, session, "FINAL_AFTER_TERM")
-            .contains("FINAL_AFTER_TERM")
+    assert!(expect_term_acks_and_descendant_final(
+        &harness.control,
+        &[&leader, &descendant],
+        &[&descendant],
+    ));
+    wait_exited_and_assert_terminal_contains(
+        &harness.fixture,
+        session,
+        &["FINAL_AFTER_TERM", "FINAL_DESCENDANT_AFTER_TERM"],
     );
     assert!(wait_group_absent(leader.pgid, Duration::from_secs(2)));
     assert_eq!(
@@ -1573,7 +1761,8 @@ fn pause_resume_control_races_body() {
         Response::Ok
     );
 
-    let (reaped, reaped_leader, reaped_descendant) = harness.create_session("reaped-leader");
+    let (reaped, reaped_leader, reaped_descendant) =
+        harness.create_session_with_options("reaped-leader", true);
     send_peer_command(&harness.control, &reaped_leader, "EXIT_LEADER");
     expect_peer_reply(&harness.control, "EXIT_LEADER_ACK");
     wait_pid_absent(reaped_leader.pid, Duration::from_secs(3));
@@ -1602,8 +1791,31 @@ fn pause_resume_control_races_body() {
             .request(Request::KillSession { session: reaped }),
         Response::Ok
     );
-    expect_datagram_prefix(&harness.control, "TERM_ACK:");
-    harness.fixture.wait_exited(reaped);
+    let reaped_drain_ok = expect_term_acks_and_descendant_final(
+        &harness.control,
+        &[&reaped_descendant],
+        &[&reaped_descendant],
+    );
+    if cfg!(target_os = "macos") {
+        assert!(
+            !reaped_drain_ok,
+            "macOS reaped survivor unexpectedly wrote to its detached PTY"
+        );
+    } else {
+        assert!(
+            reaped_drain_ok,
+            "reaped survivor did not drain final PTY bytes"
+        );
+    }
+    wait_exited_and_assert_terminal_contains(
+        &harness.fixture,
+        reaped,
+        if cfg!(target_os = "macos") {
+            &[]
+        } else {
+            &["FINAL_DESCENDANT_AFTER_TERM"]
+        },
+    );
     assert!(wait_group_absent(
         reaped_descendant.pgid,
         Duration::from_secs(2)
@@ -1641,8 +1853,8 @@ fn request_on_stream(
 #[test]
 fn pause_resume_backpressured_input_keeps_controls_available() {
     let _env_lock = ENV_LOCK.lock().unwrap();
-    let harness = PauseHarness::new();
-    let session = harness.fixture.create_session(
+    let mut harness = PauseHarness::new();
+    let summary = harness.fixture.create_session_summary(
         "blocked-pause",
         vec![
             "sh".into(),
@@ -1650,6 +1862,8 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
             "stty raw -echo; printf READY; exec sleep 30".into(),
         ],
     );
+    harness.record_created_pgid(&summary);
+    let session = summary.id;
     let mut dashboard = UnixStream::connect(&harness.fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -1750,13 +1964,18 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
 fn pause_resume_child_fixture() {
     let role = std::env::var("OVRCR_PAUSE_ROLE").unwrap();
     let dir = PathBuf::from(std::env::var("OVRCR_PAUSE_DIR").unwrap());
-    let parent = dir.join("parent.sock");
+    let parent = std::env::var_os("OVRCR_PAUSE_PARENT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dir.join("parent.sock"));
     let address = dir.join(format!("{role}.sock"));
     let _ = std::fs::remove_file(&address);
     let socket = UnixDatagram::bind(&address).unwrap();
     let term = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(libc::SIGTERM, Arc::clone(&term)).unwrap();
-    if role == "descendant" {
+    let ignore_sighup = std::env::var("OVRCR_PAUSE_IGNORE_SIGHUP")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+    if role == "descendant" && ignore_sighup {
         unsafe {
             libc::signal(libc::SIGHUP, libc::SIG_IGN);
         }
@@ -1771,21 +1990,25 @@ fn pause_resume_child_fixture() {
                 "--nocapture",
             ])
             .env("OVRCR_PAUSE_ROLE", "descendant")
-            .env("OVRCR_PAUSE_DIR", &dir);
+            .env("OVRCR_PAUSE_DIR", &dir)
+            .env("OVRCR_PAUSE_PARENT", &parent);
+        if ignore_sighup {
+            command.env("OVRCR_PAUSE_IGNORE_SIGHUP", "1");
+        }
         Some(command.spawn().unwrap())
     } else {
         None
     };
     let pid = unsafe { libc::getpid() };
     let pgid = unsafe { libc::getpgid(pid) };
+    let original_termios = set_pause_raw_terminal();
+    let stdin_fd = libc::STDIN_FILENO;
     socket
         .send_to(
             format!("READY:{role}:{pid}:{pgid}:{}", address.display()).as_bytes(),
             &parent,
         )
         .unwrap();
-    let original_termios = set_pause_raw_terminal();
-    let stdin_fd = libc::STDIN_FILENO;
     let mut stdin_bytes = [0_u8; 4096];
     let mut datagram_bytes = [0_u8; 4096];
     loop {
@@ -1795,9 +2018,34 @@ fn pause_resume_child_fixture() {
                 .unwrap();
             if let Some(child) = child.as_mut() {
                 let _ = child.wait();
-                println!("FINAL_AFTER_TERM");
-                std::io::stdout().flush().unwrap();
+                std::io::stdout().write_all(b"FINAL_AFTER_TERM\n").unwrap();
+            } else {
+                let write_result = std::io::stdout().write_all(b"FINAL_DESCENDANT_AFTER_TERM\n");
+                let flush_result = std::io::stdout().flush();
+                socket
+                    .send_to(
+                        format!(
+                            "DESCENDANT_STDOUT_RESULT:{pid}:drain={}",
+                            if write_result.is_ok() && flush_result.is_ok() {
+                                "ok"
+                            } else {
+                                "error"
+                            },
+                        )
+                        .as_bytes(),
+                        &parent,
+                    )
+                    .unwrap();
             }
+            if role == "descendant" {
+                socket
+                    .send_to(
+                        format!("FINAL_DESCENDANT_AFTER_TERM:{pid}").as_bytes(),
+                        &parent,
+                    )
+                    .unwrap();
+            }
+            std::io::stdout().flush().unwrap();
             restore_pause_terminal(original_termios);
             let _ = std::fs::remove_file(&address);
             return;
@@ -2646,7 +2894,11 @@ impl ControlFixture {
             ServerMessage::Event(_) => panic!("unexpected event"),
         }
     }
-    fn create_session(&self, name: &str, argv: Vec<OsString>) -> SessionId {
+    fn create_session_summary(
+        &self,
+        name: &str,
+        argv: Vec<OsString>,
+    ) -> ovrcr::session::SessionSummary {
         match self.request(Request::CreateSession(CreateSessionRequest {
             project: "fixture".into(),
             workspace: "work".into(),
@@ -2654,9 +2906,12 @@ impl ControlFixture {
             label: None,
             argv,
         })) {
-            Response::CreatedSession(summary) => summary.id,
+            Response::CreatedSession(summary) => summary,
             response => panic!("unexpected response: {response:?}"),
         }
+    }
+    fn create_session(&self, name: &str, argv: Vec<OsString>) -> SessionId {
+        self.create_session_summary(name, argv).id
     }
     fn only_session_id(&self) -> SessionId {
         match self.request(Request::List) {
