@@ -1771,14 +1771,16 @@ fn pause_resume_control_races_body() {
         Request::ResumeSession { session },
         Request::KillSession { session },
     ];
+    let streams = operations
+        .iter()
+        .map(|_| UnixStream::connect(&harness.fixture.socket).unwrap())
+        .collect::<Vec<_>>();
     let workers = operations
         .into_iter()
-        .map(|request| {
+        .zip(streams)
+        .map(|(request, mut stream)| {
             let barrier = Arc::clone(&barrier);
-            let socket = harness.fixture.socket.clone();
             thread::spawn(move || {
-                let stream = UnixStream::connect(socket).unwrap();
-                let mut stream = stream;
                 barrier.wait();
                 request_on_stream(&mut stream, 1, request, Duration::from_secs(4))
             })

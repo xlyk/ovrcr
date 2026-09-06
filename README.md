@@ -75,6 +75,10 @@ after the server's session refresh is applied. Enter on a paused row stays in Br
 mode and reports that `r` will resume it. Keyboard input, bracketed paste, and
 CLI terminal sends are rejected while a session is paused; Ctrl-g remains
 available in Terminal mode so you can return to Browse and resume it.
+Pause records successful signal delivery to the original process group; it does
+not synchronously confirm that every group member has stopped. Input admitted
+before pause may finish writing or execute after resume, and output already
+buffered before pause may appear after pause.
 Pause/resume is a process lifecycle control separate from agent activity. It
 does not declare an agent idle, cancel remote agent work, or replace the
 hook-owned activity state.

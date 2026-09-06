@@ -358,12 +358,23 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
             "--",
             "/bin/sh",
             "-c",
-            "printf 'READY\\n'; IFS= read -r value; printf 'ACK:%s\\n' \"$value\"",
+            "printf 'READY\\n'; IFS= read -r value; printf 'ACK:%s\\n' \"$value\"; sleep 30",
         ])
         .trim()
         .to_owned();
-    fixture.capture();
     let numeric_id: u64 = id.parse().unwrap();
+    let created = fixture
+        .sessions()
+        .into_iter()
+        .find(|session| session.id == SessionId(numeric_id))
+        .expect("created session must be listed");
+    let original_pid = created
+        .pid
+        .expect("created session must report its managed PID") as i32;
+    assert!(original_pid > 1, "created session has no valid managed PID");
+    let original_pgid = unsafe { libc::getpgid(original_pid) };
+    assert!(original_pgid > 1, "managed PID has no valid original PGID");
+    fixture.capture();
     fixture.wait_text(&id, "READY");
 
     assert_eq!(
@@ -394,11 +405,39 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
     );
     fixture.ok(&["terminal", "send", &id, "--text", "hello"]);
     fixture.wait_text(&id, "ACK:hello");
-    fixture.ok(&["terminal", "close", &id]);
-    assert!(
-        !fixture
-            .sessions()
-            .iter()
-            .any(|session| session.id == SessionId(numeric_id))
+    assert_eq!(
+        fixture.json(&["pause", &id]),
+        serde_json::json!({"ok": true})
     );
+    assert_eq!(
+        fixture.json(&["terminal", "close", &id]),
+        serde_json::json!({"ok": true})
+    );
+    let record_removed = !fixture
+        .sessions()
+        .iter()
+        .any(|session| session.id == SessionId(numeric_id));
+    assert!(record_removed, "closed session record remains");
+    let group_absent = wait_group_absent(original_pgid, Duration::from_secs(2));
+    eprintln!(
+        "paused close cleanup: original_pid={original_pid} original_pgid={original_pgid} record_removed={record_removed} original_pgid_absent={group_absent} before_fixture_teardown=true"
+    );
+    assert!(
+        group_absent,
+        "original managed PGID {original_pgid} remains after paused close"
+    );
+}
+
+fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let result = unsafe { libc::kill(-pgid, 0) };
+        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::yield_now();
+    }
 }
