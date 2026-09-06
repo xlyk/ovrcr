@@ -177,7 +177,7 @@ fn agent_hook_cli_reaches_managed_session() {
 
     let marker = root.path().join("hook-child.marker");
     let report_stdout = root.path().join("hook-report.stdout");
-    let script = r#"printf CHILD_READY > "$2"; "$1" --json report activity --state busy --sequence 1 > "$3"; printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#;
+    let script = r#"printf CHILD_READY > "$2"; "$1" --json report activity --state busy --sequence 1 > "$3" && printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#;
     let created = run(&[
         "new",
         "--project",
