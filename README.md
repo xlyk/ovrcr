@@ -78,7 +78,9 @@ restore a PTY after a server crash or reboot.
 ## Command palette
 
 Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
-command palette. The GUI also supports `Cmd-K`. Type to filter actions or
+command palette. `Cmd-K` opens the popup anywhere in the GUI window and moves
+keyboard focus into it. If the dashboard has detached, it reconnects first.
+Type to filter actions or
 search a terminal by its project, workspace, and name. Use the arrow keys to
 select a result, Enter to continue, and Escape to cancel.
 

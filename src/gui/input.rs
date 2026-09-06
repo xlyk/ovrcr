@@ -9,12 +9,6 @@ pub fn encode_event(
     cell: egui::Vec2,
 ) -> Vec<u8> {
     match event {
-        Event::Key {
-            key: Key::K,
-            pressed: true,
-            modifiers,
-            ..
-        } if modifiers.mac_cmd => b"\x07:".to_vec(),
         Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => text.as_bytes().to_vec(),
         Event::Paste(text) => encode_paste(text, screen.bracketed_paste()),
         Event::Key {

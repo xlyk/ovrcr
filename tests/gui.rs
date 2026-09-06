@@ -22,7 +22,7 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
 }
 
 #[test]
-fn command_k_opens_palette_without_forwarding_k() {
+fn command_k_is_not_forwarded_to_terminal() {
     let parser = vt100::Parser::new(24, 80, 0);
     let bytes = encode_event(
         &Event::Key {
@@ -40,7 +40,7 @@ fn command_k_opens_palette_without_forwarding_k() {
         egui::Rect::NOTHING,
         egui::vec2(8.0, 16.0),
     );
-    assert_eq!(bytes, b"\x07:");
+    assert!(bytes.is_empty());
 }
 
 #[test]
