@@ -1804,19 +1804,61 @@ mod tests {
         (cwd, session, receiver)
     }
 
+    struct TestSessionEvents {
+        cancel: Arc<AtomicBool>,
+        finished: Receiver<()>,
+        handle: Option<JoinHandle<()>>,
+    }
+
+    impl TestSessionEvents {
+        fn cancel(&self) {
+            self.cancel.store(true, Ordering::Release);
+        }
+
+        fn finish(mut self, timeout: Duration) -> Result<()> {
+            if self.finished.recv_timeout(timeout).is_err() {
+                self.cancel();
+                if self.finished.recv_timeout(Duration::from_secs(1)).is_err() {
+                    bail!("test session event consumer did not stop after cancellation")
+                }
+            }
+            if let Some(handle) = self.handle.take() {
+                handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("test session event consumer panicked"))?;
+            }
+            Ok(())
+        }
+    }
+
     fn apply_test_session_events(
         session: Arc<Session>,
         receiver: Receiver<SessionEvent>,
-    ) -> JoinHandle<()> {
-        thread::spawn(move || {
-            while let Ok(event) = receiver.recv() {
-                let exited = matches!(event, SessionEvent::Exited { .. });
-                session.apply_event(event);
-                if exited {
-                    break;
+    ) -> TestSessionEvents {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (finished_sender, finished) = mpsc::sync_channel(1);
+        let consumer_cancel = Arc::clone(&cancel);
+        let handle = thread::spawn(move || {
+            while !consumer_cancel.load(Ordering::Acquire) {
+                match receiver.recv_timeout(Duration::from_millis(10)) {
+                    Ok(event) => {
+                        let exited = matches!(event, SessionEvent::Exited { .. });
+                        session.apply_event(event);
+                        if exited {
+                            break;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
-        })
+            let _ = finished_sender.send(());
+        });
+        TestSessionEvents {
+            cancel,
+            finished,
+            handle: Some(handle),
+        }
     }
 
     fn saturated_control_state(
@@ -1839,10 +1881,23 @@ mod tests {
         (state, dispatch_receiver, client_stream)
     }
 
-    fn cleanup_test_session(session: &Session, events: JoinHandle<()>) {
+    fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<()> {
         let _ = session.set_paused(false);
-        let _ = session.terminate(Duration::from_secs(2));
-        let _ = events.join();
+        let termination = session.terminate(Duration::from_secs(2));
+        if termination.is_err() {
+            events.cancel();
+        }
+        let events_result = events.finish(Duration::from_secs(1));
+        match (termination, events_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(termination), Ok(())) => Err(termination.context("terminate test session")),
+            (Ok(()), Err(events)) => Err(events.context("finish test session event consumer")),
+            (Err(termination), Err(events)) => Err(anyhow::anyhow!(
+                "terminate test session: {}; finish test session event consumer: {}",
+                error_chain_string(&termination),
+                error_chain_string(&events),
+            )),
+        }
     }
 
     #[test]
@@ -1924,8 +1979,15 @@ mod tests {
                 drop(dispatch_receiver.take());
                 let _ = result.recv_timeout(Duration::from_secs(1));
                 let _ = worker.join();
-                cleanup_test_session(&session, events);
-                panic!("pause control must not block on a full dispatch queue: {error}");
+                match cleanup_test_session(&session, events) {
+                    Ok(()) => {
+                        panic!("pause control must not block on a full dispatch queue: {error}")
+                    }
+                    Err(cleanup_error) => panic!(
+                        "pause control must not block on a full dispatch queue: {error}; \
+                         cleanup failed: {cleanup_error:#}"
+                    ),
+                }
             }
         };
         worker.join().unwrap();
@@ -1937,7 +1999,7 @@ mod tests {
         let pause_preserved = matches!(session.summary().phase, SessionPhase::Paused);
         let dashboard_closed = matches!(client_stream.read(&mut [0_u8; 1]), Ok(0));
         drop(dispatch_receiver.take());
-        cleanup_test_session(&session, events);
+        cleanup_test_session(&session, events).unwrap();
         assert!(partial_failure);
         assert!(error_message.contains("dispatcher queue is full"));
         assert!(pause_preserved);
@@ -1963,7 +2025,7 @@ mod tests {
         let error = state.set_session_paused(id, true).unwrap_err();
         let pause_preserved = matches!(session.summary().phase, SessionPhase::Paused);
         let dashboard_closed = matches!(client_stream.read(&mut [0_u8; 1]), Ok(0));
-        cleanup_test_session(&session, events);
+        cleanup_test_session(&session, events).unwrap();
         assert!(error.to_string().contains("dispatcher is unavailable"));
         assert!(pause_preserved);
         assert!(dashboard_closed);
@@ -1996,7 +2058,7 @@ mod tests {
             assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
             drop(dispatch_receiver);
             state.remove_session(id).unwrap();
-            events.join().unwrap();
+            cleanup_test_session(&session, events).unwrap();
             assert!(!state.sessions.lock().unwrap().contains_key(&id));
         }
     }
@@ -2027,7 +2089,7 @@ mod tests {
         assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
         drop(dispatch_receiver);
         state.remove_session(id).unwrap();
-        events.join().unwrap();
+        cleanup_test_session(&session, events).unwrap();
         assert_eq!(state.request_shutdown(false), Response::Ok);
     }
 
@@ -2055,7 +2117,7 @@ mod tests {
         };
         let events = apply_test_session_events(Arc::clone(&session), receiver);
         session.wait_until_exited(Duration::from_secs(2)).unwrap();
-        events.join().unwrap();
+        cleanup_test_session(&session, events).unwrap();
         let state = test_state(None, None);
         state
             .sessions
@@ -2068,7 +2130,6 @@ mod tests {
         let message = error_chain_string(&error);
         assert!(message.contains("session has exited"));
         assert!(message.contains("dispatcher is unavailable"));
-        session.terminate(Duration::from_secs(2)).unwrap();
     }
 
     #[test]
