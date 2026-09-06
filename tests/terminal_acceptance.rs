@@ -42,17 +42,7 @@ impl AcceptanceFixture {
             .stderr(std::process::Stdio::null())
             .spawn()
             .context("start isolated OVRCR server")?;
-        wait_for_socket(&socket, Duration::from_secs(3))?;
-        git(&repo, &["init", "-b", "main"])?;
-        git(&repo, &["config", "user.name", "OVRCR Acceptance"])?;
-        git(
-            &repo,
-            &["config", "user.email", "acceptance@example.invalid"],
-        )?;
-        std::fs::write(repo.join("README"), "acceptance\n")?;
-        git(&repo, &["add", "README"])?;
-        git(&repo, &["commit", "-m", "initial"])?;
-        Ok(Self {
+        let fixture = Self {
             config,
             socket,
             executable,
@@ -61,7 +51,18 @@ impl AcceptanceFixture {
             workspace_root,
             server: Some(server),
             managed_pgids: Vec::new(),
-        })
+        };
+        wait_for_socket(&fixture.socket, Duration::from_secs(3))?;
+        git(&fixture.repo, &["init", "-b", "main"])?;
+        git(&fixture.repo, &["config", "user.name", "OVRCR Acceptance"])?;
+        git(
+            &fixture.repo,
+            &["config", "user.email", "acceptance@example.invalid"],
+        )?;
+        std::fs::write(fixture.repo.join("README"), "acceptance\n")?;
+        git(&fixture.repo, &["add", "README"])?;
+        git(&fixture.repo, &["commit", "-m", "initial"])?;
+        Ok(fixture)
     }
 
     fn cli(&self, args: &[&str]) -> Result<std::process::Output> {
@@ -139,6 +140,8 @@ impl AcceptanceFixture {
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
         let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -170,6 +173,8 @@ impl AcceptanceFixture {
 
     fn list(&self) -> Result<HierarchySnapshot> {
         let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         write_frame(
             &mut stream,
             &ClientMessage {

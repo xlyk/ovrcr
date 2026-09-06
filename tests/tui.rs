@@ -539,7 +539,25 @@ fn pause_resume_dense_status_has_priority() {
         .join("\n");
     assert!(rendered.contains("pid: 555  elapsed: 0m  paused"));
     assert!(rendered.contains("p pause  r resume"));
+    assert!(
+        rendered
+            .lines()
+            .last()
+            .is_some_and(|footer| footer.contains("q detach"))
+    );
 
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let terminal_footer = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
+        .collect::<String>();
+    assert!(terminal_footer.contains("Terminal mode"));
+    assert!(terminal_footer.contains("Ctrl-g"));
+    assert!(!terminal_footer.contains("q detach"));
+
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
     let mut narrow = Terminal::new(TestBackend::new(40, 20)).unwrap();
     narrow
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))

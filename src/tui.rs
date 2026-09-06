@@ -1421,8 +1421,6 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
                     Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
-                    Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" detach", Style::default().fg(MUTED)),
                 ]
             } else if paused && narrow {
                 vec![
@@ -1449,10 +1447,12 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
                 ]);
             }
-            footer.extend([
-                Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" detach", Style::default().fg(MUTED)),
-            ]);
+            if dashboard.mode != InputMode::Terminal {
+                footer.extend([
+                    Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" detach", Style::default().fg(MUTED)),
+                ]);
+            }
             Line::from(footer)
         },
         |error| {
