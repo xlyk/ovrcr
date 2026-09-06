@@ -1,14 +1,23 @@
 # Context Usage Accounting Implementation Plan
 
-> **For agentic workers:** Use the writing-plans execution workflow task by task. This is a proposed design for review; do not execute it until implementation is requested. Do not delegate, commit, or expand scope implicitly.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Goal:** Show the latest explicitly reported context occupancy for each agent session in the CLI and existing TUI context field.
 
 **Architecture:** Extend the agent-hooks report envelope and existing in-memory session summary. Normalize one complete usage snapshot per report, publish through `SessionChanged`, and use the same formatting rules in the reporting helper and dashboard. Keep all I/O synchronous and use the existing socket and queue machinery.
 
-**Tech Stack:** Rust 2024, serde, bincode, clap, Ratatui, stdlib synchronization; reuse the `serde_json` dependency introduced by the agent-hooks plan.
+**Tech Stack:** Rust 2024, serde, bincode, clap, Ratatui, stdlib synchronization; reuse the existing `serde_json = "1"` dependency.
 
 **Spec:** `plans/2026-09-04-ovrcr-mvp-design.md` supplies the architecture constraints; README's unchecked “Context usage accounting for agent sessions” supplies this extension's goal. This document proposes its detailed behavior rather than treating the checkbox as an approved specification.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Constraints and source grounding
 
@@ -18,15 +27,15 @@
 - Preserve existing PTY ownership, output drainage, process-group exit, and removal semantics.
 - Preserve three-line sidebar rows, literal tree indentation, selection behavior, and terminal layout.
 - All execution commands below begin with `rtk`; commands are planned checks, not results from this planning session.
-- Inspected HEAD: `7db59502ea7dba0e54f40541e7211913a4569e66`; re-read affected files after the hooks dependency lands.
+- Inspected HEAD: `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`; re-read affected files after the hooks dependency lands.
 - README currently promises unknown context and explicitly says labels/output do not establish agent activity.
-- `src/session.rs:40` defines `SessionSummary`; `summary()` copies synchronized lifecycle state; `apply_event()` owns exit publication.
+- `src/session.rs` defines `SessionSummary`; `summary()` copies synchronized lifecycle state; `apply_event()` owns exit publication.
 - `src/protocol.rs` already carries summaries in `HierarchySnapshot` and `ServerEvent::SessionChanged`, with a 1 MiB frame bound.
 - `src/server.rs` serializes session mutations and routes lifecycle updates through the dispatcher; reuse hooks' ordered report application there.
-- `src/tui.rs:413` replaces changed summaries; `tree_line_text()` currently formats the literal `ctx —`.
+- `src/tui.rs` replaces changed summaries; `tree_line_text()` currently formats the literal `ctx —`.
 - `src/main.rs` prints a stable three-column session list; add a focused inspection command without changing that output.
 - `tests/tui.rs` has `dashboard_fixture()`, `TestBackend` rendering, and exact sidebar assertions; `tests/cli.rs` has real Git/PTY fixtures and `CleanupGuard`.
-- `Cargo.toml` currently has no JSON parser; this plan consumes hooks' proposed `serde_json`, adding no further dependency.
+- `Cargo.toml` already includes `serde_json = "1"`; this plan adds no dependency.
 
 ## Product contract
 
@@ -113,10 +122,22 @@ pub fn format_context(sample: Option<&ContextUsageSnapshot>, now_ms: u64, exited
 
 The source enum is an adapter identifier, not cryptographic provider verification. Reject empty model/conversation strings, control characters, and strings exceeding 256 UTF-8 bytes. This bounds displayed provenance and avoids control-sequence injection. Accept omitted optional keys as unknown. Reject negative/fractional/out-of-range counts, zero capacity, extra generic keys, and invalid source names. Validate identically after socket decoding, not only in the CLI.
 
+## Current integration paths and task checkpoints
+
+Start only after the hooks handoff names the actual report envelope, dispatcher application function, capability revocation points, and helper deadline functions. In Task 2, replace the hooks-only irrefutable `let AgentUpdate::Activity(...)` with an exhaustive match. The landed contract is `DispatchMessage::AgentReport { report, completion: SyncSender<Response> }` calling `Session::apply_agent_report(&AgentReport) -> anyhow::Result<bool>`; its bool means visible summary changed. Equal counts with a newer receipt timestamp return true and publish SessionChanged. Keep separate `ReportOrder` fields for Activity and Context; clone/validate a candidate ordering state before committing it with the validated sample under the same session mutex. An invalid context payload must neither consume sequence nor refresh receipt time.
+
+The resource CLI already depends on serde_json and manually projects session summaries through `src/main.rs::terminal_value`. In Task 4, add `context_usage` (snapshot or null) and `context_stale` (boolean or null when never reported) there as well as the dedicated inspection command. Capture observation time once per output operation and use the same freshness helper for JSON and TUI. Paused sessions retain their last sample; pause itself does not make it stale. Exited and later saved-only records cannot accept reports.
+
+Implement `session context ID` through `request_without_start(Request::List)` and existing `RuntimeError`/printing conventions. This focused inspection command is explicitly always JSON, including without the global flag. Its successful default output remains the specified JSON object; global `--json` prints the same bare object, matching current resource inspection output. Missing server or ID returns the existing structured NotFound error under `--json`, nonzero status, and no server creation. Do not invent a success wrapper or call the removed `print_response` path.
+
+Add `tests/resource_cli.rs` to the allowed test files. Extend Task 4 with `context_resource_inventory_matches_inspection`: obtain Unknown, accept a generic context report, then compare `terminal list --json` with `session context ID --json` by parsed fields. Verify replacement clears omitted capacity and that exit makes both views stale. Run that exact test and require one executed case; keep existing resource CLI behavior passing.
+
+Task 3's three provider input counters are **all required to be known** for a known sum. If any is missing or null, usage is unknown; never silently substitute zero. Malformed present counters remain errors. For deterministic freshness tests supply `now_ms` to pure helpers, including one millisecond before/at the 300,000 ms threshold and a backward clock; do not wait five minutes. On the real adapter gate, record actual input provenance without saving prompts, transcripts, or capabilities.
+
 ## Task 1: Define snapshot semantics and pure checks
 
 **Files:** `src/context.rs`, `src/lib.rs`.
-**Consumes:** Landed hooks dependency supplies `serde_json`; this pure logic uses none of its runtime interfaces.
+**Consumes:** The current package already supplies `serde_json`; this pure logic uses no hooks runtime interface.
 **Produces:** All types and functions above except the Claude parser, implemented in Task 3.
 
 - [ ] Add one table-driven test `context_semantics` covering zero, unknown halves, exact percentage, over-capacity, `u64::MAX`, and stale boundaries. Representative executable assertions inside the test:
@@ -213,7 +234,7 @@ println!("ctx {}", format_context(Some(&sample), 0, false));
 **Consumes:** Updated summaries and `format_context`/`context_is_stale`.
 **Produces:** `ovrcr session context ID` and real values in the existing sidebar field.
 
-- [ ] Add `SessionCommand::Context { id: u64 }`. Use `connect_if_running`, fetch `Request::List`, and select the exact ID. Missing server/session returns nonzero with a concise error. Print one JSON object with `session`, `context_usage` (snapshot or null), and `stale` (null if never reported, otherwise boolean). No new server request or changes to `ovrcr list` are needed.
+- [ ] Add `SessionCommand::Context { id: u64 }`. Use `request_without_start(Request::List)` and select the exact ID. Missing server/session returns nonzero with a concise error. Print one JSON object with `session`, `context_usage` (snapshot or null), and `stale` (null if never reported, otherwise boolean). No new server request or changes to `ovrcr list` are needed.
 - [ ] Update the session metrics line in `tree_line_text()`:
 
 ```rust

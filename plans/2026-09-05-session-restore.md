@@ -1,6 +1,6 @@
 # Session Restore Implementation Plan
 
-> **For agentic workers:** Use the writing-plans execution workflow task by task; this is a proposed plan, not authorization to implement it. Every verification command below is prospective.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Goal:** Restore explicitly saved sessions after server loss by creating new PTYs, with one supported agent conversation adapter.
 
@@ -10,6 +10,15 @@
 
 **Spec:** [MVP design](2026-09-04-ovrcr-mvp-design.md), especially Terminology, Persistent registry, Session lifecycle, Failure handling, and Deferred work; [README roadmap](../README.md#feature-roadmap).
 
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
+
 ## Global constraints and evidence
 
 - Proposed extension of the MVP's explicit no-restore boundary; the original design remains the baseline for everything else.
@@ -17,7 +26,7 @@
 - No database, async runtime, agent SDK, keeper process, or surviving-process adoption.
 - Only registered workspaces; retain canonical-path and Git ownership checks before launch or removal.
 - Implementation commands use `rtk`; no implementation, tests, commits, or external mutations were performed while writing this plan.
-- Source inspected at `7db59502ea7dba0e54f40541e7211913a4569e66` on 2026-09-05; refresh these anchors before execution.
+- Source inspected at `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05; refresh these anchors before execution.
 - `src/config.rs::Registry::save_atomic` already uses a same-directory exclusive temporary file, file sync, rename, and directory sync.
 - `src/server.rs::create_session_locked` holds the sessions guard during spawn; `next_session_id` currently restarts at 1.
 - `run_server` currently locks startup by socket directory, loads only project/workspace TOML, and creates an empty live map.
@@ -83,6 +92,7 @@ pub struct RestoreStore {
     pub path: PathBuf,
     pub data: RestoreFile,
     pub write_blocked: bool,           // ambiguous post-rename failure
+    pub storage_error: Option<String>, // last commit failure, no argv/secrets
 }
 pub fn load(path: &Path) -> anyhow::Result<RestoreFile>;
 pub fn save(path: &Path, data: &RestoreFile) -> Result<(), SaveFailure>;
@@ -151,6 +161,28 @@ Do not block forever joining pipe readers if a descendant inherits a probe pipe:
 Reject adapter launch if `CLAUDE_CODE_SKIP_PROMPT_HISTORY` is set to a truthy value in the current server environment; do not silently unset it.
 Changed authentication, settings, HOME, deleted transcripts, or provider-side behavior can still cause resume failure. Show the actual agent terminal/exit; successful PTY spawn means “resume launched,” never “conversation restored.”
 No dependency on agent hooks, context accounting, or a transcript-discovery API is introduced.
+
+## Current integration paths and task checkpoints
+
+This plan runs last because it adds durable identity to all earlier features. Break Task 2 into compiling checkpoints: (a) reserve IDs and add incarnation fields/constructors; (b) commit opt-in launch intent before spawn; (c) restore an existing record; (d) wire lifecycle persistence. Do not combine disk failure injection, provider probing, and crash acceptance in the first edit. Complete Task 1's commit-boundary tests before introducing a process spawn that depends on them.
+
+In Task 1, wire startup explicitly: acquire the config-derived owner lock, then the existing socket startup lock; load/validate registry and restore state before binding the socket; construct ServerState with `restore: Mutex<RestoreStore>`; release only the socket startup lock after binding. Keep the config owner File alive until server threads/owned sessions are torn down. Test a second socket using the same config is refused and can acquire the owner lock after the first owner exits. In Task 2, remove the independently authoritative `next_session_id: AtomicU64`; allocation reads and commits `store.data.next_id` under mutation/store locks, including automatic local shells. Update server unit fixture constructors with isolated temporary stores.
+
+After `Session::spawn` returns an Arc, the immediate next step under the held sessions guard is insertion into the owned map. Put no fallible disk/provider/dashboard work between those operations. Perform fallible validation before spawn; publication failure after insertion retains the map entry. Errors before spawn returns leave conservative MayBeRunning and no fabricated handle; retain Session's existing internal spawn cleanup behavior. Extend the ready-callback registration test to prove a concurrently arriving startup event/report finds the inserted handle once the map guard is released.
+
+For restore retries, look up the durable record first for eligibility/expected incarnation, then the owned map under mutation serialization. The live-map exception applies only when **both** the saved record and owned Session have the same `expected + 1` incarnation. That owned summary takes presentation precedence, including Exited; any disagreement is Conflict, never another spawn. Extend the retry test to let the first launch finish before replaying the lost-response request and prove its launch-count marker remains one.
+
+Add `RestoreStore::commit(&mut self, next: RestoreFile) -> Result<(), SaveFailure>` and use it for **every** counter/intent/stopped/removal write. It rejects an already write-blocked store before touching disk; successful save swaps memory; pre-rename failure keeps old memory; post-rename failure sets `write_blocked = true`, keeps conservative authoritative state, and records the storage error for presentation. Record pre-rename errors as well; a later successful commit clears `storage_error`. Diagnostic reloading must not silently make a failed operation successful. The bare save snippet in Task 2 must call this method. Check the signed TOML counter limit before increment: `next_id == i64::MAX as u64` means allocation is exhausted, never an out-of-range file write.
+
+When storage is blocked, refuse creates/restores/removal/workspace deletion before side effects. **Owned process cleanup still runs** through kill/close/shutdown; failed stopped/deletion persistence returns PartialFailure and keeps the owned record plus the durable conservative record. It never reports success just because the PGID is gone. The dispatcher may attempt the stopped commit after final Exited, but it must not take `mutation_lock` because termination waits for that event. A failed commit cannot revert Exited into Running or remove the last cleanup handle.
+
+`restore_session` returns `Response::CreatedSession(current_summary)`. Retry identity is `(id, incarnation)`, not byte equality of a changing summary: a completed attempt can become Exited or acquire new activity between replies. For `current == expected + 1`, return the current owned attempt even if Exited; assert one launch and stable identity rather than identical response payloads. Another restore uses that current incarnation explicitly. Use checked arithmetic for expected+1. No owned attempt after restart means no idempotence proof, so require a new request against the saved current incarnation.
+
+`decode_spec` only decodes validated saved bytes and fields; it never calls `launch_argv`. `launch_argv` may consume that decoded argv and append the adapter's exact flags once. At launch, set the new incarnation and fresh hook identity after decoding. Reset activity/context and parser/history; capabilities and report watermarks never come from disk. Saved-only summaries use Unknown activity, no context, no PID, and no elapsed-runtime display. Add `incarnation` to pane/screen readiness identity and invalidate matching frozen histories/copy jobs before replacing a logical ID; reject old raw events before parsing, then publish a fresh authoritative screen/control epoch for its viewers.
+
+The resource CLI is part of Tasks 2–4. `NewArgs` is shared by `new` and `terminal create`: both accept the same opt-in flags. Update `terminal_value` for incarnation and `phase: "recoverable"` with a separate recovery reason, null PID/exit fields, and unknown activity/context. Include saved-only records in online `Inspect` inventory and terminal counts exactly once by ID; saved records with no registered parent remain visible through `session saved`. Offline resource inventory uses the same owner-locked read policy as `session saved` and must not silently report zero saved terminals. `ReadTerminal`, SendTerminal, pause/resume, and control takeover on a saved-only ID return Conflict with the recovery reason. `CloseTerminal` on an owned saved session cleans the group then durably removes its record; on a saved-only uncertain record it refuses and directs the explicit remove/acknowledgement path.
+
+Add `tests/resource_cli.rs` to constructor and acceptance scope. Add `restore_resource_cli_matches_saved_lifecycle`: opt-in `terminal create`, exit/restart, compare saved/terminal inventory, refuse text/input on saved-only state, restore by expected incarnation, and close with both record removal and PGID absence. Use the file's own Fixture for live CLI cases; the crash task's new subprocess fixture remains local to `tests/session_restore.rs`, with no import of private ControlFixture. Put uncertain saved-only CloseTerminal refusal in the subprocess crash test, where uncertainty is real. Run the exact resource test (one executed) and the existing resource regression. Keep deterministic fake-provider gates separate from actual provider resume acceptance.
 
 ## Task 1: Durable intent and single-writer storage
 
@@ -222,8 +254,7 @@ let mut next = store.data.clone();
 next.next_id = next_id;
 // For opt-in creation, push the validated record with incarnation=1,
 // attempt=MayBeRunning; ephemeral creation persists only the counter.
-crate::restore::save(&store.path, &next)?;
-store.data = next;
+store.commit(next)?; // handles pre/post-rename failure and write_blocked
 ```
 
 - [ ] Release the store guard before spawning; keep the existing sessions guard until registration. Every post-commit error returns `PartialFailure` with logical ID/incarnation and blocks another launch without acknowledgement.
@@ -243,7 +274,14 @@ let request = Request::RestoreSession { session: id,
     expected_incarnation: 1, ack_orphans_gone: true };
 let first = fixture.request(request.clone());
 let again = fixture.request(request);
-assert_eq!(first, again);
+let summary = |response| match response {
+    Response::CreatedSession(summary) => summary,
+    other => panic!("expected restore success, got {other:?}"),
+};
+let first_summary = summary(first);
+let again_summary = summary(again);
+assert_eq!((first_summary.id, first_summary.incarnation),
+    (again_summary.id, again_summary.incarnation));
 assert_eq!(std::fs::read_to_string(&launch_count).unwrap(), "1\n");
 ```
 
@@ -304,7 +342,7 @@ assert_eq!(launch_argv(&record, true).unwrap()[2], OsString::from(uuid));
 **Files:** create `tests/session_restore.rs`; modify `README.md` only during implementation to document opt-in, new PTYs, orphan acknowledgement, environment policy, and adapter limits.
 **Interfaces:** consume the completed public CLI and protocol; no production-only crash flags.
 
-- [ ] Build a subprocess fixture using `env!("CARGO_BIN_EXE_ovrcr")`, isolated config/socket, real disposable Git repo/worktree, and explicit `server` child handle.
+- [ ] Build a subprocess fixture using `env!("CARGO_BIN_EXE_ovrcr")`, isolated config/socket, real disposable Git repo/worktree, and explicit `server` child handle. `crash()` must kill and wait/reap that exact child before restart; normal cleanup shuts down and wait/reaps the restarted child, confirms socket removal and all tagged groups absent, and retains the fixture with an error if any bounded cleanup fails. Never assume SIGKILL performed the server's normal shutdown cleanup.
 - [ ] Expose fixture methods `start()`, `crash()`, `request(Request) -> Response`, and `wait_marker(&Path, &[u8])`; bounded socket/marker waits use a monotonic deadline and assert the observed state.
 - [ ] Use a shell child that ignores HUP and starts a descendant; exchange its readiness marker through PTY output before killing the server child handle with SIGKILL.
 

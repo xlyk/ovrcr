@@ -1,6 +1,6 @@
 # Terminal Mouse Forwarding Implementation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task by task when implementation is authorized. Steps use checkboxes for tracking. This planning request does not authorize implementation, commits, or agent dispatch.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Status:** Proposed design and implementation defaults for review; not an approved specification.
 
@@ -11,6 +11,15 @@
 **Tech stack:** Rust 2024, Crossterm 0.29, Ratatui 0.30, vt100 0.16, portable-pty 0.9; no new dependency or thread.
 
 **Spec references:** `README.md`, roadmap checkbox “Mouse forwarding to applications running inside a terminal”; `plans/2026-09-04-ovrcr-mvp-design.md`, Terminal data flow, Dashboard/Input modes, Local protocol, Failure handling, and Verification. The approved MVP explicitly defers this feature; this plan proposes extending that boundary.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints
 
@@ -24,21 +33,21 @@
 
 ## Source grounding
 
-Inspected baseline: `7db59502ea7dba0e54f40541e7211913a4569e66` on 2026-09-05. Line numbers below identify that baseline; resolve symbols again before implementation.
+Inspected baseline: `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. The symbol names below are the source anchors; resolve them again before implementation.
 
 | Source | Relevant existing behavior |
 |---|---|
-| `src/tui.rs:94` | `Dashboard` has one `selected`, `parser`, `pane_size`, and browse/terminal mode. |
-| `src/tui.rs:330` | `mouse_action` consumes browse-mode left clicks in the sidebar and rejects terminal-mode mouse. |
-| `src/tui.rs:381` | `handle_server_message` resets the parser from `Response::Screen`, feeds incremental output, and requests selection again for `ScreenDirty`. |
-| `src/tui.rs:429` | `select_request`, `resize_request`, and `input_request` already construct the needed protocol requests. |
-| `src/tui.rs:967` | `update_mouse_capture` disables all capture in terminal mode regardless of application requests. |
-| `src/tui.rs:1024` | `process_dashboard_input` passes the real outer rectangle for mouse input but discards focus events. |
-| `src/tui.rs:1636` | `actual_drawn_inner_rect` returns the actual terminal content rectangle; it excludes sidebar, title, metadata, and footer. |
-| `src/session.rs:266` | `current_screen` uses `state_formatted()`, which includes input modes. No extra mouse snapshot field is required. |
-| `src/gui/input.rs:76` | The optional GUI helper encodes button press/release only. It does not currently emit wheel or motion input. |
-| `src/bin/ovrcr-gui.rs:332` | The GUI input loop calls that stateless encoder; passing GUI clicks alone cannot prove drag/wheel acceptance. |
-| `tests/terminal_acceptance.rs:347` | `OuterDashboard` drives the real dashboard executable through an outer PTY and parses its rendered output. |
+| `src/tui.rs` | `Dashboard` has one `selected`, `parser`, `pane_size`, and browse/terminal mode. |
+| `src/tui.rs` | `mouse_action` consumes browse-mode left clicks in the sidebar and rejects terminal-mode mouse. |
+| `src/tui.rs` | `handle_server_message` resets the parser from `Response::Screen`, feeds incremental output, and requests selection again for `ScreenDirty`. |
+| `src/tui.rs` | `select_request`, `resize_request`, and `input_request` already construct the needed protocol requests. |
+| `src/tui.rs` | `update_mouse_capture` disables all capture in terminal mode regardless of application requests. |
+| `src/tui.rs` | `process_dashboard_input` passes the real outer rectangle for mouse input but discards focus events. |
+| `src/tui.rs` | `actual_drawn_inner_rect` returns the actual terminal content rectangle; it excludes sidebar, title, metadata, and footer. |
+| `src/session.rs` | `current_screen` uses `state_formatted()`, which includes input modes. No extra mouse snapshot field is required. |
+| `src/gui/input.rs` | The optional GUI helper encodes button press/release only. It does not currently emit wheel or motion input. |
+| `src/bin/ovrcr-gui.rs` | The GUI input loop calls that stateless encoder; passing GUI clicks alone cannot prove drag/wheel acceptance. |
+| `tests/terminal_acceptance.rs` | `OuterDashboard` drives the real dashboard executable through an outer PTY and parses its rendered output. |
 
 Dependency source verified in the local Cargo registry: `vt100-0.16.2/src/screen.rs` defines the mode/encoding enums, DECSET/DECRST handling, `state_formatted`, and mouse accessors. It exposes `None`, `Press` (9), `PressRelease` (1000), `ButtonMotion` (1002), and `AnyMotion` (1003); encodings are `Default`, `Utf8` (1005), and `Sgr` (1006). Its current mode is the authority; do not build a second escape-sequence parser.
 
@@ -115,6 +124,26 @@ fn reconcile_mouse_protocol(&mut self); // clear state after parsed mode changes
 
 `terminal_mouse_enabled` combines terminal input mode, focus, readiness, selected running session, and non-None tracking. Store the old session ID in cleanup rather than calling `input_request` after selection changes. Every production path must drain cleanup before writing its ordinary action/request, including `next_dashboard_messages`, `process_dashboard_input`, and the event loop's direct resize paths.
 
+## Current integration paths and task checkpoints
+
+In the recommended order, split panes and copy/history already exist. Use the landed `pane_rects` and focused `PaneState` as the only geometry/parser source. Browse retains sidebar/pane focus clicks; History and Copy consume mouse without PTY forwarding; Terminal forwards only inside the ready, Running, focused pane. A click in the other pane while in Terminal must neither forward there nor switch focus. Paused sessions never admit new mouse input.
+
+Reuse the pane's view/readiness state instead of introducing an independently authoritative `mouse_ready` boolean. For a singleton baseline the `MouseAwaiting` sketches below apply; with SetView, eligibility requires the focused pane's matching Screen **and** that view request's final Ok. A snapshot for another pane, old revision, or old request cannot enable capture. Resize and dirty refresh clear readiness before the request and reconcile capture after the new view completes. Output that only changes DEC mouse modes must still trigger reconciliation.
+
+Extend held gesture identity to include the committed view revision. Build cleanup using the old `(session, revision)` before changing focus, mode, or geometry, and drain its single bounded frame before SetView. Later multiple-dashboard integration also tags the old control epoch: if authority was already revoked, discard held state without sending unauthorized cleanup. A server pause/exit similarly clears state; cleanup cannot bypass server input admission. On voluntary Ctrl-g/resize while authority is valid, cleanup is the last admitted terminal action, then the mode/view transition proceeds.
+
+Define the response-order test in Task 3 as: press → request new view → receive wrong-pane/old-revision Screen → receive matching focused Screen → receive final Ok. Assert exactly one old-session release before SetView, no mouse forwarding through the pending interval, and restored eligibility only at final Ok. For protocol withdrawal, assert held state clears with **no** old-protocol release. Add History, Copy, and Paused to `mouse_state_capture_tracks_output_and_focus`, avoiding new mode-specific routing copies.
+
+The pure encoder tests belong in `tests/tui.rs` and may use its local fixture. The raw child fixture belongs to `tests/terminal_acceptance.rs` via `#[path = "support/mouse_app.rs"] mod mouse_app;` (or the file's existing support module); invoke its ignored helper in that same integration-test executable. Do not add a new ordinary integration binary merely to access its private OuterDashboard. The ignored helper is excluded from pass counts; actual acceptance must show emitted mouse bytes reaching the owned child's raw input, not terminal echo.
+
+In Task 3, remove `run_dashboard`'s final `guard.mark_mouse(dashboard.mode == InputMode::Browse)` assumption. The guard already enabled capture at entry; keep its lifetime cleanup obligation through exit even when capture was temporarily disabled. Unconditionally issuing its idempotent DisableMouseCapture on restoration is sufficient; do not add shared state just to avoid that command. Track focus-reporting teardown with the same lifetime discipline. Test enabling child mouse mode while in Terminal followed by normal/error exit and require both capture/focus disable bytes in outer output.
+
+Centralize outbound ordering in `send_dashboard_action(stream, dashboard, action) -> anyhow::Result<()>`: take/write pending cleanup once, then write the ordinary request/action. Route input, resize, focus, and detach through this helper. Cleanup is drained on successful socket write, not held awaiting a separate acknowledgement; a second cancellation with no held buttons emits nothing. If cleanup write fails, stop and propagate the connection error without sending the later action. Handle FocusLost explicitly in `process_dashboard_input`: cancel while old eligibility is valid, mark unfocused, drain cleanup, and redraw/reconcile capture; FocusGained only restores focus and re-evaluates eligibility.
+
+Launch the raw fixture with `std::env::current_exe()` plus `--ignored --exact mouse_fixture_child --nocapture`, through an ordinary managed CreateSession request in the fixture workspace. Pass test-only mode/marker values through that child argv/environment, never global environment mutation. Add any launch convenience method directly on the local AcceptanceFixture and show its CreateSession body; there is no existing `start_mouse_fixture` API. Its recorded PGID joins the fixture's existing bounded cleanup.
+
+Use [computer-use testing](../docs/testing-computer-use.md) for the native gate and record click, release, drag, wheel, focus loss, and terminal restoration separately. The optional GUI helper's current press/release encoder cannot establish wheel or drag behavior. No GUI input implementation is required by this plan.
+
 ## Task 1: Encode the parser's supported mouse protocols
 
 **Files:** `src/tui.rs`; `tests/tui.rs`.
@@ -149,7 +178,7 @@ if x > limit || y > limit { return None; }
 // Prefix ESC [ M, then code+32, x+32, y+32; UTF-8 encodes each scalar.
 ```
 
-- [ ] Complete the tables with all supported event classes in every mode, all three button IDs, all wheel axes, combined modifiers, SGR coordinates above 223, legacy cells 222/223 (zero based), UTF-8 cells 2014/2015, and `u16::MAX`. Out-of-range input produces no bytes, never wraps or truncates. Verify X10 drops wheel/motion/release and strips modifiers.
+- [ ] Complete the tables with all supported event classes in every mode, all three button IDs, all wheel axes, combined modifiers, SGR coordinates above 223, legacy cell 222 accepted and 223 rejected (zero based), UTF-8 cell 2014 accepted and 2015 rejected, and `u16::MAX`. Out-of-range input produces no bytes, never wraps or truncates. Verify X10 drops wheel/motion/release and strips modifiers.
 
 ## Task 2: Route owned gestures through the real terminal geometry
 

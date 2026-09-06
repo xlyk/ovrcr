@@ -1,6 +1,6 @@
 # Pause and Resume Controls Implementation Plan
 
-> **For agentic workers:** Use the writing-plans execution workflow task by task. This is a proposed plan, not an approved specification or authorization to implement. Follow the user's execution and delegation boundaries.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Goal:** Let CLI and dashboard users pause and resume the process group owned by a live OVRCR session without losing its PTY, screen, or cleanup guarantees.
 
@@ -9,6 +9,15 @@
 **Tech Stack:** Rust 2024, blocking threads and mutexes, existing libc/portable-pty, Serde/bincode, Clap, Ratatui/Crossterm; no additional dependencies.
 
 **Spec:** [README feature roadmap](../README.md#feature-roadmap), checkbox “Pause and resume controls for sessions.” The [original MVP design](2026-09-04-ovrcr-mvp-design.md), especially Session lifecycle, Terminal data flow, Failure handling, and Verification, supplies the retained constraints. Its Deferred work section excludes pause/resume from the original MVP; this proposal adds that feature only.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints
 
@@ -23,7 +32,7 @@
 
 ## Source grounding and proposed defaults
 
-Inspected HEAD: `7db59502ea7dba0e54f40541e7211913a4569e66`. The README was already modified when inspected; use the current roadmap wording without replacing unrelated changes.
+Inspected HEAD: `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`. The README roadmap and resource CLI documentation are committed; preserve unrelated sections.
 
 | Current source | Consequence for this feature |
 | --- | --- |
@@ -52,7 +61,7 @@ These defaults require review before implementation:
 
 Modify only these implementation files when this proposal is accepted:
 
-- `src/session.rs`: phase, pause API, signaling result, input admission, stopped-group termination, focused unit tests.
+- `src/session.rs`: phase, pause API, signaling result, admission in both `write` and `send_text`, stopped-group termination, focused unit tests.
 - `src/protocol.rs`: pause/resume request variants and a dispatcher refresh command; protocol round-trip test.
 - `src/server.rs`: serialized control methods, lifecycle guards, refreshed metadata delivery, server unit tests.
 - `src/main.rs`: CLI variants, dispatch, and phase suffix in list output.
@@ -81,6 +90,18 @@ fn pause_request(&mut self, paused: bool) -> DashboardAction;
 ```
 
 The enum-variant lines above describe additions, not standalone Rust declarations. No wire-version negotiation is introduced: server and clients must use the same binary version, as required by the original design.
+
+## Current integration paths and task checkpoints
+
+Treat the resource CLI as a second PTY input path. In Task 1, the shared admission check must cover both `Session::write` and `Session::send_text`; the latter currently encodes bracketed paste and writes text plus optional carriage return under one writer lock. Preserve that atomic text/submit operation. Check lifecycle before blocking I/O, without holding `terminate_lock` or the state mutex during the write.
+
+In Task 3, update `ServerState::send_terminal` as well as dashboard Input routing. A paused precheck or a pause racing admission must return structured `Conflict`, not `Internal`; an already admitted write retains the documented exception. Update `terminal_value` in `src/main.rs` to emit `phase: "paused"`, null exit fields, and the existing live PID/start time. The new commands use `mutate_without_start` and preserve the global `--json` envelope.
+
+Termination has three production entry points: `kill_session`, `close_terminal`, and `request_shutdown`. All must retain TERM→CONT→grace→KILL cleanup and refreshed metadata on partial failure. `CloseTerminal` removes only after successful cleanup; `RemoveSession` still refuses Paused. Test-only `handle_shutdown` is not proof of production shutdown behavior.
+
+Add `tests/resource_cli.rs` to Tasks 3/6's allowed files. Using its own `Fixture`, add `pause_resume_resource_cli_preserves_input_and_close_contract`: capture the managed PGID; pause; require JSON phase `paused`; require `terminal send` with its default submit behavior to fail with Conflict; resume and observe a unique child-generated acknowledgement; pause again and close; require record removal and PGID absence. Exercise the rejected send through the resource CLI, not a direct `Session::write` call. Run `rtk proxy cargo test --test resource_cli pause_resume_resource_cli_preserves_input_and_close_contract -- --exact --nocapture` and require one executed test.
+
+Before proceeding from Task 3, compile every `SessionPhase` match in `src/main.rs`, `src/tui.rs`, `src/server.rs`, and optional GUI code. Before finishing, rerun `terminal_cli_drives_real_session_and_preserves_workspace_removal_guards` in `--test resource_cli` with `--exact`; require one executed regression. Hooks and context are later plans: do not introduce their fields here.
 
 ## Task 1: Serialize process-group controls and protect lifecycle state
 
@@ -123,7 +144,7 @@ Ok(changed)
 ```
 
 - [ ] Return `Ok(false)` for ESRCH and `Ok(true)` for successful delivery from `signal_group`; retain concrete errors for other errno values. Existing termination call sites may discard the boolean because disappearance is a successful cleanup condition.
-- [ ] Reject Paused in `write` using the existing short state check: `bail!("session is paused; resume it before sending input")`. Release the state lock before acquiring the writer or performing blocking I/O. Never acquire `terminate_lock` in `write`.
+- [ ] Reject Paused in both `write` and `send_text` using the same short admission check: `bail!("session is paused; resume it before sending input")`. Release the state lock before acquiring the writer or performing blocking I/O. Never acquire `terminate_lock` in `write`.
 - [ ] Add `pause_resume_exit_event_cannot_be_overwritten` and `pause_resume_rejects_unsafe_group`. Let a shell exit naturally; place a Barrier in the test dispatcher immediately before applying its real Exited event, after reader completion and group disappearance. Race event application with a control attempt and require final Exited plus a control refusal. Never inject Exited while live fixture processes remain: that would bypass signaling and hang cleanup joins. Unit-test invalid PGIDs `0`, `1`, and own process group at the validation boundary without sending signals to them.
 - [ ] Run `rtk proxy cargo test --lib pause_resume_ -- --nocapture`; expect at least 3 passing tests. Unit state checks are preliminary; actual group-stop evidence is Task 4.
 
@@ -152,7 +173,7 @@ if should_signal_group(self)? {
 let deadline = Instant::now() + grace;
 ```
 
-- [ ] Keep the existing verified KILL escalation, `wait_until_exited`, join of reader/waiter, and final group-absence check. Do not hold the state or sessions-map mutex while waiting. SIGCONT failure must return an error; shutdown must retain the server and report partial failure rather than pretend cleanup finished.
+- [ ] Keep the existing verified KILL escalation, `wait_until_exited`, join of reader/waiter, and final group-absence check. Do not hold the state or sessions-map mutex while waiting. For termination, SIGCONT returning false/ESRCH means the group disappeared after TERM; continue existing exit/drain/join checks without inventing a Running transition. Other SIGCONT errors must return an error; shutdown must retain the server and report partial failure rather than pretend cleanup finished.
 - [ ] Add `pause_resume_terminate_serializes_competing_controls`: start pause, resume, and terminate on Arc clones behind a Barrier; all threads must finish within a channel deadline, final phase must be Exited, and the PGID must be absent. Valid losers may return Conflict after termination; none may revive an exited summary.
 - [ ] Run `rtk proxy cargo test --lib pause_resume_ -- --nocapture`; expect at least 5 passing tests. Run `rtk proxy cargo test --lib session::tests::terminate_removes_the_whole_process_group -- --exact --nocapture`; expect exactly 1 pass.
 
@@ -165,7 +186,7 @@ let deadline = Instant::now() + grace;
 
 - [ ] Add `pause_resume_requests_round_trip`, serializing both requests and a Paused `SessionSummary` through existing frame helpers. Run `rtk proxy cargo test --lib protocol::tests::pause_resume_requests_round_trip -- --exact`; expect missing variants initially and exactly 1 pass afterward.
 - [ ] Add the request variants and server method. Acquire `mutation_lock`, call `reject_if_stopping`, clone the Arc from `sessions`, release the map guard, then call `set_paused`. Missing ID uses existing `lifecycle_error(NotFound, ...)`; other control errors use Conflict through `error_for_lifecycle`.
-- [ ] Enqueue `DispatchMessage::RefreshSession { session: id }` before releasing the mutation guard after a control attempt on an existing session. Dispatcher looks up the session and sends `SessionChanged(session.summary())`; do not enqueue an earlier captured summary. Missing records at dispatch time are ignored. A closed dispatcher yields a concrete failure, including whether the signal already succeeded.
+- [ ] Enqueue `DispatchMessage::RefreshSession { session: id }` before releasing the mutation guard after a control attempt on an existing session. Dispatcher looks up the session and sends `SessionChanged(session.summary())`; do not enqueue an earlier captured summary. Missing records at dispatch time are ignored. Use `try_send` for this refresh, not a potentially blocking bounded-channel send. Full/closed dispatch returns PartialFailure when the signal succeeded, or preserves the original Conflict with notification failure details when it did not. Do not undo a delivered signal. Take an owner-checked `dashboard_snapshot` and call existing `disconnect_dashboard` on refresh failure so a still-connected TUI cannot indefinitely display stale control state; a new hierarchy/List reads current session truth. Test queue saturation and disconnected dispatch with no stuck control thread.
 - [ ] Use the same refresh message after `kill_session` attempts and after each shutdown termination attempt, including failures: CONT may have changed Paused to Running even if later cleanup failed. Preserve the original operation error if notification also fails, with both causes in the returned message.
 - [ ] Do not make exit application acquire `terminate_lock`: termination waits for dispatcher-applied Exited and would deadlock. Control signals change phase under the short state mutex; the final Exited event remains authoritative. The refresh handler reads current state, so a refresh queued before exit cannot restore a captured Paused value after it.
 - [ ] Replace removal's Running-only condition with an Exited-only permission:
@@ -177,7 +198,7 @@ if !matches!(session.summary().phase, SessionPhase::Exited { .. }) {
 ```
 
 - [ ] Inspect every `SessionPhase::Running` comparison. Keep busy animation's Running-only check; update live-session guards and the test-only `handle_shutdown` guard to include Paused. Workspace removal already checks all records; production shutdown already refuses all records without `--kill`.
-- [ ] Add `Command::Pause { id: u64 }` and `Command::Resume { id: u64 }` using the existing `connect_or_start`/`send_request`/`print_response` flow. Preserve the first three list fields; append `running`, `paused`, or `exited` after the session name.
+- [ ] Add `Command::Pause { id: u64 }` and `Command::Resume { id: u64 }` using `mutate_without_start(request, json_output)` in the current `run` dispatcher. A missing server returns NotFound without launching one. Support the existing global `--json` success/error envelope. Preserve the first three list fields; append `running`, `paused`, or `exited` after the session name.
 
 ```rust
 let phase = match session.phase {
@@ -240,7 +261,7 @@ expect_peer_reply(&control_socket, "RESUME_DESCENDANT_1");
 - [ ] Add `pause_resume_control_races_converge`: synchronize separate socket clients with a Barrier for pause/resume/kill. Require bounded responses, only documented successes/conflicts, eventual Exited, final parsed marker where TERM handlers run, and absent group. For the reaped-leader case, let the descendant ignore SIGHUP before READY and give the leader an `EXIT_LEADER` datagram command that acknowledges then exits without waiting for its child. Wait until the leader PID is absent, assert the descendant still belongs to the recorded PGID, pause/resume that survivor, then kill it and verify final drainage and absence.
 - [ ] Add `pause_resume_backpressured_input_keeps_controls_available`: extend the existing blocked-input setup with control-client pause then resume before kill. Control responses and List must complete while the dashboard input write is blocked. This exercises the admission exception and proves pause does not wait on the PTY writer.
 - [ ] Use socket read timeouts, bounded process-state polling, and cleanup guards that confirm all recorded PGIDs disappear even on assertions. Never prove pause solely by quiet output or an elapsed sleep. Preserve fixture paths if cleanup fails.
-- [ ] Run `rtk proxy cargo test --test server_lifecycle pause_resume_ -- --nocapture`; expect exactly 5 ordinary passing tests and 1 ignored helper, not zero matches. Run the existing `backpressured_input_does_not_block_list_or_kill` filter with `--exact`; expect exactly 1 pass.
+- [ ] Run `rtk proxy cargo test --test server_lifecycle pause_resume_ -- --nocapture`; expect exactly 5 ordinary passing tests and 1 ignored helper, not zero matches. Run the existing `backpressured_input_and_send_do_not_block_inspect_or_kill` filter with `--exact`; expect exactly 1 pass.
 
 ## Task 5: Add dense dashboard controls and paused presentation
 

@@ -1,6 +1,6 @@
 # Multiple Dashboards Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL when execution is authorized: use superpowers:executing-plans, or superpowers:subagent-driven-development if the user requests delegation. Steps use checkboxes for tracking. This proposal authorizes no implementation, commits, or additional agents.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Status:** Proposed future design. The defaults below are assumptions for review, not an approved specification or existing behavior.
 
@@ -11,6 +11,15 @@
 **Tech Stack:** Existing Rust edition 2024 package; Ratatui 0.30, Crossterm 0.29, portable-pty 0.9, vt100 0.16, Serde/Bincode, and standard-library locks, threads, and channels. No new dependency or Cargo feature.
 
 **Spec:** `README.md`, checkbox “Multiple dashboards connected to the same server”; `plans/2026-09-04-ovrcr-mvp-design.md`, Architecture, Terminal data flow, Local protocol, and Failure handling. The approved MVP explicitly excludes this feature; this document proposes the extension and records the changed assumptions.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints
 
@@ -23,25 +32,25 @@
 
 ## Current code grounding
 
-Inspected at HEAD `7db59502ea7dba0e54f40541e7211913a4569e66` on 2026-09-05. Refresh HEAD and read the final peer plans before implementation.
+Inspected at HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. Refresh HEAD and read the final peer plans before implementation.
 
 | File and current entry point | Relevant behavior |
 | --- | --- |
-| `src/server.rs:95`, `ServerState` | Global `selected`, `dashboard`, `dashboard_size`, and `dashboard_slot` assume one dashboard. |
-| `src/server.rs:868`, `handle_connection` | Rejects a second hello; creates one writer; identity uses `Arc<()>` to protect replacement cleanup. |
-| `src/server.rs:752`, `run_dispatcher` | Select and PTY output share an ordering boundary; Input and Resize currently execute in connection readers. |
-| `src/server.rs:480`, `DashboardSink` | 64 queued messages; incremental overflow creates per-session dirty recovery; reliable overflow disconnects. |
-| `src/server.rs:146`, `create_session_locked` | New sessions inherit singleton geometry, otherwise 120×40. |
-| `src/session.rs:216`, `write` | Blocking `write_all`; never move it into the dispatcher or hold a registry lock across it. |
-| `src/session.rs:229`, `resize` | Changes kernel PTY dimensions and parser dimensions together; each session has only one physical terminal size. |
-| `src/tui.rs:381`, `handle_server_message` | Filters only by session; overwrites pane geometry from snapshots and locally resizes its parser on outer resize. |
+| `src/server.rs`, `ServerState` | Global `selected`, `dashboard`, `dashboard_size`, and `dashboard_slot` assume one dashboard. |
+| `src/server.rs`, `handle_connection` | Rejects a second hello; creates one writer; identity uses `Arc<()>` to protect replacement cleanup. |
+| `src/server.rs`, `run_dispatcher` | Select and PTY output share an ordering boundary; Input and Resize currently execute in connection readers. |
+| `src/server.rs`, `DashboardSink` | 64 queued messages; incremental overflow creates per-session dirty recovery; reliable overflow disconnects. |
+| `src/server.rs`, `create_session_locked` | New sessions inherit singleton geometry, otherwise 120×40. |
+| `src/session.rs`, `write` | Blocking `write_all`; never move it into the dispatcher or hold a registry lock across it. |
+| `src/session.rs`, `resize` | Changes kernel PTY dimensions and parser dimensions together; each session has only one physical terminal size. |
+| `src/tui.rs`, `handle_server_message` | Filters only by session; overwrites pane geometry from snapshots and locally resizes its parser on outer resize. |
 | `tests/server_lifecycle.rs` | Real `ControlFixture`, slow-reader recovery, input backpressure, selection ordering, shutdown acknowledgement, and 50-session coverage. |
 | `tests/tui.rs`, `tests/terminal_acceptance.rs` | TestBackend assertions and real outer-PTY `AcceptanceFixture`/`OuterDashboard` provide existing acceptance seams. |
 
 ## Proposed interaction policy
 
 1. Admit at most **8 dashboard connections** per server. A ninth gets `Conflict: dashboard limit (8) reached`, then closes. CLI connections do not consume dashboard slots. Repeated hello on an admitted connection retains the current single-writer refusal and disconnect behavior.
-2. Selection is independent. Selecting an unowned running session claims its input and resize authority; selecting an already controlled session subscribes read-only. Merely resizing an observer never steals control. Ctrl-g retains control; switching away or detaching releases it. No automatic promotion of existing observers: they use `t` to claim a released session.
+2. Selection is independent. Selecting an unowned running session claims its input and resize authority; selecting an already controlled session subscribes read-only. Merely resizing an observer never steals control. Ctrl-g and switching focus among visible panes retain control; removing a session from the visible view or detaching releases it. No automatic promotion of existing observers: they use `t` to claim a released session.
 3. In Browse, **t takes control** of the selected session using the last observed control epoch. A successful takeover moves input and PTY-size authority together. A concurrent stale takeover gets `Conflict: control changed; retry`; it does not immediately take control back. Enter is available only after an authoritative controller snapshot; observers remain in Browse.
 4. Display `CONTROL · size 80×24` or `READ ONLY · dashboard 3 · size 80×24 · t take control`; when unowned, display `READ ONLY · unowned · t take control`. Display `input finishing; retry takeover` for an accepted write still in progress. Losing control forces Browse and suppresses keys, paste, and future terminal-mouse input until control is reacquired.
 5. Store each dashboard's desired pane size independently. A controller's desired size becomes the real PTY/parser size. Observers keep parsers at the **server's actual size**, clip the top-left screen to their local pane, and pad a larger viewport; show `clipped` if either actual dimension exceeds the viewport. Do not reflow the same byte stream at an observer's width or repeatedly resize to match it.
@@ -127,11 +136,33 @@ struct Dashboards {
 // fn finish_input(state: &ServerState, session: SessionId, token: u64);
 ```
 
-Route Select, Resize, TakeControl through the existing ordered dispatcher. `begin_input` checks live identity, stopping flag, selected session/revision, holder/epoch and no in-flight token under the same dashboard lock; it reserves a token, drops locks, and returns the session. The reader calls `session.write`; use a scope guard to call `finish_input` on success, error or unwind. Token completion clears only the matching token; it never reinstates a holder. Select changing sessions releases the old lease without disturbing a pending token.
+Route Select, Resize, TakeControl through the existing ordered dispatcher. `begin_input` checks live identity, stopping flag, selected session/revision, holder/epoch and no in-flight token under the same dashboard lock; it reserves a token, drops locks, and returns the session. The reader calls `session.write`; use a scope guard to call `finish_input` on success, error or unwind. Token completion clears only the matching token; it never reinstates a holder. Select/SetView releases leases only for sessions leaving that client's visible view, without disturbing pending tokens.
 
 Initialize SessionControl alongside successful session registration with holder None, epoch 1, actual spawn size, and no input token. Clear ownership on Exited and remove the control record on session removal. Lock order is sessions map → dashboards → individual sink; clone session Arcs and drop the sessions guard promptly. Never acquire sessions/mutation locks while holding dashboards, never hold dashboards across socket or PTY writes, and never join a thread under these locks. The dispatcher may hold dashboards through the short resize ioctl and authoritative snapshot enqueue to serialize authority against input admission. Refuse controller geometry-changing resize while input is in flight with the same retryable Conflict, avoiding epoch changes mid-write. Observer viewport changes and same-size screen refresh remain allowed.
 
 Reliable screen publication and subscription commit occur before the next PTY event. Hold dashboards across parser event application and outgoing enqueue as well, so direct disconnect/lease release can acquire that same lock and publish an unowned epoch plus screen without racing a duplicate output chunk. Clone affected session Arcs before taking dashboards. On resize/takeover/release, enqueue resets for all viewers at their own revisions and the new shared epoch; purge their superseded increments/dirty entries. Bytes already held by a writer arrive before its reset. Include `(revision, session, epoch)` in dirty keys and write-completion callbacks, so an old dirty completion cannot mark a newer stream dirty. While dashboards is held, call the already captured sink's enqueue directly; collect failed IDs and disconnect only after releasing the guard, never recursively call send_dashboard or disconnect under that lock. Send errors only to the requester; continue fanout to healthy sinks.
+
+## Current integration paths and task checkpoints
+
+With split panes already landed, implement this plan using `DashboardSlot.view: DashboardView` and its single revision; the singleton structs below describe the pre-split baseline, not a second state model to add. Store each client's frozen history state with that slot. Subscription means membership in its visible view; Input/TakeControl additionally require its focused session. Reuse SetView and add control epochs to its Screen/Output/ScreenDirty contract. A full SetView response still completes with one final Ok after its pane snapshots; unsolicited epoch-reset Screens are events, never extra responses to a completed request.
+
+Canonical integrated wire shape: retain `Response::Screen { revision, session, control: ControlState, bytes }`, with **actual size only in `control.size`**; unsolicited resets use the same fields in `ServerEvent::Screen`. `Output` and `ScreenDirty` carry `(revision, session, epoch)` as listed below. Migrate every split-pane Screen consumer/fixture together rather than adding a second, potentially inconsistent size field. For SetView, use each viewer's revision and each session's current epoch; the final Ok belongs only to the originating request.
+
+Route existing `Request::DashboardGeometry { size }` by the admitted dashboard ID, validate nonzero size, and store it in that slot even before it selects a session. SetView updates that slot's creation geometry from the focused PaneTarget; an empty view retains its last nonzero geometry. `create_session_locked` chooses the requesting dashboard's geometry, or for Control clients the sole dashboard's geometry when exactly one exists, otherwise 120×40. Initialize SessionControl immediately with successful registration; remove it and all matching subscriptions in `remove_session_locked`. Extend Task 2 admission and Task 3 kernel-size tests with zero/one/two dashboards, ReadTerminal actual-size assertions, and create→observe from two clients→close→both subscriptions cleared.
+
+Use one `release_control_locked(dashboards, dashboard_id, session_id)` transition under the dashboards mutex, called only after collecting required session handles in the established lock order. It clears the matching holder, keeps an in-flight token, advances epoch once, and queues ControlChanged followed by authoritative Screen to remaining viewers before later output. Repeated/non-holder cleanup is a no-op. Voluntary view removal, disconnect, and Exited use this transition; Exited screens remain readable. Ctrl-g/focus-only changes do not release. No extra dispatcher wait is introduced from a dispatcher callback.
+
+Complete server lock order is `mutation → registry → sessions → dashboards → session state/terminal locks → sink`; take only the needed subset. Snapshot helpers release per-session state guards before taking dashboards. Writer callbacks release sink guards before invoking disconnect. `disconnect_dashboard(id)` removes/marks only that ID under lock, then shuts down sockets outside it; the reader owns writer joining and never joins itself. Extend the old-ID disconnect test with a late writer callback after a fresh ID attaches. Never wait for a PTY write, dispatcher completion, or thread join while holding a server lock.
+
+The current resource CLI adds another blocking input path: `Request::SendTerminal` → `ServerState::send_terminal` → `Session::send_text`. Keep that explicit control-client command available as scripting authority, but make it reserve the **same per-session in-flight token** as dashboard Input. Introduce `begin_control_input(state, session) -> Result<(Arc<Session>, u64)>`: validate Control role before dispatch, stopping/lifecycle, and no outstanding token; reserve without changing holder or epoch. The existing connection reader then runs the single `send_text(text, submit)` operation and drops a completion guard. It must not execute in the ordered dispatcher.
+
+A Dashboard-role connection is forbidden from sending SendTerminal, so an observer cannot bypass Input's holder/revision/epoch checks. A Control-role send is an explicit user scripting operation; document that it may write to a controlled terminal and that takeover/controller resize returns Conflict until that admitted operation finishes. Never hold dashboards, sessions, or mutation locks while either write blocks. Pause still rejects new input on both paths; kill, close, and shutdown remain available to unblock a non-reading child.
+
+Add `multiple_dashboards_control_send_obeys_input_reservation` in `tests/server_lifecycle.rs`: admit a control-client send to a deliberately non-reading child, observe its in-flight state, refuse a second send and takeover without waiting, refuse a Dashboard-role SendTerminal, and prove List plus KillSession remain responsive. After a normal admitted send finishes, require takeover success and exactly one child-generated marker. Use the existing backpressure fixture's bounded coordination rather than a sleep as admission proof. Run the exact filter (one executed test), in addition to the original six integration cases.
+
+Treat pane focus separately from ownership. Ctrl-g and focus switching preserve a lease for still-visible sessions; removing/hiding a pane releases its lease and publishes an epoch reset to its other viewers. Running sessions may be claimed; Paused sessions remain observable/resizable by an existing holder but receive no new input. A free Paused session remains unowned until resumed and explicitly claimed. Copy/History never enable input merely because the client holds control. Mouse state is cleared on control loss without sending stale-epoch release bytes.
+
+Task 2's caller audit includes Inspect/List, ReadTerminal, SendTerminal, CloseTerminal, current spawn-size selection, and every cleanup callback formerly referring to the singleton owner. Run the existing resource CLI regression once at completion. Record the integrated split/history/mouse tests separately from the single-pane acceptance counts; do not rebuild those features here.
 
 ## Ordered implementation tasks
 
@@ -181,8 +212,8 @@ for id in recipients { send_dashboard(state, id, message.clone(), None); }
 **Files:** `src/server.rs`, `tests/server_lifecycle.rs`; existing Session methods unchanged.
 **Consumes/produces:** Registered identities and ordered dispatch → SessionControl, begin/finish input, atomic takeover, observer snapshots.
 
-- [ ] Add `multiple_dashboards_control_and_kernel_resize` and `multiple_dashboards_takeover_rejects_stale_or_inflight_input`. Extend the fixture setup already used by `backpressured_input_does_not_block_list_or_kill`; register its real Git project/workspace and create real PTY shells.
-- [ ] Test the same-session sequence A selects 24×80, B selects 40×120, B attempts input, B resizes to 30×100, then B takes control with A's observed epoch. Assert B's rejected input creates no file; A's accepted shell command `stty size > size.txt; printf SIZE_ACK` records **24 80** before takeover and B's accepted command records **30 100** afterward. Wait for matching SIZE_ACK and file contents, using unique marker/file names per step. A's subsequent stale input must not create its marker file.
+- [ ] Add `multiple_dashboards_control_and_kernel_resize` and `multiple_dashboards_takeover_rejects_stale_or_inflight_input`. Extend the fixture setup already used by `backpressured_input_and_send_do_not_block_inspect_or_kill`; register its real Git project/workspace and create real PTY shells.
+- [ ] Test the same-session sequence A selects 24×80, B selects 40×120, B attempts input, B resizes to 30×100, A explicitly sends its tagged size command and receives SIZE_ACK, then B takes control with A's observed epoch and explicitly sends its own differently tagged size command. Assert B's rejected input creates no file; A's accepted shell command `stty size > size.txt; printf SIZE_ACK` records **24 80** before takeover and B's accepted command records **30 100** afterward. Wait for matching SIZE_ACK and file contents, using unique marker/file names per step. A's subsequent stale input must not create its marker file.
 - [ ] Define server-local `InputCompletion<'a> { state: &'a ServerState, session: SessionId, token: u64 }` with Drop calling `finish_input(self.state, self.session, self.token)`. Reserve input before constructing this guard, then write without locks. The essential boundary is:
 
 ```rust
@@ -199,7 +230,7 @@ control.state.input_in_flight = true;
 - [ ] Use a cfg(test) channel latch immediately after token reservation and before Session::write to exercise the race deterministically. While latched, require B takeover to return Conflict, disconnect A, and require claim to remain Conflict. Release the latch, observe accepted bytes and completion, then acquire B and prove no A bytes arrive after B's success. A delayed completion with the old token cannot clear a newer token.
 - [ ] In the real blocked-child fixture, send enough input to backpressure `write_all`; use the reservation latch/observable server token to establish admission, not a sleep. Verify another dashboard on another PTY exchanges an acknowledgement and CLI List/Kill succeed. Keep existing raw reader/parser paths running throughout.
 - [ ] Controller resize/takeover invokes existing Session::resize only after validation; commit holder/epoch after ioctl succeeds, then reset all subscribers. Observer resize only changes its slot and returns the current screen. Validate all targeted sessions before changing selection; an invalid target preserves the old lease and subscription.
-- [ ] Run `rtk proxy cargo test --test server_lifecycle multiple_dashboards_ -- --nocapture`: now **4 passed**. Run `rtk proxy cargo test --test server_lifecycle backpressured_input_does_not_block_list_or_kill -- --exact --nocapture`: **1 passed**.
+- [ ] Run `rtk proxy cargo test --test server_lifecycle multiple_dashboards_ -- --nocapture`: now **4 passed**. Run `rtk proxy cargo test --test server_lifecycle backpressured_input_and_send_do_not_block_inspect_or_kill -- --exact --nocapture`: **1 passed**.
 
 ### Task 4: Preserve slow-reader isolation and bounded shutdown
 
