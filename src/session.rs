@@ -94,6 +94,8 @@ pub struct Session {
     pgid: libc::pid_t,
     #[cfg(test)]
     signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
@@ -107,7 +109,7 @@ impl Session {
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, None, None, None)
+        Self::spawn_internal(id, spec, size, events, None, None, None, None)
     }
 
     pub(crate) fn spawn_with_ready(
@@ -117,17 +119,18 @@ impl Session {
         events: SyncSender<SessionEvent>,
         ready: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, Some(ready), None, None)
+        Self::spawn_internal(id, spec, size, events, Some(ready), None, None, None)
     }
 
     #[cfg(test)]
-    fn spawn_with_reap_hook(
+    fn spawn_with_test_hooks(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
-        reap_hook: Arc<dyn Fn() + Send + Sync>,
-        signal_hook: Arc<dyn Fn() + Send + Sync>,
+        reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
@@ -135,8 +138,9 @@ impl Session {
             size,
             events,
             None,
-            Some(reap_hook),
-            Some(signal_hook),
+            reap_hook,
+            signal_hook,
+            signal_result_hook,
         )
     }
 
@@ -148,9 +152,12 @@ impl Session {
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     ) -> Result<Arc<Self>> {
         #[cfg(not(test))]
         let _ = &signal_hook;
+        #[cfg(not(test))]
+        let _ = &signal_result_hook;
 
         let argv0 = spec
             .argv
@@ -224,6 +231,8 @@ impl Session {
             }),
             #[cfg(test)]
             signal_hook,
+            #[cfg(test)]
+            signal_result_hook,
         });
 
         let reader_session = Arc::clone(&session);
@@ -391,7 +400,17 @@ impl Session {
                 if let Some(signal_hook) = &self.signal_hook {
                     signal_hook();
                 }
-                match signal_group(self.pgid, libc::SIGCONT) {
+                let signal_result = signal_group(self.pgid, libc::SIGCONT);
+                #[cfg(test)]
+                let signal_result = if let Some(signal_result_hook) = &self.signal_result_hook {
+                    match signal_result_hook() {
+                        Some(error) => Err(error),
+                        None => signal_result,
+                    }
+                } else {
+                    signal_result
+                };
+                match signal_result {
                     Ok(true) => {
                         let mut state = self.state.lock().unwrap();
                         if matches!(state.phase, SessionPhase::Paused) {
@@ -414,6 +433,9 @@ impl Session {
             Err(error) => return Err(signal_error.unwrap_or(error)),
         };
         if !group_exited && group_present {
+            if let Some(error) = signal_error {
+                return Err(error);
+            }
             let should_kill = match should_signal_group(self) {
                 Ok(should_kill) => should_kill,
                 Err(error) => return Err(signal_error.unwrap_or(error)),
@@ -654,8 +676,10 @@ fn wait_for_group_exit(pgid: libc::pid_t, deadline: Instant) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
     use std::process::Command;
     use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver};
 
     struct TerminationGuard(Arc<Session>);
@@ -704,13 +728,16 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     struct ReapGate {
         entered: mpsc::SyncSender<()>,
         release: Mutex<Receiver<()>>,
         signal_entered: mpsc::SyncSender<()>,
         signal_release: Mutex<Receiver<()>>,
+        signal_result_entered: mpsc::SyncSender<()>,
     }
 
+    #[cfg(target_os = "macos")]
     impl ReapGate {
         fn new() -> (
             Arc<Self>,
@@ -718,22 +745,26 @@ mod tests {
             mpsc::SyncSender<()>,
             Receiver<()>,
             mpsc::SyncSender<()>,
+            Receiver<()>,
         ) {
             let (entered_sender, entered) = mpsc::sync_channel(1);
             let (release, release_receiver) = mpsc::sync_channel(1);
             let (signal_entered_sender, signal_entered) = mpsc::sync_channel(1);
             let (signal_release, signal_release_receiver) = mpsc::sync_channel(1);
+            let (signal_result_entered_sender, signal_result_entered) = mpsc::sync_channel(1);
             (
                 Arc::new(Self {
                     entered: entered_sender,
                     release: Mutex::new(release_receiver),
                     signal_entered: signal_entered_sender,
                     signal_release: Mutex::new(signal_release_receiver),
+                    signal_result_entered: signal_result_entered_sender,
                 }),
                 entered,
                 release,
                 signal_entered,
                 signal_release,
+                signal_result_entered,
             )
         }
 
@@ -745,6 +776,25 @@ mod tests {
         fn before_signal(&self) {
             let _ = self.signal_entered.send(());
             let _ = self.signal_release.lock().unwrap().recv();
+        }
+
+        fn after_signal(&self) -> Option<anyhow::Error> {
+            let _ = self.signal_result_entered.send(());
+            None
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct ReapGateCleanup {
+        release: mpsc::SyncSender<()>,
+        signal_release: mpsc::SyncSender<()>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for ReapGateCleanup {
+        fn drop(&mut self) {
+            let _ = self.signal_release.try_send(());
+            let _ = self.release.try_send(());
         }
     }
 
@@ -850,6 +900,7 @@ mod tests {
         false
     }
 
+    #[cfg(target_os = "macos")]
     fn wait_for_process_state(pid: u32, expected: char, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let pid = pid.to_string();
@@ -868,11 +919,13 @@ mod tests {
         false
     }
 
+    #[cfg(target_os = "macos")]
     fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandle<()>) {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::sync_channel(64);
         let signal_gate = Arc::clone(&reap_gate);
-        let session = Session::spawn_with_reap_hook(
+        let signal_result_gate = Arc::clone(&reap_gate);
+        let session = Session::spawn_with_test_hooks(
             SessionId(50),
             SessionSpec {
                 project: "p".into(),
@@ -888,8 +941,40 @@ mod tests {
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
-            Arc::new(move || reap_gate.wait()),
-            Arc::new(move || signal_gate.before_signal()),
+            Some(Arc::new(move || reap_gate.wait())),
+            Some(Arc::new(move || signal_gate.before_signal())),
+            Some(Arc::new(move || signal_result_gate.after_signal())),
+        )
+        .unwrap();
+        let _ = Box::leak(Box::new(dir));
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+        (session, dispatcher)
+    }
+
+    fn spawn_live_refusal_session(
+        signal_result_hook: Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>,
+    ) -> (Arc<Session>, JoinHandle<()>) {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let session = Session::spawn_with_test_hooks(
+            SessionId(51),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "live-refusal".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap '' TERM; printf READY; while :; do read line; done".into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+            None,
+            None,
+            Some(signal_result_hook),
         )
         .unwrap();
         let _ = Box::leak(Box::new(dir));
@@ -1026,11 +1111,17 @@ mod tests {
         assert!(!group_exists(session.pgid).unwrap());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn terminate_reaps_group_after_transient_sigcont_permission() {
-        let (reap_gate, entered, release, signal_entered, signal_release) = ReapGate::new();
+        let (reap_gate, entered, release, signal_entered, signal_release, signal_result_entered) =
+            ReapGate::new();
         let (session, dispatcher) = spawn_term_race_session(reap_gate);
         let _cleanup = TerminationGuard(Arc::clone(&session));
+        let _gate_cleanup = ReapGateCleanup {
+            release: release.clone(),
+            signal_release: signal_release.clone(),
+        };
         assert!(entered.recv_timeout(Duration::from_secs(2)).is_ok());
         assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
 
@@ -1048,6 +1139,11 @@ mod tests {
         assert!(wait_for_process_state(leader, 'Z', Duration::from_secs(2)));
         assert!(group_exists(session.pgid).unwrap());
         signal_release.send(()).unwrap();
+        assert!(
+            signal_result_entered
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
         release.send(()).unwrap();
 
         assert!(
@@ -1065,11 +1161,17 @@ mod tests {
         assert!(!group_exists(session.pgid).unwrap());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn terminate_retains_sigcont_permission_error_when_group_remains() {
-        let (reap_gate, entered, release, signal_entered, signal_release) = ReapGate::new();
+        let (reap_gate, entered, release, signal_entered, signal_release, signal_result_entered) =
+            ReapGate::new();
         let (session, dispatcher) = spawn_term_race_session(reap_gate);
         let _cleanup = TerminationGuard(Arc::clone(&session));
+        let _gate_cleanup = ReapGateCleanup {
+            release: release.clone(),
+            signal_release: signal_release.clone(),
+        };
         assert!(entered.recv_timeout(Duration::from_secs(2)).is_ok());
         assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
 
@@ -1086,6 +1188,11 @@ mod tests {
         assert!(wait_for_process_state(leader, 'Z', Duration::from_secs(2)));
         assert!(group_exists(session.pgid).unwrap());
         signal_release.send(()).unwrap();
+        assert!(
+            signal_result_entered
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
 
         let error = termination_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -1097,6 +1204,42 @@ mod tests {
         termination.join().unwrap();
         session.wait_until_exited(Duration::from_secs(2)).unwrap();
         dispatcher.join().unwrap();
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn terminate_retains_sigcont_permission_error_for_live_group() {
+        let refuse_sigcont = Arc::new(AtomicBool::new(true));
+        let refusal = Arc::clone(&refuse_sigcont);
+        let signal_result_hook = Arc::new(move || {
+            if refusal.load(Ordering::Acquire) {
+                Some(anyhow::anyhow!(
+                    "signal PTY process group: Operation not permitted (os error 1)"
+                ))
+            } else {
+                None
+            }
+        });
+        let (session, dispatcher) = spawn_live_refusal_session(signal_result_hook);
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+        let leader = session.summary().pid.unwrap();
+
+        let error = session
+            .terminate(Duration::from_millis(50))
+            .expect_err("a still-present refused group must retain SIGCONT error");
+        assert!(error.to_string().contains("signal PTY process group"));
+        assert!(error.to_string().contains("Operation not permitted"));
+        assert!(pid_exists(leader), "SIGKILL must not reach the live leader");
+        assert!(group_exists(session.pgid).unwrap());
+
+        refuse_sigcont.store(false, Ordering::Release);
+        session.terminate(Duration::from_millis(200)).unwrap();
+        dispatcher.join().unwrap();
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
         assert!(!group_exists(session.pgid).unwrap());
     }
 
