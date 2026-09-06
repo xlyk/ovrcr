@@ -668,6 +668,13 @@ fn terminal_value(session: &SessionSummary) -> Value {
         "pid": session.pid,
         "started_unix_ms": session.started_unix_ms,
         "phase": phase,
+        "activity": match session.activity {
+            AgentActivity::Unknown => "unknown",
+            AgentActivity::Idle => "idle",
+            AgentActivity::Busy => "busy",
+            AgentActivity::WaitingInput => "waiting_input",
+            AgentActivity::Error => "error",
+        },
         "exit_code": exit_code,
         "exit_signal": exit_signal,
     })
@@ -762,7 +769,7 @@ fn print_workspace(value: &Value) {
 
 fn print_terminal_row(value: &Value) {
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         value["id"],
         value["project"].as_str().unwrap_or_default(),
         value["workspace"].as_str().unwrap_or_default(),
@@ -771,6 +778,7 @@ fn print_terminal_row(value: &Value) {
         json_scalar(&value["pid"]),
         value["started_unix_ms"],
         value["phase"].as_str().unwrap_or_default(),
+        value["activity"].as_str().unwrap_or_default(),
         json_scalar(&value["exit_code"]),
         json_scalar(&value["exit_signal"]),
     );

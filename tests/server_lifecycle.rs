@@ -80,7 +80,47 @@ fn hook_child_report_helper() {
 
     let mut stdin = std::io::stdin();
     let mut byte = [0_u8; 1];
-    let _ = stdin.read(&mut byte);
+    if stdin.read(&mut byte).is_ok() && byte[0] == b'w' {
+        let mut stream = UnixStream::connect(&socket).expect("reconnect hook socket");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set reconnect hook read deadline");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .expect("set reconnect hook write deadline");
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::AgentReport(AgentReport {
+                    session: SessionId(session),
+                    capability,
+                    sequence: None,
+                    update: AgentUpdate::Activity(ovrcr::session::AgentActivity::WaitingInput),
+                }),
+            },
+        )
+        .expect("write reconnect hook report");
+        let response =
+            read_frame::<ServerMessage>(&mut stream).expect("read reconnect hook response");
+        assert_eq!(
+            response,
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            }
+        );
+        let identity_path =
+            std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(identity_path)
+            .and_then(|mut file| file.write_all(b"WAITING_REPORTED\n"))
+            .expect("record reconnect hook report acknowledgement");
+    }
+    loop {
+        thread::park_timeout(Duration::from_secs(1));
+    }
 }
 
 struct ServerFixture {
@@ -408,6 +448,142 @@ fn agent_hook_startup_registration_is_visible() {
     assert_eq!(
         fixture.request(Request::KillSession {
             session: identity.session
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn agent_hook_round_trip_survives_dashboard_reconnect() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child_with_report("reconnect", "agent-hook-reconnect");
+    let pgid = fixture.original_pgid(identity.session);
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 10,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let initial = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    let ServerMessage::Response {
+        request_id: 10,
+        response: Response::Hierarchy(snapshot),
+    } = initial
+    else {
+        panic!("dashboard hello did not return a hierarchy: {initial:?}");
+    };
+    assert!(
+        snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .any(|summary| summary.id == identity.session
+                && summary.activity == ovrcr::session::AgentActivity::Busy)
+    );
+    drop(dashboard);
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: identity.session,
+            text: "w".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_identity_marker("agent-hook-reconnect", "WAITING_REPORTED");
+
+    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    reconnect
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut reconnect,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let initial = read_frame::<ServerMessage>(&mut reconnect).unwrap();
+    let ServerMessage::Response {
+        request_id: 20,
+        response: Response::Hierarchy(snapshot),
+    } = initial
+    else {
+        panic!("dashboard reconnect did not return a hierarchy: {initial:?}");
+    };
+    assert!(
+        snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .any(|summary| summary.id == identity.session
+                && summary.activity == ovrcr::session::AgentActivity::WaitingInput),
+        "reconnected snapshot: {snapshot:?}"
+    );
+
+    write_frame(
+        &mut reconnect,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::Select {
+                session: identity.session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    let screen = loop {
+        match read_frame::<ServerMessage>(&mut reconnect).unwrap() {
+            ServerMessage::Response {
+                request_id: 21,
+                response: Response::Screen { bytes, .. },
+            } => break bytes,
+            _ => {}
+        }
+    };
+    let mut parser = vt100::Parser::new(24, 80, 0);
+    parser.process(&screen);
+    let text = parser.screen().contents();
+    assert!(
+        text.contains("HOOK_READY"),
+        "helper output was not retained: {text:?}"
+    );
+    for forbidden in [
+        "AgentReport",
+        "ClientMessage",
+        "ServerMessage",
+        "Response",
+        "OVRCR_HOOK_SOCKET",
+        "WAITING_REPORTED",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "hook protocol leaked into terminal: {text:?}"
+        );
+    }
+    drop(reconnect);
+
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session,
         }),
         Response::Ok
     );
@@ -3390,7 +3566,7 @@ impl ControlFixture {
         let identity_path = self._root.path().join(format!("{marker}.identity"));
         let child = std::env::current_exe().unwrap();
         let script = if report {
-            r#"OVRCR_AGENT_HOOK_IDENTITY_PATH="$1" exec "$2" --ignored --exact hook_child_report_helper --nocapture"#
+            r#"stty -echo; OVRCR_AGENT_HOOK_IDENTITY_PATH="$1" exec "$2" --ignored --exact hook_child_report_helper --nocapture"#
         } else {
             r#"printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$1"; printf HOOK_READY; while IFS= read -r line; do :; done"#
         };
@@ -3491,6 +3667,21 @@ impl ControlFixture {
             thread::park_timeout(Duration::from_millis(5));
         }
         panic!("session {id:?} did not produce terminal marker");
+    }
+
+    fn wait_identity_marker(&self, marker: &str, expected: &str) {
+        let identity_path = self._root.path().join(format!("{marker}.identity"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if std::fs::read_to_string(&identity_path)
+                .map(|contents| contents.lines().any(|line| line == expected))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("managed hook child did not publish marker {expected:?}");
     }
 
     fn shutdown_kill(&self) {
