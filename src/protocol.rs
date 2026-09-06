@@ -130,6 +130,7 @@ pub enum Request {
     CloseTerminal {
         session: SessionId,
     },
+    AgentReport(AgentReport),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +200,10 @@ pub enum ServerEvent {
 
 pub enum DispatchMessage {
     Session(SessionEvent),
+    AgentReport {
+        report: AgentReport,
+        completion: std::sync::mpsc::SyncSender<Response>,
+    },
     RefreshSession {
         session: SessionId,
     },

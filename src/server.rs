@@ -1,18 +1,18 @@
 use crate::config::{ProjectRecord, Registry};
 use crate::git::{self, BranchSpec};
 use crate::protocol::{
-    BranchRequest, ClientMessage, ClientRole, DispatchMessage, ErrorCode, HierarchySnapshot,
-    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
-    write_frame,
+    AgentReport, BranchRequest, ClientMessage, ClientRole, DispatchMessage, ErrorCode,
+    HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent, ServerMessage,
+    WorkspaceSummary, read_frame, write_frame,
 };
 use crate::session::{
-    InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase, SessionSpec,
-    SessionSummary, TerminalSize,
+    HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase,
+    SessionSpec, SessionSummary, TerminalSize,
 };
 use anyhow::{Context, Result, bail};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -91,6 +91,38 @@ fn user_temp_dir(name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let user = unsafe { libc::getuid() };
     temp.join(format!("{name}-{user}"))
+}
+
+fn resolve_bound_socket(socket: &Path) -> Result<PathBuf> {
+    let leaf = socket
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .context("server socket path has no leaf")?;
+    match fs::symlink_metadata(socket) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                bail!("server socket path cannot be a symlink")
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("inspect server socket path"),
+    }
+    let parent = socket
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(fs::canonicalize(parent)
+        .with_context(|| format!("resolve server socket parent {}", parent.display()))?
+        .join(leaf))
+}
+
+fn generate_hook_capability() -> Result<[u8; 32]> {
+    let mut capability = [0_u8; 32];
+    let mut random = File::open("/dev/urandom").context("open hook capability source")?;
+    random
+        .read_exact(&mut capability)
+        .context("read hook capability")?;
+    Ok(capability)
 }
 
 pub struct ServerState {
@@ -186,6 +218,7 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let session = self.session_for_control(id)?;
+        session.revoke_hook_capability();
         let termination = session.terminate(grace).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)?;
@@ -268,6 +301,11 @@ impl ServerState {
             label,
             cwd,
             argv: request.argv,
+            hook_env: Some(HookEnvironment {
+                socket: resolve_bound_socket(&self.socket)?,
+                session: id,
+                capability: generate_hook_capability()?,
+            }),
         };
         let size = self.dashboard_size.lock().unwrap().as_ref().map_or(
             TerminalSize {
@@ -297,6 +335,7 @@ impl ServerState {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let session = self.session_for_control(id)?;
+        session.revoke_hook_capability();
         let termination = session.terminate(grace).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)
@@ -324,6 +363,7 @@ impl ServerState {
                 "session is still live; kill it before removal",
             ));
         }
+        session.revoke_hook_capability();
         self.sessions.lock().unwrap().remove(&id);
         let mut selected = self.selected.lock().unwrap();
         if selected.as_ref() == Some(&id) {
@@ -351,6 +391,7 @@ impl ServerState {
             let mut failures = Vec::new();
             for session in sessions {
                 let id = session.summary().id;
+                session.revoke_hook_capability();
                 let termination = session.terminate(Duration::from_secs(5)).map(|_| ());
                 let refresh = self.refresh_session_locked(id);
                 if let Err(error) = combine_control_and_refresh(id, termination, refresh) {
@@ -758,6 +799,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .with_context(|| format!("create server socket directory {}", parent.display()))?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("secure server socket directory {}", parent.display()))?;
+    let bound_socket = resolve_bound_socket(&paths.socket)?;
     let startup_lock = acquire_startup_lock(parent)?;
     if paths.socket.exists() {
         match UnixStream::connect(&paths.socket) {
@@ -792,7 +834,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
     let state = Arc::new(ServerState {
-        socket: paths.socket.clone(),
+        socket: bound_socket,
         registry_path,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
@@ -859,6 +901,9 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
     while let Ok(command) = commands.recv() {
         match command {
             DispatchMessage::Session(event) => dispatch_session_event(&state, event),
+            DispatchMessage::AgentReport { report, completion } => {
+                dispatch_agent_report(&state, report, completion)
+            }
             DispatchMessage::RefreshSession { session } => {
                 dispatch_refresh_session(&state, session)
             }
@@ -871,6 +916,30 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
             DispatchMessage::Stop => break,
         }
     }
+}
+
+fn dispatch_agent_report(
+    state: &Arc<ServerState>,
+    report: AgentReport,
+    completion: SyncSender<Response>,
+) {
+    let session = state.sessions.lock().unwrap().get(&report.session).cloned();
+    let response = match session {
+        Some(session) => match session.apply_agent_report(&report) {
+            Ok(changed) => {
+                if changed {
+                    dashboard_try_send(
+                        state,
+                        ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
+                    );
+                }
+                Response::Ok
+            }
+            Err(error) => error_for_lifecycle(error),
+        },
+        None => error_response(ErrorCode::NotFound, "session not found"),
+    };
+    let _ = completion.send(response);
 }
 
 fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
@@ -1203,6 +1272,23 @@ fn handle_request_with_id(
                 );
                 Response::Ok
             }),
+        Request::AgentReport(report) => {
+            let (completion, result) = mpsc::sync_channel(1);
+            match state
+                .dispatch
+                .try_send(DispatchMessage::AgentReport { report, completion })
+            {
+                Ok(()) => result.recv().unwrap_or_else(|_| {
+                    error_response(ErrorCode::Internal, "dispatcher is unavailable")
+                }),
+                Err(mpsc::TrySendError::Full(_)) => {
+                    error_response(ErrorCode::Conflict, "dispatcher queue is full")
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    error_response(ErrorCode::Internal, "dispatcher is unavailable")
+                }
+            }
+        }
         Request::PauseSession { session } => state
             .set_session_paused(session, true)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
@@ -1490,6 +1576,7 @@ where
     if kill {
         let mut failures = Vec::new();
         for session in sessions {
+            session.revoke_hook_capability();
             if let Err(error) = terminate(&session) {
                 failures.push(format!(
                     "session {}: {}",
@@ -1694,6 +1781,7 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
 mod tests {
     use super::*;
     use crate::protocol::{ServerEvent, ServerMessage};
+    use crate::session::AgentActivity;
     use std::io::Read;
     use std::net::Shutdown;
 
@@ -1724,6 +1812,52 @@ mod tests {
             dispatch_sender.try_send(DispatchMessage::Stop),
             Err(mpsc::TrySendError::Full(_))
         ));
+    }
+
+    #[test]
+    fn agent_report_queue_full_is_a_structured_conflict() {
+        let (state, _receiver) = test_state_with_dispatch(None, None);
+        for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+            state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+        }
+        let mut role = ClientRole::Control;
+        let response = state.handle_request(
+            &mut role,
+            Request::AgentReport(AgentReport {
+                session: SessionId(999),
+                capability: [0_u8; 32],
+                sequence: None,
+                update: crate::protocol::AgentUpdate::Activity(AgentActivity::Busy),
+            }),
+        );
+        assert_eq!(
+            response,
+            Response::Error {
+                code: ErrorCode::Conflict,
+                message: "dispatcher queue is full".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let real_parent = root.path().join("real");
+        std::fs::create_dir(&real_parent).unwrap();
+        let symlink_parent = root.path().join("link");
+        std::os::unix::fs::symlink(&real_parent, &symlink_parent).unwrap();
+        let socket = symlink_parent.join("server.sock");
+        let expected = real_parent.canonicalize().unwrap().join("server.sock");
+        assert_eq!(resolve_bound_socket(&socket).unwrap(), expected);
+
+        let listener = UnixListener::bind(&socket).unwrap();
+        assert_eq!(resolve_bound_socket(&socket).unwrap(), expected);
+        drop(listener);
+        std::fs::remove_file(&socket).unwrap();
+
+        let symlink_leaf = root.path().join("symlink.sock");
+        std::os::unix::fs::symlink(&expected, &symlink_leaf).unwrap();
+        assert!(resolve_bound_socket(&symlink_leaf).is_err());
     }
 
     #[test]
@@ -1796,6 +1930,7 @@ mod tests {
                     "-c".into(),
                     "trap '' TERM; while :; do sleep 1; done".into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
@@ -2108,6 +2243,7 @@ mod tests {
                     label: "sh".into(),
                     cwd: cwd.path().to_path_buf(),
                     argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+                    hook_env: None,
                 },
                 TerminalSize { rows: 24, cols: 80 },
                 events,
@@ -2374,6 +2510,7 @@ mod tests {
     fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         let cwd = tempfile::tempdir().unwrap();
         let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let capability = [0x49; 32];
         let session = Session::spawn(
             SessionId(7),
             crate::session::SessionSpec {
@@ -2383,6 +2520,11 @@ mod tests {
                 label: "sh".into(),
                 cwd: cwd.path().to_path_buf(),
                 argv: vec!["sh".into()],
+                hook_env: Some(HookEnvironment {
+                    socket: PathBuf::from("/private/test/ovrcr.sock"),
+                    session: SessionId(7),
+                    capability,
+                }),
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
@@ -2416,6 +2558,16 @@ mod tests {
         ));
         assert!(!state.shutdown.load(Ordering::Acquire));
         assert!(matches!(session.summary().phase, SessionPhase::Running));
+        assert!(
+            session
+                .apply_agent_report(&AgentReport {
+                    session: SessionId(7),
+                    capability,
+                    sequence: None,
+                    update: crate::protocol::AgentUpdate::Activity(AgentActivity::Busy),
+                })
+                .is_err()
+        );
         session.terminate(Duration::from_secs(2)).unwrap();
         waiter.join().unwrap();
     }
@@ -2433,6 +2585,7 @@ mod tests {
                 label: "sh".into(),
                 cwd: cwd.path().to_path_buf(),
                 argv: vec!["sh".into()],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
@@ -2480,6 +2633,7 @@ mod tests {
                 label: "sh".into(),
                 cwd: cwd.path().to_path_buf(),
                 argv: vec!["sh".into()],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
@@ -2537,8 +2691,10 @@ mod tests {
                 }],
             }],
         };
+        let socket_path = root.path().join("socket");
+        let _socket_guard = UnixListener::bind(&socket_path).unwrap();
         let state = Arc::new(ServerState {
-            socket: root.path().join("socket"),
+            socket: socket_path,
             registry_path: root.path().join("config.toml"),
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
