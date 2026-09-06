@@ -69,6 +69,21 @@ lines; clicking any of those lines selects it.
 Idle sessions leave their status slot blank; an explicit busy state animates a braille spinner.
 Activity defaults to idle until agent hooks are connected; terminal output and
 process liveness do not imply that an agent is busy.
+In Browse mode, press `p` to pause the selected live session or `r` to resume
+it. The server is authoritative for the phase, so a paused row is shown only
+after the server's session refresh is applied. Enter on a paused row stays in Browse
+mode and reports that `r` will resume it. Keyboard input, bracketed paste, and
+CLI terminal sends are rejected while a session is paused; Ctrl-g remains
+available in Terminal mode so you can return to Browse and resume it.
+Pause/resume is a process lifecycle control separate from agent activity. It
+does not declare an agent idle, cancel remote agent work, or replace the
+hook-owned activity state.
+
+Dashboard output is delivered through a bounded queue so a detached or slow
+dashboard can reattach and refresh the current screen. Output backlog is
+coalesced into a per-session refresh when necessary; control responses and
+lifecycle events are preserved, and the dashboard disconnects if the queue
+cannot accept one of those messages.
 
 Detaching leaves the server, PTYs, and child process groups running. Run
 `ovrcr` again to reattach and rebuild the selected terminal from its current
@@ -182,14 +197,31 @@ List sessions, stop a process group, and remove an exited record:
 
 ```sh
 ovrcr list
+ovrcr pause SESSION_ID
+ovrcr resume SESSION_ID
 ovrcr kill SESSION_ID
 ovrcr session remove SESSION_ID
 ```
 
+`pause ID` sends SIGSTOP to the original process group owned by that session;
+`resume ID` sends SIGCONT to the same group. Both commands require a live,
+managed session and leave the session record in place. While paused, the server
+rejects input admission until `resume ID` succeeds.
+
 `kill` sends SIGTERM to the whole managed process group and uses SIGKILL after
-the grace period when members remain. A session stays in the hierarchy after
-exit until `session remove` is requested, so its final screen remains
-available.
+the five-second grace period when members remain. A stopped group is resumed
+with SIGCONT during cleanup so its TERM handlers and waiters can run; OVRCR
+then waits for the final PTY output, reader and child-waiter completion, and
+group disappearance before reporting successful cleanup. A session stays in
+the hierarchy after exit until `session remove` is requested, so its final
+screen remains available.
+
+Pause and termination target the original process group established for the
+OVRCR-owned PTY. OVRCR cannot adopt a process launched through another terminal
+or PTY, and it does not promise to freeze descendants that move into another
+group or to pause remote work or services. External job control can change
+membership or stopped state, and the inherited PID/PGID reuse race remains a
+limit of the ownership check; this is not a process-identity sandbox.
 
 Workspace removal is guarded. Every session must be stopped and removed, the
 worktree must have a clean Git status, its canonical path must match the
@@ -305,7 +337,7 @@ Future additions, with priorities and release dates still to be decided:
 - [ ] Split panes to view multiple sessions side by side.
 - [ ] Historical scrollback to revisit output beyond the current screen.
 - [ ] Copy mode to select and copy terminal output with the keyboard.
-- [ ] Pause and resume controls for sessions.
+- [x] Pause and resume controls for sessions.
 - [ ] Agent hooks to report agent-specific activity and status.
 - [ ] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
