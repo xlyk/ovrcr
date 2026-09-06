@@ -92,6 +92,7 @@ pub enum KeyEncoding {
 }
 
 pub struct Dashboard {
+    pub tasks: Option<crate::task_tui::TasksView>,
     pub hierarchy: HierarchySnapshot,
     pub selected: Option<SessionId>,
     pub mode: InputMode,
@@ -109,6 +110,7 @@ pub struct Dashboard {
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
+            tasks: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -133,6 +135,9 @@ impl Dashboard {
     }
 
     fn redraw_interval(&self) -> Duration {
+        if self.tasks.is_some() {
+            return Duration::from_millis(50);
+        }
         if self
             .busy_sessions
             .iter()
@@ -267,9 +272,19 @@ impl Dashboard {
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        if let Some(tasks) = &mut self.tasks {
+            if tasks.event(Event::Key(key)) {
+                self.tasks = None;
+            }
+            return DashboardAction::Redraw;
+        }
         match self.mode {
             InputMode::Browse => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if key.code == KeyCode::Char('t') {
+                        self.tasks = Some(crate::task_tui::TasksView::default());
+                        return DashboardAction::Redraw;
+                    }
                     return DashboardAction::None;
                 }
                 match key.code {
@@ -316,6 +331,12 @@ impl Dashboard {
     }
 
     pub fn event_action(&mut self, event: Event) -> DashboardAction {
+        if let Some(tasks) = &mut self.tasks {
+            if tasks.event(event) {
+                self.tasks = None;
+            }
+            return DashboardAction::Redraw;
+        }
         match event {
             Event::Key(key) => self.key_action(key),
             Event::Paste(text) if self.mode == InputMode::Terminal => DashboardAction::PtyBytes(
@@ -328,7 +349,9 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if self.mode == InputMode::Terminal || mouse.kind != MouseEventKind::Down(MouseButton::Left)
+        if self.tasks.is_some()
+            || self.mode == InputMode::Terminal
+            || mouse.kind != MouseEventKind::Down(MouseButton::Left)
         {
             return DashboardAction::None;
         }
@@ -396,7 +419,8 @@ impl Dashboard {
                 Response::Ok => self.error = None,
                 Response::CreatedSession(_)
                 | Response::Inventory { .. }
-                | Response::TerminalText { .. } => self.error = None,
+                | Response::TerminalText { .. }
+                | Response::Task(_) => self.error = None,
                 Response::Error { code, message } => {
                     self.error = Some(format!("{code:?}: {message}"));
                 }
@@ -848,7 +872,10 @@ fn dashboard_loop<W: Write>(
     let mut next_frame_redraw = Instant::now();
     let mut pending_redraw = false;
     let mut first_frame = true;
+    let mut task_worker =
+        crate::task_tui::TaskWorker::start().context("start task control worker")?;
     loop {
+        pending_redraw |= task_worker.poll(dashboard.tasks.as_mut());
         let outer = terminal.size()?;
         let next_size = pane_size(TerminalSize {
             rows: outer.height,
@@ -1196,6 +1223,10 @@ pub fn draw_dashboard(frame: &mut Frame<'_>, dashboard: &Dashboard) {
 }
 
 pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_ms: u64) {
+    if let Some(tasks) = &dashboard.tasks {
+        crate::task_tui::draw_tasks(frame, tasks);
+        return;
+    }
     let layout = dashboard_layout(frame.area());
     frame.render_widget(
         Block::default().style(Style::default().bg(BASE)),
@@ -1343,6 +1374,8 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 Span::styled(" focus  ", Style::default().fg(MUTED)),
                 Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
                 Span::styled(" browse  ", Style::default().fg(MUTED)),
+                Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
+                Span::styled(" tasks  ", Style::default().fg(MUTED)),
                 Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
                 Span::styled(" detach", Style::default().fg(MUTED)),
             ])
