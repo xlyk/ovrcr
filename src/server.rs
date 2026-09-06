@@ -2829,7 +2829,7 @@ mod tests {
                 argv: vec![
                     "sh".into(),
                     "-c".into(),
-                    "(trap '' HUP; while :; do sleep 1; done) & printf READY; kill -KILL $$".into(),
+                    "(trap '' HUP; printf DESCENDANT_READY; while :; do sleep 1; done) & printf LEADER_READY; while IFS= read -r line; do case \"$line\" in HOST_OWNERSHIP_ACK) printf HOST_OWNERSHIP_ACKED; IFS= read -r line || break; [ \"$line\" = ALLOW_LEADER_EXIT ] && kill -KILL \"$$\";; esac; done".into(),
                 ],
                 hook_env: None,
             },
@@ -2840,12 +2840,9 @@ mod tests {
             None,
         )
         .unwrap();
-        let original_pgid = {
-            let pid = session.summary().pid.expect("live session PID");
-            let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-            assert_eq!(pgid, pid as libc::pid_t);
-            pgid
-        };
+        // Session::spawn verified that the leader owns its original group. Capture that
+        // immutable identity before any readiness handshake, then install the cleanup owner.
+        let original_pgid = session.summary().pid.expect("live session PID") as libc::pid_t;
         let event_session = Arc::clone(&session);
         let waiter = thread::spawn(move || {
             while let Ok(event) = receiver.recv() {
@@ -2873,12 +2870,29 @@ mod tests {
             waiter,
             dispatcher,
         );
+        assert_eq!(
+            unsafe { libc::getpgid(original_pgid) },
+            original_pgid,
+            "leader must remain alive while cleanup ownership is installed"
+        );
+        assert!(
+            wait_test_screen(&session, "DESCENDANT_READY", Duration::from_secs(2)),
+            "descendant did not acknowledge its HUP handler readiness"
+        );
+        session.write(b"HOST_OWNERSHIP_ACK\r").unwrap();
+        assert!(
+            wait_test_screen(&session, "HOST_OWNERSHIP_ACKED", Duration::from_secs(2)),
+            "leader did not acknowledge host cleanup ownership"
+        );
+        session.write(b"ALLOW_LEADER_EXIT\r").unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while test_pid_exists(original_pgid) && Instant::now() < deadline {
             thread::park_timeout(Duration::from_millis(5));
         }
         assert!(!test_pid_exists(original_pgid));
         assert!(test_group_exists(original_pgid));
+        // This forced Exited event is a test seam only; production waits for its owned
+        // process group to disappear before publishing Exited.
         session.apply_event(SessionEvent::Exited {
             id: SessionId(72),
             phase: SessionPhase::Exited {
@@ -3509,5 +3523,16 @@ mod tests {
             thread::park_timeout(Duration::from_millis(5));
         }
         true
+    }
+
+    fn wait_test_screen(session: &Session, marker: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if String::from_utf8_lossy(&session.current_screen()).contains(marker) {
+                return true;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        false
     }
 }
