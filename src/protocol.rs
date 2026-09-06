@@ -1,5 +1,5 @@
 use crate::config::Registry;
-use crate::session::{SessionEvent, SessionId, SessionSummary, TerminalSize};
+use crate::session::{AgentActivity, SessionEvent, SessionId, SessionSummary, TerminalSize};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,29 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 pub struct ClientMessage {
     pub request_id: u64,
     pub request: Request,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentUpdate {
+    Activity(AgentActivity),
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentReport {
+    pub session: SessionId,
+    pub capability: [u8; 32],
+    pub sequence: Option<u64>,
+    pub update: AgentUpdate,
+}
+
+impl std::fmt::Debug for AgentReport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "AgentReport {{ session: {:?}, capability: [redacted], sequence: {:?}, update: {:?} }}",
+            self.session, self.sequence, self.update
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +250,7 @@ pub fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::AgentActivity;
     use std::io::Write;
     use std::os::unix::net::UnixStream;
 
@@ -313,10 +337,30 @@ mod tests {
             pid: Some(42),
             started_unix_ms: 7,
             phase: crate::session::SessionPhase::Paused,
+            activity: AgentActivity::Unknown,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
         let message = ServerMessage::Event(ServerEvent::SessionChanged(paused));
         write_frame(&mut left, &message).unwrap();
         assert_eq!(read_frame::<ServerMessage>(&mut right).unwrap(), message);
+    }
+
+    #[test]
+    fn agent_report_round_trip_and_redaction() {
+        let token = [0xA5; 32];
+        let report = AgentReport {
+            session: SessionId(3),
+            capability: token,
+            sequence: Some(7),
+            update: AgentUpdate::Activity(AgentActivity::Busy),
+        };
+        let debug = format!("{report:?}");
+        assert!(debug.contains("capability: [redacted]"));
+        assert!(!debug.contains("165"));
+        assert!(debug.contains("Busy"));
+
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        write_frame(&mut left, &report).unwrap();
+        assert_eq!(read_frame::<AgentReport>(&mut right).unwrap(), report);
     }
 }

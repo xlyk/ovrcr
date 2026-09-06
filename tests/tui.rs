@@ -5,7 +5,7 @@ use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent,
     ServerMessage, WorkspaceSummary,
 };
-use ovrcr::session::{SessionId, SessionPhase, SessionSummary, TerminalSize};
+use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding, dashboard_message_channel, encode_key,
     encode_paste, event_to_request,
@@ -37,6 +37,7 @@ fn dashboard_fixture() -> Dashboard {
         pid,
         started_unix_ms,
         phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
     };
     dashboard.hierarchy = HierarchySnapshot {
         projects: vec![
@@ -646,6 +647,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                         pid: Some(id as u32),
                         started_unix_ms: 0,
                         phase: SessionPhase::Running,
+                        activity: AgentActivity::Unknown,
                     })
                     .collect(),
             }],
@@ -733,6 +735,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
             pid: Some(id as u32),
             started_unix_ms: 0,
             phase: SessionPhase::Running,
+            activity: AgentActivity::Unknown,
         });
     }
     dashboard.select_session(SessionId(50));

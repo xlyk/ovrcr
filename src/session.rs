@@ -37,6 +37,15 @@ pub enum SessionPhase {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentActivity {
+    Unknown,
+    Idle,
+    Busy,
+    WaitingInput,
+    Error,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputAdmissionError {
     Paused,
@@ -64,6 +73,31 @@ pub struct SessionSummary {
     pub pid: Option<u32>,
     pub started_unix_ms: u64,
     pub phase: SessionPhase,
+    pub activity: AgentActivity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReportOrder {
+    #[default]
+    Unset,
+    Receipt,
+    Sequenced(u64),
+}
+
+impl ReportOrder {
+    pub fn accept(&mut self, incoming: Option<u64>) -> Result<()> {
+        let next = match (*self, incoming) {
+            (Self::Unset, None) => Self::Receipt,
+            (Self::Unset, Some(sequence)) if sequence > 0 => Self::Sequenced(sequence),
+            (Self::Receipt, None) => Self::Receipt,
+            (Self::Sequenced(previous), Some(sequence)) if sequence > previous => {
+                Self::Sequenced(sequence)
+            }
+            _ => bail!("agent report sequence is invalid for the current ordering mode"),
+        };
+        *self = next;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +109,7 @@ pub enum SessionEvent {
 struct SessionState {
     phase: SessionPhase,
     pid: Option<u32>,
+    activity: AgentActivity,
 }
 
 struct JoinHandles {
@@ -210,10 +245,12 @@ impl Session {
                 pid: Some(pid),
                 started_unix_ms,
                 phase: SessionPhase::Running,
+                activity: AgentActivity::Unknown,
             },
             state: Mutex::new(SessionState {
                 phase: SessionPhase::Running,
                 pid: Some(pid),
+                activity: AgentActivity::Unknown,
             }),
             state_changed: Condvar::new(),
             parser: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
@@ -270,6 +307,7 @@ impl Session {
         let mut summary = self.summary.clone();
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
+        summary.activity = state.activity;
         summary
     }
 
@@ -1484,6 +1522,26 @@ mod tests {
         assert_pid_is_gone(leader);
         assert_pid_is_gone(descendant);
         assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn agent_report_order_rejects_replay_and_mode_switch() {
+        let mut order = ReportOrder::default();
+        assert!(order.accept(Some(2)).is_ok());
+        assert!(order.accept(Some(1)).is_err());
+        assert!(order.accept(Some(2)).is_err());
+        assert!(order.accept(None).is_err());
+        assert_eq!(order, ReportOrder::Sequenced(2));
+        assert!(order.accept(Some(3)).is_ok());
+    }
+
+    #[test]
+    fn agent_report_order_receipt_accepts_repeated_values() {
+        let mut order = ReportOrder::default();
+        assert!(order.accept(None).is_ok());
+        assert!(order.accept(None).is_ok());
+        assert_eq!(order, ReportOrder::Receipt);
+        assert!(order.accept(Some(1)).is_err());
     }
 
     fn extract_tagged_pid(screen: &[u8], tag: &[u8]) -> Option<u32> {
