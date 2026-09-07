@@ -7,7 +7,10 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 
-pub use copy::{CopyMotion, CopyPoint, CopySelection, write_clipboard};
+pub use copy::{
+    CopyMotion, CopyPoint, CopySelection, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint,
+    HistoryCopyRange, append_history_selection, write_clipboard,
+};
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, event_to_request};
 pub use render::{
