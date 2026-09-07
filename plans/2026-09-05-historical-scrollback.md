@@ -38,7 +38,7 @@ Inspected at Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`; recheck HEAD a
 | `crates/ovrcr-runtime/src/session/mod.rs`, `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, `wait_for_output` | Parser currently has zero history. Add ring retention and capture entry points under one terminal-state lock. |
 | `crates/ovrcr-runtime/src/server/dispatch.rs` and `crates/ovrcr-runtime/src/server/mod.rs`, dispatcher entry points | Ordered event processing and selected output. Add session-scoped history requests through the dispatcher. |
 | `crates/ovrcr-runtime/src/server/connections.rs` and `outbound.rs` | Bounded messages, dirty notifications, and the connection owner. Store one history snapshot with that owner and enqueue ordinary responses. |
-| `crates/ovrcr-protocol/src/wire.rs` | Typed framed requests and `MAX_FRAME_BYTES = 1_048_576`. Add bounded tiled history messages, without sending a full history frame. |
+| `crates/ovrcr-protocol/src/wire.rs` (shared wire declarations); `crates/ovrcr-protocol/src/codec.rs` (framing and `MAX_FRAME_BYTES = 1_048_576`) | Add bounded tiled history messages, without sending a full history frame. |
 | `crates/ovrcr-tui/src/dashboard/{state,input,render}.rs` and `dashboard/mod.rs` | One live parser and Browse/Terminal modes. Add separate frozen history navigation/rendering state. |
 | `tests/server_lifecycle.rs` | Real `ControlFixture`, dirty recovery, selected-snapshot ordering and 50-session lifecycle gates. Extend these patterns. |
 | `tests/tui.rs`, `tests/terminal_acceptance.rs` | `dashboard_fixture`, Ratatui buffers and real outer PTY acceptance harness. Reuse them. |

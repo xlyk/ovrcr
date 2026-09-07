@@ -27,7 +27,7 @@
 - Only registered workspaces; retain canonical-path and Git ownership checks before launch or removal.
 - Implementation commands use `rtk`; no implementation, tests, commits, or external mutations were performed while writing this plan.
 - Source inspected at `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05; refresh these anchors before execution.
-- `crates/ovrcr-runtime/src/config.rs::Registry::save_atomic` already uses a same-directory exclusive temporary file, file sync, rename, and directory sync.
+- `crates/ovrcr-runtime/src/config.rs::save_registry_atomic` already uses a same-directory exclusive temporary file, file sync, rename, and directory sync.
 - `crates/ovrcr-runtime/src/server/{mod,startup}.rs::create_session_locked` holds the sessions guard during spawn; `next_session_id` currently restarts at 1.
 - `run_server` currently locks startup by socket directory, loads only project/workspace TOML, and creates an empty live map.
 - `crates/ovrcr-runtime/src/session/mod.rs::SessionSpec` carries `Vec<OsString>`; PTY creation invokes argv directly at the workspace path.
