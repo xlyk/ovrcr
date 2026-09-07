@@ -100,6 +100,32 @@ Detaching leaves the server, PTYs, and child process groups running. Run
 screen. Reattach works while the original dashboard is gone; the MVP does not
 restore a PTY after a server crash or reboot.
 
+### Historical scrollback
+
+In Browse mode, select a session and press PageUp to open its retained output.
+History starts as a frozen snapshot, so live PTY output does not move the rows
+under review. The footer marks new live output while the snapshot is open.
+Use Up/Down or `k`/`j` for one row, PageUp/PageDown for one viewport, Home/End
+for the oldest or newest captured row, and Left/Right or `h`/`l` to move across
+wide rows. Press Escape, `q`, or Ctrl-g to close history and return to Browse;
+Enter and paste do not send input while reading history.
+
+The server keeps at most 512 physical history rows per session. New output
+evicts the oldest rows after that bound; it does not create a second retained
+copy for each finite burst. Exited session records keep their retained rows
+until the record is removed. A dashboard connection owns at most one frozen
+snapshot, and its client cache keeps at most sixteen bounded pages. History
+pages contain at most 16 rows by 128 columns and are limited to the existing
+128 KiB response bound.
+
+History rows keep the terminal geometry and wrapping captured when the snapshot
+was made. Resizing the live terminal changes the history viewport, but does not
+reflow or rewrite captured rows; use horizontal navigation to reveal columns
+captured outside the viewport. The history view is capped at 64 rows by 256
+columns inside a larger pane. Alternate-screen applications do not provide a
+history transcript. Retained history lives in memory with the session and is
+lost when the server exits; it is not persisted to disk.
+
 ## Control terminals from scripts
 
 The `project`, `workspace`, and `terminal` groups also accept the plural names

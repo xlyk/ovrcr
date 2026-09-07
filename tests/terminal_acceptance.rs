@@ -192,6 +192,29 @@ impl AcceptanceFixture {
         Ok(hierarchy)
     }
 
+    fn read_terminal(&self, session: ovrcr::session::SessionId) -> Result<String> {
+        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::ReadTerminal {
+                    session,
+                    max_lines: None,
+                },
+            },
+        )?;
+        let ServerMessage::Response { response, .. } = read_frame(&mut stream)? else {
+            bail!("terminal read returned an event")
+        };
+        let Response::TerminalText { text, .. } = response else {
+            bail!("terminal read returned an unexpected response")
+        };
+        Ok(text)
+    }
+
     fn shutdown(&mut self) -> Result<()> {
         let pgids = self.session_pgids()?;
         self.managed_pgids = pgids.clone();
@@ -480,6 +503,16 @@ impl OuterDashboard {
         self.parser.screen().contents()
     }
 
+    fn click_visible_text(&mut self, needle: &str) -> Result<()> {
+        let row = self
+            .rendered()
+            .lines()
+            .position(|line| line.contains(needle))
+            .context("visible hierarchy row")?;
+        let sequence = format!("\x1b[<0;5;{}M", row + 1);
+        self.send(sequence.as_bytes())
+    }
+
     fn wait_for_screen<F>(&mut self, predicate: F, timeout: Duration) -> Result<()>
     where
         F: Fn(&str) -> bool,
@@ -609,6 +642,144 @@ fn read_outer(mut reader: Box<dyn Read + Send>, sender: Sender<Vec<u8>>) {
             }
         }
     }
+}
+
+#[test]
+fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let fifo = fixture._root.path().join("history-trigger.fifo");
+    let fifo_arg = fifo.to_string_lossy().into_owned();
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "work",
+        "--name",
+        "history",
+        "--",
+        "sh",
+        "-c",
+        "fifo=\"$1\"; rm -f \"$fifo\"; mkfifo \"$fifo\"; i=0; while [ \"$i\" -lt 100 ]; do printf 'HIST_OLD_%03d\\n' \"$i\"; i=$((i+1)); done; printf '\\033[2J\\033[H'; printf 'HISTORY_READY\\n'; while IFS= read -r token; do printf 'HIST_NEW_%s\\n' \"$token\"; done < \"$fifo\"",
+        "history-child",
+        &fifo_arg,
+    ])?;
+    require_success(output, "history session")?;
+    let history_id = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.name == "history")
+        .context("history session id")?
+        .id
+        .0;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let fifo_deadline = Instant::now() + Duration::from_secs(3);
+    while !fifo.exists() && Instant::now() < fifo_deadline {
+        thread::yield_now();
+    }
+    if !fifo.exists() {
+        bail!("history child did not create its FIFO");
+    }
+    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    let mut ready_seen = false;
+    while Instant::now() < ready_deadline {
+        if fixture
+            .read_terminal(ovrcr::session::SessionId(history_id))?
+            .contains("HISTORY_READY")
+        {
+            ready_seen = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        ready_seen,
+        "history child did not render its initial marker"
+    );
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for_screen(|screen| screen.contains("history"), Duration::from_secs(3))?;
+    dashboard.click_visible_text("history")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY_READY"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && screen.contains("Ctrl-g browse"),
+        Duration::from_secs(3),
+    )?;
+    let page_up = b"\x1b[5~";
+    dashboard.send(page_up)?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY · frozen"),
+        Duration::from_secs(3),
+    )?;
+    let mut old_marker_visible = false;
+    for _ in 0..10 {
+        dashboard.send(page_up)?;
+        if dashboard
+            .wait_for_screen(
+                |screen| screen.contains("HIST_OLD_000"),
+                Duration::from_millis(500),
+            )
+            .is_ok()
+        {
+            old_marker_visible = true;
+            break;
+        }
+    }
+    assert!(
+        old_marker_visible,
+        "PageUp did not reveal old history output"
+    );
+    let frozen = dashboard.rendered();
+    assert!(frozen.contains("HIST_OLD_000"));
+    assert!(frozen.contains("HISTORY · frozen"));
+
+    let mut trigger = std::fs::OpenOptions::new().write(true).open(&fifo)?;
+    trigger.write_all(b"LIVE_TOKEN\n")?;
+    trigger.flush()?;
+    drop(trigger);
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.resize(40, 120)?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HIST_NEW_LIVE_TOKEN"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    Ok(())
 }
 
 #[test]
