@@ -1298,11 +1298,30 @@ fn history_pending_keys_coalesce() {
         .first()
         .cloned()
         .expect("next eviction tile");
+    let (start_row, start_col, rows, cols) = match eviction_two.request {
+        Request::HistoryPage {
+            start_row,
+            start_col,
+            rows,
+            cols,
+            ..
+        } => (start_row, start_col, rows, cols),
+        request => panic!("unexpected eviction request: {request:?}"),
+    };
+    let second_page = history_tile_page(start_row, start_col, rows, cols);
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: eviction_two.request_id,
-        response: Response::HistoryRows(history_tile_page(208, 0, 16, 128)),
+        response: Response::HistoryRows(second_page.clone()),
     });
     assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 16);
+    assert!(
+        dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .pages
+            .contains(&second_page)
+    );
     assert!(
         !dashboard
             .history
@@ -1417,7 +1436,7 @@ fn history_render_preserves_cells_and_clips() {
         .as_mut()
         .unwrap()
         .pages
-        .push_back(history_page(0, 0, 4, vec![history_cell("loaded", 1)]));
+        .push_back(history_page(0, 0, 4, vec![history_cell("payload", 1)]));
     dashboard_terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -1429,7 +1448,7 @@ fn history_render_preserves_cells_and_clips() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(dashboard_text.contains("loaded"));
+    assert!(dashboard_text.contains("HISTORY · frozen · loaded"));
     dashboard.history = Some(ovrcr::tui::HistoryView::new(history_opened(1), 0));
     dashboard
         .history
@@ -1476,6 +1495,75 @@ fn history_cancelled_begin_releases_late_snapshot() {
     assert!(dashboard.history.is_none());
     assert_eq!(release.len(), 1);
     assert_eq!(release[0].request_id, 2);
+    assert!(matches!(
+        release[0].request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    ));
+    assert!(dashboard.history_begin_request.is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { .. },
+            ..
+        })
+    ));
+
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(
+        dashboard.ctrl('g'),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.history.is_none());
+    assert_eq!(release.len(), 1);
+    assert!(matches!(
+        release[0].request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    ));
+    assert!(dashboard.history_begin_request.is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { .. },
+            ..
+        })
+    ));
+
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.ctrl('g'),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.history.is_none());
+    assert_eq!(release.len(), 1);
     assert!(matches!(
         release[0].request,
         Request::HistoryEnd {

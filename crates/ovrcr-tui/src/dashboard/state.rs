@@ -275,6 +275,12 @@ impl Dashboard {
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
         match self.mode {
             InputMode::Browse => {
+                if is_browse_key(key) && self.history_begin_request.is_some() {
+                    if let Some(begin) = self.history_begin_request.as_mut() {
+                        begin.cancelled = true;
+                    }
+                    return DashboardAction::EnterBrowse;
+                }
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     return DashboardAction::None;
                 }
@@ -311,6 +317,9 @@ impl Dashboard {
             }
             InputMode::Terminal => {
                 if is_browse_key(key) {
+                    if let Some(begin) = self.history_begin_request.as_mut() {
+                        begin.cancelled = true;
+                    }
                     self.mode = InputMode::Browse;
                     DashboardAction::EnterBrowse
                 } else if !self.input_is_allowed() {

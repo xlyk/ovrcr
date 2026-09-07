@@ -112,8 +112,10 @@ Enter and paste do not send input while reading history.
 
 The server keeps at most 512 physical history rows per session. New output
 evicts the oldest rows after that bound; it does not create a second retained
-copy for each finite burst. Exited session records keep their retained rows
-until the record is removed. A dashboard connection owns at most one frozen
+copy for each finite burst. Eviction can leave a wrapped continuation after the
+beginning of its logical line is gone; retained rows preserve their original
+physical widths. Exited session records keep their retained rows until the
+record is removed. A dashboard connection owns at most one frozen
 snapshot, and its client cache keeps at most sixteen bounded pages. History
 pages contain at most 16 rows by 128 columns and are limited to the existing
 128 KiB response bound.
