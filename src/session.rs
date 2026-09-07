@@ -30,11 +30,29 @@ pub struct SessionSpec {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionPhase {
     Running,
+    Paused,
     Exited {
         code: Option<u32>,
         signal: Option<String>,
     },
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputAdmissionError {
+    Paused,
+    Exited,
+}
+
+impl std::fmt::Display for InputAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Paused => "session is paused; resume it before sending input",
+            Self::Exited => "session has exited",
+        })
+    }
+}
+
+impl std::error::Error for InputAdmissionError {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
@@ -74,6 +92,10 @@ pub struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     pgid: libc::pid_t,
+    #[cfg(test)]
+    signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
@@ -87,7 +109,7 @@ impl Session {
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, None)
+        Self::spawn_internal(id, spec, size, events, None, None, None, None)
     }
 
     pub(crate) fn spawn_with_ready(
@@ -97,7 +119,29 @@ impl Session {
         events: SyncSender<SessionEvent>,
         ready: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, Some(ready))
+        Self::spawn_internal(id, spec, size, events, Some(ready), None, None, None)
+    }
+
+    #[cfg(test)]
+    fn spawn_with_test_hooks(
+        id: SessionId,
+        spec: SessionSpec,
+        size: TerminalSize,
+        events: SyncSender<SessionEvent>,
+        reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_internal(
+            id,
+            spec,
+            size,
+            events,
+            None,
+            reap_hook,
+            signal_hook,
+            signal_result_hook,
+        )
     }
 
     fn spawn_internal(
@@ -106,7 +150,15 @@ impl Session {
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+        signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     ) -> Result<Arc<Self>> {
+        #[cfg(not(test))]
+        let _ = &signal_hook;
+        #[cfg(not(test))]
+        let _ = &signal_result_hook;
+
         let argv0 = spec
             .argv
             .first()
@@ -177,6 +229,10 @@ impl Session {
                 reader: None,
                 waiter: None,
             }),
+            #[cfg(test)]
+            signal_hook,
+            #[cfg(test)]
+            signal_result_hook,
         });
 
         let reader_session = Arc::clone(&session);
@@ -189,9 +245,13 @@ impl Session {
 
         let waiter_session = Arc::clone(&session);
         let waiter_events = events;
+        let waiter_reap_hook = reap_hook;
         let waiter_handle = thread::Builder::new()
             .name(format!("ovrcr-session-waiter-{id:?}"))
             .spawn(move || {
+                if let Some(reap_hook) = waiter_reap_hook {
+                    reap_hook();
+                }
                 wait_for_child(&mut *child, waiter_session, waiter_events);
             })?;
         {
@@ -213,13 +273,39 @@ impl Session {
         summary
     }
 
-    pub fn write(&self, bytes: &[u8]) -> Result<()> {
-        if matches!(
-            self.state.lock().unwrap().phase,
-            SessionPhase::Exited { .. }
-        ) {
-            bail!("session has exited")
+    pub fn set_paused(&self, paused: bool) -> Result<bool> {
+        let _control = self.terminate_lock.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        if matches!(state.phase, SessionPhase::Exited { .. }) {
+            bail!("session has exited");
         }
+        verify_owned_group(self)?;
+        let signal = if paused { libc::SIGSTOP } else { libc::SIGCONT };
+        if !signal_group(self.pgid, signal)? {
+            bail!("PTY process group no longer exists");
+        }
+        let next = if paused {
+            SessionPhase::Paused
+        } else {
+            SessionPhase::Running
+        };
+        let changed = state.phase != next;
+        state.phase = next;
+        self.state_changed.notify_all();
+        Ok(changed)
+    }
+
+    fn admit_input(&self) -> std::result::Result<(), InputAdmissionError> {
+        let phase = self.state.lock().unwrap().phase.clone();
+        match phase {
+            SessionPhase::Running => Ok(()),
+            SessionPhase::Paused => Err(InputAdmissionError::Paused),
+            SessionPhase::Exited { .. } => Err(InputAdmissionError::Exited),
+        }
+    }
+
+    pub fn write(&self, bytes: &[u8]) -> Result<()> {
+        self.admit_input().map_err(anyhow::Error::new)?;
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(bytes).context("write to PTY")?;
         writer.flush().context("flush PTY")?;
@@ -275,16 +361,11 @@ impl Session {
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
+        self.admit_input().map_err(anyhow::Error::new)?;
         let bytes = {
             let parser = self.parser.lock().unwrap();
             crate::tui::encode_paste(text, parser.screen().bracketed_paste())
         };
-        if matches!(
-            self.state.lock().unwrap().phase,
-            SessionPhase::Exited { .. }
-        ) {
-            bail!("session has exited")
-        }
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(&bytes).context("write text to PTY")?;
         if submit {
@@ -311,27 +392,90 @@ impl Session {
             return Ok(());
         }
 
+        let mut signal_error = None;
         if should_signal_group(self)? {
             signal_group(self.pgid, libc::SIGTERM)?;
+            if should_signal_group(self)? {
+                #[cfg(test)]
+                if let Some(signal_hook) = &self.signal_hook {
+                    signal_hook();
+                }
+                let signal_result = signal_group(self.pgid, libc::SIGCONT);
+                #[cfg(test)]
+                let signal_result = if let Some(signal_result_hook) = &self.signal_result_hook {
+                    match signal_result_hook() {
+                        Some(error) => Err(error),
+                        None => signal_result,
+                    }
+                } else {
+                    signal_result
+                };
+                match signal_result {
+                    Ok(true) => {
+                        let mut state = self.state.lock().unwrap();
+                        if matches!(state.phase, SessionPhase::Paused) {
+                            state.phase = SessionPhase::Running;
+                            self.state_changed.notify_all();
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => signal_error = Some(error),
+                }
+            }
         }
         let deadline = Instant::now() + grace;
-        if !wait_for_group_exit(self.pgid, deadline)? && group_exists(self.pgid)? {
-            if should_signal_group(self)? {
-                signal_group(self.pgid, libc::SIGKILL)?;
+        let group_exited = match wait_for_group_exit(self.pgid, deadline) {
+            Ok(exited) => exited,
+            Err(error) => return Err(signal_error.unwrap_or(error)),
+        };
+        let group_present = match group_exists(self.pgid) {
+            Ok(present) => present,
+            Err(error) => return Err(signal_error.unwrap_or(error)),
+        };
+        if !group_exited && group_present {
+            if let Some(error) = signal_error {
+                return Err(error);
+            }
+            let should_kill = match should_signal_group(self) {
+                Ok(should_kill) => should_kill,
+                Err(error) => return Err(signal_error.unwrap_or(error)),
+            };
+            if should_kill {
+                if let Err(error) = signal_group(self.pgid, libc::SIGKILL) {
+                    return Err(signal_error.unwrap_or(error));
+                }
             }
             let kill_deadline = Instant::now() + grace.max(Duration::from_secs(2));
-            if !wait_for_group_exit(self.pgid, kill_deadline)? {
-                bail!("PTY process group did not exit after SIGKILL")
+            let kill_exited = match wait_for_group_exit(self.pgid, kill_deadline) {
+                Ok(exited) => exited,
+                Err(error) => return Err(signal_error.unwrap_or(error)),
+            };
+            if !kill_exited {
+                return Err(signal_error.unwrap_or_else(|| {
+                    anyhow::anyhow!("PTY process group did not exit after SIGKILL")
+                }));
             }
         }
 
-        let phase = self.wait_until_exited(grace.max(Duration::from_secs(2)))?;
+        let phase = match self.wait_until_exited(grace.max(Duration::from_secs(2))) {
+            Ok(phase) => phase,
+            Err(error) => return Err(signal_error.unwrap_or(error)),
+        };
         if !matches!(phase, SessionPhase::Exited { .. }) {
-            bail!("session did not publish its exit event")
+            return Err(signal_error
+                .unwrap_or_else(|| anyhow::anyhow!("session did not publish its exit event")));
         }
-        self.join_threads()?;
-        if group_exists(self.pgid)? {
-            bail!("PTY process group still exists after termination")
+        if let Err(error) = self.join_threads() {
+            return Err(signal_error.unwrap_or(error));
+        }
+        match group_exists(self.pgid) {
+            Ok(false) => {}
+            Ok(true) => {
+                return Err(signal_error.unwrap_or_else(|| {
+                    anyhow::anyhow!("PTY process group still exists after termination")
+                }));
+            }
+            Err(error) => return Err(signal_error.unwrap_or(error)),
         }
         Ok(())
     }
@@ -486,7 +630,7 @@ fn should_signal_group(session: &Session) -> Result<bool> {
     }
 }
 
-fn signal_group(pgid: libc::pid_t, signal: libc::c_int) -> Result<()> {
+fn signal_group(pgid: libc::pid_t, signal: libc::c_int) -> Result<bool> {
     if pgid <= 1 || signal <= 0 {
         bail!("refusing unsafe process-group signal")
     }
@@ -494,11 +638,11 @@ fn signal_group(pgid: libc::pid_t, signal: libc::c_int) -> Result<()> {
     if result == -1 {
         let error = io::Error::last_os_error();
         if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
+            return Ok(false);
         }
         return Err(error).context("signal PTY process group");
     }
-    Ok(())
+    Ok(true)
 }
 
 fn group_exists(pgid: libc::pid_t) -> Result<bool> {
@@ -532,7 +676,184 @@ fn wait_for_group_exit(pgid: libc::pid_t, deadline: Instant) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use std::process::Command;
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver};
+
+    struct TerminationGuard(Arc<Session>);
+
+    impl TerminationGuard {
+        fn force_cleanup(&self) -> Result<()> {
+            let pgid = self.0.pgid;
+            if !group_exists(pgid)? {
+                return Ok(());
+            }
+            match verify_owned_group(&self.0) {
+                Ok(()) => {}
+                Err(_error) if !group_exists(pgid)? => return Ok(()),
+                Err(error) => return Err(error),
+            }
+            let _ = signal_group(pgid, libc::SIGTERM)?;
+            let _ = signal_group(pgid, libc::SIGCONT)?;
+            if wait_for_group_exit(pgid, Instant::now() + Duration::from_secs(2))? {
+                return Ok(());
+            }
+            if !group_exists(pgid)? {
+                return Ok(());
+            }
+            verify_owned_group(&self.0)?;
+            let _ = signal_group(pgid, libc::SIGKILL)?;
+            if !wait_for_group_exit(pgid, Instant::now() + Duration::from_secs(2))? {
+                bail!("test cleanup could not remove PTY process group {pgid}");
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for TerminationGuard {
+        fn drop(&mut self) {
+            let result = if thread::panicking() {
+                self.force_cleanup()
+            } else {
+                self.0.terminate(Duration::from_millis(200))
+            };
+            if let Err(error) = result {
+                eprintln!(
+                    "session test cleanup failed for process group {}: {error}",
+                    self.0.pgid
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct ReapGate {
+        entered: mpsc::SyncSender<()>,
+        release: Mutex<Receiver<()>>,
+        signal_entered: mpsc::SyncSender<()>,
+        signal_release: Mutex<Receiver<()>>,
+        signal_result_entered: mpsc::SyncSender<()>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl ReapGate {
+        fn new() -> (
+            Arc<Self>,
+            Receiver<()>,
+            mpsc::SyncSender<()>,
+            Receiver<()>,
+            mpsc::SyncSender<()>,
+            Receiver<()>,
+        ) {
+            let (entered_sender, entered) = mpsc::sync_channel(1);
+            let (release, release_receiver) = mpsc::sync_channel(1);
+            let (signal_entered_sender, signal_entered) = mpsc::sync_channel(1);
+            let (signal_release, signal_release_receiver) = mpsc::sync_channel(1);
+            let (signal_result_entered_sender, signal_result_entered) = mpsc::sync_channel(1);
+            (
+                Arc::new(Self {
+                    entered: entered_sender,
+                    release: Mutex::new(release_receiver),
+                    signal_entered: signal_entered_sender,
+                    signal_release: Mutex::new(signal_release_receiver),
+                    signal_result_entered: signal_result_entered_sender,
+                }),
+                entered,
+                release,
+                signal_entered,
+                signal_release,
+                signal_result_entered,
+            )
+        }
+
+        fn wait(&self) {
+            let _ = self.entered.send(());
+            let _ = self.release.lock().unwrap().recv();
+        }
+
+        fn before_signal(&self) {
+            let _ = self.signal_entered.send(());
+            let _ = self.signal_release.lock().unwrap().recv();
+        }
+
+        fn after_signal(&self) -> Option<anyhow::Error> {
+            let _ = self.signal_result_entered.send(());
+            None
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct ReapGateCleanup {
+        release: mpsc::SyncSender<()>,
+        signal_release: mpsc::SyncSender<()>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for ReapGateCleanup {
+        fn drop(&mut self) {
+            let _ = self.signal_release.try_send(());
+            let _ = self.release.try_send(());
+        }
+    }
+
+    struct CancellableBarrier {
+        state: Mutex<CancellableBarrierState>,
+        changed: Condvar,
+    }
+
+    struct CancellableBarrierState {
+        waiting: usize,
+        generation: u64,
+        cancelled: bool,
+    }
+
+    impl CancellableBarrier {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(CancellableBarrierState {
+                    waiting: 0,
+                    generation: 0,
+                    cancelled: false,
+                }),
+                changed: Condvar::new(),
+            }
+        }
+
+        fn wait(&self) -> bool {
+            let mut state = self.state.lock().unwrap();
+            if state.cancelled {
+                return false;
+            }
+            let generation = state.generation;
+            state.waiting += 1;
+            if state.waiting == 2 {
+                state.waiting = 0;
+                state.generation = state.generation.wrapping_add(1);
+                self.changed.notify_all();
+                return true;
+            }
+            while !state.cancelled && state.generation == generation {
+                state = self.changed.wait(state).unwrap();
+            }
+            !state.cancelled
+        }
+
+        fn cancel(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.cancelled = true;
+            self.changed.notify_all();
+        }
+    }
+
+    struct BarrierGuard(Arc<CancellableBarrier>);
+
+    impl Drop for BarrierGuard {
+        fn drop(&mut self) {
+            self.0.cancel();
+        }
+    }
 
     fn spawn_test_shell() -> Arc<Session> {
         let dir = tempfile::tempdir().unwrap();
@@ -577,6 +898,454 @@ mod tests {
             thread::park_timeout(Duration::from_millis(5));
         }
         false
+    }
+
+    #[cfg(target_os = "macos")]
+    fn wait_for_process_state(pid: u32, expected: char, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let pid = pid.to_string();
+        while Instant::now() < deadline {
+            if let Ok(output) = Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid])
+                .output()
+            {
+                let state = String::from_utf8_lossy(&output.stdout);
+                if state.trim_start().starts_with(expected) {
+                    return true;
+                }
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        false
+    }
+
+    #[cfg(target_os = "macos")]
+    fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandle<()>) {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let signal_gate = Arc::clone(&reap_gate);
+        let signal_result_gate = Arc::clone(&reap_gate);
+        let session = Session::spawn_with_test_hooks(
+            SessionId(50),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "term-race".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap 'exit 0' TERM; printf READY; while :; do read line; done".into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+            Some(Arc::new(move || reap_gate.wait())),
+            Some(Arc::new(move || signal_gate.before_signal())),
+            Some(Arc::new(move || signal_result_gate.after_signal())),
+        )
+        .unwrap();
+        let _ = Box::leak(Box::new(dir));
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+        (session, dispatcher)
+    }
+
+    fn spawn_live_refusal_session(
+        signal_result_hook: Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>,
+    ) -> (Arc<Session>, JoinHandle<()>) {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let session = Session::spawn_with_test_hooks(
+            SessionId(51),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "live-refusal".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap '' TERM; printf READY; while :; do read line; done".into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+            None,
+            None,
+            Some(signal_result_hook),
+        )
+        .unwrap();
+        let _ = Box::leak(Box::new(dir));
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+        (session, dispatcher)
+    }
+
+    #[test]
+    fn pause_resume_phase_and_input_admission() {
+        let session = spawn_test_shell();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        session.write(b"printf 'REA%s\\n' DY\r").unwrap();
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+
+        assert!(session.set_paused(true).unwrap());
+        assert_eq!(session.summary().phase, SessionPhase::Paused);
+        assert!(!session.set_paused(true).unwrap());
+        assert!(session.write(b"SHOULD_NOT_BE_ACCEPTED\r").is_err());
+        assert!(session.send_text("SHOULD_NOT_BE_ACCEPTED", true).is_err());
+        assert!(session.set_paused(false).unwrap());
+        assert!(!session.set_paused(false).unwrap());
+        session.write(b"printf 'RESUME_%s\\n' ACK\r").unwrap();
+        assert!(wait_for_screen(
+            &session,
+            "RESUME_ACK",
+            Duration::from_secs(2)
+        ));
+        session.terminate(Duration::from_millis(200)).unwrap();
+        assert!(session.set_paused(true).is_err());
+        assert!(session.set_paused(false).is_err());
+    }
+
+    #[test]
+    fn pause_resume_terminate_runs_term_handler() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let session = Session::spawn(
+            SessionId(5),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "term-handler".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "trap 'printf TERM_HANDLED; exit 0' TERM; printf READY; while :; do read line; done"
+                        .into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+        )
+        .unwrap();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let dispatcher = dispatch_test_events(session.clone(), rx);
+
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+        assert!(session.set_paused(true).unwrap());
+        session.terminate(Duration::from_millis(200)).unwrap();
+        dispatcher.join().unwrap();
+
+        assert!(String::from_utf8_lossy(&session.current_screen()).contains("TERM_HANDLED"));
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn pause_resume_terminate_serializes_competing_controls() {
+        let session = spawn_test_shell();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let gate = Arc::new(Barrier::new(3));
+        let (results, received) = mpsc::sync_channel(3);
+
+        let pause_gate = Arc::clone(&gate);
+        let pause_session = Arc::clone(&session);
+        let pause_results = results.clone();
+        let pause = thread::spawn(move || {
+            pause_gate.wait();
+            let result = pause_session
+                .set_paused(true)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            pause_results.send(("pause", result)).unwrap();
+        });
+
+        let resume_gate = Arc::clone(&gate);
+        let resume_session = Arc::clone(&session);
+        let resume_results = results.clone();
+        let resume = thread::spawn(move || {
+            resume_gate.wait();
+            let result = resume_session
+                .set_paused(false)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            resume_results.send(("resume", result)).unwrap();
+        });
+
+        let terminate_gate = Arc::clone(&gate);
+        let terminate_session = Arc::clone(&session);
+        let terminate = thread::spawn(move || {
+            terminate_gate.wait();
+            let result = terminate_session
+                .terminate(Duration::from_millis(200))
+                .map_err(|error| error.to_string());
+            results.send(("terminate", result)).unwrap();
+        });
+
+        let mut outcomes = Vec::new();
+        for _ in 0..3 {
+            outcomes.push(
+                received
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("competing controls must finish promptly"),
+            );
+        }
+        pause.join().unwrap();
+        resume.join().unwrap();
+        terminate.join().unwrap();
+
+        assert!(
+            outcomes
+                .iter()
+                .any(|(name, result)| { *name == "terminate" && result.is_ok() })
+        );
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminate_reaps_group_after_transient_sigcont_permission() {
+        let (reap_gate, entered, release, signal_entered, signal_release, signal_result_entered) =
+            ReapGate::new();
+        let (session, dispatcher) = spawn_term_race_session(reap_gate);
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let _gate_cleanup = ReapGateCleanup {
+            release: release.clone(),
+            signal_release: signal_release.clone(),
+        };
+        assert!(entered.recv_timeout(Duration::from_secs(2)).is_ok());
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+
+        let leader = session.summary().pid.unwrap();
+        let (termination_sender, termination_receiver) = mpsc::sync_channel(1);
+        let termination_session = Arc::clone(&session);
+        let termination = thread::spawn(move || {
+            let _ = termination_sender.send(
+                termination_session
+                    .terminate(Duration::from_millis(200))
+                    .map_err(|error| format!("{error:#}")),
+            );
+        });
+        assert!(signal_entered.recv_timeout(Duration::from_secs(2)).is_ok());
+        assert!(wait_for_process_state(leader, 'Z', Duration::from_secs(2)));
+        assert!(group_exists(session.pgid).unwrap());
+        signal_release.send(()).unwrap();
+        assert!(
+            signal_result_entered
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+        release.send(()).unwrap();
+
+        assert!(
+            termination_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        termination.join().unwrap();
+        dispatcher.join().unwrap();
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminate_retains_sigcont_permission_error_when_group_remains() {
+        let (reap_gate, entered, release, signal_entered, signal_release, signal_result_entered) =
+            ReapGate::new();
+        let (session, dispatcher) = spawn_term_race_session(reap_gate);
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let _gate_cleanup = ReapGateCleanup {
+            release: release.clone(),
+            signal_release: signal_release.clone(),
+        };
+        assert!(entered.recv_timeout(Duration::from_secs(2)).is_ok());
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+
+        let leader = session.summary().pid.unwrap();
+        let (termination_sender, termination_receiver) = mpsc::sync_channel(1);
+        let termination_session = Arc::clone(&session);
+        let termination = thread::spawn(move || {
+            let result = termination_session
+                .terminate(Duration::from_millis(50))
+                .map_err(|error| format!("{error:#}"));
+            let _ = termination_sender.send(result);
+        });
+        assert!(signal_entered.recv_timeout(Duration::from_secs(2)).is_ok());
+        assert!(wait_for_process_state(leader, 'Z', Duration::from_secs(2)));
+        assert!(group_exists(session.pgid).unwrap());
+        signal_release.send(()).unwrap();
+        assert!(
+            signal_result_entered
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+
+        let error = termination_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .expect_err("a still-present refused group must retain SIGCONT error");
+        assert!(error.contains("signal PTY process group"));
+        assert!(error.contains("Operation not permitted"));
+        release.send(()).unwrap();
+        termination.join().unwrap();
+        session.wait_until_exited(Duration::from_secs(2)).unwrap();
+        dispatcher.join().unwrap();
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn terminate_retains_sigcont_permission_error_for_live_group() {
+        let refuse_sigcont = Arc::new(AtomicBool::new(true));
+        let refusal = Arc::clone(&refuse_sigcont);
+        let signal_result_hook = Arc::new(move || {
+            if refusal.load(Ordering::Acquire) {
+                Some(anyhow::anyhow!(
+                    "signal PTY process group: Operation not permitted (os error 1)"
+                ))
+            } else {
+                None
+            }
+        });
+        let (session, dispatcher) = spawn_live_refusal_session(signal_result_hook);
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        assert!(wait_for_screen(&session, "READY", Duration::from_secs(2)));
+        let leader = session.summary().pid.unwrap();
+
+        let error = session
+            .terminate(Duration::from_millis(50))
+            .expect_err("a still-present refused group must retain SIGCONT error");
+        assert!(error.to_string().contains("signal PTY process group"));
+        assert!(error.to_string().contains("Operation not permitted"));
+        assert!(pid_exists(leader), "SIGKILL must not reach the live leader");
+        assert!(group_exists(session.pgid).unwrap());
+
+        refuse_sigcont.store(false, Ordering::Release);
+        session.terminate(Duration::from_millis(200)).unwrap();
+        dispatcher.join().unwrap();
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn pause_resume_exit_event_cannot_be_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::sync_channel(64);
+        let session = Session::spawn(
+            SessionId(4),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "exit-race".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "printf 'EXIT_%s' READY; IFS= read -r _".into(),
+                ],
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            tx,
+        )
+        .unwrap();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let gate = Arc::new(CancellableBarrier::new());
+        let _gate_cleanup = BarrierGuard(Arc::clone(&gate));
+        let (exit_ready, exit_ready_receiver) = mpsc::sync_channel(1);
+        let (dispatch_done, dispatch_done_receiver) = mpsc::sync_channel(1);
+        let (control_result, control_result_receiver) = mpsc::sync_channel(1);
+        let dispatcher = dispatch_test_events_with_exit_gate(
+            Arc::clone(&session),
+            rx,
+            Arc::clone(&gate),
+            exit_ready,
+            dispatch_done,
+        );
+        let control_gate = Arc::clone(&gate);
+        let control_session = Arc::clone(&session);
+        let control = thread::spawn(move || {
+            if !control_gate.wait() {
+                let _ = control_result.send(None);
+                return;
+            }
+            let _ = control_result.send(Some(control_session.set_paused(true)));
+        });
+
+        assert!(wait_for_screen(
+            &session,
+            "EXIT_READY",
+            Duration::from_secs(2)
+        ));
+        session.write(b"\n").unwrap();
+        assert!(
+            exit_ready_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+        assert!(matches!(
+            control_result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            Some(Err(_))
+        ));
+        assert!(
+            dispatch_done_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok()
+        );
+        control.join().unwrap();
+        dispatcher.join().unwrap();
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+    }
+
+    fn dispatch_test_events_with_exit_gate(
+        session: Arc<Session>,
+        rx: Receiver<SessionEvent>,
+        gate: Arc<CancellableBarrier>,
+        exit_ready: mpsc::SyncSender<()>,
+        dispatch_done: mpsc::SyncSender<()>,
+    ) -> JoinHandle<()> {
+        thread::spawn(move || {
+            while let Ok(event) = rx.recv() {
+                let exited = matches!(event, SessionEvent::Exited { .. });
+                if exited {
+                    let _ = exit_ready.send(());
+                    gate.wait();
+                }
+                session.apply_event(event);
+                if exited {
+                    let _ = dispatch_done.send(());
+                    break;
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn pause_resume_rejects_unsafe_group() {
+        assert!(verify_group_identity(0, false).is_err());
+        assert!(verify_group_identity(1, false).is_err());
+        assert!(verify_group_identity(unsafe { libc::getpgrp() }, false).is_err());
     }
 
     #[test]

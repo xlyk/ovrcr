@@ -1,7 +1,7 @@
 use crate::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerEvent, ServerMessage,
 };
-use crate::session::{SessionId, TerminalSize};
+use crate::session::{SessionId, SessionPhase, TerminalSize};
 use anyhow::{Context, Result, bail};
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -126,7 +126,7 @@ impl Dashboard {
             error: None,
             busy_sessions: HashSet::new(),
             tree_offset: 0,
-            next_request_id: 4,
+            next_request_id: 1,
             palette: None,
         }
     }
@@ -297,9 +297,16 @@ impl Dashboard {
                 match key.code {
                     KeyCode::Char(':') => self.open_palette(),
                     KeyCode::Char('q') => DashboardAction::Detach,
+                    KeyCode::Char('p') => self.pause_request(true),
+                    KeyCode::Char('r') => self.pause_request(false),
                     KeyCode::Enter => {
-                        self.mode = InputMode::Terminal;
-                        DashboardAction::Redraw
+                        if self.selected_phase() == Some(&SessionPhase::Paused) {
+                            self.error = Some("Session paused; press r to resume".into());
+                            DashboardAction::Redraw
+                        } else {
+                            self.mode = InputMode::Terminal;
+                            DashboardAction::Redraw
+                        }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
                         self.move_selection(1);
@@ -316,6 +323,8 @@ impl Dashboard {
                 if is_browse_key(key) {
                     self.mode = InputMode::Browse;
                     DashboardAction::EnterBrowse
+                } else if !self.input_is_allowed() {
+                    self.refuse_input()
                 } else {
                     match encode_key(key, self.parser.screen().application_cursor()) {
                         KeyEncoding::Bytes(bytes) => DashboardAction::PtyBytes(bytes),
@@ -348,9 +357,16 @@ impl Dashboard {
         match event {
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
-            Event::Paste(text) if self.mode == InputMode::Terminal => DashboardAction::PtyBytes(
-                encode_paste(&text, self.parser.screen().bracketed_paste()),
-            ),
+            Event::Paste(text) if self.mode == InputMode::Terminal => {
+                if !self.input_is_allowed() {
+                    self.refuse_input()
+                } else {
+                    DashboardAction::PtyBytes(encode_paste(
+                        &text,
+                        self.parser.screen().bracketed_paste(),
+                    ))
+                }
+            }
             Event::Mouse(mouse) => self.mouse_action(mouse, Rect::new(0, 0, 0, 0)),
             Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => DashboardAction::Redraw,
             Event::Paste(_) => DashboardAction::None,
@@ -411,6 +427,27 @@ impl Dashboard {
         DashboardAction::Request(self.select_request(session, request_id))
     }
 
+    fn pause_request(&mut self, paused: bool) -> DashboardAction {
+        let Some(session) = self.selected.and_then(|id| find_session(self, id)) else {
+            self.error = Some("No session selected".into());
+            return DashboardAction::Redraw;
+        };
+        if matches!(session.phase, SessionPhase::Exited { .. }) {
+            self.error = Some("Session exited".into());
+            return DashboardAction::Redraw;
+        }
+        let session = session.id;
+        let request_id = self.next_request_id();
+        DashboardAction::Request(ClientMessage {
+            request_id,
+            request: if paused {
+                Request::PauseSession { session }
+            } else {
+                Request::ResumeSession { session }
+            },
+        })
+    }
+
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
         if let ServerMessage::Response {
             request_id,
@@ -467,6 +504,7 @@ impl Dashboard {
                             break;
                         }
                     }
+                    self.update_mode_for_selected_phase();
                 }
                 ServerEvent::Output { .. } | ServerEvent::ScreenDirty { .. } => {}
             },
@@ -476,6 +514,7 @@ impl Dashboard {
 
     fn update_hierarchy(&mut self, hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
         self.hierarchy = hierarchy;
+        self.update_mode_for_selected_phase();
         if self
             .selected
             .is_some_and(|id| find_session(self, id).is_none())
@@ -492,6 +531,7 @@ impl Dashboard {
                 return vec![self.select_request(id, request_id)];
             }
         }
+        self.update_mode_for_selected_phase();
         Vec::new()
     }
 
@@ -521,10 +561,39 @@ impl Dashboard {
     }
 
     pub fn input_request(&self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
+        if !self.input_is_allowed() {
+            return None;
+        }
         self.selected.map(|session| ClientMessage {
             request_id,
             request: Request::Input { session, bytes },
         })
+    }
+
+    fn selected_phase(&self) -> Option<&SessionPhase> {
+        self.selected
+            .and_then(|id| find_session(self, id))
+            .map(|session| &session.phase)
+    }
+
+    fn input_is_allowed(&self) -> bool {
+        matches!(self.selected_phase(), None | Some(SessionPhase::Running))
+    }
+
+    fn refuse_input(&mut self) -> DashboardAction {
+        self.error = Some(match self.selected_phase() {
+            Some(SessionPhase::Paused) => "Session paused; press r to resume".into(),
+            Some(SessionPhase::Exited { .. }) => "Session exited".into(),
+            None => "No session selected".into(),
+            Some(SessionPhase::Running) => return DashboardAction::None,
+        });
+        DashboardAction::Redraw
+    }
+
+    fn update_mode_for_selected_phase(&mut self) {
+        if self.selected_phase() == Some(&SessionPhase::Paused) {
+            self.mode = InputMode::Browse;
+        }
     }
 
     fn next_request_id(&mut self) -> u64 {
@@ -851,6 +920,8 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
             dashboard.handle_server_message(message);
         }
     }
+    // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
+    dashboard.next_request_id = 4;
 
     let mut guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(guard.writer_mut());
@@ -1374,6 +1445,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     format_elapsed_at(session.started_unix_ms, now_unix_ms),
                     Style::default().fg(TEAL),
                 ),
+                if matches!(session.phase, SessionPhase::Paused) {
+                    Span::styled("  paused", Style::default().fg(PEACH))
+                } else {
+                    Span::raw("")
+                },
             ])
         },
     );
@@ -1408,19 +1484,49 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     );
     let footer = dashboard.error.as_deref().map_or_else(
         || {
-            Line::from(vec![
-                Span::styled("j/k/↑/↓", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" select  ", Style::default().fg(MUTED)),
-                Span::styled("Enter", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" focus  ", Style::default().fg(MUTED)),
-                Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" browse  ", Style::default().fg(MUTED)),
-                Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" tasks  ", Style::default().fg(MUTED)),
-                Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
-                Span::styled(" detach", Style::default().fg(MUTED)),
-                Span::styled("  : commands", Style::default().fg(MAUVE)),
-            ])
+            let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
+            let narrow = layout.footer.width < 60;
+            let mut footer = if dashboard.mode == InputMode::Terminal {
+                vec![
+                    Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
+                    Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" browse  ", Style::default().fg(MUTED)),
+                ]
+            } else if paused && narrow {
+                vec![
+                    Span::styled("r", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" resume  ", Style::default().fg(MUTED)),
+                    Span::styled("p", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" pause  ", Style::default().fg(MUTED)),
+                ]
+            } else {
+                vec![
+                    Span::styled("j/k/↑/↓", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" select  ", Style::default().fg(MUTED)),
+                    Span::styled("Enter", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" focus  ", Style::default().fg(MUTED)),
+                    Span::styled("p", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" pause  ", Style::default().fg(MUTED)),
+                    Span::styled("r", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" resume  ", Style::default().fg(MUTED)),
+                ]
+            };
+            if dashboard.mode != InputMode::Terminal && !(paused && narrow) {
+                footer.extend([
+                    Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" browse  ", Style::default().fg(MUTED)),
+                    Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" tasks  ", Style::default().fg(MUTED)),
+                ]);
+            }
+            if dashboard.mode != InputMode::Terminal {
+                footer.extend([
+                    Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" detach", Style::default().fg(MUTED)),
+                    Span::styled("  : commands", Style::default().fg(MAUVE)),
+                ]);
+            }
+            Line::from(footer)
         },
         |error| {
             Line::from(vec![
@@ -1563,7 +1669,9 @@ fn tree_line_text(
             } else {
                 session.label.as_str()
             };
-            let status = if dashboard.session_is_busy(*id) {
+            let status = if matches!(session.phase, SessionPhase::Paused) {
+                'P'
+            } else if dashboard.session_is_busy(*id) {
                 SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
             } else {
                 ' '

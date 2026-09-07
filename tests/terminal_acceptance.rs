@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 use ovrcr::config::Registry;
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    ClientMessage, HierarchySnapshot, Request, Response, ServerMessage, read_frame, write_frame,
+};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -40,17 +42,7 @@ impl AcceptanceFixture {
             .stderr(std::process::Stdio::null())
             .spawn()
             .context("start isolated OVRCR server")?;
-        wait_for_socket(&socket, Duration::from_secs(3))?;
-        git(&repo, &["init", "-b", "main"])?;
-        git(&repo, &["config", "user.name", "OVRCR Acceptance"])?;
-        git(
-            &repo,
-            &["config", "user.email", "acceptance@example.invalid"],
-        )?;
-        std::fs::write(repo.join("README"), "acceptance\n")?;
-        git(&repo, &["add", "README"])?;
-        git(&repo, &["commit", "-m", "initial"])?;
-        Ok(Self {
+        let fixture = Self {
             config,
             socket,
             executable,
@@ -59,7 +51,18 @@ impl AcceptanceFixture {
             workspace_root,
             server: Some(server),
             managed_pgids: Vec::new(),
-        })
+        };
+        wait_for_socket(&fixture.socket, Duration::from_secs(3))?;
+        git(&fixture.repo, &["init", "-b", "main"])?;
+        git(&fixture.repo, &["config", "user.name", "OVRCR Acceptance"])?;
+        git(
+            &fixture.repo,
+            &["config", "user.email", "acceptance@example.invalid"],
+        )?;
+        std::fs::write(fixture.repo.join("README"), "acceptance\n")?;
+        git(&fixture.repo, &["add", "README"])?;
+        git(&fixture.repo, &["commit", "-m", "initial"])?;
+        Ok(fixture)
     }
 
     fn cli(&self, args: &[&str]) -> Result<std::process::Output> {
@@ -113,7 +116,7 @@ impl AcceptanceFixture {
             "--",
             "sh",
             "-c",
-            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
+            "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *PAUSE_RESUME_TOKEN*) printf PAUSE_RESUME_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
         self.managed_pgids = self.session_pgids()?;
@@ -137,6 +140,8 @@ impl AcceptanceFixture {
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
         let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -164,6 +169,27 @@ impl AcceptanceFixture {
             })
             .filter(|pgid| *pgid > 1)
             .collect())
+    }
+
+    fn list(&self) -> Result<HierarchySnapshot> {
+        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::List,
+            },
+        )?;
+        let ServerMessage::Response {
+            response: Response::Hierarchy(hierarchy),
+            ..
+        } = read_frame::<ServerMessage>(&mut stream)?
+        else {
+            bail!("server list did not return a hierarchy")
+        };
+        Ok(hierarchy)
     }
 
     fn shutdown(&mut self) -> Result<()> {
@@ -454,6 +480,36 @@ impl OuterDashboard {
         self.parser.screen().contents()
     }
 
+    fn wait_for_screen<F>(&mut self, predicate: F, timeout: Duration) -> Result<()>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let deadline = Instant::now() + timeout;
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .received
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
+                Ok(bytes) => {
+                    self.parser.process(&bytes);
+                    output.extend_from_slice(&bytes);
+                    let rendered = self.parser.screen().contents();
+                    if predicate(&rendered) {
+                        return Ok(());
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        bail!(
+            "outer terminal did not reach expected screen state: {}",
+            String::from_utf8_lossy(&output)
+        )
+    }
+
     fn detach(mut self) -> Result<()> {
         self.send(b"\x07")?;
         self.send(b"q")?;
@@ -661,6 +717,64 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
     reattached.send(b"j")?;
     reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    reattached.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn pause_resume_dashboard_round_trip() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.send(b"k")?;
+    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.send(b"\r\x07")?;
+    dashboard.wait_for(b"p pause", Duration::from_secs(3))?;
+
+    dashboard.send(b"p")?;
+    dashboard.wait_for(b"paused", Duration::from_secs(3))?;
+    let listed = fixture.list()?;
+    let waiting = listed
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .find(|session| session.name == "waiting")
+        .context("List did not return waiting session")?;
+    assert_eq!(waiting.phase, ovrcr::session::SessionPhase::Paused);
+
+    dashboard.detach()?;
+    let mut reattached = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.send(b"j")?;
+    reattached.wait_for(b"paused", Duration::from_secs(3))?;
+    reattached.send(b"r")?;
+    reattached.wait_for_screen(|screen| !screen.contains("paused"), Duration::from_secs(3))?;
+    reattached.send(b"\r")?;
+    reattached.wait_for(b"Terminal mode", Duration::from_secs(3))?;
+    reattached.send(b"PAUSE_RESUME_TOKEN\r")?;
+    reattached.wait_for(b"PAUSE_RESUME_ACK", Duration::from_secs(3))?;
     reattached.detach()?;
     fixture.shutdown()?;
     Ok(())

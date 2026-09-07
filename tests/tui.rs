@@ -2,8 +2,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr::protocol::{
-    ErrorCode, HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage,
-    WorkspaceSummary,
+    ClientMessage, ErrorCode, HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent,
+    ServerMessage, WorkspaceSummary,
 };
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
@@ -661,6 +661,197 @@ fn browse_and_terminal_modes_keep_input_ownership_clear() {
 }
 
 #[test]
+fn pause_resume_browse_keys_send_explicit_requests() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(5));
+
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request_id: 1,
+            request: Request::PauseSession {
+                session: SessionId(5),
+            },
+        })
+    );
+    assert_eq!(
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase,
+        SessionPhase::Running
+    );
+
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request_id: 2,
+            request: Request::PauseSession {
+                session: SessionId(5),
+            },
+        })
+    );
+
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase = SessionPhase::Paused;
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request_id: 3,
+            request: Request::ResumeSession {
+                session: SessionId(5),
+            },
+        })
+    );
+
+    dashboard.selected = None;
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("selected"))
+    );
+
+    dashboard.selected = Some(SessionId(2));
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        dashboard
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("exited"))
+    );
+
+    dashboard.selected = Some(SessionId(5));
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase = SessionPhase::Running;
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'p'])
+    );
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'r'])
+    );
+}
+
+#[test]
+fn pause_resume_input_and_paste_stay_guarded() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(5));
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase = SessionPhase::Paused;
+
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("Session paused; press r to resume")
+    );
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        ))),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("blocked".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        event_to_request(
+            &mut dashboard,
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            100,
+        )
+        .is_none()
+    );
+    assert!(event_to_request(&mut dashboard, Event::Paste("blocked".into()), 101).is_none());
+    assert!(dashboard.input_request(b"blocked".to_vec(), 99).is_none());
+    assert!(
+        dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL,
+        ))) == ovrcr::tui::DashboardAction::EnterBrowse
+    );
+
+    let paused = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(paused)));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        dashboard.hierarchy.clone(),
+    )));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+}
+
+#[test]
+fn pause_resume_dense_status_has_priority() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(5));
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase = SessionPhase::Paused;
+    dashboard.busy_sessions.insert(SessionId(5));
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+    assert_eq!(row(3).trim_end(), "  P local");
+    let rendered = (0..40)
+        .map(|y| {
+            (0..120)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("pid: 555  elapsed: 0m  paused"));
+    assert!(rendered.contains("p pause  r resume"));
+    assert!(
+        rendered
+            .lines()
+            .last()
+            .is_some_and(|footer| footer.contains("q detach"))
+    );
+    assert!(rendered.contains("Ctrl-t tasks"));
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let terminal_footer = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
+        .collect::<String>();
+    assert!(terminal_footer.contains("Terminal mode"));
+    assert!(terminal_footer.contains("Ctrl-g"));
+    assert!(!terminal_footer.contains("q detach"));
+
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    let mut narrow = Terminal::new(TestBackend::new(40, 20)).unwrap();
+    narrow
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let footer = (0..40)
+        .map(|x| narrow.backend().buffer()[(x, 19)].symbol())
+        .collect::<String>();
+    assert!(
+        footer.starts_with("r resume"),
+        "narrow footer was {footer:?}"
+    );
+}
+
+#[test]
 fn collapse_and_mouse_hits_use_current_visible_tree() {
     let mut dashboard = dashboard_fixture();
     dashboard.selected = Some(SessionId(5));
@@ -1053,15 +1244,15 @@ fn inverse_colors_keep_explicit_colors_and_set_reverse_modifier() {
 
 #[test]
 fn runtime_paste_event_becomes_selected_session_input() {
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
-    dashboard.select_request(SessionId(7), 1);
+    let mut dashboard = dashboard_fixture();
+    dashboard.select_request(SessionId(5), 1);
     dashboard.parser.process(b"\x1b[?2004h");
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     let request = event_to_request(&mut dashboard, Event::Paste("hello\n".into()), 2).unwrap();
     assert_eq!(
         request.request,
         ovrcr::protocol::Request::Input {
-            session: SessionId(7),
+            session: SessionId(5),
             bytes: b"\x1b[200~hello\n\x1b[201~".to_vec(),
         }
     );

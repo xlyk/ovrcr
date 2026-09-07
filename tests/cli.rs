@@ -48,6 +48,34 @@ fn terminal_workspace_filter_requires_project() {
 }
 
 #[test]
+fn pause_resume_cli_requires_id() {
+    let root = tempfile::tempdir().unwrap();
+    for command in ["pause", "resume"] {
+        let missing = isolated_command(&root).args([command]).output().unwrap();
+        assert_eq!(missing.status.code(), Some(2), "{command} without ID");
+        assert!(
+            String::from_utf8_lossy(&missing.stderr)
+                .contains("required arguments were not provided"),
+            "{command} missing-ID diagnostic: {}",
+            String::from_utf8_lossy(&missing.stderr)
+        );
+        assert!(!root.path().join("server.sock").exists());
+
+        let nonnumeric = isolated_command(&root)
+            .args([command, "not-a-number"])
+            .output()
+            .unwrap();
+        assert_eq!(nonnumeric.status.code(), Some(2), "{command} nonnumeric ID");
+        assert!(
+            String::from_utf8_lossy(&nonnumeric.stderr).contains("invalid value"),
+            "{command} nonnumeric diagnostic: {}",
+            String::from_utf8_lossy(&nonnumeric.stderr)
+        );
+        assert!(!root.path().join("server.sock").exists());
+    }
+}
+
+#[test]
 fn offline_project_inspection_reads_and_sorts_the_registry_without_starting_server() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -139,6 +167,8 @@ branch = "feature/one"
         &["terminal", "read", "99", "--json"],
         &["terminal", "send", "99", "--text", "hello", "--json"],
         &["terminal", "close", "99", "--json"],
+        &["pause", "99", "--json"],
+        &["resume", "99", "--json"],
     ] {
         let output = isolated_command(&root).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
