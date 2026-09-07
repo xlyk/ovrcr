@@ -55,6 +55,12 @@ enum Command {
     Kill {
         id: u64,
     },
+    Pause {
+        id: u64,
+    },
+    Resume {
+        id: u64,
+    },
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -270,6 +276,18 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::New(args) => create_terminal(args, json_output),
         Command::Kill { id } => mutate_started(
             Request::KillSession {
+                session: SessionId(id),
+            },
+            json_output,
+        ),
+        Command::Pause { id } => mutate_without_start(
+            Request::PauseSession {
+                session: SessionId(id),
+            },
+            json_output,
+        ),
+        Command::Resume { id } => mutate_without_start(
+            Request::ResumeSession {
                 session: SessionId(id),
             },
             json_output,
@@ -579,6 +597,7 @@ fn workspace_value(
 fn terminal_value(session: &SessionSummary) -> Value {
     let (phase, exit_code, exit_signal) = match &session.phase {
         SessionPhase::Running => ("running", Value::Null, Value::Null),
+        SessionPhase::Paused => ("paused", Value::Null, Value::Null),
         SessionPhase::Exited { code, signal } => (
             "exited",
             code.map_or(Value::Null, |code| json!(code)),
@@ -787,7 +806,12 @@ fn print_legacy_response(response: Response, json_output: bool) -> AppResult<()>
                 for workspace in project.workspaces {
                     println!("  workspace {}", workspace.name);
                     for session in workspace.sessions {
-                        println!("    session {} {}", session.id.0, session.name);
+                        let phase = match session.phase {
+                            SessionPhase::Running => "running",
+                            SessionPhase::Paused => "paused",
+                            SessionPhase::Exited { .. } => "exited",
+                        };
+                        println!("    session {} {} {phase}", session.id.0, session.name);
                     }
                 }
             }
