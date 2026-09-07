@@ -824,6 +824,7 @@ fn pause_resume_dense_status_has_priority() {
             .last()
             .is_some_and(|footer| footer.contains("q detach"))
     );
+    assert!(rendered.contains("Ctrl-t tasks"));
 
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     terminal

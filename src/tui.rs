@@ -1515,6 +1515,8 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 footer.extend([
                     Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
+                    Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" tasks  ", Style::default().fg(MUTED)),
                 ]);
             }
             if dashboard.mode != InputMode::Terminal {
