@@ -1,16 +1,17 @@
 use ovrcr::config::Registry;
 use ovrcr::protocol::{
-    BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
-    ServerMessage, read_frame, write_frame,
+    AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
+    Request, Response, ServerMessage, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +20,108 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+#[ignore]
+fn hook_child_report_helper() {
+    let identity_path =
+        std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+    let socket = std::env::var_os("OVRCR_HOOK_SOCKET").expect("hook socket");
+    let session = std::env::var("OVRCR_SESSION_ID")
+        .expect("hook session")
+        .parse::<u64>()
+        .expect("hook session is decimal");
+    let token = std::env::var("OVRCR_HOOK_TOKEN").expect("hook token");
+    let capability = parse_hook_capability(&token).expect("hook token is 64 lowercase hex");
+    std::fs::write(
+        identity_path,
+        format!("{}\n{}\n{}\n", socket.to_string_lossy(), session, token),
+    )
+    .expect("write private hook identity");
+
+    let mut stream = UnixStream::connect(&socket).expect("connect hook socket");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set hook read deadline");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .expect("set hook write deadline");
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::AgentReport(AgentReport {
+                session: SessionId(session),
+                capability,
+                sequence: None,
+                update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+            }),
+        },
+    )
+    .expect("write hook report");
+    let response = read_frame::<ServerMessage>(&mut stream).expect("read hook response");
+    assert_eq!(
+        response,
+        ServerMessage::Response {
+            request_id: 1,
+            response: Response::Ok,
+        }
+    );
+    let identity_path =
+        std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(identity_path)
+        .and_then(|mut file| file.write_all(b"REPORTED\n"))
+        .expect("record private hook report acknowledgement");
+    let mut stdout = std::io::stdout();
+    stdout.write_all(b"HOOK_READY\n").expect("write hook ready");
+    stdout.flush().expect("flush hook ready");
+
+    let mut stdin = std::io::stdin();
+    let mut byte = [0_u8; 1];
+    if stdin.read(&mut byte).is_ok() && byte[0] == b'w' {
+        let mut stream = UnixStream::connect(&socket).expect("reconnect hook socket");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set reconnect hook read deadline");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .expect("set reconnect hook write deadline");
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::AgentReport(AgentReport {
+                    session: SessionId(session),
+                    capability,
+                    sequence: None,
+                    update: AgentUpdate::Activity(ovrcr::session::AgentActivity::WaitingInput),
+                }),
+            },
+        )
+        .expect("write reconnect hook report");
+        let response =
+            read_frame::<ServerMessage>(&mut stream).expect("read reconnect hook response");
+        assert_eq!(
+            response,
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            }
+        );
+        let identity_path =
+            std::env::var_os("OVRCR_AGENT_HOOK_IDENTITY_PATH").expect("hook child identity path");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(identity_path)
+            .and_then(|mut file| file.write_all(b"WAITING_REPORTED\n"))
+            .expect("record reconnect hook report acknowledgement");
+    }
+    loop {
+        thread::park_timeout(Duration::from_secs(1));
+    }
+}
 
 struct ServerFixture {
     root: tempfile::TempDir,
@@ -100,6 +203,415 @@ fn startup_socket_directory_is_private() {
         & 0o777;
     assert_eq!(mode, 0o700);
     fixture.stop();
+}
+
+#[test]
+fn agent_hook_sequence_does_not_regress_state() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("ordered", "agent-hook-order");
+    let pgid = fixture.original_pgid(identity.session);
+    fixture.wait_terminal_contains(identity.session, "HOOK_READY");
+    let busy = AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy);
+    assert_eq!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: Some(1),
+            update: busy.clone(),
+        })),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Idle),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: Some(1),
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Idle),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: Some(0),
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Idle),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    assert_eq!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: Some(2),
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Idle),
+        })),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Idle
+    );
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: identity.session,
+            capability: identity.capability,
+            sequence: Some(3),
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn agent_hook_capability_and_exit_are_enforced() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let first = fixture.create_hook_child("agent-a", "agent-hook-auth-a");
+    let second = fixture.create_hook_child("agent-b", "agent-hook-auth-b");
+    let first_pgid = fixture.original_pgid(first.session);
+    let second_pgid = fixture.original_pgid(second.session);
+    fixture.wait_terminal_contains(first.session, "HOOK_READY");
+    fixture.wait_terminal_contains(second.session, "HOOK_READY");
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: first.capability,
+            sequence: Some(1),
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_activity(first.session),
+        ovrcr::session::AgentActivity::Unknown
+    );
+    assert_eq!(
+        fixture.session_activity(second.session),
+        ovrcr::session::AgentActivity::Unknown
+    );
+    assert_eq!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: second.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.session_activity(second.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    assert_eq!(fixture.session_phase(first.session), SessionPhase::Running);
+    assert_eq!(fixture.session_phase(second.session), SessionPhase::Running);
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: second.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Idle),
+        })),
+        Response::Ok
+    );
+    assert_eq!(fixture.session_phase(second.session), SessionPhase::Running);
+    assert_eq!(
+        fixture.request(Request::PauseSession {
+            session: second.session
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: second.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::WaitingInput),
+        })),
+        Response::Ok
+    );
+    assert_eq!(fixture.session_phase(second.session), SessionPhase::Paused);
+    assert_eq!(
+        fixture.session_activity(second.session),
+        ovrcr::session::AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: first.session
+        }),
+        Response::Ok
+    );
+    assert!(wait_group_absent(first_pgid, Duration::from_secs(2)));
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: first.session,
+            capability: first.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Error {
+            code: ErrorCode::NotFound,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: second.session,
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, second.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(second_pgid, Duration::from_secs(2)));
+    assert!(matches!(
+        fixture.request(Request::AgentReport(AgentReport {
+            session: second.session,
+            capability: second.capability,
+            sequence: None,
+            update: AgentUpdate::Activity(ovrcr::session::AgentActivity::Busy),
+        })),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn agent_hook_startup_registration_is_visible() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child_with_report("startup", "agent-hook-startup");
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+    let pgid = fixture.original_pgid(identity.session);
+    fixture.wait_terminal_contains(identity.session, "HOOK_READY");
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn agent_hook_round_trip_survives_dashboard_reconnect() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child_with_report("reconnect", "agent-hook-reconnect");
+    let pgid = fixture.original_pgid(identity.session);
+    assert_eq!(
+        fixture.session_activity(identity.session),
+        ovrcr::session::AgentActivity::Busy
+    );
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 10,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let initial = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+    let ServerMessage::Response {
+        request_id: 10,
+        response: Response::Hierarchy(snapshot),
+    } = initial
+    else {
+        panic!("dashboard hello did not return a hierarchy: {initial:?}");
+    };
+    assert!(
+        snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .any(|summary| summary.id == identity.session
+                && summary.activity == ovrcr::session::AgentActivity::Busy)
+    );
+    drop(dashboard);
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: identity.session,
+            text: "w".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_identity_marker("agent-hook-reconnect", "WAITING_REPORTED");
+
+    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    reconnect
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut reconnect,
+        &ClientMessage {
+            request_id: 20,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let initial = read_frame::<ServerMessage>(&mut reconnect).unwrap();
+    let ServerMessage::Response {
+        request_id: 20,
+        response: Response::Hierarchy(snapshot),
+    } = initial
+    else {
+        panic!("dashboard reconnect did not return a hierarchy: {initial:?}");
+    };
+    assert!(
+        snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .any(|summary| summary.id == identity.session
+                && summary.activity == ovrcr::session::AgentActivity::WaitingInput),
+        "reconnected snapshot: {snapshot:?}"
+    );
+
+    write_frame(
+        &mut reconnect,
+        &ClientMessage {
+            request_id: 21,
+            request: Request::Select {
+                session: identity.session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    let screen = loop {
+        match read_frame::<ServerMessage>(&mut reconnect).unwrap() {
+            ServerMessage::Response {
+                request_id: 21,
+                response: Response::Screen { bytes, .. },
+            } => break bytes,
+            _ => {}
+        }
+    };
+    let mut parser = vt100::Parser::new(24, 80, 0);
+    parser.process(&screen);
+    let text = parser.screen().contents();
+    assert!(
+        text.contains("HOOK_READY"),
+        "helper output was not retained: {text:?}"
+    );
+    for forbidden in [
+        "AgentReport",
+        "ClientMessage",
+        "ServerMessage",
+        "Response",
+        "OVRCR_HOOK_SOCKET",
+        "WAITING_REPORTED",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "hook protocol leaked into terminal: {text:?}"
+        );
+    }
+    drop(reconnect);
+
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session,
+        }),
+        Response::Ok
+    );
+    wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let socket = fixture.socket.clone();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = fixture.create_hook_child("failed-ack", "agent-hook-failure");
+        assert_eq!("HOOK_READY", "missing acknowledgement");
+    }));
+    assert!(result.is_err());
+    let pgid = fixture
+        .process_groups
+        .lock()
+        .unwrap()
+        .last()
+        .copied()
+        .expect("failed handshake child ownership was recorded");
+    drop(fixture);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(!socket.exists());
 }
 
 #[test]
@@ -2893,7 +3405,15 @@ struct ControlFixture {
     workspace_root: std::path::PathBuf,
     socket: std::path::PathBuf,
     thread: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
+    process_groups: std::sync::Mutex<Vec<libc::pid_t>>,
     request_timeout: Option<Duration>,
+    workspace_ready: std::sync::Mutex<bool>,
+}
+
+#[derive(Clone, Copy)]
+struct HookIdentity {
+    session: SessionId,
+    capability: [u8; 32],
 }
 
 impl ControlFixture {
@@ -2949,7 +3469,9 @@ impl ControlFixture {
             workspace_root: workspace_root.canonicalize().unwrap(),
             socket,
             thread: std::sync::Mutex::new(Some(thread)),
+            process_groups: std::sync::Mutex::new(Vec::new()),
             request_timeout: None,
+            workspace_ready: std::sync::Mutex::new(false),
         };
         fixture.wait_socket();
         fixture
@@ -3007,6 +3529,192 @@ impl ControlFixture {
     fn create_session(&self, name: &str, argv: Vec<OsString>) -> SessionId {
         self.create_session_summary(name, argv).id
     }
+
+    fn create_hook_child(&self, name: &str, marker: &str) -> HookIdentity {
+        self.create_hook_child_inner(name, marker, false)
+    }
+
+    fn create_hook_child_with_report(&self, name: &str, marker: &str) -> HookIdentity {
+        self.create_hook_child_inner(name, marker, true)
+    }
+
+    fn create_hook_child_inner(&self, name: &str, marker: &str, report: bool) -> HookIdentity {
+        let mut workspace_ready = self.workspace_ready.lock().unwrap();
+        if !*workspace_ready {
+            assert_eq!(
+                self.request(Request::AddProject {
+                    name: "fixture".into(),
+                    repo: self.repo.clone(),
+                    workspace_root: self.workspace_root.clone(),
+                }),
+                Response::Ok
+            );
+            assert_eq!(
+                self.request(Request::CreateWorkspace {
+                    project: "fixture".into(),
+                    name: "work".into(),
+                    branch: BranchRequest::New {
+                        branch: "agent-hooks".into(),
+                        base: "main".into(),
+                    },
+                }),
+                Response::Ok
+            );
+            *workspace_ready = true;
+        }
+        drop(workspace_ready);
+        let identity_path = self._root.path().join(format!("{marker}.identity"));
+        let child = std::env::current_exe().unwrap();
+        let script = if report {
+            r#"stty -echo; OVRCR_AGENT_HOOK_IDENTITY_PATH="$1" exec "$2" --ignored --exact hook_child_report_helper --nocapture"#
+        } else {
+            r#"printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$1"; printf HOOK_READY; while IFS= read -r line; do :; done"#
+        };
+        let mut argv = vec![
+            "sh".into(),
+            "-c".into(),
+            script.into(),
+            "ovrcr-hook-child".into(),
+            identity_path.clone().into_os_string(),
+        ];
+        if report {
+            argv.push(child.into_os_string());
+        }
+        let summary = self.create_session_summary(name, argv);
+        self.record_process_group(&summary);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(&identity_path) {
+                let mut lines = contents.lines();
+                let socket = lines.next().unwrap_or_default();
+                let session = lines.next().and_then(|value| value.parse::<u64>().ok());
+                let capability = lines.next().and_then(parse_hook_capability);
+                if let (Some(session), Some(capability)) = (session, capability) {
+                    let expected_socket = self
+                        .socket
+                        .parent()
+                        .unwrap()
+                        .canonicalize()
+                        .unwrap()
+                        .join(self.socket.file_name().unwrap());
+                    assert_eq!(socket, expected_socket.to_string_lossy());
+                    assert_eq!(session, summary.id.0);
+                    if report && !contents.lines().any(|line| line == "REPORTED") {
+                        thread::park_timeout(Duration::from_millis(5));
+                        continue;
+                    }
+                    return HookIdentity {
+                        session: summary.id,
+                        capability,
+                    };
+                }
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("managed hook child did not publish its private identity");
+    }
+
+    fn record_process_group(&self, summary: &ovrcr::session::SessionSummary) {
+        if let Some(pid) = summary.pid {
+            self.process_groups.lock().unwrap().push(pid as libc::pid_t);
+        }
+    }
+
+    fn original_pgid(&self, id: SessionId) -> libc::pid_t {
+        let pid = self.session_summary(id).pid.expect("live session PID");
+        let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+        assert_eq!(pgid, pid as libc::pid_t);
+        pgid
+    }
+
+    fn session_summary(&self, id: SessionId) -> ovrcr::session::SessionSummary {
+        match self.request(Request::List) {
+            Response::Hierarchy(snapshot) => snapshot
+                .projects
+                .into_iter()
+                .flat_map(|project| project.workspaces)
+                .flat_map(|workspace| workspace.sessions)
+                .find(|session| session.id == id)
+                .unwrap_or_else(|| panic!("session record disappeared")),
+            response => panic!("unexpected response: {response:?}"),
+        }
+    }
+
+    fn session_activity(&self, id: SessionId) -> ovrcr::session::AgentActivity {
+        self.session_summary(id).activity
+    }
+
+    fn session_phase(&self, id: SessionId) -> SessionPhase {
+        self.session_summary(id).phase
+    }
+
+    fn wait_terminal_contains(&self, id: SessionId, marker: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Some(Response::TerminalText { text, .. }) = request_with_timeout(
+                &self.socket,
+                401,
+                Request::ReadTerminal {
+                    session: id,
+                    max_lines: None,
+                },
+                Duration::from_millis(250),
+            ) {
+                if text.contains(marker) {
+                    return;
+                }
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("session {id:?} did not produce terminal marker");
+    }
+
+    fn wait_identity_marker(&self, marker: &str, expected: &str) {
+        let identity_path = self._root.path().join(format!("{marker}.identity"));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if std::fs::read_to_string(&identity_path)
+                .map(|contents| contents.lines().any(|line| line == expected))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        panic!("managed hook child did not publish marker {expected:?}");
+    }
+
+    fn shutdown_kill(&self) {
+        let sessions = match self.request(Request::List) {
+            Response::Hierarchy(snapshot) => snapshot
+                .projects
+                .into_iter()
+                .flat_map(|project| project.workspaces)
+                .flat_map(|workspace| workspace.sessions)
+                .collect::<Vec<_>>(),
+            response => panic!("unexpected response: {response:?}"),
+        };
+        for session in sessions {
+            if session.name == "local" {
+                let _ = self.request(Request::SendTerminal {
+                    session: session.id,
+                    text: "exit".into(),
+                    submit: true,
+                });
+                self.wait_exited(session.id);
+            } else {
+                assert_eq!(
+                    self.request(Request::KillSession {
+                        session: session.id
+                    }),
+                    Response::Ok
+                );
+                self.wait_exited(session.id);
+            }
+        }
+        assert_eq!(self.request(Request::Shutdown { kill: true }), Response::Ok);
+        self.join();
+    }
     fn only_session_id(&self) -> SessionId {
         match self.request(Request::List) {
             Response::Hierarchy(snapshot) => snapshot.projects[0].workspaces[0].sessions[0].id,
@@ -3047,6 +3755,97 @@ impl ControlFixture {
     fn join(&self) {
         self.thread.lock().unwrap().take().unwrap().join().unwrap();
     }
+
+    fn join_bounded(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let finished = self
+                .thread
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|handle| handle.is_finished())
+                .unwrap_or(true);
+            if finished {
+                let handle = self.thread.lock().unwrap().take();
+                return handle.map(|handle| handle.join().is_ok()).unwrap_or(true);
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    }
+
+    fn kill_owned_groups(&self) -> bool {
+        let groups = self.process_groups.lock().unwrap().clone();
+        let mut cleaned = true;
+        for pgid in groups {
+            if !group_exists(pgid) {
+                continue;
+            }
+            if unsafe { libc::kill(-pgid, libc::SIGKILL) } != 0 && group_exists(pgid) {
+                cleaned = false;
+                continue;
+            }
+            if !wait_group_absent(pgid, Duration::from_secs(2)) {
+                cleaned = false;
+            }
+        }
+        cleaned
+    }
+}
+
+impl Drop for ControlFixture {
+    fn drop(&mut self) {
+        let mut cleanup_failed = false;
+        if self.thread.get_mut().unwrap().is_some() {
+            let shutdown = request_with_timeout(
+                &self.socket,
+                999,
+                Request::Shutdown { kill: true },
+                self.request_timeout.unwrap_or(Duration::from_secs(2)),
+            );
+            if shutdown != Some(Response::Ok) {
+                eprintln!("control fixture shutdown response: {shutdown:?}");
+                cleanup_failed = true;
+            }
+        }
+        if !self.kill_owned_groups() {
+            cleanup_failed = true;
+        }
+        if self.thread.get_mut().unwrap().is_some() && !self.join_bounded(Duration::from_secs(2)) {
+            cleanup_failed = true;
+        }
+        if !self
+            .process_groups
+            .get_mut()
+            .unwrap()
+            .iter()
+            .copied()
+            .all(|pgid| !group_exists(pgid))
+        {
+            cleanup_failed = true;
+        }
+        if cleanup_failed {
+            let kept = std::mem::replace(&mut self._root, tempfile::tempdir().unwrap()).keep();
+            eprintln!(
+                "control fixture cleanup incomplete; preserved {}",
+                kept.display()
+            );
+        }
+    }
+}
+
+fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut capability = [0_u8; 32];
+    for (index, byte) in capability.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(capability)
 }
 
 #[test]

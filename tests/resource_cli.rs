@@ -441,3 +441,49 @@ fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
         std::thread::yield_now();
     }
 }
+
+#[test]
+fn agent_hook_resource_inventory_reports_activity() {
+    let mut fixture = Fixture::new();
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let id = fixture
+        .ok(&[
+            "terminal",
+            "create",
+            "--project",
+            "fixture",
+            "--workspace",
+            "demo",
+            "--name",
+            "hook-activity",
+            "--",
+            "/bin/sh",
+            "-c",
+            r#""$1" --json report activity --state busy --sequence 1 && printf HOOK_DONE; while IFS= read -r line; do :; done"#,
+            "hook-child",
+            bin,
+        ])
+        .trim()
+        .to_owned();
+    fixture.capture();
+    fixture.wait_text(&id, "HOOK_DONE");
+
+    let records = fixture.json(&[
+        "terminal",
+        "list",
+        "--project",
+        "fixture",
+        "--workspace",
+        "demo",
+    ]);
+    let record = records
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id.parse::<u64>().unwrap())
+        .expect("managed hook terminal is listed");
+    assert_eq!(record["activity"], "busy");
+    for forbidden in ["capability", "hook_socket", "hook_token"] {
+        assert!(!record.as_object().unwrap().contains_key(forbidden));
+    }
+}

@@ -5,7 +5,7 @@ use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent,
     ServerMessage, WorkspaceSummary,
 };
-use ovrcr::session::{SessionId, SessionPhase, SessionSummary, TerminalSize};
+use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding, dashboard_message_channel, encode_key,
     encode_paste, event_to_request,
@@ -37,6 +37,7 @@ fn dashboard_fixture() -> Dashboard {
         pid,
         started_unix_ms,
         phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
     };
     dashboard.hierarchy = HierarchySnapshot {
         projects: vec![
@@ -444,7 +445,7 @@ fn dashboard_layout() {
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     assert!(rendered[1].contains("pid: 111  elapsed: 0m"));
     assert!(rendered[2].contains("─"));
-    assert!(!buffer[(8, 14)].modifier.contains(Modifier::DIM));
+    assert!(buffer[(8, 14)].modifier.contains(Modifier::DIM));
     assert_eq!(buffer[(1, 6)].bg, Color::Rgb(203, 166, 247));
 
     dashboard.selected = Some(SessionId(2));
@@ -454,7 +455,7 @@ fn dashboard_layout() {
     let selected_exited = (0..120)
         .map(|col| terminal.backend().buffer()[(col, 1)].symbol())
         .collect::<String>();
-    assert!(selected_exited.contains("pid: —"));
+    assert!(selected_exited.contains("pid: closed"));
 }
 
 #[test]
@@ -469,10 +470,10 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
     assert_eq!(row(1).trim_end(), "▼ 󰉋 consigint");
     assert_eq!(row(2).trim_end(), "  ▼ auth");
-    assert_eq!(row(3).trim_end(), "    local");
+    assert_eq!(row(3).trim_end(), "  - local");
     assert_eq!(row(4).trim_end(), "     ├ terminal");
     assert_eq!(row(5).trim_end(), "     └ run 0m  ctx —");
-    assert_eq!(row(6).trim_end(), "    review");
+    assert_eq!(row(6).trim_end(), "  - review");
     assert_eq!(row(7).trim_end(), "     ├ claude");
     assert_eq!(buffer[(2, 1)].fg, Color::Rgb(203, 166, 247));
     assert_eq!(buffer[(2, 2)].fg, Color::Rgb(203, 166, 247));
@@ -480,7 +481,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     assert_eq!(buffer[(2, 6)].fg, Color::Rgb(108, 112, 134));
     assert_eq!(row(9).trim_end(), "");
     assert_eq!(row(10).trim_end(), "  ▼ lifecycle");
-    assert_eq!(row(11).trim_end(), "    local");
+    assert_eq!(row(11).trim_end(), "  - local");
     assert_eq!(row(12).trim_end(), "     ├ terminal");
     assert_eq!(row(13).trim_end(), "     └ run 0m  ctx —");
     assert_eq!(row(14).trim_end(), "    implement");
@@ -520,7 +521,7 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
     let mut dashboard = dashboard_fixture();
     dashboard.selected = Some(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    dashboard.busy_sessions.insert(SessionId(1));
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::Busy;
     for (time, marker) in [(0, "⠋"), (100, "⠙"), (900, "⠏"), (1000, "⠋")] {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
@@ -530,19 +531,145 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
             terminal.backend().buffer()[(2, 6)].fg,
             Color::Rgb(166, 227, 161)
         );
-        assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), " ");
+        assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "-");
     }
-    dashboard.busy_sessions.clear();
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::Idle;
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1100))
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(2, 6)].symbol(), " ");
     // An exited process cannot remain busy, even if an old signal is retained.
-    dashboard.busy_sessions.insert(SessionId(2));
+    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].activity = AgentActivity::Busy;
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(2, 14)].symbol(), " ");
+}
+
+#[test]
+fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(1));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let metadata = |terminal: &Terminal<TestBackend>| {
+        (40..120)
+            .map(|column| terminal.backend().buffer()[(column, 1)].symbol())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    };
+
+    for (activity, expected) in [
+        (
+            AgentActivity::Unknown,
+            "pid: 111  elapsed: 0m  agent unknown",
+        ),
+        (AgentActivity::Idle, "pid: 111  elapsed: 0m  agent idle"),
+        (AgentActivity::Busy, "pid: 111  elapsed: 0m  agent busy"),
+        (
+            AgentActivity::WaitingInput,
+            "pid: 111  elapsed: 0m  agent waiting input",
+        ),
+        (AgentActivity::Error, "pid: 111  elapsed: 0m  agent error"),
+    ] {
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = activity;
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Running;
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        assert_eq!(metadata(&terminal), expected);
+    }
+
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Paused;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(
+        metadata(&terminal),
+        "pid: 111  elapsed: 0m  agent error  paused"
+    );
+
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].pid = None;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m");
+}
+
+#[test]
+fn agent_hook_sidebar_states_are_literal() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity = AgentActivity::Unknown;
+    dashboard.hierarchy.projects[1].workspaces[0].sessions[1].activity = AgentActivity::Idle;
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity =
+        AgentActivity::WaitingInput;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].activity = AgentActivity::Error;
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(2, 3)].symbol(), "-");
+    assert_eq!(buffer[(2, 11)].symbol(), " ");
+    assert_eq!(buffer[(2, 6)].symbol(), "?");
+    assert_eq!(buffer[(2, 20)].symbol(), "!");
+    assert_eq!(buffer[(2, 14)].symbol(), " ");
+}
+
+#[test]
+fn agent_hook_summary_updates_drive_animation() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.selected = Some(SessionId(5));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "-");
+
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(5),
+        bytes: b"PTY output".to_vec(),
+    }));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
+    assert_eq!(
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity,
+        AgentActivity::Unknown
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+
+    let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
+    summary.activity = AgentActivity::Busy;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 100))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "⠙");
+
+    summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
+    summary.activity = AgentActivity::Idle;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
+    assert_eq!(
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity,
+        AgentActivity::Idle
+    );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 200))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), " ");
 }
 
 #[test]
@@ -799,7 +926,7 @@ fn pause_resume_dense_status_has_priority() {
     let mut dashboard = dashboard_fixture();
     dashboard.selected = Some(SessionId(5));
     dashboard.hierarchy.projects[1].workspaces[1].sessions[1].phase = SessionPhase::Paused;
-    dashboard.busy_sessions.insert(SessionId(5));
+    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity = AgentActivity::Busy;
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -816,7 +943,7 @@ fn pause_resume_dense_status_has_priority() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("pid: 555  elapsed: 0m  paused"));
+    assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
     assert!(rendered.contains("p pause  r resume"));
     assert!(
         rendered
@@ -926,6 +1053,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                         pid: Some(id as u32),
                         started_unix_ms: 0,
                         phase: SessionPhase::Running,
+                        activity: AgentActivity::Unknown,
                     })
                     .collect(),
             }],
@@ -1013,6 +1141,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
             pid: Some(id as u32),
             started_unix_ms: 0,
             phase: SessionPhase::Running,
+            activity: AgentActivity::Unknown,
         });
     }
     dashboard.select_session(SessionId(50));
