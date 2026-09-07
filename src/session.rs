@@ -1255,7 +1255,11 @@ mod tests {
                 name: "exit-race".into(),
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
-                argv: vec!["sh".into(), "-c".into(), "printf 'EXIT_%s' READY".into()],
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "printf 'EXIT_%s' READY; sleep 1".into(),
+                ],
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
