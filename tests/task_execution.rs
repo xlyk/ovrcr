@@ -570,6 +570,18 @@ fn git_workspace_removal_refuses_a_running_task_in_a_clean_worktree() {
     let id = f.start(&task);
     let run = f.wait(&id, "Running");
     let cwd = std::path::Path::new(run["directory"].as_str().unwrap());
+    let marker_deadline = Instant::now() + Duration::from_secs(15);
+    while !["started", "received-prompt"]
+        .iter()
+        .all(|name| cwd.join(name).is_file())
+    {
+        assert!(
+            Instant::now() < marker_deadline,
+            "fixture readiness markers did not appear in {}",
+            cwd.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     for name in ["started", "received-prompt"] {
         fs::remove_file(cwd.join(name)).unwrap();
     }
