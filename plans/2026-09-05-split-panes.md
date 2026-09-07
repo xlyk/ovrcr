@@ -1,6 +1,6 @@
 # Split Panes Implementation Plan
 
-> **For agentic workers:** If implementation is authorized, use the writing-plans execution workflow task by task. Follow the user's choice of inline work or delegated work; this document does not authorize implementation, commits, or additional agents. Steps use checkboxes for tracking.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Status:** Proposed future design, not an approved specification or implemented behavior. All choices below marked as defaults are design assumptions for review.
 
@@ -11,6 +11,15 @@
 **Tech stack:** Rust edition 2024; existing Ratatui 0.30, Crossterm 0.29, portable-pty 0.9, vt100 0.16, serde/bincode, and standard-library blocking I/O, threads, channels, and locks. No new dependency or Cargo feature.
 
 **Spec references:** `README.md`, feature-roadmap checkbox “Split panes to view multiple sessions side by side”; `plans/2026-09-04-ovrcr-mvp-design.md`, especially Terminal data flow, Dashboard, Local protocol, and Failure handling. The approved MVP explicitly defers panes; this proposal extends its single-pane rules rather than claiming approval from that document.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints
 
@@ -24,18 +33,18 @@
 
 ## Current code grounding
 
-Read against Git HEAD `7db59502ea7dba0e54f40541e7211913a4569e66` on 2026-09-05. Refresh these references before implementation if HEAD changes.
+Read against Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. Refresh these references before implementation if HEAD changes.
 
 | Existing location | Relevant behavior |
 | --- | --- |
-| `src/tui.rs:94` | `Dashboard` holds one `selected`, `parser`, and `pane_size`. |
-| `src/tui.rs:270` and `:382` | Keyboard/paste encoding reads that parser's modes; incoming output is accepted only for the selected session. |
-| `src/tui.rs:835` and `:1006` | Event loop limits input to 32 events, drains at most 64 server messages per batch, coalesces frames at 16 ms, and drains messages before drawing. |
-| `src/tui.rs:1188` and `:1361` | Dense sidebar and two metadata rows precede one terminal rectangle. At 120×40 the terminal is `(40, 3, 80, 36)`. |
-| `src/protocol.rs:75` and `:125` | `Select` returns a `Screen`; `Input`, `Resize`, `Output`, and `ScreenDirty` carry a session ID. |
-| `src/server.rs:95`, `:752`, and `:797` | Server stores one selected session; selection joins the same dispatcher as PTY output so its snapshot precedes subsequent increments. |
-| `src/server.rs:480` | `DashboardSink` already tracks dirty state per session, but `replace_selection` discards output for the old and new selection. |
-| `src/session.rs:229` and `:266` | `Session::resize` changes the real PTY and parser; `current_screen` uses `state_formatted()` to reconstruct terminal state. |
+| `src/tui.rs` | `Dashboard` holds one `selected`, `parser`, and `pane_size`. |
+| `src/tui.rs` and message handling | Keyboard/paste encoding reads that parser's modes; incoming output is accepted only for the selected session. |
+| `src/tui.rs` and event batching | Event loop limits input to 32 events, drains at most 64 server messages per batch, coalesces frames at 16 ms, and drains messages before drawing. |
+| `src/tui.rs` and layout calculation | Dense sidebar and two metadata rows precede one terminal rectangle. At 120×40 the terminal is `(40, 3, 80, 36)`. |
+| `src/protocol.rs` | `Select` returns a `Screen`; `Input`, `Resize`, `Output`, and `ScreenDirty` carry a session ID. |
+| `src/server.rs` and dispatcher entry points | Server stores one selected session; selection joins the same dispatcher as PTY output so its snapshot precedes subsequent increments. |
+| `src/server.rs` | `DashboardSink` already tracks dirty state per session, but `replace_selection` discards output for the old and new selection. |
+| `src/session.rs` | `Session::resize` changes the real PTY and parser; `current_screen` uses `state_formatted()` to reconstruct terminal state. |
 | `tests/tui.rs`, `tests/server_lifecycle.rs`, `tests/terminal_acceptance.rs` | Existing TestBackend checks, socket/PTY fixtures, slow-dashboard recovery, 50-session cleanup, and real outer-PTY acceptance can be extended. |
 
 ## Proposed defaults and boundaries
@@ -81,7 +90,7 @@ Replace `ServerState::selected` with `view: Mutex<Option<DashboardView>>`. Exten
 
 The queue remains 64 entries. Preflight room for all snapshots plus the acknowledgement and each frame's serialized size; if they cannot fit, disconnect that dashboard rather than drop lifecycle/response frames. A real PTY resize is not transactional: if the second resize fails, report `PartialFailure`, clear that owner's subscription and disconnect it, preserving processes and any completed first resize. Do not claim rollback. A later attachment obtains actual current screens and applies its geometry again.
 
-Keep `Select` and `Resize` as existing same-version API adapters while migrating tests: `Select` constructs a singleton view with the next revision; `Resize` is accepted only for a singleton view and changes its geometry through the dispatcher. Reject `Resize` for a two-pane view with `InvalidRequest: use SetView for split geometry`. Both now use the same snapshot-before-increment path; adapt existing tests that expected only a resize `Ok`. New dashboard code uses only `SetView`. No cross-version compatibility promise is added.
+Keep `Select` and `Resize` as existing same-version API adapters while migrating tests: `Select` constructs a singleton view with the next revision; `Resize` is accepted only for a singleton view and changes its geometry through the dispatcher. Reject `Resize` for a two-pane view with `InvalidRequest: use SetView for split geometry`. Both now return exactly one Screen followed by one Ok for the same request ID through the snapshot-before-increment path; migrate all singleton test callers to drain both before issuing another request. New dashboard code uses only `SetView`. No cross-version compatibility promise is added.
 
 Output dispatch parses every PTY before testing membership in the committed view. Emit `(revision, session, bytes)` only for visible members. Dirty keys become `(revision, SessionId)`, including the writer's Pending/Sending/Sent callback; an old dirty write completion must never mark a new view dirty. On a dirty event, the client requests its whole desired view at a new revision. Once that happens, other old-revision dirty events are ignored. This intentionally refreshes both screens to avoid a separate partial-resubscription protocol.
 
@@ -93,7 +102,9 @@ In `src/tui.rs`, replace the three single-pane fields with these concrete fields
 pub struct PaneState {
     pub session: Option<SessionId>,
     pub parser: vt100::Parser,
-    pub size: TerminalSize,
+    pub size: TerminalSize, // actual size of installed snapshot
+    pub desired_size: TerminalSize, // latest measured target
+    pub snapshot_installed: bool, // for the pending view only
     pub ready: bool,
     pub error: Option<String>,
 }
@@ -117,12 +128,12 @@ pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRect
 // split_pane(&mut self) -> bool
 // focus_pane(&mut self, index: usize) -> bool
 // close_focused_pane(&mut self) -> bool
-// view_request(&mut self, area: Rect, request_id: u64) -> ClientMessage
+// view_request(&mut self, area: Rect, request_id: u64) -> anyhow::Result<Option<ClientMessage>>
 // apply_screen(&mut self, revision: u64, session: SessionId,
 //              size: TerminalSize, bytes: &[u8])
 ```
 
-`view_request` increments revision with checked addition (exhaustion reports an error and ends the dashboard), computes visible nonempty targets, and marks them unready. `apply_screen` accepts only the current revision and a currently visible assigned session, replaces only that pane's parser, processes the snapshot, and marks it ready. Apply incremental output only to a ready pane of the current revision. Ignore stale screens, stale dirty events, stale `Ok`, and stale view errors using revision/request ID; ordinary control errors retain their existing display behavior. On failed view acknowledgement keep input disabled and show the error.
+`view_request` increments revision with checked addition (exhaustion reports an error and ends the dashboard), computes visible nonempty targets, and marks them unready. `apply_screen` accepts only the current revision and a currently visible assigned session, replaces only that pane's parser, processes the snapshot, and marks `snapshot_installed`. Only the matching final Ok marks visible panes ready, after all requested snapshots are installed. Apply incremental output only to a ready pane of the current revision. Ignore stale screens, stale dirty events, stale `Ok`, and stale view errors using revision/request ID; ordinary control errors retain their existing display behavior. On failed view acknowledgement keep input disabled and show the error.
 
 Retain `select_session` as the sidebar entry point, but make it assign the focused slot or focus the other slot when already displayed. Migrate tests that directly write `selected`/`parser` to the new pane fields. `input_request` and both `event_action` and `event_to_request` must consult the same ready focused pane. No duplicate global parser alias is retained.
 
@@ -130,7 +141,25 @@ Retain `select_session` as the sidebar entry point, but make it assign the focus
 
 Each task follows RED → implementation → GREEN. Run the named command before and after the change, record actual output and nonzero test counts, and stop on unexpected regressions. A missing API/compiler error may establish the initial RED, but behavioral assertions must then run. Counts below are expected future counts, not claimed results.
 
-### Task 1: Define the bounded view contract
+### Current integration paths and task checkpoints
+
+With the recommended order, the dashboard already supports Paused, reported activity/context, History, and Copy. In Task 3, replace single-pane parser access through `focused_session` and pane helpers, including all input, metadata, animation, history-entry, copy-entry, and dirty-recovery callers. Preserve exhaustive mode routing: only Terminal can send application keys/paste; only Browse can split/focus/close by their bindings. The Enter predicate is **Running and ready**, not merely non-Exited.
+
+Keep History/Copy state at dashboard scope, tagged by captured session. A focus change or focused-session replacement ends history (including pending-Begin cancellation) and cancels copy before building the new view. Resizing cancels current-screen Copy; frozen History retains original cells and changes only its viewport. An unfocused pane's output updates that pane's live parser without replacing the focused frozen view. Closing/hiding a pane changes subscriptions only; it must never reach `CloseTerminal`, kill, or remove.
+
+Keep `PaneState.size` as the installed screen size and `desired_size` as the latest measured geometry. Allow one SetView in flight; coalesce resize/focus changes into one desired view instead of sending on every draw. An acknowledgement completes the recorded request; if desired state changed meanwhile, send the next checked revision immediately and keep input disabled. `view_request` first records the desired view, returns `Ok(None)` while a request is pending or nothing changed, and returns `Ok(Some(message))` for a new request. Revision exhaustion returns an error. Callers write only Some and preserve input refusal while changes remain pending. Match Screen by request ID, revision, and session, and match final Ok/Error by the stored request ID. Do not let an old acknowledgement clear a newer error or pending desired state.
+
+Server lock order is `mutation → registry → sessions → dashboard-slot → view → sink` when those locks are needed together. Clone session handles and release registry/map guards before session resize/snapshot operations. Never acquire an earlier lock while holding a later one; sink writers call owner cleanup only after releasing sink locks. The dispatcher is the sole view committer: recheck owner after short session work before publishing. Extend the owner-isolation delivery test with an old writer finishing after replacement; only the old owner may be cleared.
+
+In Task 4, clip wide glyphs by their terminal display width: if a two-cell glyph cannot fit completely inside a pane's terminal rectangle, draw a blank at that edge and never overwrite its separator or neighbor. Test wide leaders in the last and penultimate cells of both panes. In Task 5, query the hidden third session using `ReadTerminal` before/after the view change and assert its returned `TerminalText.size` remains unchanged.
+
+Finish Task 2 before changing the running TUI to SetView. Its server checkpoint must prove all snapshots followed by the final Ok for one request, even under output pressure. Finish Task 3 with both pane parsers installed **and** the matching final acknowledgement before input becomes ready. Clearing readiness before sending a new revision is mandatory, including focus-only changes and dirty refreshes. Tests must cover late first-pane Screen, old final Ok, and a failed second resize, not only successful side-by-side drawing.
+
+`Select`/`Resize` adapters are for existing singleton callers only. Keep their next-revision allocation in the dispatcher under the same owner check as SetView; never read/increment the revision in a connection thread. Their response sequence is Screen then Ok for the same request ID; migrate both the caller and its assertions together in Task 2. Do not leave one caller reading a Screen while an extra Ok remains queued as the next request's response.
+
+Expand the constructor-update allowance to `src/gui.rs` and existing integration fixtures **only where changed protocol fields require it**. No GUI behavior or CLI command changes are part of this plan. Add `split_preserves_history_copy_and_paused_input` in `tests/tui.rs`: open history/copy on A, feed B output, switch focus and require cancellation, then mark B Paused and require Enter/paste refusal. Run its exact filter and require one executed test in addition to the existing task counts. Keep resource CLI input/read/close regression passing after server selection migration.
+
+## Task 1: Define the bounded view contract
 
 **Files:** `src/protocol.rs` and existing constructors/matches in `src/server.rs`, `src/tui.rs`, `tests/tui.rs`, `tests/server_lifecycle.rs`.
 
@@ -215,7 +244,7 @@ assert_eq!(d.panes.len(), 2);
 assert_eq!(d.focused_pane, 1);
 let right = d.focused_session().unwrap();
 assert_ne!(right, SessionId(1));
-d.view_request(Rect::new(0, 0, 120, 40), 20);
+d.view_request(Rect::new(0, 0, 120, 40), 20).unwrap().unwrap();
 let revision = d.view_revision;
 d.apply_screen(revision, right, TerminalSize { rows: 36, cols: 40 },
     b"\x1b[?1h\x1b[?2004hRIGHT");

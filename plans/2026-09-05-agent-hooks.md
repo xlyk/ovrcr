@@ -1,14 +1,23 @@
 # Agent Hooks Implementation Plan
 
-> **For agentic workers:** Use the writing-plans execution workflow only when implementation is separately authorized. This document proposes defaults for review; it is not an approved feature specification. Execute tasks in order and preserve the stated scope.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Goal:** Let managed agent processes report explicit activity through a working child-to-server-to-dashboard hook path.
 
 **Architecture:** Extend the existing synchronous Unix-socket protocol and ordered dispatcher. The server owns activity alongside session lifecycle, while a small CLI helper translates generic reports and one Claude Code adapter into the same typed request. Dashboard reconnect uses the existing hierarchy snapshot.
 
-**Tech Stack:** Rust 2024, blocking Unix I/O and threads, existing serde/bincode/clap/Ratatui; add `serde_json = "1"` for actual provider JSON, without an agent SDK.
+**Tech Stack:** Rust 2024, blocking Unix I/O and threads, existing serde/bincode/clap/Ratatui; reuse the existing `serde_json = "1"` dependency for provider JSON, without an agent SDK.
 
 **Spec:** README checkbox “Agent hooks to report agent-specific activity and status”; original constraints in [MVP design](2026-09-04-ovrcr-mvp-design.md), especially Architecture, Session lifecycle, Local protocol, and Failure handling. This proposal replaces only that design's deferral of explicit agent activity.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints and source grounding
 
@@ -18,11 +27,11 @@
 - “OVRCR owns every session it manages.” No adoption of externally launched agents.
 - Terminal output, elapsed silence, keyboard input, PID liveness, and CPU usage never imply busy or idle.
 - Keep PTY drainage, process-group termination, final-output ordering, and removal authority unchanged.
-- Planning baseline inspected: `7db59502ea7dba0e54f40541e7211913a4569e66`; no implementation or tests were run for this document.
+- Planning baseline inspected: `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`; no implementation or tests were run for this document.
 - `src/session.rs`: `SessionSpec`, `SessionSummary`, `SessionState`, `spawn_internal`, `summary`, and `apply_event` own the relevant process and state boundaries.
 - `src/server.rs`: `create_session_locked` holds registration through spawn; `run_dispatcher` orders events; `dispatch_session_event` publishes summaries; `snapshot_from_state` supplies reconnect state.
 - `src/protocol.rs`: typed `Request`, `Response`, `DispatchMessage`, `SessionChanged`, and 1 MiB frame cap already exist.
-- `src/main.rs`: `Command`, `send_request`, and `print_response` provide CLI dispatch. Existing mutating commands auto-start; hook reports must not.
+- `src/main.rs`: `run`, `run_terminal`, `request_started`, `request_without_start`, `print_mutation`, and `print_legacy_response` provide CLI dispatch. Hook reports use their explicit inherited socket and never auto-start a server.
 - `src/tui.rs`: activity currently exists only as `Dashboard::busy_sessions`; `session_is_busy` and animation scheduling must move to authoritative summaries.
 - `tests/tui.rs::sidebar_animates_only_explicitly_busy_sessions` already guards explicit activity and exited-session behavior. `tests/server_lifecycle.rs` and `tests/cli.rs` provide real socket/PTY fixtures.
 
@@ -92,7 +101,7 @@ Add `DispatchMessage::AgentReport { report: AgentReport, completion: SyncSender<
 
 Generate 32 bytes from `/dev/urandom` per managed session before spawn; failure prevents that spawn. Add `SessionSpec::hook_env: Option<HookEnvironment>` with `HookEnvironment { socket: PathBuf, session: SessionId, capability: [u8; 32] }` and redacted Debug. Direct session tests use None.
 
-`spawn_internal` removes inherited hook identity variables first. For Some, inject only into `CommandBuilder`: `OVRCR_HOOK_SOCKET` (absolute socket path), `OVRCR_SESSION_ID` (decimal), and `OVRCR_HOOK_TOKEN` (64 lowercase hex characters). Never change the daemon's process environment. Nested OVRCR sessions receive fresh identity. Registration continues to hold the sessions guard until insertion, so a fast startup hook waits for the correct record.
+`spawn_internal` removes inherited hook identity variables first. For Some, inject only into `CommandBuilder`: `OVRCR_HOOK_SOCKET` (absolute socket path), `OVRCR_SESSION_ID` (decimal), and `OVRCR_HOOK_TOKEN` (64 lowercase hex characters). Never change the daemon's process environment. Nested OVRCR sessions receive fresh identity. Registration continues to hold the sessions guard until insertion, so a fast startup hook waits for the correct record. Construct the hook socket from the server's bound socket path: resolve a relative path against the server working directory, canonicalize its existing parent, and join its file name. Parent symlinks resolve to that canonical directory; reject a symlink socket leaf and fail spawn if the bound socket cannot be resolved. Do not interpret the path relative to the child workspace or change ordinary CLI socket resolution. Test a relative socket path and a symlinked parent with child cwd different from server cwd.
 
 The private socket directory plus session capability prevent accidental cross-session updates and old-lifetime ID reuse. This is not isolation against hostile same-user processes: existing control clients already have that user's authority, and descendants inherit the capability. Do not place the token in argv or installation JSON. A copied wrong token must be rejected for another session.
 
@@ -100,7 +109,7 @@ First accepted report selects Receipt (`sequence: None`) or Sequenced (`Some(n)`
 
 Receipt order cannot reconstruct causal order across concurrently delayed provider callbacks. The Claude adapter uses synchronous hooks and None because the documented input does not supply a sequence; it makes no exactly-once or causal-order claim. No helper retries, delivery queue, reservation RPC, or guessed timestamp sequence. Generic producers needing stale-report rejection supply their own counter.
 
-Revoke the capability when kill is accepted, on final Exited application, and on session removal. Clear activity to Unknown on final Exited. Kill failure retains the process record and reports the existing failure; reporting remains revoked. Dashboard detach neither clears nor revokes activity. Server restart starts with empty state and new random capabilities, even if numeric session IDs repeat.
+Revoke the capability when kill, close, or shutdown-with-kill accepts a termination attempt, on final Exited application, and on session removal. Clear activity to Unknown on final Exited. Kill failure retains the process record and reports the existing failure; reporting remains revoked. Dashboard detach neither clears nor revokes activity. Reconnect acceptance is report → detach → reattach → inspect the fresh HierarchySnapshot for the authoritative activity, without requiring another report or SessionChanged event. Server restart starts with empty state and new random capabilities, even if numeric session IDs repeat.
 
 ## Files to change during authorized implementation
 
@@ -112,11 +121,25 @@ Revoke the capability when kill is accepted, on final Exited application, and on
 | `src/report.rs` (new), `src/lib.rs` | Bounded synchronous report client and Claude input adapter/export |
 | `src/main.rs` | `report activity` and `report claude` command parsing/dispatch |
 | `src/tui.rs` | Summary-based activity, symbols, selected text, animation scheduling |
-| `Cargo.toml`, `Cargo.lock` | Explicit serde_json dependency required by JSON adapter |
+| `Cargo.toml`, `Cargo.lock` (read only) | serde_json is already present; no dependency change is needed |
 | `tests/server_lifecycle.rs`, `tests/cli.rs`, `tests/tui.rs` | Existing fixtures and meaningful end-to-end assertions |
 | `README.md` | Generic use, adapter setup/removal, supported observations and limits |
 
 Any existing `SessionSpec`/`SessionSummary` literal must gain the new fields where compilation identifies it; do not restructure surrounding tests or GUI code. All work above is future implementation scope, not work performed by this plan.
+
+## Current integration paths and task checkpoints
+
+Pause/resume precedes this plan in the recommended order. Accept authenticated reports while Running **or Paused**; reject Exited and any saved-only phase if restoration already exists. Paused presentation keeps `P` in the status slot and suppresses busy animation, while preserving reported activity for resume. Replace `busy_sessions` authority completely, including its test setters, rather than keeping two writable activity sources.
+
+In Task 2, revoke reporting immediately before each accepted termination attempt through `kill_session`, `close_terminal`, and the per-session loop in production `request_shutdown`. Perform ordinary existence/stopping validation first. Revocation is an idempotent session-state operation; it is never undone after failed termination. Revoke again on final Exited/removal. Do not revoke every session when shutdown without `--kill` is merely refused. Extend the lifecycle test to hold a copied capability, call `CloseTerminal`, and prove the late report is refused and its PGID is absent. Also test a refused non-killing shutdown leaves a valid live report usable.
+
+`new` and `terminal create` both reach `create_terminal`/`CreateSessionRequest`; automatic workspace shells reach the same server spawn path. All server-owned spawns receive fresh child-only hook identity. Direct `SessionSpec` test fixtures use `hook_env: None`. In the immediate-startup-report test, read the token only through the managed child or a test-local accessor; never add a production RPC exposing capabilities.
+
+In Task 3, extend the existing `run` command dispatch and reuse current error rendering. Generic helper success remains silent, including when the global `--json` flag is supplied; the report subcommand is a documented stream-oriented exception to ordinary mutation output. Refusals use the existing structured error convention under `--json`. The Claude adapter must not print an ordinary mutation success envelope that a provider could interpret as hook content.
+
+In Task 4, extend `src/main.rs::terminal_value` with `activity` using stable snake_case strings (`unknown`, `idle`, `busy`, `waiting_input`, `error`). Add `agent_hook_resource_inventory_reports_activity` in `tests/resource_cli.rs`: a managed child invokes the helper, then `terminal list --json` (including its existing project/workspace filters) exposes the accepted activity without capability fields. Add that file to implementation scope. Run its exact test (one executed), plus the existing resource CLI regression. Task 1 may introduce the summary field and Unknown constructor defaults before this observable wiring; do not leave the JSON projection silently stale at completion.
+
+Provider documentation links describe the adapter baseline, not a permanent schema guarantee. Before executing the provider acceptance task, read the linked official pages and compare actual installed-provider input. Keep generic transport tests independent of provider installation/authentication and report an unavailable real-provider gate explicitly.
 
 ## Task 1: Define activity and report ordering
 
@@ -171,7 +194,7 @@ Ok(changed)
 
 ## Task 3: Deliver the generic helper and verified adapter
 
-**Files:** `src/report.rs`, `src/lib.rs`, `src/main.rs`, Cargo files, `tests/cli.rs`, `README.md`.
+**Files:** `src/report.rs`, `src/lib.rs`, `src/main.rs`, `tests/cli.rs`, `README.md`; Cargo files remain unchanged.
 **Consumes:** `Request::AgentReport`, `Response::Ok`, identity environment.
 **Produces:** `send_report`, `claude_activity`, and these commands:
 

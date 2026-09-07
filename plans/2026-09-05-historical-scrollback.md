@@ -1,6 +1,6 @@
 # Historical Scrollback Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execution requires a separate implementation request; this document authorizes no implementation or commits.
+> **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
 **Goal:** Let a dashboard revisit a session's retained output beyond its current screen while that session continues running.
 
@@ -9,6 +9,15 @@
 **Tech Stack:** Existing Rust 2024 package, synchronous threads and bounded channels, `vt100` 0.16.2 as resolved in `Cargo.lock`, Serde/Bincode, Ratatui and Crossterm. No new dependencies, database, parser fork, or runtime.
 
 **Spec:** The unchecked historical-scrollback item in [`README.md`](../README.md); architecture constraints in [`2026-09-04-ovrcr-mvp-design.md`](2026-09-04-ovrcr-mvp-design.md). The MVP explicitly excludes history; this is a **proposed extension**, not an approved feature specification or an implemented result. Defaults below are assumptions for review.
+
+## Luna execution contract
+
+- The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
+- Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
+- Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
+- Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
 ## Global constraints and boundaries
 
@@ -22,11 +31,11 @@
 
 ## Current code grounding
 
-Inspected at Git HEAD `7db59502ea7dba0e54f40541e7211913a4569e66`; recheck HEAD and the working tree before implementation.
+Inspected at Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`; recheck HEAD and the working tree before implementation.
 
 | Location | Existing behavior and planned change |
 | --- | --- |
-| `src/session.rs:167`, `apply_event`, `resize`, `current_screen` | Parser currently has zero history. Add retention and capture screen plus revision under one terminal-state lock. |
+| `src/session.rs`, `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, `wait_for_output` | Parser currently has zero history. Add retention and capture screen plus revision under one terminal-state lock. |
 | `src/server.rs`, `run_dispatcher`, `dispatch_select`, `dispatch_session_event` | Ordered event processing and selected output. Add session-scoped history commands through that dispatcher. |
 | `src/server.rs`, `DashboardSink`, `DashboardSlot`, `handle_connection` | Bounded messages, dirty notifications and one connection owner. Store one history snapshot with that owner and enqueue ordinary responses. |
 | `src/protocol.rs` | Typed framed requests; `MAX_FRAME_BYTES = 1_048_576`. Add bounded tiled history messages, without sending a full history frame. |
@@ -112,6 +121,28 @@ impl Session {
 
 Changing only the clone's scroll offset during paging is allowed; its cells, dimensions and metadata stay immutable. Snapshot IDs increase with checked arithmetic; overflow returns `Internal`, never reuses an active ID. Missing session/snapshot returns `NotFound`, alternate-screen capture `Conflict`, invalid dimensions/ranges `InvalidRequest`. `HistoryEnd` with an already released token is idempotent `Ok` and must never release a newer token. New history features must not bypass normal dashboard-role checks.
 
+## Current integration paths and task checkpoints
+
+Task 1 replaces the parser/revision mutex arrangement, so migrate every existing caller together: `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, and `wait_for_output`. `terminal_text` remains the resource CLI's **live current-screen** read; it must not read the frozen clone or change its existing max-lines behavior. `send_text` samples bracketed-paste mode under the terminal-state lock, releases it, then follows pause admission and the existing writer lock. The condition-variable wait must use the same mutex that protects the revision it observes.
+
+Use these explicit client request records in Task 3 instead of an unqualified request-ID field:
+
+```rust
+struct PendingHistoryBegin { request_id: u64, session: SessionId, cancelled: bool }
+struct PendingHistoryPage {
+    request_id: u64, session: SessionId, snapshot: HistorySnapshotId,
+    start_row: u32, rows: u16, start_col: u16, cols: u16,
+}
+```
+
+`HistoryView.pending` holds `Option<PendingHistoryPage>` and the dashboard's begin state holds `Option<PendingHistoryBegin>`. Validate response ID, session, snapshot, starts, returned row count, cell count per row, and bounds before caching. A short last page is allowed; unsolicited or oversized data never changes the viewport. Cache keys include snapshot and both tile starts, not just row. Keep one request outstanding across navigation and later historical copying.
+
+Cancellation must handle an accepted Begin whose response arrives late. Keep a small pending-begin tombstone until that response/error arrives; if it opens a snapshot after exit/cancel, send `HistoryEnd` for that exact token without entering History. Do not allow another Begin until the pending Begin has resolved. End for an older token cannot release a newer snapshot. A transport disconnect releases the server owner and all pending client state. Add `history_cancelled_begin_releases_late_snapshot` to the TUI tests with Begin → Escape → delayed Opened → End and no mode change; assert a later Begin works.
+
+Connect cancellation to every actual selection/removal/connection reset path. A resize keeps the frozen snapshot and changes only desired page coordinates; late pages for the old viewport may populate the bounded cache only when they still match the outstanding request. They do not restore the old desired viewport. History keeps consuming the live parser's Output and same-session dirty snapshots.
+
+The split-pane plan runs later and must preserve one snapshot per dashboard, tagged with its captured session. Before finishing Task 1 and final acceptance, run `rtk proxy cargo test --test resource_cli terminal_cli_drives_real_session_and_preserves_workspace_removal_guards -- --exact --nocapture` (one executed test) to cover the migrated text/paste paths. A separate history test cannot stand in for that regression.
+
 ## Task 1: Retain rows and expose frozen, Unicode-safe tiles
 
 **Files:** Create `src/history.rs`; modify `src/lib.rs` and `src/session.rs`; unit tests in `src/history.rs` and `src/session.rs`.
@@ -182,7 +213,7 @@ DispatchMessage::History { owner, request_id, request, completion } => {
 **Files:** Modify `src/tui.rs` and `tests/tui.rs`.
 **Consumes:** Task 2 messages; existing live parser and request IDs. **Produces:** `InputMode::History`, `Dashboard.history: Option<HistoryView>`, `HistoryView::accept_page`, navigation and rendering.
 
-Define `HistoryView { opened: HistoryOpened, top: u32, left: u16, new_output: bool, pages: VecDeque<HistoryRows>, pending: Option<u64> }`; keep at most sixteen pages. Dashboard also tracks `history_begin_request: Option<u64>`. `HistoryView::accept_page(&mut self, request_id: u64, page: HistoryRows) -> bool` accepts only the outstanding request and matching session/snapshot; false means discard. `history_view_size(pane: TerminalSize) -> TerminalSize` returns positive dimensions clamped to 64×256. Define `render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView)` for direct cell rendering.
+Define `HistoryView { opened: HistoryOpened, top: u32, left: u16, new_output: bool, pages: VecDeque<HistoryRows>, pending: Option<PendingHistoryPage> }`; keep at most sixteen pages. Dashboard also tracks `history_begin_request: Option<PendingHistoryBegin>`. `HistoryView::accept_page(&mut self, request_id: u64, page: HistoryRows) -> bool` accepts only the outstanding request and matching session/snapshot; false means discard. `history_view_size(pane: TerminalSize) -> TerminalSize` returns positive dimensions clamped to 64×256. Define `render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView)` for direct cell rendering.
 
 - [ ] Add `history_navigation_never_writes_to_pty`, using `dashboard_fixture()` and a synthetic `HistoryOpened`. Assert Browse PageUp requests Begin; Terminal PageUp remains PTY bytes; then assert all history navigation, Enter and paste yield no `PtyBytes` action. Test q returns Browse, and End remains History. RED/GREEN command: `rtk proxy cargo test --test tui history_navigation_never_writes_to_pty -- --nocapture`; expected **1 test**.
 - [ ] Implement navigation with saturating row arithmetic and `u32` intermediate column arithmetic. Clamp top to `total_rows.saturating_sub(view_rows)`; clamp left to the terminal-coordinate ceiling. An empty tile must render blanks, not stale cells. Request only missing visible tiles aligned to 16 rows/128 columns; maintain one outstanding page and update the desired viewport on subsequent keys. Example navigation core:
