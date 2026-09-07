@@ -73,6 +73,7 @@ pub struct HistoryView {
     pub pending: Option<PendingHistoryPage>,
     pub cursor: Option<HistoryCursor>,
     pub cursor_target: Option<HistoryCursorTarget>,
+    cursor_reveal: bool,
     pub anchor: Option<HistoryCopyPoint>,
     pub copy_job: Option<HistoryCopyJob>,
     pub copy_completion: Option<HistoryCopyCompletion>,
@@ -93,6 +94,7 @@ impl HistoryView {
                 row: top,
                 col: 0,
             })),
+            cursor_reveal: false,
             anchor: None,
             copy_job: None,
             copy_completion: None,
@@ -229,6 +231,7 @@ impl HistoryView {
         if row_number >= self.opened.total_rows {
             self.cursor = None;
             self.cursor_target = None;
+            self.cursor_reveal = false;
             return Ok(true);
         }
         let Some(row) = self
@@ -257,6 +260,7 @@ impl HistoryView {
             }
             self.cursor = None;
             self.cursor_target = None;
+            self.cursor_reveal = false;
             return Ok(true);
         }
         let requested_col = if row_end {
@@ -317,6 +321,7 @@ impl HistoryView {
                     row: row_number,
                     col: leader_col,
                 }));
+                self.cursor_reveal = true;
                 return Ok(false);
             };
             if leader.width != 2 {
@@ -341,9 +346,10 @@ impl HistoryView {
             cell_width,
         });
         self.cursor_target = None;
-        if self.anchor.is_some() || normalized_from_continuation {
+        if self.anchor.is_some() || normalized_from_continuation || self.cursor_reveal {
             self.reveal_cursor(viewport);
         }
+        self.cursor_reveal = false;
         Ok(true)
     }
 
@@ -901,7 +907,6 @@ impl Dashboard {
                 if let Some(view) = self.history.as_mut() {
                     view.copy_job = None;
                     view.copy_completion = None;
-                    view.pending = None;
                 }
                 self.copy_notice = Some("Copy cancelled".into());
                 return DashboardAction::Redraw;
@@ -918,6 +923,15 @@ impl Dashboard {
             return DashboardAction::None;
         }
         let anchored = self.history.as_ref().and_then(|view| view.anchor).is_some();
+        let unresolved_target = view.cursor_target.is_some();
+        if !anchored
+            && unresolved_target
+            && key.kind == KeyEventKind::Press
+            && history_retry_key(key.code)
+        {
+            self.history_page_error = false;
+            self.error = None;
+        }
         if anchored && view.cursor_target.is_some() {
             if key.kind == KeyEventKind::Press && history_retry_key(key.code) {
                 self.history_page_error = false;
@@ -987,6 +1001,7 @@ impl Dashboard {
                     row: view.top,
                     col: view.left,
                 }));
+            view.cursor_reveal = false;
             self.history_page_error = false;
             self.error = None;
             self.copy_notice = None;
@@ -1102,6 +1117,7 @@ impl Dashboard {
         };
         if let Some(view) = self.history.as_mut() {
             view.cursor_target = Some(target);
+            view.cursor_reveal = false;
         }
         self.history_page_error = false;
         self.error = None;

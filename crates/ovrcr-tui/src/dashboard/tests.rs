@@ -10,7 +10,7 @@ use super::{
 use crate::protocol::{
     ErrorCode, HistoryOpened, HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
 };
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -119,6 +119,7 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
     let backend = CrosstermBackend::new(&mut bytes);
     let mut terminal = Terminal::new(backend).unwrap();
     let mut mouse_enabled = false;
+    let mut processed = 0;
     let boundary = drain_dashboard_input_then_emit_with(
         &mut terminal,
         &mut sender,
@@ -128,11 +129,23 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
             ready_polls += 1;
             Ok(true)
         },
-        |_, _, _, _| Ok(false),
+        |_, _, dashboard, _| {
+            processed += 1;
+            assert!(matches!(
+                dashboard.key_action(KeyEvent::new_with_kind(
+                    KeyCode::Enter,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Repeat,
+                )),
+                super::DashboardAction::None
+            ));
+            Ok(false)
+        },
     )
     .unwrap();
     assert_eq!(boundary, super::event_loop::DashboardBoundary::InputPending);
     assert_eq!(ready_polls, 33);
+    assert_eq!(processed, 32);
     assert!(
         dashboard
             .history
@@ -143,6 +156,47 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
     );
     drop(terminal);
     assert!(bytes.is_empty());
+
+    let mut queued_escape = true;
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut mouse_enabled = false;
+    let boundary = drain_dashboard_input_then_emit_with(
+        &mut terminal,
+        &mut sender,
+        &mut dashboard,
+        &mut mouse_enabled,
+        || {
+            let ready = queued_escape;
+            queued_escape = false;
+            Ok(ready)
+        },
+        |_, _, dashboard, _| {
+            assert!(matches!(
+                dashboard.key_action(KeyEvent::new_with_kind(
+                    KeyCode::Esc,
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press,
+                )),
+                super::DashboardAction::Redraw
+            ));
+            Ok(false)
+        },
+    )
+    .unwrap();
+    assert_eq!(boundary, super::event_loop::DashboardBoundary::Work);
+    drop(terminal);
+    assert!(bytes.is_empty());
+    assert!(
+        dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .copy_completion
+            .is_none()
+    );
+    assert_eq!(dashboard.copy_notice.as_deref(), Some("Copy cancelled"));
 
     let mut dashboard = staged_history_copy_dashboard();
     let mut bytes = Vec::new();
