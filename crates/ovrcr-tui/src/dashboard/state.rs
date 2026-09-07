@@ -350,7 +350,9 @@ impl Dashboard {
                 Response::Ok => self.error = None,
                 Response::CreatedSession(_)
                 | Response::Inventory { .. }
-                | Response::TerminalText { .. } => self.error = None,
+                | Response::TerminalText { .. }
+                | Response::HistoryOpened(_)
+                | Response::HistoryRows(_) => self.error = None,
                 Response::Error { code, message } => {
                     self.error = Some(format!("{code:?}: {message}"));
                 }

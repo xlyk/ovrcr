@@ -5,7 +5,10 @@ use ovrcr_protocol::AgentReport;
 use std::time::Instant;
 
 use crate::session::AgentActivity;
-use ovrcr_protocol::{ServerEvent, ServerMessage};
+use ovrcr_protocol::{
+    HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, Response, ServerEvent, ServerMessage,
+};
+use ovrcr_terminal::history::FrozenHistory;
 use std::io::Read;
 use std::net::Shutdown;
 
@@ -226,6 +229,8 @@ fn test_state_with_dispatch(
                 sink: dashboard.as_ref().unwrap().clone(),
                 identity,
                 stream,
+                history: None,
+                next_history_id: 1,
             })),
         }),
         receiver,
@@ -387,6 +392,376 @@ fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<
     }
 }
 
+fn queued_dashboard_message(sink: &Arc<DashboardSink>) -> ServerMessage {
+    match sink.next().unwrap() {
+        DashboardDelivery::Message(outbound) => outbound.message,
+        DashboardDelivery::Dirty(session) => {
+            panic!(
+                "unexpected dirty dashboard delivery for session {}",
+                session.0
+            )
+        }
+    }
+}
+
+fn send_history_command(
+    state: &Arc<ServerState>,
+    owner: &Arc<()>,
+    request_id: u64,
+    request: HistoryRequest,
+) {
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::History {
+            owner: Arc::clone(owner),
+            request_id,
+            request,
+            completion,
+        })
+        .unwrap();
+    result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("history dispatcher completion");
+}
+
+#[test]
+fn history_owner_and_token_isolation() {
+    let id = SessionId(11);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (old_server, _old_client) = UnixStream::pair().unwrap();
+    let old_sink = DashboardSink::new();
+    let old_owner = Arc::new(());
+    let (state, dispatch_receiver) = test_state_with_dispatch(
+        Some(old_sink.clone()),
+        Some((old_owner.clone(), old_server)),
+    );
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(&session));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+
+    send_history_command(&state, &old_owner, 1, HistoryRequest::Begin { session: id });
+    let old_opened = match queued_dashboard_message(&old_sink) {
+        ServerMessage::Response {
+            request_id: 1,
+            response: Response::HistoryOpened(opened),
+        } => opened,
+        message => panic!("unexpected old begin response: {message:?}"),
+    };
+    *state.selected.lock().unwrap() = Some(id);
+    let (select_completion, select_result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::Select {
+            request_id: 8,
+            session: id,
+            size: TerminalSize { rows: 24, cols: 80 },
+            completion: select_completion,
+        })
+        .unwrap();
+    select_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("same-session select completion");
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 8,
+            response: Response::Screen { session, .. },
+        } if session == id
+    ));
+    send_history_command(
+        &state,
+        &old_owner,
+        9,
+        HistoryRequest::Page {
+            session: id,
+            snapshot: old_opened.snapshot,
+            start_row: 0,
+            rows: 1,
+            start_col: 0,
+            cols: 1,
+        },
+    );
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 9,
+            response: Response::HistoryRows(_),
+        }
+    ));
+
+    let (new_server, _new_client) = UnixStream::pair().unwrap();
+    let new_sink = DashboardSink::new();
+    let new_owner = Arc::new(());
+    *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+        sink: new_sink.clone(),
+        identity: new_owner.clone(),
+        stream: new_server,
+        history: None,
+        next_history_id: 1,
+    });
+    *state.dashboard.lock().unwrap() = Some(new_sink.clone());
+
+    send_history_command(
+        &state,
+        &old_owner,
+        2,
+        HistoryRequest::End {
+            session: id,
+            snapshot: old_opened.snapshot,
+        },
+    );
+    assert!(new_sink.queue.lock().unwrap().messages.is_empty());
+
+    send_history_command(&state, &new_owner, 3, HistoryRequest::Begin { session: id });
+    let new_opened = match queued_dashboard_message(&new_sink) {
+        ServerMessage::Response {
+            request_id: 3,
+            response: Response::HistoryOpened(opened),
+        } => opened,
+        message => panic!("unexpected new begin response: {message:?}"),
+    };
+    send_history_command(&state, &new_owner, 4, HistoryRequest::Begin { session: id });
+    let replacement = match queued_dashboard_message(&new_sink) {
+        ServerMessage::Response {
+            request_id: 4,
+            response: Response::HistoryOpened(opened),
+        } => opened,
+        message => panic!("unexpected replacement begin response: {message:?}"),
+    };
+    assert!(replacement.snapshot.0 > new_opened.snapshot.0);
+
+    send_history_command(
+        &state,
+        &old_owner,
+        5,
+        HistoryRequest::End {
+            session: id,
+            snapshot: replacement.snapshot,
+        },
+    );
+    assert!(new_sink.queue.lock().unwrap().messages.is_empty());
+    send_history_command(
+        &state,
+        &new_owner,
+        6,
+        HistoryRequest::Page {
+            session: id,
+            snapshot: replacement.snapshot,
+            start_row: 0,
+            rows: 1,
+            start_col: 0,
+            cols: 1,
+        },
+    );
+    assert!(matches!(
+        queued_dashboard_message(&new_sink),
+        ServerMessage::Response {
+            request_id: 6,
+            response: Response::HistoryRows(_),
+        }
+    ));
+    send_history_command(
+        &state,
+        &new_owner,
+        7,
+        HistoryRequest::End {
+            session: id,
+            snapshot: replacement.snapshot,
+        },
+    );
+    assert!(matches!(
+        queued_dashboard_message(&new_sink),
+        ServerMessage::Response {
+            request_id: 7,
+            response: Response::Ok,
+        }
+    ));
+
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
+fn history_page_overflow_disconnects_without_parser_wait() {
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let owner = Arc::new(());
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    let mut parser = ovrcr_terminal::vt100::Parser::new(24, 80, HISTORY_ROWS);
+    parser.process(b"A");
+    let history = FrozenHistory::capture(
+        SessionId(12),
+        HistorySnapshotId(1),
+        1,
+        parser.screen().clone(),
+    )
+    .unwrap();
+    state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .history = Some(history);
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+
+    for (request_id, rows, cols, start_row, start_col) in [
+        (1, 0, 1, 0, 0),
+        (2, 1, PAGE_COLS + 1, 0, 0),
+        (3, 1, 1, 26, 0),
+        (4, 1, 1, u32::MAX, 0),
+    ] {
+        send_history_command(
+            &state,
+            &owner,
+            request_id,
+            HistoryRequest::Page {
+                session: SessionId(12),
+                snapshot: HistorySnapshotId(1),
+                start_row,
+                rows,
+                start_col,
+                cols,
+            },
+        );
+        assert!(matches!(
+            queued_dashboard_message(&sink),
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    ..
+                },
+            } if id == request_id
+        ));
+    }
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new(),
+            })),
+            completion: None,
+        }));
+    }
+    send_history_command(
+        &state,
+        &owner,
+        5,
+        HistoryRequest::Page {
+            session: SessionId(12),
+            snapshot: HistorySnapshotId(1),
+            start_row: 0,
+            rows: 1,
+            start_col: 0,
+            cols: 1,
+        },
+    );
+    assert!(state.dashboard_slot.lock().unwrap().is_none());
+    assert!(state.dashboard.lock().unwrap().is_none());
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+}
+
+#[test]
+fn history_capture_orders_with_output() {
+    let id = SessionId(13);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let owner = Arc::new(());
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(&session));
+    *state.selected.lock().unwrap() = Some(id);
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+
+    state
+        .dispatch
+        .send(DispatchMessage::Session(SessionEvent::Output {
+            id,
+            bytes: b"A".to_vec(),
+        }))
+        .unwrap();
+    send_history_command(&state, &owner, 2, HistoryRequest::Begin { session: id });
+    state
+        .dispatch
+        .send(DispatchMessage::Session(SessionEvent::Output {
+            id,
+            bytes: b"B".to_vec(),
+        }))
+        .unwrap();
+    send_history_command(
+        &state,
+        &owner,
+        4,
+        HistoryRequest::Page {
+            session: id,
+            snapshot: HistorySnapshotId(1),
+            start_row: 0,
+            rows: 1,
+            start_col: 0,
+            cols: PAGE_COLS,
+        },
+    );
+
+    let messages = (0..4)
+        .map(|_| queued_dashboard_message(&sink))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        &messages[0],
+        ServerMessage::Event(ServerEvent::Output { session, bytes })
+            if *session == id && bytes == b"A"
+    ));
+    assert!(matches!(
+        &messages[1],
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::HistoryOpened(_),
+        }
+    ));
+    assert!(matches!(
+        &messages[2],
+        ServerMessage::Event(ServerEvent::Output { session, bytes })
+            if *session == id && bytes == b"B"
+    ));
+    let page = match &messages[3] {
+        ServerMessage::Response {
+            request_id: 4,
+            response: Response::HistoryRows(page),
+        } => page,
+        message => panic!("unexpected history page response: {message:?}"),
+    };
+    let page_text = page.rows[0]
+        .cells
+        .iter()
+        .map(|cell| cell.text.as_str())
+        .collect::<String>();
+    assert!(page_text.contains('A'));
+    assert!(!page_text.contains('B'));
+    let live = session.current_screen();
+    assert!(live.contains(&b'A'));
+    assert!(live.contains(&b'B'));
+
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
 #[test]
 fn dashboard_overflow_closes_affected_connection() {
     let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
@@ -435,6 +810,8 @@ fn dashboard_overflow_does_not_clear_replacement_slot() {
         sink: new_sink.clone(),
         identity: new_identity,
         stream: new_server,
+        history: None,
+        next_history_id: 1,
     });
     *state.dashboard.lock().unwrap() = Some(new_sink);
     disconnect_dashboard(&state, old_snapshot);

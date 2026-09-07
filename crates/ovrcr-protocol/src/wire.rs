@@ -177,6 +177,21 @@ pub enum Request {
         session: SessionId,
     },
     AgentReport(AgentReport),
+    HistoryBegin {
+        session: SessionId,
+    },
+    HistoryPage {
+        session: SessionId,
+        snapshot: HistorySnapshotId,
+        start_row: u32,
+        rows: u16,
+        start_col: u16,
+        cols: u16,
+    },
+    HistoryEnd {
+        session: SessionId,
+        snapshot: HistorySnapshotId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +249,8 @@ pub enum Response {
         size: TerminalSize,
         text: String,
     },
+    HistoryOpened(HistoryOpened),
+    HistoryRows(HistoryRows),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
