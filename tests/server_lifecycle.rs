@@ -1,7 +1,8 @@
 use ovrcr::config::Registry;
+use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
-    Request, Response, ServerMessage, read_frame, write_frame,
+    Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -20,6 +21,29 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn context_report(
+    session: SessionId,
+    capability: [u8; 32],
+    sequence: Option<u64>,
+    model: Option<&str>,
+    conversation: Option<&str>,
+    used_tokens: Option<u64>,
+    capacity_tokens: Option<u64>,
+) -> Request {
+    Request::AgentReport(AgentReport {
+        session,
+        capability,
+        sequence,
+        update: AgentUpdate::Context(ContextUsageReport {
+            source: ContextSource::Generic,
+            model: model.map(str::to_owned),
+            conversation: conversation.map(str::to_owned),
+            used_tokens,
+            capacity_tokens,
+        }),
+    })
+}
 
 #[test]
 #[ignore]
@@ -588,6 +612,452 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
         Response::Ok
     );
     wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn context_report_replaces_snapshot_and_preserves_activity() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("context-replace", "context-replace");
+    let pgid = fixture.original_pgid(identity.session);
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(1),
+            Some("model-a"),
+            Some("conversation-a"),
+            Some(80),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let first = fixture.session_summary(identity.session);
+    assert_eq!(first.activity, ovrcr::session::AgentActivity::Unknown);
+    let first_context = first.context_usage.clone().expect("first context snapshot");
+    assert_eq!(
+        first_context.report,
+        ContextUsageReport {
+            source: ContextSource::Generic,
+            model: Some("model-a".into()),
+            conversation: Some("conversation-a".into()),
+            used_tokens: Some(80),
+            capacity_tokens: Some(100),
+        }
+    );
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(2),
+            Some("model-b"),
+            Some("conversation-b"),
+            Some(5),
+            Some(200),
+        )),
+        Response::Ok
+    );
+    let second = fixture.session_summary(identity.session);
+    assert_eq!(second.activity, ovrcr::session::AgentActivity::Unknown);
+    let second_context = second
+        .context_usage
+        .clone()
+        .expect("second context snapshot");
+    assert_eq!(
+        second_context.report,
+        ContextUsageReport {
+            source: ContextSource::Generic,
+            model: Some("model-b".into()),
+            conversation: Some("conversation-b".into()),
+            used_tokens: Some(5),
+            capacity_tokens: Some(200),
+        }
+    );
+    assert!(second_context.received_unix_ms >= first_context.received_unix_ms);
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(3),
+            Some("model-b"),
+            Some("conversation-b"),
+            None,
+            None,
+        )),
+        Response::Ok
+    );
+    let third = fixture.session_summary(identity.session);
+    assert_eq!(third.activity, ovrcr::session::AgentActivity::Unknown);
+    let third_context = third.context_usage.expect("third context snapshot");
+    assert_eq!(
+        third_context.report,
+        ContextUsageReport {
+            source: ContextSource::Generic,
+            model: Some("model-b".into()),
+            conversation: Some("conversation-b".into()),
+            used_tokens: None,
+            capacity_tokens: None,
+        }
+    );
+    assert!(third_context.received_unix_ms >= second_context.received_unix_ms);
+
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(identity.session);
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn context_report_rejects_old_and_invalid_samples() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("context-order", "context-order");
+    let pgid = fixture.original_pgid(identity.session);
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(10),
+            Some("model"),
+            None,
+            Some(10),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let initial = fixture.session_summary(identity.session);
+
+    for rejected in [
+        context_report(
+            identity.session,
+            identity.capability,
+            Some(9),
+            Some("old"),
+            None,
+            Some(9),
+            Some(100),
+        ),
+        context_report(
+            identity.session,
+            identity.capability,
+            Some(10),
+            Some("replay"),
+            None,
+            Some(10),
+            Some(100),
+        ),
+    ] {
+        assert!(matches!(
+            fixture.request(rejected),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        assert_eq!(fixture.session_summary(identity.session), initial);
+    }
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(11),
+            Some("model"),
+            None,
+            Some(5),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let lower = fixture.session_summary(identity.session);
+    assert_eq!(
+        lower.context_usage.as_ref().unwrap().report.used_tokens,
+        Some(5)
+    );
+    assert!(
+        lower.context_usage.as_ref().unwrap().received_unix_ms
+            >= initial.context_usage.as_ref().unwrap().received_unix_ms
+    );
+
+    let before_invalid_capacity = lower.clone();
+    assert!(matches!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(12),
+            Some("invalid"),
+            None,
+            Some(12),
+            Some(0),
+        )),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_summary(identity.session),
+        before_invalid_capacity
+    );
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(12),
+            Some("model"),
+            None,
+            Some(4),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let accepted = fixture.session_summary(identity.session);
+
+    for rejected in [
+        context_report(
+            identity.session,
+            identity.capability,
+            None,
+            Some("receipt-mode"),
+            None,
+            Some(3),
+            Some(100),
+        ),
+        context_report(
+            identity.session,
+            [0xA5; 32],
+            Some(13),
+            Some("wrong-capability"),
+            None,
+            Some(3),
+            Some(100),
+        ),
+    ] {
+        assert!(matches!(
+            fixture.request(rejected),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        assert_eq!(fixture.session_summary(identity.session), accepted);
+    }
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(13),
+            Some("model"),
+            None,
+            Some(3),
+            Some(100),
+        )),
+        Response::Ok
+    );
+
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(identity.session);
+    let exited = fixture.session_summary(identity.session);
+    for rejected in [
+        context_report(
+            identity.session,
+            identity.capability,
+            Some(14),
+            Some("exited"),
+            None,
+            Some(2),
+            Some(100),
+        ),
+        context_report(
+            identity.session,
+            [0xA5; 32],
+            Some(15),
+            Some("exited-wrong-capability"),
+            None,
+            Some(2),
+            Some(100),
+        ),
+    ] {
+        assert!(matches!(
+            fixture.request(rejected),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ));
+        assert_eq!(fixture.session_summary(identity.session), exited);
+    }
+    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    fixture.shutdown_kill();
+}
+
+#[test]
+fn context_snapshot_survives_dashboard_reattach() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    let identity = fixture.create_hook_child("context-reconnect", "context-reconnect");
+    let pgid = fixture.original_pgid(identity.session);
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
+
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(1),
+            Some("model-reconnect"),
+            Some("conversation-reconnect"),
+            Some(80),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let changed = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                if summary.id == identity.session =>
+            {
+                break summary;
+            }
+            _ => {}
+        }
+    };
+    let first_retained = changed
+        .context_usage
+        .clone()
+        .expect("context event snapshot");
+    assert_eq!(
+        first_retained.report.model.as_deref(),
+        Some("model-reconnect")
+    );
+    assert_eq!(first_retained.report.used_tokens, Some(80));
+    thread::sleep(Duration::from_millis(2));
+    assert_eq!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(2),
+            Some("model-reconnect"),
+            Some("conversation-reconnect"),
+            Some(80),
+            Some(100),
+        )),
+        Response::Ok
+    );
+    let changed_again = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                if summary.id == identity.session =>
+            {
+                break summary;
+            }
+            _ => {}
+        }
+    };
+    let retained = changed_again
+        .context_usage
+        .clone()
+        .expect("equal-count context event snapshot");
+    assert_eq!(retained.report, first_retained.report);
+    assert!(retained.received_unix_ms > first_retained.received_unix_ms);
+    drop(dashboard);
+
+    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    reconnect
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write_frame(
+        &mut reconnect,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let ServerMessage::Response {
+        request_id: 2,
+        response: Response::Hierarchy(snapshot),
+    } = read_frame::<ServerMessage>(&mut reconnect).unwrap()
+    else {
+        panic!("dashboard reconnect did not return a hierarchy");
+    };
+    let reattached = snapshot
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|summary| summary.id == identity.session)
+        .expect("reattached session");
+    assert_eq!(reattached.context_usage, Some(retained.clone()));
+
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: identity.session,
+        }),
+        Response::Ok
+    );
+    let exited = loop {
+        match read_frame::<ServerMessage>(&mut reconnect).unwrap() {
+            ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                if summary.id == identity.session
+                    && matches!(summary.phase, SessionPhase::Exited { .. }) =>
+            {
+                break summary;
+            }
+            _ => {}
+        }
+    };
+    assert_eq!(exited.context_usage, Some(retained.clone()));
+    assert!(context_is_stale(&retained, retained.received_unix_ms, true));
+    assert!(matches!(
+        fixture.request(context_report(
+            identity.session,
+            identity.capability,
+            Some(3),
+            Some("late"),
+            None,
+            Some(1),
+            Some(100),
+        )),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.session_summary(identity.session).context_usage,
+        Some(retained)
+    );
+    drop(reconnect);
+    fixture.wait_exited(identity.session);
     assert!(wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
@@ -3713,7 +4183,10 @@ impl ControlFixture {
             }
         }
         assert_eq!(self.request(Request::Shutdown { kill: true }), Response::Ok);
-        self.join();
+        assert!(
+            self.join_bounded(Duration::from_secs(2)),
+            "bounded fixture server did not terminate after shutdown"
+        );
     }
     fn only_session_id(&self) -> SessionId {
         match self.request(Request::List) {

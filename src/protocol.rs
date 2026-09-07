@@ -1,4 +1,5 @@
 use crate::config::Registry;
+use crate::context::ContextUsageReport;
 use crate::session::{AgentActivity, SessionEvent, SessionId, SessionSummary, TerminalSize};
 use anyhow::{Context, Result, bail};
 use serde::de::DeserializeOwned;
@@ -18,6 +19,7 @@ pub struct ClientMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentUpdate {
     Activity(AgentActivity),
+    Context(ContextUsageReport),
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -345,6 +347,7 @@ mod tests {
             started_unix_ms: 7,
             phase: crate::session::SessionPhase::Paused,
             activity: AgentActivity::Unknown,
+            context_usage: None,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
         let message = ServerMessage::Event(ServerEvent::SessionChanged(paused));
