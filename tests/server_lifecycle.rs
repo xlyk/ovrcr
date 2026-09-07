@@ -4183,7 +4183,10 @@ impl ControlFixture {
             }
         }
         assert_eq!(self.request(Request::Shutdown { kill: true }), Response::Ok);
-        self.join();
+        assert!(
+            self.join_bounded(Duration::from_secs(2)),
+            "bounded fixture server did not terminate after shutdown"
+        );
     }
     fn only_session_id(&self) -> SessionId {
         match self.request(Request::List) {
