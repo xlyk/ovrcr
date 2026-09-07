@@ -22,6 +22,101 @@ fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
 }
 
 #[test]
+fn command_k_is_not_forwarded_to_terminal() {
+    let parser = vt100::Parser::new(24, 80, 0);
+    let bytes = encode_event(
+        &Event::Key {
+            key: Key::K,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers {
+                mac_cmd: true,
+                command: true,
+                ..Default::default()
+            },
+        },
+        parser.screen(),
+        egui::Rect::NOTHING,
+        egui::vec2(8.0, 16.0),
+    );
+    assert!(bytes.is_empty());
+}
+
+#[test]
+fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let mut pgids = demo_session_groups(&root)?;
+    let mut terminal = demo.dashboard(40, 120, Default::default())?;
+    wait_screen(&terminal, "implement lifecycle cleanup")?;
+    terminal.send(b":create terminal\r")?;
+    wait_screen(&terminal, "Command (blank")?;
+    terminal.send(b"\t\tpalette-check\t\r")?;
+    wait_screen(&terminal, "palette-check")?;
+    // Wait for the palette to finish; its form also contains the new name.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while terminal.screen().contents().contains("Command palette") {
+        assert!(
+            Instant::now() < deadline,
+            "create never completed: {}",
+            terminal.screen().contents()
+        );
+        std::thread::yield_now();
+    }
+    terminal.send(b"\rprintf 'PALETTE_%s\\n' LIVE\r")?;
+    wait_screen(&terminal, "PALETTE_LIVE")?;
+    let inventory = std::process::Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args(["terminal", "list", "--json"])
+        .env("OVRCR_SOCKET", root.join("server.sock"))
+        .env("OVRCR_CONFIG", root.join("config.toml"))
+        .output()?;
+    assert!(inventory.status.success());
+    let records: serde_json::Value = serde_json::from_slice(&inventory.stdout)?;
+    let created = records
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "palette-check")
+        .unwrap();
+    let pgid = unsafe { libc::getpgid(created["pid"].as_i64().unwrap() as i32) };
+    assert!(pgid > 1);
+    pgids.push(pgid);
+    terminal.send(b"\x07:switch terminal palette-check\r")?;
+    wait_screen(&terminal, "PALETTE_LIVE")?;
+    terminal.send(b":close terminal\r")?;
+    wait_screen(&terminal, "Confirm action")?;
+    terminal.send(b"\r")?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let text = terminal.screen().contents();
+        if !text.contains("Command palette") && !text.contains("palette-check") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "close never completed: {text}");
+        std::thread::yield_now();
+    }
+    assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+    terminal.send(b"\rprintf 'AFTER_%s\\n' CLOSE\r")?;
+    wait_screen(&terminal, "AFTER_CLOSE")?;
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
     let root = demo.root().to_owned();
