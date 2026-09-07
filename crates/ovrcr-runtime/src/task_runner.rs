@@ -83,7 +83,10 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
         bail!("refusing to reuse an existing Pi session");
     }
     let extension = run_dir.join("pi-task-extension.mjs");
-    fs::write(&extension, include_str!("pi-task-extension.mjs"))?;
+    fs::write(
+        &extension,
+        include_str!("../../../src/pi-task-extension.mjs"),
+    )?;
     let mut child = Command::new(pi)
         .current_dir(directory)
         .args([

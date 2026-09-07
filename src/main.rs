@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand};
+use ovrcr::client::{connect_if_running, connect_or_start};
 use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord, load_registry};
 use ovrcr::context::{
     ContextUsageSnapshot, context_is_stale, format_context, parse_claude_context,
@@ -10,7 +11,7 @@ use ovrcr::protocol::{
     ServerMessage, read_frame, write_frame,
 };
 use ovrcr::report;
-use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
+use ovrcr::server::{ServerPaths, run_server};
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary};
 use ovrcr::tui::run_dashboard;
 use serde_json::{Value, json};
