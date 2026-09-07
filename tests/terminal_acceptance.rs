@@ -504,6 +504,36 @@ impl OuterDashboard {
         self.parser.screen().contents()
     }
 
+    fn find_text_in_rect(&self, area: ratatui::layout::Rect, needle: &str) -> Result<(u16, u16)> {
+        let screen = self.parser.screen();
+        for row in area.y..area.y.saturating_add(area.height) {
+            let mut line = String::new();
+            let mut cell_starts = Vec::new();
+            for col in area.x..area.x.saturating_add(area.width) {
+                cell_starts.push((line.len(), col));
+                let contents = screen.cell(row, col).map_or(" ", |cell| {
+                    if cell.contents().is_empty() {
+                        " "
+                    } else {
+                        cell.contents()
+                    }
+                });
+                line.push_str(contents);
+            }
+            if let Some(offset) = line.find(needle) {
+                let col = cell_starts
+                    .iter()
+                    .find_map(|(start, col)| (*start == offset).then_some(*col))
+                    .context("visible text did not start on a terminal cell")?;
+                return Ok((row.saturating_sub(area.y), col.saturating_sub(area.x)));
+            }
+        }
+        bail!(
+            "outer terminal did not render {needle:?} in pane {area:?}: {}",
+            self.rendered()
+        )
+    }
+
     fn click_visible_text(&mut self, needle: &str) -> Result<()> {
         let row = self
             .rendered()
@@ -862,6 +892,193 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
 }
 
 #[test]
+fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let fifo = fixture._root.path().join("historical-copy-trigger.fifo");
+    let fifo_arg = fifo.to_string_lossy().into_owned();
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "work",
+        "--name",
+        "history-copy",
+        "--",
+        "sh",
+        "-c",
+        r##"fifo="$1"; rm -f "$fifo"; mkfifo "$fifo"; printf 'INITIAL_READY\n'; IFS= read -r token < "$fifo"; printf '\033[2J\033[H'; xs=$(printf '%*s' 125 '' | tr ' ' x); i=0; while [ "$i" -lt 40 ]; do printf 'ROW_%03d%s\r\n' "$i" "$xs"; i=$((i+1)); done; printf 'HISTORY_DONE\n'; while IFS= read -r token; do printf 'LIVE_%s\n' "$token"; done < "$fifo""##,
+        "history-copy-child",
+        &fifo_arg,
+    ])?;
+    require_success(output, "historical copy session")?;
+    let history_id = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.name == "history-copy")
+        .context("historical copy session id")?
+        .id;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let server_pid = fixture.server.as_ref().map(Child::id);
+    let server_pgid = server_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!(
+        "historical copy fixture root: {} server pid/pgid: {server_pid:?}/{server_pgid:?} session id: {:?} groups: {:?}",
+        fixture._root.path().display(),
+        history_id,
+        fixture.managed_pgids,
+    );
+    let fifo_deadline = Instant::now() + Duration::from_secs(3);
+    while !fifo.exists() && Instant::now() < fifo_deadline {
+        thread::yield_now();
+    }
+    if !fifo.exists() {
+        bail!("historical copy child did not create its FIFO");
+    }
+    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    let mut ready_seen = false;
+    while Instant::now() < ready_deadline {
+        if fixture.read_terminal(history_id)?.contains("INITIAL_READY") {
+            ready_seen = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        ready_seen,
+        "historical copy child did not render its ready marker"
+    );
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 180,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let outer_pid = dashboard
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!("historical copy outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
+    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.click_visible_text("history-copy")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("INITIAL_READY"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+
+    write_fifo_bounded(&fifo, b"GO\n", Duration::from_secs(3))?;
+    let history_done_deadline = Instant::now() + Duration::from_secs(3);
+    let mut history_done = false;
+    while Instant::now() < history_done_deadline {
+        if fixture.read_terminal(history_id)?.contains("HISTORY_DONE") {
+            history_done = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        history_done,
+        "historical copy child did not render all rows"
+    );
+
+    dashboard.send(b"\x1b[5~")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY · frozen"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY · frozen · loaded"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b[H")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("ROW_000")
+                && screen.contains("row 1-")
+                && screen.contains("HISTORY  arrows/hjkl scroll")
+        },
+        Duration::from_secs(3),
+    )?;
+    for row in 1..=15 {
+        dashboard.send(b"j")?;
+        let expected = format!("row {}-", row + 1);
+        dashboard.wait_for_screen(
+            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            Duration::from_secs(3),
+        )?;
+    }
+    for col in 1..=126 {
+        dashboard.send(b"l")?;
+        let expected = format!("col {}-", col + 1);
+        dashboard.wait_for_screen(
+            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            Duration::from_secs(3),
+        )?;
+    }
+    dashboard.send(b" ")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 16:127"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"j")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 17:127"),
+        Duration::from_secs(3),
+    )?;
+    for col in 128..=130 {
+        dashboard.send(b"l")?;
+        let expected = format!("HISTORY SELECT  row 17:{col}");
+        dashboard.wait_for_screen(|screen| screen.contains(&expected), Duration::from_secs(3))?;
+    }
+
+    let expected = format!("{}\nROW_016{}", "x".repeat(6), "x".repeat(123));
+    let mut expected_osc = Vec::new();
+    ovrcr::tui::write_clipboard(&mut expected_osc, &expected)?;
+    dashboard.send(b"y")?;
+    dashboard.wait_for_output(&expected_osc, Duration::from_secs(3))?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Clipboard request sent; paste to verify"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"j")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 18:130"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("HISTORY SELECT"),
+        Duration::from_secs(3),
+    )?;
+    let detach_result = dashboard.detach();
+    eprintln!("historical copy outer dashboard detach: {detach_result:?}");
+    detach_result?;
+    let shutdown_result = fixture.shutdown();
+    eprintln!("historical copy fixture shutdown: {shutdown_result:?}");
+    shutdown_result?;
+    Ok(())
+}
+
+#[test]
 fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
@@ -969,6 +1186,140 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
     reattached.detach()?;
     fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    eprintln!(
+        "copy acceptance fixture root: {}",
+        fixture._root.path().display()
+    );
+    eprintln!(
+        "copy acceptance fixture session process groups while alive: {:?}",
+        fixture.managed_pgids
+    );
+    let waiting_id = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.name == "waiting")
+        .context("waiting session id")?
+        .id;
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let outer_pid = dashboard
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
+    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.send(b"k")?;
+    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    let waiting_screen = fixture.read_terminal(waiting_id)?;
+    assert!(
+        waiting_screen.starts_with("WAITING_READY"),
+        "waiting snapshot did not start at (0,0): {waiting_screen:?}"
+    );
+    assert!(
+        dashboard
+            .rendered()
+            .lines()
+            .any(|line| line.contains("WAITING_READY")),
+        "waiting session snapshot did not render its marker"
+    );
+
+    dashboard.send(b"[g ")?;
+    dashboard.send(b"lllllly")?;
+    dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("COPY  "),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\rINPUT_TOKEN\r")?;
+    dashboard.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    assert!(
+        dashboard.rendered().contains("INPUT_ACK"),
+        "input acknowledgement did not reach the outer terminal"
+    );
+    let detach_result = dashboard.detach();
+    eprintln!("copy acceptance first dashboard detach: {detach_result:?}");
+    detach_result?;
+    eprintln!(
+        "copy acceptance fixture process groups after first detach: {:?}",
+        fixture.managed_pgids
+    );
+
+    let mut reattached = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let reattached_pid = reattached
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let reattached_pgid = reattached_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!(
+        "copy acceptance reattached dashboard pid/pgid while alive: {reattached_pid:?}/{reattached_pgid:?}"
+    );
+    reattached.wait_for(b"mouse", Duration::from_secs(3))?;
+    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    reattached.send(b"j")?;
+    reattached.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    let reattached_screen = reattached.rendered();
+    assert!(reattached_screen.contains("j/k/↑/↓"));
+    assert!(!reattached_screen.contains("Terminal mode"));
+    assert!(!reattached_screen.contains("COPY  "));
+    let pane = ovrcr::tui::actual_drawn_inner_rect(ratatui::layout::Rect::new(0, 0, 100, 30));
+    let (ack_row, ack_col) = reattached.find_text_in_rect(pane, "INPUT_ACK")?;
+    eprintln!("copy acceptance retained INPUT_ACK pane position: row={ack_row} col={ack_col}");
+    reattached.send(b"[")?;
+    reattached.wait_for_screen(|screen| screen.contains("COPY  "), Duration::from_secs(3))?;
+    reattached.send(b"y")?;
+    reattached.wait_for_screen(
+        |screen| screen.contains("Set an anchor with Space"),
+        Duration::from_secs(3),
+    )?;
+    let mut select_ack = vec![b'g'];
+    select_ack.extend(vec![b'j'; usize::from(ack_row)]);
+    select_ack.extend(vec![b'l'; usize::from(ack_col)]);
+    select_ack.push(b' ');
+    select_ack.extend(vec![b'l'; b"INPUT_ACK".len() - 1]);
+    select_ack.push(b'y');
+    reattached.send(&select_ack)?;
+    reattached.wait_for_output(b"\x1b]52;c;SU5QVVRfQUNL\x1b\\", Duration::from_secs(3))?;
+    let detach_result = reattached.detach();
+    eprintln!("copy acceptance reattached dashboard detach: {detach_result:?}");
+    detach_result?;
+    let shutdown_result = fixture.shutdown();
+    eprintln!("copy acceptance fixture shutdown: {shutdown_result:?}");
+    shutdown_result?;
     Ok(())
 }
 

@@ -14,7 +14,7 @@ chrono = "0.4"
 chrono-tz = "0.10"
 clap = { version = "4", features = ["derive"] }
 croner = "=3.0.1"
-crossterm = { version = "0.29", features = ["use-dev-tty"] }
+crossterm = { version = "0.29", features = ["use-dev-tty", "osc52"] }
 directories = "6"
 eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11"] }
 libc = "0.2"
