@@ -305,11 +305,14 @@ present, and sums those counters as `used_tokens`. It does not use output
 tokens, a provider percentage, a model-name capacity fallback, or
 `total_input_tokens` as a cumulative billing counter.
 
-Samples are kept in memory with their receipt time. A sample is fresh for five
-minutes; after that, or as soon as its session exits, the dashboard appends `~`
-to its value (for example, `25%~`). The same state appears as `stale: true` in
-inspection and `context_stale: true` in terminal inventory. A server restart
-loses the live sample.
+Samples are kept in memory with their receipt time. Freshness is advisory and
+uses the wall clock: a clock earlier than the receipt marks the sample stale,
+and wall-clock changes may shorten or extend its apparent freshness. A sample
+is fresh while its receipt age is under five minutes; at five minutes or more,
+or as soon as its session exits, the dashboard appends `~` to its value (for
+example, `25%~`). The same state appears as `stale: true` in inspection and
+`context_stale: true` in terminal inventory. A server restart loses the live
+sample.
 
 Inspect one session without starting a server:
 
