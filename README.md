@@ -66,9 +66,15 @@ terminal and the current `ctx —` field. Sidebar sessions use three lines: the
 session name, its label, and elapsed runtime with context usage. Context usage
 remains unknown in the MVP. The selected session is highlighted across all three
 lines; clicking any of those lines selects it.
-Idle sessions leave their status slot blank; an explicit busy state animates a braille spinner.
-Activity defaults to idle until agent hooks are connected; terminal output and
-process liveness do not imply that an agent is busy.
+Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
+their status slot blank; busy sessions animate the braille spinner, waiting
+sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
+blank and are dimmed. The selected metadata line shows `pid: closed` after the
+managed process exits. Live selected metadata labels the same observation as
+`agent unknown`, `agent idle`, `agent busy`, `agent waiting input`, or
+`agent error`; paused sessions retain their last label and add `paused`, while
+exited sessions omit the live activity label. Terminal output, elapsed silence,
+keyboard input, and process liveness do not imply that an agent is busy or idle.
 In Browse mode, press `p` to pause the selected live session or `r` to resume
 it. The server is authoritative for the phase, so a paused row is shown only
 after the server's session refresh is applied. Enter on a paused row stays in Browse
@@ -203,14 +209,86 @@ Get commands and terminal creation return objects. Other
 successful mutations return `{"ok":true}`. Project records include `name`,
 `repo`, `workspace_root`, and `workspace_count`; workspace records include
 `project`, `name`, `path`, `branch`, and `terminal_count`. Terminal records use
-numeric `id`, `phase` (`running` or `exited`), and nullable `exit_code` and
-`exit_signal`, alongside ownership, label, PID, and start time. Screen reads
-return `id`, `rows`, `cols`, and `text`.
+numeric `id`, `phase` (`running`, `paused`, or `exited`), and nullable `exit_code` and
+`exit_signal`, alongside ownership, label, PID, start time, and `activity`.
+Activity is one of `unknown`, `idle`, `busy`, `waiting_input`, or `error` and
+is the latest accepted provider observation. Capability and hook transport
+fields are never included. Screen reads return `id`, `rows`, `cols`, and
+`text`.
 
 Runtime errors exit 1 and, with `--json`, write an
 `{"error":{"code":"NotFound","message":"…"}}` object to stderr. Successful
 results go to stdout. Argument errors retain normal help diagnostics and exit
 2, including with `--json`.
+
+### Agent hook reporting
+
+Managed sessions receive `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
+`OVRCR_HOOK_TOKEN` in their child environment. A provider hook can report an
+explicit activity state with:
+
+```sh
+ovrcr report activity --state busy --sequence 1
+ovrcr report activity --state waiting-input --sequence 2
+ovrcr report activity --state idle --sequence 3
+```
+
+The report command requires those inherited identity variables, uses only the
+inherited hook socket, and has a one-second total deadline. Successful reports
+are silent, including with `--json`. The accepted states are `unknown`, `idle`,
+`busy`, `waiting-input`, and `error`. OVRCR retains the last accepted report in
+memory and exposes that observation after dashboard detach and reconnect.
+Receipt-order reports are accepted in arrival order; omitting `--sequence`
+selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects
+sequenced mode, which must advance its session sequence; the two modes cannot
+mix, and sequence counters cannot restart between turns. This provides ordering
+checks, without causal ordering, exactly-once delivery, health claims, retries,
+or an implicit timeout meaning for provider work.
+
+Claude Code command hooks can translate supported hook events into activity
+reports. Add these entries manually to the existing `~/.claude/settings.json`;
+retain unrelated settings and handlers. If `ovrcr` is not on the provider's
+`PATH`, replace it with the installed absolute OVRCR path.
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PreToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PermissionRequest": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PostToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "PostToolUseFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "Stop": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "StopFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
+    "SessionEnd": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}]
+  }
+}
+```
+
+The adapter reads only the provider JSON on standard input. It maps
+`SessionStart` and `Stop` to `idle`, prompt and tool events to `busy`,
+`PermissionRequest` to `waiting-input`, `StopFailure` to `error`, and
+`SessionEnd` to `unknown`. Events containing `agent_id`, unknown events, and
+notifications are ignored. Malformed input, an unavailable server, and report
+timeouts are fail-open and produce no stdout; add `--verbose` for a bounded
+diagnostic on stderr. A successful adapter invocation means only that its
+local report attempt was handled; it does not approve a provider operation or
+claim that a callback was delivered exactly once.
+These are OVRCR's default observations rather than an upstream provider
+state-machine guarantee. `Stop` is a last observation, so a later callback can
+report that execution continued.
+
+Start each root provider process as its own managed session so its inherited
+capability identifies the correct PTY:
+
+```sh
+ovrcr new --project demo --workspace hooks --name agent -- claude
+```
+
+Do not share one OVRCR PTY between independent agent roots. To uninstall,
+remove only these handlers from the existing settings file and restart the
+agent session. OVRCR does not install or modify provider settings.
 
 ### Upgrading a running server
 

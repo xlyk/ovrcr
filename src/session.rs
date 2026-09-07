@@ -1,3 +1,4 @@
+use crate::protocol::{AgentReport, AgentUpdate};
 use anyhow::{Context, Result, bail};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,20 @@ pub struct SessionSpec {
     pub label: String,
     pub cwd: PathBuf,
     pub argv: Vec<OsString>,
+    pub hook_env: Option<HookEnvironment>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct HookEnvironment {
+    pub socket: PathBuf,
+    pub session: SessionId,
+    pub capability: [u8; 32],
+}
+
+impl std::fmt::Debug for HookEnvironment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("HookEnvironment { redacted: [redacted] }")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +50,15 @@ pub enum SessionPhase {
         code: Option<u32>,
         signal: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentActivity {
+    Unknown,
+    Idle,
+    Busy,
+    WaitingInput,
+    Error,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +88,31 @@ pub struct SessionSummary {
     pub pid: Option<u32>,
     pub started_unix_ms: u64,
     pub phase: SessionPhase,
+    pub activity: AgentActivity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReportOrder {
+    #[default]
+    Unset,
+    Receipt,
+    Sequenced(u64),
+}
+
+impl ReportOrder {
+    pub fn accept(&mut self, incoming: Option<u64>) -> Result<()> {
+        let next = match (*self, incoming) {
+            (Self::Unset, None) => Self::Receipt,
+            (Self::Unset, Some(sequence)) if sequence > 0 => Self::Sequenced(sequence),
+            (Self::Receipt, None) => Self::Receipt,
+            (Self::Sequenced(previous), Some(sequence)) if sequence > previous => {
+                Self::Sequenced(sequence)
+            }
+            _ => bail!("agent report sequence is invalid for the current ordering mode"),
+        };
+        *self = next;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +124,9 @@ pub enum SessionEvent {
 struct SessionState {
     phase: SessionPhase,
     pid: Option<u32>,
+    activity: AgentActivity,
+    hook_capability: Option<[u8; 32]>,
+    activity_order: ReportOrder,
 }
 
 struct JoinHandles {
@@ -123,7 +175,7 @@ impl Session {
     }
 
     #[cfg(test)]
-    fn spawn_with_test_hooks(
+    pub(crate) fn spawn_with_test_hooks(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
@@ -174,6 +226,14 @@ impl Session {
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
         command.cwd(spec.cwd);
+        command.env_remove("OVRCR_HOOK_SOCKET");
+        command.env_remove("OVRCR_SESSION_ID");
+        command.env_remove("OVRCR_HOOK_TOKEN");
+        if let Some(hook_env) = &spec.hook_env {
+            command.env("OVRCR_HOOK_SOCKET", &hook_env.socket);
+            command.env("OVRCR_SESSION_ID", hook_env.session.0.to_string());
+            command.env("OVRCR_HOOK_TOKEN", capability_hex(&hook_env.capability));
+        }
         let mut child = pair.slave.spawn_command(command)?;
         let pid = child.process_id().context("PTY child has no process ID")?;
 
@@ -210,10 +270,14 @@ impl Session {
                 pid: Some(pid),
                 started_unix_ms,
                 phase: SessionPhase::Running,
+                activity: AgentActivity::Unknown,
             },
             state: Mutex::new(SessionState {
                 phase: SessionPhase::Running,
                 pid: Some(pid),
+                activity: AgentActivity::Unknown,
+                hook_capability: spec.hook_env.as_ref().map(|hook| hook.capability),
+                activity_order: ReportOrder::default(),
             }),
             state_changed: Condvar::new(),
             parser: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
@@ -270,6 +334,7 @@ impl Session {
         let mut summary = self.summary.clone();
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
+        summary.activity = state.activity;
         summary
     }
 
@@ -343,10 +408,31 @@ impl Session {
                 let mut state = self.state.lock().unwrap();
                 state.phase = phase;
                 state.pid = None;
+                state.activity = AgentActivity::Unknown;
+                state.hook_capability = None;
                 self.state_changed.notify_all();
             }
             _ => {}
         }
+    }
+
+    pub fn apply_agent_report(&self, report: &AgentReport) -> Result<bool> {
+        let mut state = self.state.lock().unwrap();
+        if report.session != self.summary.id
+            || state.hook_capability.as_ref() != Some(&report.capability)
+            || matches!(state.phase, SessionPhase::Exited { .. })
+        {
+            bail!("agent report rejected");
+        }
+        let AgentUpdate::Activity(activity) = &report.update;
+        state.activity_order.accept(report.sequence)?;
+        let changed = state.activity != *activity;
+        state.activity = *activity;
+        Ok(changed)
+    }
+
+    pub fn revoke_hook_capability(&self) {
+        self.state.lock().unwrap().hook_capability = None;
     }
 
     pub fn current_screen(&self) -> Vec<u8> {
@@ -519,6 +605,15 @@ impl Session {
         }
         Ok(())
     }
+}
+
+fn capability_hex(capability: &[u8; 32]) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in capability {
+        use std::fmt::Write as _;
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
 }
 
 fn read_pty(
@@ -867,6 +962,7 @@ mod tests {
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
                 argv: vec![OsString::from("sh")],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -938,6 +1034,7 @@ mod tests {
                     "-c".into(),
                     "trap 'exit 0' TERM; printf READY; while :; do read line; done".into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -969,6 +1066,7 @@ mod tests {
                     "-c".into(),
                     "trap '' TERM; printf READY; while :; do read line; done".into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1008,6 +1106,101 @@ mod tests {
     }
 
     #[test]
+    fn agent_report_order_rejects_zero_sequence_without_mutating_unset() {
+        let mut order = ReportOrder::default();
+        assert!(order.accept(Some(0)).is_err());
+        assert_eq!(order, ReportOrder::Unset);
+    }
+
+    #[test]
+    fn agent_report_requires_capability_and_preserves_order_on_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(64);
+        let capability = [0x37; 32];
+        let session = Session::spawn(
+            SessionId(700),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "agent".into(),
+                label: "sh".into(),
+                cwd: dir.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "while IFS= read -r line; do :; done".into(),
+                ],
+                hook_env: Some(HookEnvironment {
+                    socket: PathBuf::from("/private/test/ovrcr.sock"),
+                    session: SessionId(700),
+                    capability,
+                }),
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+        )
+        .unwrap();
+        let _cleanup = TerminationGuard(Arc::clone(&session));
+        let _dispatcher = dispatch_test_events(session.clone(), receiver);
+
+        let report = |capability, sequence, activity| crate::protocol::AgentReport {
+            session: SessionId(700),
+            capability,
+            sequence,
+            update: crate::protocol::AgentUpdate::Activity(activity),
+        };
+        assert!(
+            session
+                .apply_agent_report(&report([0x38; 32], Some(1), AgentActivity::Busy))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Unknown);
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(0), AgentActivity::Busy))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Unknown);
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(1), AgentActivity::Busy))
+                .unwrap()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(1), AgentActivity::Idle))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
+        assert!(
+            !session
+                .apply_agent_report(&report(capability, Some(2), AgentActivity::Busy))
+                .unwrap()
+        );
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(2), AgentActivity::Idle))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
+        session.set_paused(true).unwrap();
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(3), AgentActivity::Idle))
+                .unwrap()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Idle);
+        session.terminate(Duration::from_millis(200)).unwrap();
+        assert!(
+            session
+                .apply_agent_report(&report(capability, Some(4), AgentActivity::Busy))
+                .is_err()
+        );
+        assert_eq!(session.summary().activity, AgentActivity::Unknown);
+    }
+
+    #[test]
     fn pause_resume_terminate_runs_term_handler() {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::sync_channel(64);
@@ -1025,6 +1218,7 @@ mod tests {
                     "trap 'printf TERM_HANDLED; exit 0' TERM; printf READY; while :; do read line; done"
                         .into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1260,6 +1454,7 @@ mod tests {
                     "-c".into(),
                     "printf 'EXIT_%s' READY; IFS= read -r _".into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1361,6 +1556,7 @@ mod tests {
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
                 argv: vec![OsString::from("sh")],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1390,6 +1586,7 @@ mod tests {
                 label: "sh".into(),
                 cwd: dir.path().to_path_buf(),
                 argv: vec!["sh".into(), "-c".into(), "printf FINAL_MARKER".into()],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1452,6 +1649,7 @@ mod tests {
                     "-c".into(),
                     "trap '' HUP; sleep 30 & printf 'OVRCR_DESC:%s\\n' \"$!\"; exit".into(),
                 ],
+                hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
             tx,
@@ -1489,6 +1687,26 @@ mod tests {
         assert_pid_is_gone(leader);
         assert_pid_is_gone(descendant);
         assert!(!group_exists(session.pgid).unwrap());
+    }
+
+    #[test]
+    fn agent_report_order_rejects_replay_and_mode_switch() {
+        let mut order = ReportOrder::default();
+        assert!(order.accept(Some(2)).is_ok());
+        assert!(order.accept(Some(1)).is_err());
+        assert!(order.accept(Some(2)).is_err());
+        assert!(order.accept(None).is_err());
+        assert_eq!(order, ReportOrder::Sequenced(2));
+        assert!(order.accept(Some(3)).is_ok());
+    }
+
+    #[test]
+    fn agent_report_order_receipt_accepts_repeated_values() {
+        let mut order = ReportOrder::default();
+        assert!(order.accept(None).is_ok());
+        assert!(order.accept(None).is_ok());
+        assert_eq!(order, ReportOrder::Receipt);
+        assert!(order.accept(Some(1)).is_err());
     }
 
     fn extract_tagged_pid(screen: &[u8], tag: &[u8]) -> Option<u32> {

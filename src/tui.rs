@@ -1,7 +1,7 @@
 use crate::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerEvent, ServerMessage,
 };
-use crate::session::{SessionId, SessionPhase, TerminalSize};
+use crate::session::{AgentActivity, SessionId, SessionPhase, TerminalSize};
 use anyhow::{Context, Result, bail};
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -103,8 +103,6 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
-    /// Explicit activity only; left empty until agent hooks supply busy/idle signals.
-    pub busy_sessions: HashSet<SessionId>,
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
@@ -124,7 +122,6 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
-            busy_sessions: HashSet::new(),
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
@@ -132,21 +129,24 @@ impl Dashboard {
     }
 
     fn session_is_busy(&self, id: SessionId) -> bool {
-        self.busy_sessions.contains(&id)
-            && find_session(self, id).is_some_and(|session| {
-                matches!(session.phase, crate::session::SessionPhase::Running)
-            })
+        find_session(self, id).is_some_and(|session| {
+            matches!(session.phase, crate::session::SessionPhase::Running)
+                && session.activity == crate::session::AgentActivity::Busy
+        })
     }
 
     fn redraw_interval(&self) -> Duration {
         if self.tasks.is_some() {
             return Duration::from_millis(50);
         }
-        if self
-            .busy_sessions
-            .iter()
-            .any(|id| self.session_is_busy(*id))
-        {
+        if self.hierarchy.projects.iter().any(|project| {
+            project.workspaces.iter().any(|workspace| {
+                workspace
+                    .sessions
+                    .iter()
+                    .any(|session| self.session_is_busy(session.id))
+            })
+        }) {
             SPINNER_INTERVAL
         } else {
             DASHBOARD_IDLE_REDRAW_INTERVAL
@@ -1434,9 +1434,25 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             ))
         },
         |session| {
-            let pid = session
-                .pid
-                .map_or_else(|| "—".to_string(), |pid| pid.to_string());
+            let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                "closed".to_string()
+            } else {
+                session
+                    .pid
+                    .map_or_else(|| "—".to_string(), |pid| pid.to_string())
+            };
+            let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                Span::raw("")
+            } else {
+                let label = match session.activity {
+                    AgentActivity::Unknown => "agent unknown",
+                    AgentActivity::Idle => "agent idle",
+                    AgentActivity::Busy => "agent busy",
+                    AgentActivity::WaitingInput => "agent waiting input",
+                    AgentActivity::Error => "agent error",
+                };
+                Span::styled(format!("  {label}"), Style::default().fg(TEAL))
+            };
             Line::from(vec![
                 Span::styled("pid: ", Style::default().fg(MUTED)),
                 Span::styled(pid, Style::default().fg(TEAL)),
@@ -1445,6 +1461,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     format_elapsed_at(session.started_unix_ms, now_unix_ms),
                     Style::default().fg(TEAL),
                 ),
+                activity,
                 if matches!(session.phase, SessionPhase::Paused) {
                     Span::styled("  paused", Style::default().fg(PEACH))
                 } else {
@@ -1669,12 +1686,16 @@ fn tree_line_text(
             } else {
                 session.label.as_str()
             };
-            let status = if matches!(session.phase, SessionPhase::Paused) {
-                'P'
-            } else if dashboard.session_is_busy(*id) {
-                SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
-            } else {
-                ' '
+            let status = match (&session.phase, session.activity) {
+                (SessionPhase::Exited { .. }, _) => ' ',
+                (SessionPhase::Paused, _) => 'P',
+                (_, AgentActivity::Unknown) => '-',
+                (_, AgentActivity::Idle) => ' ',
+                (_, AgentActivity::WaitingInput) => '?',
+                (_, AgentActivity::Error) => '!',
+                (SessionPhase::Running, AgentActivity::Busy) => {
+                    SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
+                }
             };
             let text = match line {
                 0 => format!("  {status} {}", session.name),
@@ -1695,6 +1716,9 @@ fn tree_line_text(
             };
             if line == 0 {
                 style = style.add_modifier(Modifier::BOLD);
+                if !selected && matches!(session.phase, SessionPhase::Exited { .. }) {
+                    style = style.add_modifier(Modifier::DIM);
+                }
             }
             (clip_text(&text, width), style)
         }
