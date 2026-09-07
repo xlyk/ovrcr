@@ -49,6 +49,8 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 sink: Arc::clone(&dashboard_sink),
                 identity: identity.clone(),
                 stream: close_stream,
+                history: None,
+                next_history_id: 1,
             });
             drop(slot);
             *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
@@ -113,11 +115,16 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         }
         let shutdown = matches!(message.request, Request::Shutdown { .. });
         let select = matches!(message.request, Request::Select { .. });
+        let history = matches!(
+            message.request,
+            Request::HistoryBegin { .. } | Request::HistoryPage { .. } | Request::HistoryEnd { .. }
+        );
         let response = handle_request_with_id(
             &state,
             &mut role,
             message.request.clone(),
             message.request_id,
+            dashboard_identity.as_ref(),
         );
         let successful_shutdown = shutdown && state.stopping.load(Ordering::Acquire);
         let (delivered, dashboard_shutdown_attempt) = match role {
@@ -126,7 +133,20 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 false,
             ),
             ClientRole::Dashboard => {
-                if !select {
+                if history {
+                    if matches!(response, Response::Ok) {
+                        (true, false)
+                    } else {
+                        let delivered = dashboard_identity.as_ref().is_some_and(|owner| {
+                            dashboard_send_owner(
+                                &state,
+                                owner,
+                                response_message(message.request_id, response),
+                            )
+                        });
+                        (delivered, false)
+                    }
+                } else if !select {
                     if successful_shutdown {
                         let (completion, result) = mpsc::sync_channel(1);
                         let queued = dashboard_send(
@@ -189,6 +209,7 @@ pub(super) fn handle_request_with_id(
     role: &mut ClientRole,
     request: Request,
     request_id: u64,
+    owner: Option<&Arc<()>>,
 ) -> Response {
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
@@ -273,6 +294,41 @@ pub(super) fn handle_request_with_id(
             let _ = receiver.recv();
             Response::Ok
         }
+        Request::HistoryBegin { session } => dispatch_history_request(
+            state,
+            dashboard,
+            owner,
+            request_id,
+            HistoryRequest::Begin { session },
+        ),
+        Request::HistoryPage {
+            session,
+            snapshot,
+            start_row,
+            rows,
+            start_col,
+            cols,
+        } => dispatch_history_request(
+            state,
+            dashboard,
+            owner,
+            request_id,
+            HistoryRequest::Page {
+                session,
+                snapshot,
+                start_row,
+                rows,
+                start_col,
+                cols,
+            },
+        ),
+        Request::HistoryEnd { session, snapshot } => dispatch_history_request(
+            state,
+            dashboard,
+            owner,
+            request_id,
+            HistoryRequest::End { session, snapshot },
+        ),
         Request::Input { session, bytes } => {
             if !dashboard || state.selected.lock().unwrap().as_ref() != Some(&session) {
                 return error_response(
@@ -412,6 +468,41 @@ pub(super) fn handle_request_with_id(
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")
             }
         }
+    }
+}
+
+fn dispatch_history_request(
+    state: &ServerState,
+    dashboard: bool,
+    owner: Option<&Arc<()>>,
+    request_id: u64,
+    request: HistoryRequest,
+) -> Response {
+    if !dashboard {
+        return error_response(
+            ErrorCode::InvalidRequest,
+            "history requires a dashboard connection",
+        );
+    }
+    let Some(owner) = owner else {
+        return error_response(ErrorCode::Conflict, "dashboard is disconnected");
+    };
+    let (completion, result) = mpsc::sync_channel(1);
+    if state
+        .dispatch
+        .send(DispatchMessage::History {
+            owner: Arc::clone(owner),
+            request_id,
+            request,
+            completion,
+        })
+        .is_err()
+    {
+        return error_response(ErrorCode::Internal, "dispatcher is unavailable");
+    }
+    match result.recv() {
+        Ok(()) => Response::Ok,
+        Err(_) => error_response(ErrorCode::Internal, "dispatcher is unavailable"),
     }
 }
 

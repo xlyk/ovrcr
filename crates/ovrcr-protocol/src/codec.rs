@@ -45,7 +45,7 @@ pub fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
 mod tests {
     use super::*;
     use crate::{
-        AgentActivity, AgentReport, AgentUpdate, ClientMessage, Request, ServerEvent,
+        AgentActivity, AgentReport, AgentUpdate, ClientMessage, Request, Response, ServerEvent,
         ServerMessage, SessionId, SessionPhase, SessionSummary,
     };
     use std::io::Write;
@@ -160,5 +160,55 @@ mod tests {
         let (mut left, mut right) = UnixStream::pair().unwrap();
         write_frame(&mut left, &report).unwrap();
         assert_eq!(read_frame::<AgentReport>(&mut right).unwrap(), report);
+    }
+
+    #[test]
+    fn history_page_round_trip_and_size_bound() {
+        let cell = crate::HistoryCell {
+            text: "x".repeat(22),
+            width: 2,
+            fg: crate::HistoryColor::Rgb(1, 2, 3),
+            bg: crate::HistoryColor::Rgb(4, 5, 6),
+            attributes: u8::MAX,
+        };
+        let page = crate::HistoryRows {
+            session: SessionId(9),
+            snapshot: crate::HistorySnapshotId(4),
+            start_row: 12,
+            start_col: 7,
+            rows: (0..crate::PAGE_ROWS)
+                .map(|_| crate::HistoryRow {
+                    width: crate::PAGE_COLS,
+                    cells: (0..crate::PAGE_COLS).map(|_| cell.clone()).collect(),
+                    wrapped: true,
+                })
+                .collect(),
+        };
+        let message = ServerMessage::Response {
+            request_id: 17,
+            response: Response::HistoryRows(page.clone()),
+        };
+        let request = ClientMessage {
+            request_id: 18,
+            request: Request::HistoryPage {
+                session: SessionId(9),
+                snapshot: crate::HistorySnapshotId(4),
+                start_row: 12,
+                rows: crate::PAGE_ROWS,
+                start_col: 7,
+                cols: crate::PAGE_COLS,
+            },
+        };
+        let mut frame = Vec::new();
+        write_frame(&mut frame, &message).unwrap();
+        let encoded = read_frame::<ServerMessage>(&mut frame.as_slice()).unwrap();
+        assert_eq!(encoded, message);
+
+        let payload_len = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
+        assert!(payload_len <= crate::PAGE_BYTES);
+
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        write_frame(&mut left, &request).unwrap();
+        assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), request);
     }
 }

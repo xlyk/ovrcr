@@ -157,6 +157,8 @@ pub(super) struct DashboardSlot {
     pub(super) sink: Arc<DashboardSink>,
     pub(super) identity: Arc<()>,
     pub(super) stream: UnixStream,
+    pub(super) history: Option<ovrcr_terminal::history::FrozenHistory>,
+    pub(super) next_history_id: u64,
 }
 
 pub(super) struct DashboardSnapshot {
@@ -195,6 +197,36 @@ pub(super) fn dashboard_snapshot(state: &ServerState) -> Option<DashboardSnapsho
         identity: slot.identity.clone(),
         stream: slot.stream.try_clone().ok()?,
     })
+}
+
+pub(super) fn dashboard_owner_matches(state: &ServerState, owner: &Arc<()>) -> bool {
+    state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
+}
+
+pub(super) fn dashboard_send_owner(
+    state: &ServerState,
+    owner: &Arc<()>,
+    message: ServerMessage,
+) -> bool {
+    let Some(snapshot) =
+        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
+    else {
+        return false;
+    };
+    if snapshot.sink.enqueue(DashboardOutbound {
+        message,
+        completion: None,
+    }) {
+        true
+    } else {
+        disconnect_dashboard(state, snapshot);
+        false
+    }
 }
 
 pub(super) fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {

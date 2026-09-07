@@ -32,11 +32,11 @@ use connections::{
     combine_control_and_refresh, error_chain_string, error_for_lifecycle, error_response,
     handle_connection, handle_request_with_id, input_error_code, response_message,
 };
-pub use dispatch::{DispatchMessage, run_dispatcher};
+pub use dispatch::{DispatchMessage, HistoryRequest, run_dispatcher};
 use dispatch::{bridge_events, clear_dashboard_geometry, set_dashboard_geometry};
 use outbound::{
-    DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_send, dashboard_snapshot,
-    dashboard_try_send, disconnect_dashboard,
+    DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
+    dashboard_send_owner, dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
 pub use startup::{ServerPaths, run_server};
@@ -191,7 +191,7 @@ impl ServerState {
     }
 
     pub fn handle_request(&self, role: &mut ClientRole, request: Request) -> Response {
-        handle_request_with_id(self, role, request, 0)
+        handle_request_with_id(self, role, request, 0, None)
     }
 
     pub fn create_session(
@@ -321,6 +321,14 @@ impl ServerState {
         }
         session.revoke_hook_capability();
         self.sessions.lock().unwrap().remove(&id);
+        if let Some(slot) = self.dashboard_slot.lock().unwrap().as_mut()
+            && slot
+                .history
+                .as_ref()
+                .is_some_and(|history| history.opened().session == id)
+        {
+            slot.history.take();
+        }
         let mut selected = self.selected.lock().unwrap();
         if selected.as_ref() == Some(&id) {
             *selected = None;

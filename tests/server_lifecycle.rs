@@ -2,12 +2,13 @@ use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
-    Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
+    HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES,
+    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::ffi::OsString;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
@@ -2209,6 +2210,413 @@ fn dashboard_request(stream: &mut UnixStream, request_id: u64, request: Request)
     }
 }
 
+struct HistoryDashboardParser {
+    screens: std::collections::HashMap<SessionId, vt100::Parser>,
+}
+
+struct HistoryFrameReader {
+    header: [u8; 4],
+    header_len: usize,
+    body: Vec<u8>,
+    body_len: usize,
+}
+
+impl HistoryFrameReader {
+    fn new() -> Self {
+        Self {
+            header: [0; 4],
+            header_len: 0,
+            body: Vec::new(),
+            body_len: 0,
+        }
+    }
+
+    fn read_some(
+        stream: &mut UnixStream,
+        bytes: &mut [u8],
+        deadline: Instant,
+    ) -> std::io::Result<Option<usize>> {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            stream.set_read_timeout(Some(remaining))?;
+            match stream.read(bytes) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "dashboard closed while reading a history frame",
+                    ));
+                }
+                Ok(read) => return Ok(Some(read)),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) && Instant::now() < deadline => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn next(
+        &mut self,
+        stream: &mut UnixStream,
+        deadline: Instant,
+    ) -> std::io::Result<Option<ServerMessage>> {
+        while self.header_len < self.header.len() {
+            let read = match Self::read_some(stream, &mut self.header[self.header_len..], deadline)?
+            {
+                Some(read) => read,
+                None => return Ok(None),
+            };
+            self.header_len += read;
+        }
+
+        let frame_len = u32::from_be_bytes(self.header) as usize;
+        if frame_len > MAX_FRAME_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("history frame too large: {frame_len} bytes"),
+            ));
+        }
+        if self.body.len() != frame_len {
+            self.body.resize(frame_len, 0);
+        }
+        while self.body_len < frame_len {
+            let read = match Self::read_some(stream, &mut self.body[self.body_len..], deadline)? {
+                Some(read) => read,
+                None => return Ok(None),
+            };
+            self.body_len += read;
+        }
+
+        let mut frame = Vec::with_capacity(4 + frame_len);
+        frame.extend_from_slice(&self.header);
+        frame.extend_from_slice(&self.body);
+        let message = read_frame::<ServerMessage>(&mut Cursor::new(frame)).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
+        self.header_len = 0;
+        self.body.clear();
+        self.body_len = 0;
+        Ok(Some(message))
+    }
+}
+
+struct HistoryConnection {
+    stream: UnixStream,
+    frames: HistoryFrameReader,
+    parser: HistoryDashboardParser,
+}
+
+impl HistoryConnection {
+    fn connect(socket: &Path) -> Self {
+        Self {
+            stream: UnixStream::connect(socket).unwrap(),
+            frames: HistoryFrameReader::new(),
+            parser: HistoryDashboardParser::new(),
+        }
+    }
+
+    fn next(&mut self, deadline: Instant) -> std::io::Result<Option<ServerMessage>> {
+        let message = self.frames.next(&mut self.stream, deadline)?;
+        if let Some(message) = &message {
+            self.parser.forward(message);
+        }
+        Ok(message)
+    }
+}
+
+impl HistoryDashboardParser {
+    fn new() -> Self {
+        Self {
+            screens: std::collections::HashMap::new(),
+        }
+    }
+
+    fn forward(&mut self, message: &ServerMessage) {
+        if let ServerMessage::Event(ServerEvent::Output { session, bytes }) = message {
+            self.screens
+                .entry(*session)
+                .or_insert_with(|| vt100::Parser::new(24, 80, HISTORY_ROWS))
+                .process(bytes);
+        }
+    }
+}
+
+fn history_request(connection: &mut HistoryConnection, id: u64, request: Request) -> Response {
+    write_frame(
+        &mut connection.stream,
+        &ClientMessage {
+            request_id: id,
+            request,
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "history response exceeded two-second deadline"
+        );
+        match connection.next(deadline).unwrap_or_else(|error| {
+            panic!("history request {id} failed: {error}");
+        }) {
+            None => panic!("history response {id} exceeded two-second deadline"),
+            Some(ServerMessage::Response {
+                request_id,
+                response,
+            }) if request_id == id => return response,
+            Some(_) => {}
+        }
+    }
+}
+
+fn history_response_size(id: u64, response: &Response) -> usize {
+    let mut frame = Vec::new();
+    write_frame(
+        &mut frame,
+        &ServerMessage::Response {
+            request_id: id,
+            response: response.clone(),
+        },
+    )
+    .unwrap();
+    u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize
+}
+
+fn history_page_all(
+    connection: &mut HistoryConnection,
+    session: SessionId,
+    snapshot: HistorySnapshotId,
+    opened: &HistoryOpened,
+    next_id: &mut u64,
+) -> Vec<HistoryRow> {
+    let mut rows = Vec::new();
+    let mut start_row = 0;
+    while start_row < opened.total_rows {
+        let count =
+            u16::try_from((opened.total_rows - start_row).min(u32::from(PAGE_ROWS))).unwrap();
+        let id = *next_id;
+        *next_id += 1;
+        let response = history_request(
+            connection,
+            id,
+            Request::HistoryPage {
+                session,
+                snapshot,
+                start_row,
+                rows: count,
+                start_col: 0,
+                cols: PAGE_COLS,
+            },
+        );
+        assert!(
+            history_response_size(id, &response) <= PAGE_BYTES,
+            "history page response exceeded {PAGE_BYTES} bytes"
+        );
+        let Response::HistoryRows(page) = response else {
+            panic!("history page returned {response:?}");
+        };
+        assert_eq!(page.start_row, start_row);
+        assert!(!page.rows.is_empty() || start_row == opened.total_rows);
+        start_row += u32::try_from(page.rows.len()).unwrap();
+        rows.extend(page.rows);
+    }
+    rows
+}
+
+fn history_rows_text(rows: &[HistoryRow]) -> String {
+    rows.iter()
+        .flat_map(|row| row.cells.iter())
+        .map(|cell| cell.text.as_str())
+        .collect::<String>()
+}
+
+fn history_workspace(fixture: &ControlFixture, branch: &str) {
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: branch.into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+}
+
+fn history_ready_shell(fixture: &ControlFixture) -> SessionId {
+    let summary = fixture.create_session_summary(
+        "history-ready",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "printf 'OLD_VISIBLE\nHISTORY_READY\n'; read gate; i=0; while [ \"$i\" -lt 600 ]; do printf 'NEW_%04d\n' \"$i\"; i=$((i+1)); done; printf 'DETACHED_OFFSCREEN_000\n'; i=0; while [ \"$i\" -lt 40 ]; do printf 'DETACHED_TAIL_%03d\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\n'".into(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    summary.id
+}
+
+fn history_memory_shell(index: usize, cols: u16) -> Vec<OsString> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        r#"
+cols=$1
+index=$2
+printf 'HISTORY_MEMORY_READY_%s\n' "$index"
+IFS= read -r gate
+fill=X
+while [ "${#fill}" -lt "$cols" ]; do fill="${fill}X"; done
+i=0
+while [ "$i" -lt 700 ]; do
+  printf '%s\n' "$fill"
+  i=$((i+1))
+done
+printf 'HISTORY_MEMORY_DONE_1_%s\n' "$index"
+IFS= read -r gate
+i=0
+while [ "$i" -lt 700 ]; do
+  printf '%s\n' "$fill"
+  i=$((i+1))
+done
+printf 'HISTORY_MEMORY_DONE_2_%s\n' "$index"
+while :; do sleep 1; done
+"#
+        .into(),
+        "ovrcr-history-memory".into(),
+        cols.to_string().into(),
+        index.to_string().into(),
+    ]
+}
+
+fn current_rss_kib() -> u64 {
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        if let Some(value) = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:")?.split_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            return value;
+        }
+    }
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .expect("current RSS ps query");
+    assert!(output.status.success(), "current RSS ps query failed");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("current RSS ps output is KiB")
+}
+
+fn drain_dashboard_events(connection: &mut HistoryConnection) {
+    let deadline = Instant::now() + Duration::from_millis(2);
+    loop {
+        match connection.next(deadline) {
+            Ok(Some(ServerMessage::Event(_))) => {}
+            Ok(Some(message)) => {
+                panic!("unexpected dashboard response while draining: {message:?}")
+            }
+            Ok(None) => break,
+            Err(error) => panic!("dashboard event drain failed: {error}"),
+        }
+    }
+}
+
+fn wait_memory_marker(
+    fixture: &ControlFixture,
+    dashboard: &mut HistoryConnection,
+    session: SessionId,
+    marker: &str,
+    deadline: Instant,
+) {
+    while Instant::now() < deadline {
+        drain_dashboard_events(dashboard);
+        if let Some(Response::TerminalText { text, .. }) = request_with_timeout(
+            &fixture.socket,
+            700,
+            Request::ReadTerminal {
+                session,
+                max_lines: None,
+            },
+            Duration::from_millis(250),
+        ) {
+            if text.contains(marker) {
+                return;
+            }
+        }
+        thread::yield_now();
+    }
+    panic!("session {session:?} did not produce memory marker {marker:?}");
+}
+
+fn history_memory_probe_all(
+    dashboard: &mut HistoryConnection,
+    sessions: &[SessionId],
+    cols: u16,
+    fill_stage: usize,
+    next_request_id: &mut u64,
+) -> Vec<u32> {
+    let mut probed_rows = Vec::with_capacity(sessions.len());
+    for (index, session) in sessions.iter().copied().enumerate() {
+        let begin_id = *next_request_id;
+        *next_request_id += 1;
+        let opened = history_request(dashboard, begin_id, Request::HistoryBegin { session });
+        let Response::HistoryOpened(opened) = opened else {
+            panic!("history begin returned {opened:?} for session {index}");
+        };
+        assert_eq!(opened.size.cols, cols);
+        assert_eq!(opened.history_rows, u32::try_from(HISTORY_ROWS).unwrap());
+        assert_eq!(
+            opened.total_rows,
+            opened.history_rows + u32::from(opened.size.rows)
+        );
+        probed_rows.push(opened.history_rows);
+        println!(
+            "MEMORY_PROBE geometry_cols={cols} fill_stage={fill_stage} session_index={index} session={} history_rows={} total_rows={} snapshot={}",
+            session.0, opened.history_rows, opened.total_rows, opened.snapshot.0
+        );
+        assert_eq!(
+            history_request(
+                dashboard,
+                *next_request_id,
+                Request::HistoryEnd {
+                    session,
+                    snapshot: opened.snapshot,
+                },
+            ),
+            Response::Ok
+        );
+        *next_request_id += 1;
+    }
+    assert!(probed_rows.iter().all(|rows| *rows <= HISTORY_ROWS as u32));
+    assert!(probed_rows.iter().all(|rows| *rows == HISTORY_ROWS as u32));
+    probed_rows
+}
+
 fn recv_pause_ready(socket: &UnixDatagram) -> PausePeer {
     let mut bytes = [0_u8; 4096];
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -3183,6 +3591,504 @@ fn restore_pause_terminal(original: Option<libc::termios>) {
         unsafe {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original);
         }
+    }
+}
+
+#[test]
+#[ignore = "bounded historical scrollback RSS measurement"]
+fn history_memory_measurements() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let cols = match std::env::var("OVRCR_HISTORY_MEMORY_GEOMETRY").as_deref() {
+        Ok("80") => 80,
+        Ok("512") => 512,
+        Ok(value) => {
+            panic!("OVRCR_HISTORY_MEMORY_GEOMETRY must be exactly 80 or 512, got {value:?}")
+        }
+        Err(error) => {
+            panic!("OVRCR_HISTORY_MEMORY_GEOMETRY is required (allowed values: 80, 512): {error}")
+        }
+    };
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, &format!("feature/history-memory-{cols}"));
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let mut sessions = Vec::with_capacity(50);
+    for index in 0..50 {
+        let summary = fixture.create_session_summary(
+            &format!("history-memory-{index}"),
+            history_memory_shell(index, cols),
+        );
+        fixture.record_process_group(&summary);
+        sessions.push(summary.id);
+        let ready = format!("HISTORY_MEMORY_READY_{index}");
+        fixture.wait_terminal_contains(summary.id, &ready);
+
+        let selected = history_request(
+            &mut dashboard,
+            index as u64 + 2,
+            Request::Select {
+                session: summary.id,
+                size: ovrcr::session::TerminalSize { rows: 24, cols },
+            },
+        );
+        let Response::Screen { size, .. } = selected else {
+            panic!("select returned {selected:?}");
+        };
+        assert_eq!(
+            size,
+            ovrcr::session::TerminalSize { rows: 24, cols },
+            "geometry was not applied before fill for session {index}"
+        );
+        let Response::TerminalText { size, .. } = fixture.request(Request::ReadTerminal {
+            session: summary.id,
+            max_lines: Some(1),
+        }) else {
+            panic!("ReadTerminal did not return terminal text for session {index}");
+        };
+        assert_eq!(
+            size,
+            ovrcr::session::TerminalSize { rows: 24, cols },
+            "ReadTerminal reported the wrong geometry for session {index}"
+        );
+    }
+    assert_eq!(
+        sessions.len(),
+        50,
+        "memory run must measure exactly 50 sessions"
+    );
+    let process_id = std::process::id();
+    let before_fill = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_before_fill_after_ready={before_fill} session_count={}",
+        sessions.len()
+    );
+
+    for (index, session) in sessions.iter().copied().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session,
+                text: "go".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        let done = format!("HISTORY_MEMORY_DONE_1_{index}");
+        wait_memory_marker(
+            &fixture,
+            &mut dashboard,
+            session,
+            &done,
+            Instant::now() + Duration::from_secs(30),
+        );
+        println!("MEMORY_FILL_DONE geometry_cols={cols} session_index={index}");
+    }
+
+    let after_first_fill = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_after_first_fill_before_probes={after_first_fill} first_fill_retention_delta_kib={} session_count={}",
+        after_first_fill.saturating_sub(before_fill),
+        sessions.len()
+    );
+
+    let mut next_request_id = 1000_u64;
+    let first_rows =
+        history_memory_probe_all(&mut dashboard, &sessions, cols, 1, &mut next_request_id);
+    assert_eq!(first_rows.len(), sessions.len());
+    let after_first_probes = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_after_first_probes={after_first_probes} first_probe_allocator_delta_kib={} retained_sessions={}",
+        after_first_probes.saturating_sub(after_first_fill),
+        sessions.len()
+    );
+
+    for (index, session) in sessions.iter().copied().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session,
+                text: "again".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        let done = format!("HISTORY_MEMORY_DONE_2_{index}");
+        wait_memory_marker(
+            &fixture,
+            &mut dashboard,
+            session,
+            &done,
+            Instant::now() + Duration::from_secs(30),
+        );
+        println!("MEMORY_FILL_DONE geometry_cols={cols} fill_stage=2 session_index={index}");
+    }
+    let after_second_fill = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_after_second_fill_before_probes={after_second_fill} second_fill_growth_after_first_probes_kib={} session_count={}",
+        after_second_fill.saturating_sub(after_first_probes),
+        sessions.len()
+    );
+    let second_rows =
+        history_memory_probe_all(&mut dashboard, &sessions, cols, 2, &mut next_request_id);
+    assert_eq!(second_rows.len(), sessions.len());
+    let after_second_probes = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_after_second_probes={after_second_probes} second_probe_allocator_delta_kib={} retained_sessions={}",
+        after_second_probes.saturating_sub(after_second_fill),
+        sessions.len()
+    );
+
+    let final_session = sessions[0];
+    let final_begin_id = next_request_id;
+    next_request_id += 1;
+    let final_opened = history_request(
+        &mut dashboard,
+        final_begin_id,
+        Request::HistoryBegin {
+            session: final_session,
+        },
+    );
+    let Response::HistoryOpened(final_opened) = final_opened else {
+        panic!("final held history begin returned {final_opened:?}");
+    };
+    assert_eq!(final_opened.history_rows, HISTORY_ROWS as u32);
+    let held_snapshot = final_opened.snapshot;
+    let held_rss = current_rss_kib();
+    println!(
+        "MEMORY_MEASUREMENT geometry_cols={cols} pid={process_id} rss_units=KiB rss_with_one_held_snapshot={held_rss} held_session={} held_snapshot={} retained_rows={} retained_sessions={}",
+        final_session.0,
+        held_snapshot.0,
+        final_opened.history_rows,
+        sessions.len()
+    );
+    let final_end_id = next_request_id;
+    assert_eq!(
+        history_request(
+            &mut dashboard,
+            final_end_id,
+            Request::HistoryEnd {
+                session: final_session,
+                snapshot: held_snapshot,
+            },
+        ),
+        Response::Ok
+    );
+    drop(dashboard);
+
+    let groups = fixture.process_groups.lock().unwrap().clone();
+    fixture.shutdown_kill();
+    assert_eq!(
+        groups.len(),
+        50,
+        "memory run must own exactly 50 process groups"
+    );
+    assert!(
+        groups
+            .iter()
+            .all(|pgid| wait_group_absent(*pgid, Duration::from_secs(2))),
+        "memory run left an owned process group"
+    );
+    println!(
+        "MEMORY_CLEANUP geometry_cols={cols} process_groups_clean=true server_thread_joined=true"
+    );
+}
+
+#[test]
+fn history_reattach_reads_retained_output() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, "feature/history-reattach");
+    let session = history_ready_shell(&fixture);
+    fixture.wait_terminal_contains(session, "HISTORY_READY");
+
+    let mut first = HistoryConnection::connect(&fixture.socket);
+    let hello = history_request(&mut first, 1, Request::DashboardHello);
+    assert!(matches!(hello, Response::Hierarchy(_)));
+    let screen = history_request(
+        &mut first,
+        2,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+        },
+    );
+    let Response::Screen { bytes, .. } = screen else {
+        panic!("select did not return a screen");
+    };
+    let mut parser = vt100::Parser::new(24, 80, HISTORY_ROWS);
+    parser.process(&bytes);
+    assert!(parser.screen().contents().contains("HISTORY_READY"));
+    drop(first);
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "go".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(session);
+
+    let mut reattached = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut reattached, 10, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let screen = history_request(
+        &mut reattached,
+        11,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+        },
+    );
+    let Response::Screen { bytes, .. } = screen else {
+        panic!("reattached select did not return a screen");
+    };
+    let live_text = String::from_utf8_lossy(&bytes);
+    assert!(live_text.contains("FINAL_HISTORY_MARKER"));
+    assert!(!live_text.contains("DETACHED_OFFSCREEN_000"));
+
+    let opened_id = 12;
+    let opened = history_request(
+        &mut reattached,
+        opened_id,
+        Request::HistoryBegin { session },
+    );
+    let Response::HistoryOpened(opened) = opened else {
+        panic!("history begin returned {opened:?}");
+    };
+    assert!(
+        history_response_size(opened_id, &Response::HistoryOpened(opened.clone())) <= PAGE_BYTES
+    );
+    assert!(opened.history_rows > 0);
+    let rows = history_page_all(&mut reattached, session, opened.snapshot, &opened, &mut 13);
+    let retained_rows = &rows[..opened.history_rows as usize];
+    assert!(history_rows_text(retained_rows).contains("DETACHED_OFFSCREEN_000"));
+    assert!(history_rows_text(&rows).contains("FINAL_HISTORY_MARKER"));
+    assert_eq!(
+        history_request(
+            &mut reattached,
+            1000,
+            Request::HistoryEnd {
+                session,
+                snapshot: opened.snapshot,
+            },
+        ),
+        Response::Ok
+    );
+    drop(reattached);
+
+    fixture.shutdown_kill();
+    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
+        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    }
+}
+
+#[test]
+fn history_frozen_page_survives_eviction_and_exit() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, "feature/history-eviction");
+    let session = history_ready_shell(&fixture);
+    fixture.wait_terminal_contains(session, "HISTORY_READY");
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let screen = history_request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+        },
+    );
+    let Response::Screen { bytes, .. } = screen else {
+        panic!("select did not return a screen");
+    };
+    let mut parser = vt100::Parser::new(24, 80, HISTORY_ROWS);
+    parser.process(&bytes);
+    assert!(parser.screen().contents().contains("HISTORY_READY"));
+
+    let begin_id = 3;
+    let begin = history_request(&mut dashboard, begin_id, Request::HistoryBegin { session });
+    let Response::HistoryOpened(opened) = begin else {
+        panic!("history begin returned {begin:?}");
+    };
+    let frozen_rows = history_page_all(&mut dashboard, session, opened.snapshot, &opened, &mut 4);
+    let frozen_text = history_rows_text(&frozen_rows);
+    assert!(frozen_text.contains("OLD_VISIBLE"));
+    assert!(!frozen_text.contains("FINAL_HISTORY_MARKER"));
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: "go".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(session);
+
+    let frozen_again =
+        history_page_all(&mut dashboard, session, opened.snapshot, &opened, &mut 100);
+    assert_eq!(frozen_again, frozen_rows);
+    assert!(history_rows_text(&frozen_again).contains("OLD_VISIBLE"));
+    assert!(!history_rows_text(&frozen_again).contains("FINAL_HISTORY_MARKER"));
+    assert_eq!(
+        history_request(
+            &mut dashboard,
+            200,
+            Request::HistoryEnd {
+                session,
+                snapshot: opened.snapshot,
+            },
+        ),
+        Response::Ok
+    );
+
+    let new_begin_id = 201;
+    let new_begin = history_request(
+        &mut dashboard,
+        new_begin_id,
+        Request::HistoryBegin { session },
+    );
+    let Response::HistoryOpened(new_opened) = new_begin else {
+        panic!("new history begin returned {new_begin:?}");
+    };
+    assert_eq!(
+        new_opened.history_rows,
+        u32::try_from(HISTORY_ROWS).unwrap()
+    );
+    let new_rows = history_page_all(
+        &mut dashboard,
+        session,
+        new_opened.snapshot,
+        &new_opened,
+        &mut 202,
+    );
+    let new_text = history_rows_text(&new_rows);
+    assert!(new_text.contains("FINAL_HISTORY_MARKER"));
+    assert!(!new_text.contains("OLD_VISIBLE"));
+    assert_eq!(
+        history_request(
+            &mut dashboard,
+            300,
+            Request::HistoryEnd {
+                session,
+                snapshot: new_opened.snapshot,
+            },
+        ),
+        Response::Ok
+    );
+    drop(dashboard);
+
+    fixture.shutdown_kill();
+    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
+        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    }
+}
+
+#[test]
+fn history_slow_dashboard_recovers_after_finite_burst() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    history_workspace(&fixture, "feature/history-slow-dashboard");
+    let summary = fixture.create_session_summary(
+        "history-burst",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "i=0; while [ \"$i\" -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\\n'".into(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    let session = summary.id;
+
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
+    assert!(matches!(
+        history_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let selected = history_request(
+        &mut dashboard,
+        2,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+        },
+    );
+    assert!(matches!(selected, Response::Screen { .. }));
+    fixture.wait_exited(session);
+
+    let drain_deadline = Instant::now() + Duration::from_secs(2);
+    let mut dirty = false;
+    while Instant::now() < drain_deadline {
+        match dashboard.next(Instant::now() + Duration::from_millis(50)) {
+            Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
+                session: dirty_session,
+            }))) if dirty_session == session => dirty = true,
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                break;
+            }
+            Err(error) => panic!("draining slow dashboard failed: {error}"),
+        }
+    }
+    assert!(dirty, "finite burst did not emit dirty recovery");
+
+    let recovered = history_request(
+        &mut dashboard,
+        3,
+        Request::Select {
+            session,
+            size: ovrcr::session::TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+        },
+    );
+    assert!(matches!(recovered, Response::Screen { .. }));
+    let begin_id = 4;
+    let begin = history_request(&mut dashboard, begin_id, Request::HistoryBegin { session });
+    let Response::HistoryOpened(opened) = begin else {
+        panic!("history begin after dirty recovery returned {begin:?}");
+    };
+    let rows = history_page_all(&mut dashboard, session, opened.snapshot, &opened, &mut 5);
+    assert!(history_rows_text(&rows).contains("FINAL_HISTORY_MARKER"));
+    assert_eq!(
+        history_request(
+            &mut dashboard,
+            1000,
+            Request::HistoryEnd {
+                session,
+                snapshot: opened.snapshot,
+            },
+        ),
+        Response::Ok
+    );
+    drop(dashboard);
+    fixture.shutdown_kill();
+    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
+        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
     }
 }
 

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::context::{ContextUsageSnapshot, validate_context};
-use ovrcr_protocol::{AgentReport, AgentUpdate};
-use ovrcr_terminal::{encode_paste, vt100};
+use ovrcr_protocol::{AgentReport, AgentUpdate, HISTORY_ROWS, HistorySnapshotId};
+use ovrcr_terminal::{encode_paste, history::FrozenHistory, vt100};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::Write;
@@ -106,12 +106,16 @@ struct JoinHandles {
     waiter: Option<JoinHandle<()>>,
 }
 
+struct TerminalState {
+    parser: vt100::Parser,
+    revision: u64,
+}
+
 pub struct Session {
     summary: SessionSummary,
     state: Mutex<SessionState>,
     state_changed: Condvar,
-    parser: Mutex<vt100::Parser>,
-    parser_revision: Mutex<u64>,
+    terminal: Mutex<TerminalState>,
     parser_changed: Condvar,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -120,6 +124,8 @@ pub struct Session {
     signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
     signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
+    #[cfg(test)]
+    history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
@@ -255,8 +261,10 @@ impl Session {
                 context_order: ReportOrder::default(),
             }),
             state_changed: Condvar::new(),
-            parser: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
-            parser_revision: Mutex::new(0),
+            terminal: Mutex::new(TerminalState {
+                parser: vt100::Parser::new(size.rows, size.cols, HISTORY_ROWS),
+                revision: 0,
+            }),
             parser_changed: Condvar::new(),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -272,6 +280,8 @@ impl Session {
             signal_hook,
             #[cfg(test)]
             signal_result_hook,
+            #[cfg(test)]
+            history_capture_hook: Mutex::new(None),
         });
 
         let reader_session = Arc::clone(&session);
@@ -364,20 +374,18 @@ impl Session {
                 pixel_height: 0,
             })
             .context("resize PTY")?;
-        self.parser
-            .lock()
-            .unwrap()
-            .screen_mut()
-            .set_size(size.rows, size.cols);
+        let mut terminal = self.terminal.lock().unwrap();
+        terminal.parser.screen_mut().set_size(size.rows, size.cols);
+        terminal.revision = terminal.revision.saturating_add(1);
         Ok(())
     }
 
     pub fn apply_event(&self, event: SessionEvent) {
         match event {
             SessionEvent::Output { id, bytes } if id == self.summary.id => {
-                self.parser.lock().unwrap().process(&bytes);
-                let mut revision = self.parser_revision.lock().unwrap();
-                *revision = revision.saturating_add(1);
+                let mut terminal = self.terminal.lock().unwrap();
+                terminal.parser.process(&bytes);
+                terminal.revision = terminal.revision.saturating_add(1);
                 self.parser_changed.notify_all();
             }
             SessionEvent::Exited { id, phase } if id == self.summary.id => {
@@ -433,22 +441,49 @@ impl Session {
     }
 
     pub fn current_screen(&self) -> Vec<u8> {
-        self.parser.lock().unwrap().screen().state_formatted()
+        let mut terminal = self.terminal.lock().unwrap();
+        terminal.parser.screen_mut().set_scrollback(0);
+        terminal.parser.screen().state_formatted()
     }
 
     pub fn terminal_text(&self) -> (TerminalSize, String) {
-        let parser = self.parser.lock().unwrap();
-        let screen = parser.screen();
+        let mut terminal = self.terminal.lock().unwrap();
+        terminal.parser.screen_mut().set_scrollback(0);
+        let screen = terminal.parser.screen();
         let (rows, cols) = screen.size();
         (TerminalSize { rows, cols }, screen.contents())
     }
 
-    pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
-        self.admit_input().map_err(anyhow::Error::new)?;
-        let bytes = {
-            let parser = self.parser.lock().unwrap();
-            encode_paste(text, parser.screen().bracketed_paste())
+    pub fn capture_history(&self, snapshot: HistorySnapshotId) -> Result<FrozenHistory> {
+        let (revision, screen) = {
+            let terminal = self.terminal.lock().unwrap();
+            (terminal.revision, terminal.parser.screen().clone())
         };
+        #[cfg(test)]
+        if let Some(hook) = self.history_capture_hook.lock().unwrap().clone() {
+            hook();
+        }
+        FrozenHistory::capture(self.summary.id, snapshot, revision, screen)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_terminal_lock_for_test(&self, operation: impl FnOnce()) {
+        let _terminal = self.terminal.lock().unwrap();
+        operation();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_history_capture_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.history_capture_hook.lock().unwrap() = hook;
+    }
+
+    pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
+        let bracketed_paste = {
+            let terminal = self.terminal.lock().unwrap();
+            terminal.parser.screen().bracketed_paste()
+        };
+        let bytes = encode_paste(text, bracketed_paste);
+        self.admit_input().map_err(anyhow::Error::new)?;
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(&bytes).context("write text to PTY")?;
         if submit {
@@ -459,9 +494,9 @@ impl Session {
     }
 
     pub fn wait_for_output(&self, timeout: Duration) {
-        let revision = self.parser_revision.lock().unwrap();
-        if *revision == 0 {
-            let _ = self.parser_changed.wait_timeout(revision, timeout);
+        let terminal = self.terminal.lock().unwrap();
+        if terminal.revision == 0 {
+            let _ = self.parser_changed.wait_timeout(terminal, timeout);
         }
     }
 
