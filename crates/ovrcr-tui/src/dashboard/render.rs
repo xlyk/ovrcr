@@ -102,26 +102,36 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
     }
     for screen_row in 0..bounded.height {
         let absolute_row = view.top.saturating_add(u32::from(screen_row));
-        let Some((page, history_row)) = view.pages.iter().find_map(|page| {
-            let end = page.start_row.saturating_add(page.rows.len() as u32);
-            if absolute_row >= page.start_row && absolute_row < end {
-                Some((page, &page.rows[(absolute_row - page.start_row) as usize]))
-            } else {
-                None
-            }
-        }) else {
-            continue;
-        };
         for screen_col in 0..bounded.width {
             let absolute_col = u32::from(view.left).saturating_add(u32::from(screen_col));
             if absolute_col > u32::from(u16::MAX) {
                 continue;
             }
             let absolute_col = absolute_col as u16;
-            if absolute_col < page.start_col || absolute_col >= history_row.width {
+            let Some((page_start_col, history_row)) = view
+                .pages
+                .iter()
+                .filter_map(|page| {
+                    let end = page.start_row.saturating_add(page.rows.len() as u32);
+                    if absolute_row >= page.start_row && absolute_row < end && !page.rows.is_empty()
+                    {
+                        Some((
+                            page.start_col,
+                            &page.rows[(absolute_row - page.start_row) as usize],
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .filter(|(start_col, _)| absolute_col >= *start_col)
+                .max_by_key(|(start_col, _)| *start_col)
+            else {
+                continue;
+            };
+            if absolute_col < page_start_col || absolute_col >= history_row.width {
                 continue;
             }
-            let index = usize::from(absolute_col - page.start_col);
+            let index = usize::from(absolute_col - page_start_col);
             let Some(history_cell) = history_row.cells.get(index) else {
                 continue;
             };
@@ -162,6 +172,71 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
             cell.modifier = modifier;
         }
     }
+}
+
+fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
+    let viewport = history_view_size(pane_size);
+    let row_end = view
+        .top
+        .saturating_add(u32::from(viewport.rows))
+        .min(view.opened.total_rows);
+    let col_end = u32::from(view.left)
+        .saturating_add(u32::from(viewport.cols))
+        .min(u32::from(u16::MAX).saturating_add(1));
+    let mut missing = false;
+    let mut has_content = false;
+    let mut row_start = (view.top / 16) * 16;
+    while row_start < row_end {
+        let mut col_start = (u32::from(view.left) / 128) * 128;
+        while col_start < col_end {
+            let Some(page_start_col) = u16::try_from(col_start).ok() else {
+                break;
+            };
+            let cached = view.pages.iter().find(|page| {
+                page.snapshot == view.opened.snapshot
+                    && page.start_row == row_start
+                    && page.start_col == page_start_col
+            });
+            let Some(page) = cached else {
+                missing = true;
+                col_start = col_start.saturating_add(128);
+                continue;
+            };
+            has_content |= page.rows.iter().any(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.width != 0 && !cell.text.is_empty())
+            });
+            col_start = col_start.saturating_add(128);
+        }
+        row_start = row_start.saturating_add(16);
+    }
+    let status = if missing || view.pending.is_some() {
+        "loading"
+    } else if has_content {
+        "loaded"
+    } else {
+        "empty"
+    };
+    let row_end = row_end.max(view.top);
+    let col_end = col_end.max(u32::from(view.left));
+    let output = if view.new_output {
+        "HISTORY · frozen · new output"
+    } else {
+        "HISTORY · frozen"
+    };
+    let limit = if pane_size.rows > viewport.rows || pane_size.cols > viewport.cols {
+        " · viewport limit"
+    } else {
+        ""
+    };
+    format!(
+        "{output} · {status} · row {}-{} · col {}-{}{limit}",
+        view.top.saturating_add(1),
+        row_end,
+        u32::from(view.left).saturating_add(1),
+        col_end,
+    )
 }
 
 fn history_color(value: HistoryColor, default: Color) -> Color {
@@ -334,22 +409,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     if layout.metadata.height > 1 {
         let metadata_hint = dashboard.history.as_ref().map_or_else(
             || "─".repeat(usize::from(layout.metadata.width)),
-            |view| {
-                let output = if view.new_output {
-                    "HISTORY · frozen · new output"
-                } else {
-                    "HISTORY · frozen"
-                };
-                let viewport = history_view_size(dashboard.pane_size);
-                let limit = if dashboard.pane_size.rows > viewport.rows
-                    || dashboard.pane_size.cols > viewport.cols
-                {
-                    " · viewport limit"
-                } else {
-                    ""
-                };
-                format!("{output}{limit}")
-            },
+            |view| history_hint(view, dashboard.pane_size),
         );
         frame.render_widget(
             Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),

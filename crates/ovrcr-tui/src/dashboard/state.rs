@@ -117,6 +117,7 @@ impl Dashboard {
             history_begin_request: None,
             tree_offset: 0,
             next_request_id: 1,
+            history_page_error: false,
             history_end_after_selection: None,
         }
     }
@@ -332,6 +333,8 @@ impl Dashboard {
         if self.history.is_some() || self.history_begin_request.is_some() {
             return DashboardAction::Redraw;
         }
+        self.history_page_error = false;
+        self.error = None;
         let request_id = self.next_request_id();
         self.history_begin_request = Some(PendingHistoryBegin {
             request_id,
@@ -384,6 +387,8 @@ impl Dashboard {
             KeyCode::Enter => return DashboardAction::None,
             _ => return DashboardAction::None,
         }
+        self.history_page_error = false;
+        self.error = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
     }
@@ -429,6 +434,9 @@ impl Dashboard {
     }
 
     pub(super) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
+        if self.history_page_error {
+            return None;
+        }
         let (start_row, start_col, rows, cols, session, snapshot) = {
             let view = self.history.as_mut()?;
             if view.pending.is_some() {
@@ -650,7 +658,8 @@ impl Dashboard {
                         }
                     }
                 }
-                Response::Ok => self.error = None,
+                Response::Ok if !self.history_page_error => self.error = None,
+                Response::Ok => {}
                 Response::CreatedSession(_)
                 | Response::Inventory { .. }
                 | Response::TerminalText { .. } => self.error = None,
@@ -687,6 +696,7 @@ impl Dashboard {
                         if let Some(view) = self.history.as_mut() {
                             view.pending = None;
                         }
+                        self.history_page_error = true;
                         matched_history = true;
                     }
                     self.error = Some(format!("{code:?}: {message}"));

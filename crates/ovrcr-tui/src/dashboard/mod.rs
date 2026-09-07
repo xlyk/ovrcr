@@ -72,6 +72,7 @@ pub struct Dashboard {
     pub history_begin_request: Option<PendingHistoryBegin>,
     tree_offset: usize,
     next_request_id: u64,
+    history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
 }
 
