@@ -68,7 +68,7 @@ No historical scrolling, copy selection, pane splitting, configurable bindings, 
 
 ## File and interface map
 
-Production changes stay in `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,mod}.rs` and `render.rs` only where the existing terminal rectangle is consumed. Existing runtime/protocol/server code needs no new wire type. Add focused tests to root `tests/tui.rs` and `tests/terminal_acceptance.rs`; add the raw fixture in `tests/support/mouse_app.rs`. `src/lib.rs` continues to re-export the TUI facade and `src/main.rs`/`src/cli/` are outside this feature. `README.md` can be updated only during later implementation, after acceptance; this planning task edits this plan alone.
+Production changes stay in `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,mod,terminal_guard}.rs` and `render.rs` only where the existing terminal rectangle is consumed. Existing runtime/protocol/server code needs no new wire type. Add focused tests to root `tests/tui.rs` and `tests/terminal_acceptance.rs`; add the raw fixture in `tests/support/mouse_app.rs`. `src/lib.rs` continues to re-export the TUI facade and `src/main.rs`/`src/cli/` are outside this feature. `README.md` can be updated only during later implementation, after acceptance; this planning task edits this plan alone.
 
 Expose the pure encoder alongside `encode_key` and `encode_paste`:
 
@@ -123,7 +123,7 @@ fn reconcile_mouse_protocol(&mut self); // clear state after parsed mode changes
 ### Workspace handoff
 
 - Mouse routing and parser-mode inspection belong to `ovrcr-tui::dashboard::{input,state,event_loop}` with rendering geometry in `dashboard::render`; the application imports the public facade from `ovrcr_tui` through root `src/lib.rs`.
-- The selected-session identity, terminal size, and mouse protocol enums are re-exported by `ovrcr_protocol`; their wire definitions remain in `crates/ovrcr-protocol/src/wire.rs`. PTY/parser ownership stays in `ovrcr_runtime::session`, and no new runtime or protocol message is needed.
+- The selected-session identity, terminal size, and other shared request records are re-exported by `ovrcr_protocol`; their wire definitions remain in `crates/ovrcr-protocol/src/wire.rs`. `MouseProtocolMode` and `MouseProtocolEncoding` are VT100 types reached through the `ovrcr_terminal::vt100` re-export, while PTY/parser ownership stays in `ovrcr_runtime::session`; no new runtime or protocol message is needed.
 - Focused checks are `rtk proxy cargo test -p ovrcr --test tui mouse_ -- --nocapture`, `rtk proxy cargo test -p ovrcr --test terminal_acceptance mouse_ -- --nocapture`, and `rtk proxy cargo check -p ovrcr-tui --all-targets`; the real executable path is `rtk proxy cargo run -p ovrcr --`.
 - The root `src/gui.rs`, `src/gui/input.rs`, `src/bin/ovrcr-gui.rs`, and `tests/gui.rs` remain optional helper surfaces. Their current click-only encoder cannot establish wheel/drag acceptance and is not part of this plan's production path.
 
@@ -183,7 +183,7 @@ if x > limit || y > limit { return None; }
 
 ## Task 2: Route owned gestures through the real terminal geometry
 
-**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop}.rs`; `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,terminal_guard}.rs`; `tests/tui.rs`.
 
 **Consumes:** Task 1 encoder and `actual_drawn_inner_rect`. **Produces:** terminal branch of `mouse_action`, held-state cancellation, and bounded cleanup.
 
@@ -280,7 +280,7 @@ dashboard.wait_for(b"MOUSE_CHECK_1:1b5b3c303b333b344d1b5b3c303b333b346d:END",
 
 - [ ] Run `rtk proxy cargo test -p ovrcr --test tui`; require all discovered nonignored tests to run, including the 9 new mouse tests. Record the actual nonzero total; do not invent a baseline total.
 - [ ] Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance default_dashboard_acceptance_wrapper_exercises_pty_controls -- --exact --nocapture`; require exactly 1 test, existing nonzero latency samples, and its p95 assertions.
-- [ ] Run `rtk proxy cargo test -p ovrcr-tui --lib`; require nonzero execution and terminal guard restoration checks. Run `rtk proxy cargo fmt --all -- --check` and `rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings` after source changes.
+- [ ] Run `rtk proxy cargo test -p ovrcr-tui --lib -- --nocapture` for the TUI unit suite (3 existing dashboard tests), then `rtk proxy cargo test -p ovrcr --test tui terminal_guard_ -- --nocapture` for the 3 existing root terminal-guard tests. Run `rtk proxy cargo fmt --all -- --check` and `rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings` after source changes.
 - [ ] In a real macOS/Linux terminal, use a mouse-aware application such as Vim with `:set mouse=a`: click to position, drag selection, wheel, press Ctrl-g, change sessions, resize while held, and return. Record the app/host versions and visible result. Turn application mouse off and verify host selection behavior returns. Unavailable platform/UI evidence remains unverified.
 - [ ] The disposable GUI helper can validate clicks and Ctrl-g with `rtk proxy just gui`, but its current encoder lacks drag/wheel. Use a real terminal for the complete gate. If extending that helper is separately authorized, change `src/gui/input.rs`, `src/bin/ovrcr-gui.rs`, and `tests/gui.rs` to add pointer position/button state and wheel/motion translation; do not claim those events were covered by today's click-only helper.
 

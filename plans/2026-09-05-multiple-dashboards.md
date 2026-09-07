@@ -191,7 +191,7 @@ write_frame(&mut bytes, &message).unwrap();
 assert_eq!(read_frame::<ClientMessage>(&mut bytes.as_slice()).unwrap(), message);
 ```
 
-- [ ] Run `rtk proxy cargo test -p ovrcr-protocol --lib multi_dashboard_ -- --nocapture`: at this task's completion **2 passed**. Implement the types and constructor migration; retain the existing malformed/oversize checks.
+- [ ] Run the owning unit gates separately: `rtk proxy cargo test -p ovrcr-protocol --lib multi_dashboard_control_frames_round_trip -- --exact --nocapture` (exactly **1 test**) and `rtk proxy cargo test -p ovrcr-runtime --lib server::tests::multi_dashboard_zero_identity_is_not_client_supplied -- --exact --nocapture` (exactly **1 test**). Implement the types and constructor migration; retain the existing malformed/oversize checks.
 - [ ] Replace role-only dashboard authorization in `handle_request` test callers with an actually registered ID; control callers pass None. Do not create a compatibility path that bypasses registration.
 
 ### Task 2: Give every dashboard independent routing and lifetime
@@ -212,7 +212,7 @@ let recipients = {
 for id in recipients { send_dashboard(state, id, message.clone(), None); }
 ```
 
-- [ ] Run `rtk proxy cargo test -p ovrcr --test server_lifecycle multiple_dashboards_ -- --nocapture`: **2 passed** at this step. Run `rtk proxy cargo test -p ovrcr-runtime --lib multi_dashboard_disconnect_is_idempotent_and_local -- --exact --nocapture`: **1 passed**.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test server_lifecycle multiple_dashboards_ -- --nocapture`: **2 root integration tests passed** at this step. Run `rtk proxy cargo test -p ovrcr-runtime --lib server::tests::multi_dashboard_disconnect_is_idempotent_and_local -- --exact --nocapture`: **1 runtime unit test passed**.
 
 ### Task 3: Serialize input authority and actual PTY geometry
 
@@ -280,7 +280,7 @@ let full = queue.messages.len() == DASHBOARD_QUEUE
 - [ ] Carry the charged encoded length beside each DashboardOutbound; serialization scratch is one bounded frame, not cached copies of all frames. Set dashboard socket write timeout to two seconds. A timed-out partial frame closes the socket; never resume with another frame. A short stall recovers via dirty notification, and a longer stall disconnects only that dashboard.
 - [ ] Assert healthy peer receives the final burst marker after output stops; stalled peer either receives exactly one dirty notification followed by a matching fresh screen, or EOF after timeout. Separately force queue saturation in a unit test to prove dirty recovery without relying on kernel buffer timing. Verify both peers still get hierarchy changes where connected.
 - [ ] Shutdown marks stopping under mutation_lock before termination and rejects later input/claims/mutations; on partial termination failure restore the available state and return PartialFailure. Reject ordinary shutdown with retained sessions before setting stopping. No input completion needs mutation_lock, so a blocked admitted write stays killable. Deliver the requester's acknowledgement through its writer with a **three-second completion deadline**, then close all dashboard sockets whether acknowledgement succeeded or timed out; preserve the existing disconnected-requester wakeup. Reader handlers must join their writers. Add `active_dashboard_handlers: Mutex<usize>` and `dashboard_handlers_changed: Condvar` to ServerState; increment upon admitted hello and decrement/notify from a reader scope guard after writer join. Wait at most three seconds for zero after terminating sessions and closing sockets, returning a teardown error instead of claiming clean shutdown on timeout.
-- [ ] Verify a healthy shutdown requester succeeds despite another blocked writer; also test the blocked dashboard as requester. Require socket removal, every dashboard EOF, no managed PGIDs, and zero active dashboard handlers. Run `rtk proxy cargo test -p ovrcr --test server_lifecycle multiple_dashboards_ -- --nocapture`: now **6 passed**. Add unit `multi_dashboard_queue_bytes_and_epoch_recovery` in `crates/ovrcr-runtime/src/server/tests.rs`; run its exact runtime unit path and require **1 passed**.
+- [ ] Verify a healthy shutdown requester succeeds despite another blocked writer; also test the blocked dashboard as requester. Require socket removal, every dashboard EOF, no managed PGIDs, and zero active dashboard handlers. Run `rtk proxy cargo test -p ovrcr --test server_lifecycle multiple_dashboards_ -- --nocapture`: now **6 root integration tests passed**. Add unit `multi_dashboard_queue_bytes_and_epoch_recovery` in `crates/ovrcr-runtime/src/server/tests.rs`; run `rtk proxy cargo test -p ovrcr-runtime --lib server::tests::multi_dashboard_queue_bytes_and_epoch_recovery -- --exact --nocapture` and require **1 runtime unit test passed**.
 
 ### Task 5: Show ownership and make observer rendering truthful
 

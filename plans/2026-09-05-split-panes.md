@@ -146,8 +146,8 @@ Each task follows RED → implementation → GREEN. Run the named command before
 ### Workspace handoff
 
 - Direct imports use the public `ovrcr_protocol` re-exports backed by `crates/ovrcr-protocol/src/wire.rs` for pane/view messages; the current `wire` module is private. Runtime dispatch and authority use `ovrcr_runtime::server`, while pane state/input/rendering remain private children of `ovrcr_tui::dashboard` exposed through its facade. The root application continues to consume that facade through `src/lib.rs`; do not add an application compatibility module.
-- Package-focused unit commands are `rtk proxy cargo test -p ovrcr-protocol --lib split_view_`, `rtk proxy cargo test -p ovrcr-runtime --lib split_delivery_`, and `rtk proxy cargo test -p ovrcr-tui --lib split_state_ split_layout_` as applicable.
-- Root integration commands are `rtk proxy cargo test -p ovrcr --test tui split_`, `rtk proxy cargo test -p ovrcr --test server_lifecycle split_`, and `rtk proxy cargo test -p ovrcr --test terminal_acceptance split_`; dashboard executable checks use `rtk proxy cargo run -p ovrcr --`.
+- Package-focused unit commands are `rtk proxy cargo test -p ovrcr-protocol --lib split_view_ -- --nocapture` (**2 protocol tests**) and `rtk proxy cargo test -p ovrcr-runtime --lib split_delivery_ -- --nocapture` (**3 runtime tests**). The dashboard state/layout cases are root integration tests in `tests/tui.rs`, so run `rtk proxy cargo test -p ovrcr --test tui split_state_ -- --nocapture` (**3 root tests**) and `rtk proxy cargo test -p ovrcr --test tui split_layout_ -- --nocapture` (**2 root tests**).
+- Root integration commands are `rtk proxy cargo test -p ovrcr --test server_lifecycle split_server_ -- --nocapture` (**1 root test**) and `rtk proxy cargo test -p ovrcr --test terminal_acceptance split_terminal_ -- --nocapture` (**1 root test**); dashboard executable checks use `rtk proxy cargo run -p ovrcr --`.
 
 With the recommended order, the dashboard already supports Paused, reported activity/context, History, and Copy. In Task 3, replace single-pane parser access through `focused_session` and pane helpers, including all input, metadata, animation, history-entry, copy-entry, and dirty-recovery callers. Preserve exhaustive mode routing: only Terminal can send application keys/paste; only Browse can split/focus/close by their bindings. The Enter predicate is **Running and ready**, not merely non-Exited.
 
@@ -198,7 +198,7 @@ assert_eq!(read_frame::<ClientMessage>(&mut wire.as_slice()).unwrap(), message);
 
 ### Task 2: Publish two ordered snapshots and bound overflow recovery
 
-**Files:** `crates/ovrcr-runtime/src/server/{mod,dispatch,connections,outbound}.rs` and its owning unit tests; dispatcher variant in `crates/ovrcr-protocol/src/wire.rs`.
+**Files:** `crates/ovrcr-protocol/src/wire.rs` for the wire-level `Request::SetView` shape, and `crates/ovrcr-runtime/src/server/{mod,dispatch,connections,outbound}.rs` plus its owning unit tests for `DispatchMessage::SetView`, dispatch ownership, and completion channels.
 
 **Consumes:** Task 1 view contract and existing dashboard owner identity.
 **Produces:** `dispatch_set_view`, `DashboardSink::replace_view`, owner-scoped view state and revision-tagged delivery.

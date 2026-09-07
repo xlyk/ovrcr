@@ -215,7 +215,7 @@ fn restore_round_trip_keeps_non_utf8_and_empty_args() {
 }
 ```
 
-- [ ] Run `rtk proxy cargo test -p ovrcr-runtime --lib restore_round_trip_keeps_non_utf8_and_empty_args -- --exact`; initial failure must be the absent module/interface, then exactly 1 passing test after implementation.
+- [ ] Run `rtk proxy cargo test -p ovrcr-runtime --lib restore::tests::restore_round_trip_keeps_non_utf8_and_empty_args -- --exact`; initial failure must be the absent module/interface, then exactly 1 passing test after implementation.
 - [ ] Extract the atomic byte writer without changing project/workspace format. Carry a `replaced` boolean set only after successful `fs::rename`.
 
 ```rust
