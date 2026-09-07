@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/ovrcr-protocol", "crates/ovrcr-terminal"]
-default-members = [".", "crates/ovrcr-protocol", "crates/ovrcr-terminal"]
+members = [".", "crates/ovrcr-protocol", "crates/ovrcr-terminal", "crates/ovrcr-runtime"]
+default-members = [".", "crates/ovrcr-protocol", "crates/ovrcr-terminal", "crates/ovrcr-runtime"]
 resolver = "3"
 
 [workspace.package]
@@ -28,6 +28,7 @@ tempfile = "3"
 vt100 = "0.16"
 ovrcr-protocol = { path = "crates/ovrcr-protocol" }
 ovrcr-terminal = { path = "crates/ovrcr-terminal" }
+ovrcr-runtime = { path = "crates/ovrcr-runtime" }
 
 [package]
 name = "ovrcr"
@@ -56,6 +57,7 @@ eframe = { workspace = true, optional = true }
 libc = { workspace = true }
 ovrcr-protocol = { workspace = true }
 ovrcr-terminal = { workspace = true }
+ovrcr-runtime = { workspace = true }
 portable-pty = { workspace = true }
 ratatui = { workspace = true }
 serde = { workspace = true }

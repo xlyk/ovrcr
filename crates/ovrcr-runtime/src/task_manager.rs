@@ -691,7 +691,7 @@ fn git_checked(repo: &Path, args: &[&str], dir: &Path, cancel: &AtomicBool) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ErrorCode, Response};
+    use ovrcr_protocol::{ErrorCode, Response};
     use std::sync::mpsc;
     type Hook = Arc<dyn Fn() + Send + Sync>;
     fn gate() -> (Hook, mpsc::Receiver<()>, mpsc::SyncSender<()>) {

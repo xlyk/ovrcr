@@ -1,8 +1,8 @@
 //! Byte-bounded list pages for the task control protocol.
-use crate::protocol::MAX_FRAME_BYTES;
 use crate::task_manager::TaskResponse;
 use crate::tasks::{Run, Task, TaskId};
 use anyhow::{Context, Result, bail};
+use ovrcr_protocol::MAX_FRAME_BYTES;
 use serde::Serialize;
 
 // Reserve transport headroom plus the response discriminant, vector length and
