@@ -303,8 +303,10 @@ impl Write for FailingWriter {
 
 fn staged_history_copy_dashboard() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
+    dashboard.select_session(SessionId(1));
     dashboard.mode = InputMode::History;
-    dashboard.selected = Some(SessionId(1));
+    dashboard.panes[dashboard.focused_pane].snapshot_installed = true;
+    dashboard.panes[dashboard.focused_pane].ready = true;
     let opened = HistoryOpened {
         session: SessionId(1),
         snapshot: HistorySnapshotId(7),

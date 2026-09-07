@@ -1,10 +1,14 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ovrcr::session::TerminalSize;
+use ovrcr::protocol::{
+    HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage, WorkspaceSummary,
+};
+use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::task_manager::{TaskRequest, TaskResponse};
 use ovrcr::task_tui::{TasksView, Transcript, draw_tasks};
 use ovrcr::tasks::*;
 use ovrcr::tui::{Dashboard, DashboardAction, InputMode};
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use std::path::PathBuf;
 fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
@@ -35,9 +39,53 @@ fn fixture() -> TasksView {
     );
     v
 }
+
+fn ready_dashboard() -> Dashboard {
+    let session = SessionSummary {
+        id: SessionId(1),
+        project: "project".into(),
+        workspace: "workspace".into(),
+        name: "local".into(),
+        label: "shell".into(),
+        pid: Some(1),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.outer_area = Rect::new(0, 0, 80, 24);
+    dashboard.hierarchy = HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "project".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "project".into(),
+                name: "workspace".into(),
+                path: PathBuf::from("/tmp/workspace"),
+                sessions: vec![session],
+            }],
+        }],
+    };
+    dashboard.select_request(SessionId(1), 1);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::Screen {
+            session: SessionId(1),
+            revision: dashboard.view_revision,
+            size: dashboard.panes[dashboard.focused_pane].desired_size,
+            bytes: b"ready".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::Ok,
+    });
+    dashboard
+}
+
 #[test]
 fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
-    let mut d = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    let mut d = ready_dashboard();
     d.ctrl('t');
     assert!(d.tasks.is_some());
     d.event_action(key(KeyCode::Esc));
@@ -281,23 +329,28 @@ fn multiline_cursor_edits_unicode_without_corruption() {
 
 #[test]
 fn dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open() {
-    use ovrcr::protocol::{Request, ServerEvent, ServerMessage};
-    use ovrcr::session::SessionId;
-    let mut d = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
-    d.select_request(SessionId(1), 1);
+    use ovrcr::protocol::Request;
+    let mut d = ready_dashboard();
     d.ctrl('t');
     d.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
-        revision: 0,
+        revision: d.view_revision,
         bytes: b"still draining".to_vec(),
     }));
-    assert!(d.parser.screen().contents().contains("still draining"));
+    assert!(
+        d.panes[d.focused_pane]
+            .parser
+            .screen()
+            .contents()
+            .contains("still draining")
+    );
+    let revision = d.view_revision;
     let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(1),
-        revision: 0,
+        revision,
     }));
     assert_eq!(requests.len(), 1);
-    assert!(matches!(requests[0].request, Request::Select { .. }));
+    assert!(matches!(requests[0].request, Request::SetView { .. }));
     assert!(d.tasks.is_some());
 }
 

@@ -8,13 +8,16 @@ use super::render::{
     METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_gap,
     tree_row_height,
 };
-use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
+use super::{
+    Dashboard, DashboardAction, InputMode, KeyEncoding, RequestedView, TreeRow, history_view_size,
+};
 use crate::protocol::{
-    ClientMessage, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId,
-    Request, Response, ServerEvent, ServerMessage,
+    ClientMessage, DashboardView, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows,
+    HistorySnapshotId, PaneTarget, Request, Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crate::task_tui::TasksView;
+use anyhow::anyhow;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -501,10 +504,11 @@ impl Dashboard {
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
-            selected: None,
             mode: InputMode::Browse,
-            parser: vt100::Parser::new(size.rows, size.cols, 0),
-            pane_size: size,
+            panes: vec![super::PaneState::new(size)],
+            focused_pane: 0,
+            view_revision: 0,
+            outer_area: Rect::new(0, 0, size.cols, size.rows),
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
@@ -517,9 +521,245 @@ impl Dashboard {
             palette: None,
             history_page_error: false,
             history_end_after_selection: None,
-            screen_session: None,
-            pending_screen: None,
+            last_view_request_id: None,
+            pending_view: None,
+            requested_view: None,
+            force_view_refresh: false,
+            view_request_ids: HashSet::new(),
         }
+    }
+
+    pub fn focused_session(&self) -> Option<SessionId> {
+        self.panes
+            .get(self.focused_pane)
+            .and_then(|pane| pane.session)
+    }
+
+    pub(super) fn focused_pane(&self) -> Option<&super::PaneState> {
+        self.panes.get(self.focused_pane)
+    }
+
+    pub(super) fn focused_pane_mut(&mut self) -> Option<&mut super::PaneState> {
+        self.panes.get_mut(self.focused_pane)
+    }
+
+    pub(super) fn focused_size(&self) -> TerminalSize {
+        self.focused_pane()
+            .map_or(TerminalSize { rows: 1, cols: 1 }, |pane| pane.size)
+    }
+
+    pub fn split_pane(&mut self) -> bool {
+        if self.panes.len() >= 2 {
+            return false;
+        }
+        let current = self.focused_session();
+        let sessions = self
+            .visible_rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Session { id } => Some(id),
+                TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let Some(current_index) =
+            current.and_then(|id| sessions.iter().position(|candidate| *candidate == id))
+        else {
+            self.error = Some("No other visible session to split".into());
+            return false;
+        };
+        let Some(session) = (1..sessions.len())
+            .map(|offset| sessions[(current_index + offset) % sessions.len()])
+            .next()
+        else {
+            self.error = Some("No other visible session to split".into());
+            return false;
+        };
+        self.release_for_selection_change();
+        let size = self.focused_size();
+        let mut pane = super::PaneState::new(size);
+        pane.session = Some(session);
+        self.panes.push(pane);
+        self.focused_pane = 1;
+        self.mode = InputMode::Browse;
+        self.requested_view = None;
+        true
+    }
+
+    pub fn focus_pane(&mut self, index: usize) -> bool {
+        if index >= self.panes.len() || index == self.focused_pane {
+            return false;
+        }
+        self.release_for_selection_change();
+        self.focused_pane = index;
+        self.mode = InputMode::Browse;
+        self.requested_view = None;
+        true
+    }
+
+    pub fn close_focused_pane(&mut self) -> bool {
+        if self.panes.len() < 2 {
+            return false;
+        }
+        self.release_for_selection_change();
+        self.panes.remove(self.focused_pane);
+        self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
+        self.mode = InputMode::Browse;
+        self.requested_view = None;
+        true
+    }
+
+    fn desired_view(&self) -> RequestedView {
+        let rects = super::pane_rects(self.outer_area, self.panes.len(), self.focused_pane);
+        let mut targets = Vec::new();
+        for rect in rects {
+            let Some(pane) = self.panes.get(rect.pane_index) else {
+                continue;
+            };
+            let Some(session) = pane.session else {
+                continue;
+            };
+            if rect.terminal.width == 0 || rect.terminal.height == 0 {
+                continue;
+            }
+            targets.push((
+                session,
+                TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                },
+            ));
+        }
+        let focused = self
+            .focused_session()
+            .filter(|session| targets.iter().any(|(id, _)| id == session));
+        RequestedView {
+            revision: self.view_revision,
+            targets,
+            focused,
+        }
+    }
+
+    fn same_view(left: &RequestedView, right: &RequestedView) -> bool {
+        left.targets == right.targets && left.focused == right.focused
+    }
+
+    pub fn view_request(
+        &mut self,
+        area: Rect,
+        request_id: u64,
+    ) -> anyhow::Result<Option<ClientMessage>> {
+        self.outer_area = area;
+        let desired = self.desired_view();
+        let pending_same = self
+            .pending_view
+            .as_ref()
+            .is_some_and(|pending| Self::same_view(&pending.view, &desired));
+        let unchanged = self.pending_view.is_none()
+            && !self.force_view_refresh
+            && self
+                .requested_view
+                .as_ref()
+                .is_some_and(|requested| Self::same_view(requested, &desired));
+        let rects = super::pane_rects(area, self.panes.len(), self.focused_pane);
+        for rect in &rects {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+                if unchanged {
+                    continue;
+                } else if self.pending_view.is_some() {
+                    if !pending_same {
+                        pane.ready = false;
+                    }
+                } else if !pending_same {
+                    pane.ready = false;
+                    pane.snapshot_installed = false;
+                    pane.error = None;
+                }
+            }
+        }
+        if self.pending_view.is_some() {
+            return Ok(None);
+        }
+        if unchanged {
+            return Ok(None);
+        }
+        let revision = self
+            .view_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("dashboard view revision exhausted"))?;
+        self.view_revision = revision;
+        let mut view = desired;
+        view.revision = revision;
+        for (session, size) in &view.targets {
+            if let Some(pane) = self
+                .panes
+                .iter_mut()
+                .find(|pane| pane.session == Some(*session))
+            {
+                pane.desired_size = *size;
+                pane.ready = false;
+                pane.snapshot_installed = false;
+                pane.error = None;
+            }
+        }
+        self.force_view_refresh = false;
+        self.last_view_request_id = Some(request_id);
+        self.view_request_ids.insert(request_id);
+        self.pending_view = Some(super::PendingView {
+            request_id,
+            view: view.clone(),
+        });
+        Ok(Some(ClientMessage {
+            request_id,
+            request: Request::SetView {
+                view: DashboardView {
+                    revision,
+                    panes: view
+                        .targets
+                        .iter()
+                        .map(|(session, size)| PaneTarget {
+                            session: *session,
+                            size: *size,
+                        })
+                        .collect(),
+                    focused: view.focused,
+                },
+            },
+        }))
+    }
+
+    pub fn apply_screen(
+        &mut self,
+        revision: u64,
+        session: SessionId,
+        size: TerminalSize,
+        bytes: &[u8],
+    ) {
+        if revision != self.view_revision
+            || !self.pending_view.as_ref().is_some_and(|pending| {
+                pending.view.revision == revision
+                    && pending.view.targets.iter().any(|(id, _)| *id == session)
+            })
+        {
+            return;
+        }
+        let Some(pane) = self
+            .panes
+            .iter_mut()
+            .find(|pane| pane.session == Some(session))
+        else {
+            return;
+        };
+        pane.size = size;
+        pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
+        pane.parser.process(bytes);
+        pane.snapshot_installed = true;
+        pane.error = None;
+        let rows = self.visible_rows();
+        self.ensure_selection_visible(&rows);
     }
 
     pub(super) fn session_is_busy(&self, id: SessionId) -> bool {
@@ -593,26 +833,27 @@ impl Dashboard {
             })
             .collect::<Vec<_>>();
         if ids.is_empty() {
-            self.selected = None;
+            if let Some(pane) = self.focused_pane_mut() {
+                pane.session = None;
+                pane.ready = false;
+                pane.snapshot_installed = false;
+            }
             return;
         }
         let current = self
-            .selected
+            .focused_session()
             .and_then(|selected| ids.iter().position(|id| *id == selected));
         let index = match current {
             Some(index) => (index as isize + delta).clamp(0, ids.len() as isize - 1) as usize,
             None if delta < 0 => ids.len() - 1,
             None => 0,
         };
-        if self.selected != Some(ids[index]) {
-            self.release_for_selection_change();
-        }
-        self.selected = Some(ids[index]);
+        self.select_session(ids[index]);
         self.ensure_selection_visible(&rows);
     }
 
     pub fn toggle_selected_group(&mut self) {
-        let Some(selected) = self.selected else {
+        let Some(selected) = self.focused_session() else {
             return;
         };
         for project in &self.hierarchy.projects {
@@ -633,22 +874,35 @@ impl Dashboard {
     }
 
     pub fn select_session(&mut self, id: SessionId) {
-        if self.selected != Some(id) {
+        if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
+            self.focus_pane(index);
+        } else if self.focused_session() != Some(id) {
             self.release_for_selection_change();
+            let size = self.focused_size();
+            if let Some(pane) = self.focused_pane_mut() {
+                pane.session = Some(id);
+                pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
+                pane.size = size;
+                pane.desired_size = size;
+                pane.snapshot_installed = false;
+                pane.ready = false;
+                pane.error = None;
+            }
+            self.requested_view = None;
+            self.mode = InputMode::Browse;
         }
-        self.selected = Some(id);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
     }
 
     fn tree_viewport_height(&self) -> usize {
-        usize::from(self.pane_size.rows)
+        usize::from(self.focused_size().rows)
             .saturating_add(usize::from(METADATA_HEIGHT))
             .max(1)
     }
 
     fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
-        let Some(selected) = self.selected else {
+        let Some(selected) = self.focused_session() else {
             return;
         };
         let Some(index) = rows
@@ -716,13 +970,32 @@ impl Dashboard {
                     KeyCode::PageUp => self.begin_history_request(),
                     KeyCode::Char('p') => self.pause_request(true),
                     KeyCode::Char('r') => self.pause_request(false),
+                    KeyCode::Char('v') => {
+                        self.split_pane();
+                        DashboardAction::Redraw
+                    }
+                    KeyCode::Char('x') => {
+                        self.close_focused_pane();
+                        DashboardAction::Redraw
+                    }
+                    KeyCode::Tab => {
+                        if self.panes.len() == 2 {
+                            self.focus_pane((self.focused_pane + 1) % 2);
+                        }
+                        DashboardAction::Redraw
+                    }
+                    KeyCode::BackTab => {
+                        if self.panes.len() == 2 {
+                            self.focus_pane((self.focused_pane + 1) % 2);
+                        }
+                        DashboardAction::Redraw
+                    }
                     KeyCode::Enter => {
-                        if self.selected_phase() == Some(&SessionPhase::Paused) {
-                            self.error = Some("Session paused; press r to resume".into());
-                            DashboardAction::Redraw
-                        } else {
+                        if self.input_is_allowed() {
                             self.mode = InputMode::Terminal;
                             DashboardAction::Redraw
+                        } else {
+                            self.refuse_input()
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -746,7 +1019,10 @@ impl Dashboard {
                 } else if !self.input_is_allowed() {
                     self.refuse_input()
                 } else {
-                    match encode_key(key, self.parser.screen().application_cursor()) {
+                    let application_cursor = self
+                        .focused_pane()
+                        .is_some_and(|pane| pane.parser.screen().application_cursor());
+                    match encode_key(key, application_cursor) {
                         KeyEncoding::Bytes(bytes) => DashboardAction::PtyBytes(bytes),
                         KeyEncoding::Browse | KeyEncoding::Ignore => DashboardAction::None,
                     }
@@ -761,12 +1037,11 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
-        let Some(session) = self.selected else {
+        let Some(session) = self.focused_session() else {
             self.error = Some("Waiting for terminal screen".into());
             return DashboardAction::Redraw;
         };
-        if self.screen_session != Some(session)
-            || self.pending_screen.is_some()
+        if !self.focused_pane().is_some_and(|pane| pane.ready)
             || find_session(self, session).is_none()
         {
             self.error = Some("Waiting for terminal screen".into());
@@ -774,7 +1049,11 @@ impl Dashboard {
         }
         self.error = None;
         self.copy_notice = None;
-        self.copy = Some(CopySelection::capture(session, self.parser.screen()));
+        let screen = self
+            .focused_pane()
+            .map(|pane| pane.parser.screen())
+            .expect("focused session has a pane");
+        self.copy = Some(CopySelection::capture(session, screen));
         self.mode = InputMode::Copy;
         DashboardAction::Redraw
     }
@@ -890,7 +1169,7 @@ impl Dashboard {
     }
 
     fn begin_history_request(&mut self) -> DashboardAction {
-        let Some(session) = self.selected else {
+        let Some(session) = self.focused_session() else {
             return DashboardAction::None;
         };
         if self.history.is_some() || self.history_begin_request.is_some() {
@@ -966,7 +1245,7 @@ impl Dashboard {
             }
             return DashboardAction::None;
         }
-        let size = history_view_size(self.pane_size);
+        let size = history_view_size(self.focused_size());
         if !anchored {
             let Some(view) = self.history.as_mut() else {
                 return DashboardAction::None;
@@ -1196,6 +1475,7 @@ impl Dashboard {
             return None;
         }
         let mut resolve_error = None;
+        let size = history_view_size(self.focused_size());
         let request = {
             let view = self.history.as_mut()?;
             if view.pending.is_some() || view.copy_completion.is_some() {
@@ -1205,7 +1485,7 @@ impl Dashboard {
                 (HistoryPagePurpose::Copy(job.id), job.page_needed())
             } else {
                 if view.cursor_target.is_some() {
-                    if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
+                    if let Err(error) = view.resolve_cursor(size) {
                         resolve_error = Some(error);
                     }
                 }
@@ -1216,7 +1496,6 @@ impl Dashboard {
                 } else if view.cursor_target.is_some() {
                     (HistoryPagePurpose::Cursor, view.cursor_page_needed()?)
                 } else {
-                    let size = history_view_size(self.pane_size);
                     let row_end = view
                         .top
                         .saturating_add(u32::from(size.rows))
@@ -1344,7 +1623,8 @@ impl Dashboard {
                 } else {
                     DashboardAction::PtyBytes(encode_paste(
                         &text,
-                        self.parser.screen().bracketed_paste(),
+                        self.focused_pane()
+                            .is_some_and(|pane| pane.parser.screen().bracketed_paste()),
                     ))
                 }
             }
@@ -1361,6 +1641,16 @@ impl Dashboard {
             || mouse.kind != MouseEventKind::Down(MouseButton::Left)
         {
             return DashboardAction::None;
+        }
+        for pane in super::pane_rects(area, self.panes.len(), self.focused_pane) {
+            if mouse.column >= pane.terminal.x
+                && mouse.column < pane.terminal.right()
+                && mouse.row >= pane.terminal.y
+                && mouse.row < pane.terminal.bottom()
+            {
+                self.focus_pane(pane.pane_index);
+                return DashboardAction::Redraw;
+            }
         }
         let sidebar = sidebar_area(area);
         if mouse.column < sidebar.x
@@ -1401,20 +1691,22 @@ impl Dashboard {
     }
 
     pub(super) fn request_selected(&mut self) -> DashboardAction {
-        let Some(session) = self.selected else {
+        let request_id = self.next_request_id();
+        let Ok(view) = self.view_request(self.outer_area, request_id) else {
             return DashboardAction::Redraw;
         };
-        let request_id = self.next_request_id();
-        let select = self.select_request(session, request_id);
+        let Some(view) = view else {
+            return DashboardAction::Redraw;
+        };
         if let Some(end) = self.history_end_after_selection.take() {
-            DashboardAction::RequestBatch(vec![end, select])
+            DashboardAction::RequestBatch(vec![end, view])
         } else {
-            DashboardAction::Request(select)
+            DashboardAction::Request(view)
         }
     }
 
     fn pause_request(&mut self, paused: bool) -> DashboardAction {
-        let Some(session) = self.selected.and_then(|id| find_session(self, id)) else {
+        let Some(session) = self.focused_session().and_then(|id| find_session(self, id)) else {
             self.error = Some("No session selected".into());
             return DashboardAction::Redraw;
         };
@@ -1452,19 +1744,17 @@ impl Dashboard {
                 Response::Hierarchy(hierarchy) => outgoing.extend(self.update_hierarchy(hierarchy)),
                 Response::Screen {
                     session,
-                    revision: _,
+                    revision,
                     size,
                     bytes,
                 } => {
-                    let matched_screen = self.pending_screen == Some((session, request_id));
+                    let matched_screen = self.pending_view.as_ref().is_some_and(|pending| {
+                        pending.request_id == request_id
+                            && pending.view.revision == revision
+                            && pending.view.targets.iter().any(|(id, _)| *id == session)
+                    });
                     if matched_screen {
-                        self.pending_screen = None;
-                        self.screen_session = Some(session);
-                    }
-                    if matched_screen && self.selected == Some(session) {
-                        self.pane_size = size;
-                        self.parser = vt100::Parser::new(size.rows, size.cols, 0);
-                        self.parser.process(&bytes);
+                        self.apply_screen(revision, session, size, &bytes);
                         if let Some(view) = self.history.as_mut() {
                             if view.opened.session == session {
                                 view.new_output = true;
@@ -1472,6 +1762,44 @@ impl Dashboard {
                         }
                     }
                 }
+                Response::Ok
+                    if self
+                        .pending_view
+                        .as_ref()
+                        .is_some_and(|pending| pending.request_id == request_id) =>
+                {
+                    let pending = self.pending_view.take().expect("matching view request");
+                    let desired_now = self.desired_view();
+                    let desired_matches =
+                        !self.force_view_refresh && Self::same_view(&pending.view, &desired_now);
+                    let complete = pending.view.targets.iter().all(|(session, _)| {
+                        self.panes
+                            .iter()
+                            .any(|pane| pane.session == Some(*session) && pane.snapshot_installed)
+                    });
+                    if complete && desired_matches {
+                        for (session, _) in &pending.view.targets {
+                            if let Some(pane) = self
+                                .panes
+                                .iter_mut()
+                                .find(|pane| pane.session == Some(*session))
+                            {
+                                pane.ready = true;
+                            }
+                        }
+                        self.requested_view = Some(pending.view);
+                        self.error = None;
+                    } else if !desired_matches {
+                        self.requested_view = Some(pending.view);
+                        let next_id = self.next_request_id();
+                        if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
+                            outgoing.push(request);
+                        }
+                    } else {
+                        self.pending_view = Some(pending);
+                    }
+                }
+                Response::Ok if self.view_request_ids.contains(&request_id) => {}
                 Response::Ok if !self.history_page_error => self.error = None,
                 Response::Ok => {}
                 Response::CreatedSession(_)
@@ -1522,11 +1850,23 @@ impl Dashboard {
                         .and_then(|view| view.pending.as_ref())
                         .filter(|pending| pending.request_id == request_id)
                         .cloned();
-                    let matched_screen = self
-                        .pending_screen
-                        .is_some_and(|(_, pending_id)| pending_id == request_id);
-                    if matched_screen {
-                        self.pending_screen = None;
+                    let matched_view = self
+                        .pending_view
+                        .as_ref()
+                        .is_some_and(|pending| pending.request_id == request_id);
+                    if matched_view {
+                        let pending = self.pending_view.take().expect("matching view request");
+                        for (session, _) in pending.view.targets {
+                            if let Some(pane) = self
+                                .panes
+                                .iter_mut()
+                                .find(|pane| pane.session == Some(session))
+                            {
+                                pane.ready = false;
+                                pane.snapshot_installed = false;
+                                pane.error = Some(message.clone());
+                            }
+                        }
                     }
                     if self
                         .history_begin_request
@@ -1557,7 +1897,9 @@ impl Dashboard {
                             view.copy_completion = None;
                         }
                     }
-                    self.error = Some(format!("{code:?}: {message}"));
+                    if matched_view || !self.view_request_ids.contains(&request_id) {
+                        self.error = Some(format!("{code:?}: {message}"));
+                    }
                     if matched_history && self.copy.is_none() {
                         self.mode = if self.history.is_some() {
                             InputMode::History
@@ -1573,25 +1915,56 @@ impl Dashboard {
                 }
                 ServerEvent::Output {
                     session,
-                    revision: _,
+                    revision,
                     bytes,
-                } if self.selected == Some(session) => {
-                    self.parser.process(&bytes);
-                    if let Some(view) = self.history.as_mut() {
-                        if view.opened.session == session {
-                            view.new_output = true;
+                } => {
+                    if revision == self.view_revision
+                        && self
+                            .panes
+                            .iter()
+                            .any(|pane| pane.session == Some(session) && pane.ready)
+                    {
+                        if let Some(pane) = self
+                            .panes
+                            .iter_mut()
+                            .find(|pane| pane.session == Some(session) && pane.ready)
+                        {
+                            pane.parser.process(&bytes);
+                        }
+                        if self.focused_session() == Some(session) {
+                            if let Some(view) = self.history.as_mut() {
+                                if view.opened.session == session {
+                                    view.new_output = true;
+                                }
+                            }
                         }
                     }
                 }
-                ServerEvent::ScreenDirty {
-                    session,
-                    revision: _,
-                } if self.selected == Some(session) => {
-                    if let Some(view) = self.history.as_mut() {
-                        view.new_output = true;
+                ServerEvent::ScreenDirty { session, revision } => {
+                    if revision == self.view_revision {
+                        if let Some(pane) = self
+                            .panes
+                            .iter_mut()
+                            .find(|pane| pane.session == Some(session))
+                        {
+                            pane.ready = false;
+                            pane.snapshot_installed = false;
+                            self.force_view_refresh = true;
+                            if let Some(view) = self.history.as_mut() {
+                                if view.opened.session == session {
+                                    view.new_output = true;
+                                }
+                            }
+                            if self.pending_view.is_none() {
+                                let request_id = self.next_request_id();
+                                if let Ok(Some(request)) =
+                                    self.view_request(self.outer_area, request_id)
+                                {
+                                    outgoing.push(request);
+                                }
+                            }
+                        }
                     }
-                    let request_id = self.next_request_id();
-                    outgoing.push(self.select_request(session, request_id));
                 }
                 ServerEvent::SessionChanged(summary) => {
                     for session in self
@@ -1608,7 +1981,6 @@ impl Dashboard {
                     }
                     self.update_mode_for_selected_phase();
                 }
-                ServerEvent::Output { .. } | ServerEvent::ScreenDirty { .. } => {}
             },
         }
         outgoing
@@ -1622,10 +1994,11 @@ impl Dashboard {
     ) {
         match purpose {
             HistoryPagePurpose::Viewport | HistoryPagePurpose::Cursor => {
+                let size = history_view_size(self.focused_size());
                 if let Some(view) = self.history.as_mut() {
                     view.cache_page(page);
                     if matches!(purpose, HistoryPagePurpose::Cursor) {
-                        if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
+                        if let Err(error) = view.resolve_cursor(size) {
                             self.history_page_error = true;
                             self.error = Some(error.to_string());
                         }
@@ -1667,6 +2040,7 @@ impl Dashboard {
     }
 
     pub fn take_pending_history_copy(&mut self) -> Option<String> {
+        let focused_session = self.focused_session();
         let Some(view) = self.history.as_mut() else {
             return None;
         };
@@ -1674,7 +2048,7 @@ impl Dashboard {
             return None;
         };
         let valid = self.mode == InputMode::History
-            && self.selected == Some(completion.range.session)
+            && focused_session == Some(completion.range.session)
             && view.opened.session == completion.range.session
             && view.opened.snapshot == completion.range.snapshot
             && view.copy_range() == Some(completion.range);
@@ -1697,7 +2071,7 @@ impl Dashboard {
             .history_begin_request
             .take()
             .expect("history begin request checked above");
-        if pending.cancelled || self.selected != Some(opened.session) {
+        if pending.cancelled || self.focused_session() != Some(opened.session) {
             let end_request_id = self.next_request_id();
             outgoing.push(ClientMessage {
                 request_id: end_request_id,
@@ -1720,7 +2094,7 @@ impl Dashboard {
                 },
             });
         }
-        let size = history_view_size(self.pane_size);
+        let size = history_view_size(self.focused_size());
         let max_top = opened.total_rows.saturating_sub(u32::from(size.rows));
         let top = opened
             .total_rows
@@ -1738,85 +2112,91 @@ impl Dashboard {
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();
         let mut outgoing = Vec::new();
-        if self
-            .selected
-            .is_some_and(|id| find_session(self, id).is_none())
-        {
+        if self.panes.iter().any(|pane| {
+            pane.session
+                .is_some_and(|id| find_session(self, id).is_none())
+        }) {
             self.release_for_selection_change();
             if let Some(request) = self.take_pending_history_end() {
                 outgoing.push(request);
             }
-            self.selected = None;
+            let existing = self
+                .hierarchy
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .map(|session| session.id)
+                .collect::<HashSet<_>>();
+            self.panes
+                .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
+            if self.panes.is_empty() {
+                self.panes.push(super::PaneState::new(self.focused_size()));
+            }
+            self.focused_pane = self.focused_pane.min(self.panes.len() - 1);
             self.mode = InputMode::Browse;
-            self.parser = vt100::Parser::new(self.pane_size.rows, self.pane_size.cols, 0);
             if let Some(id) = self.visible_rows().iter().find_map(|row| match row {
                 TreeRow::Session { id } => Some(*id),
                 TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
             }) {
                 self.select_session(id);
                 let request_id = self.next_request_id();
-                outgoing.push(self.select_request(id, request_id));
+                if let Ok(Some(request)) = self.view_request(self.outer_area, request_id) {
+                    outgoing.push(request);
+                }
             }
         }
         self.update_mode_for_selected_phase();
         outgoing
     }
 
-    pub fn select_request(&mut self, id: SessionId, request_id: u64) -> ClientMessage {
-        if self.screen_session != Some(id) {
-            if self.copy.is_some() {
-                self.cancel_copy(None);
-            }
-            self.screen_session = None;
-        }
-        self.selected = Some(id);
-        self.pending_screen = Some((id, request_id));
-        ClientMessage {
-            request_id,
-            request: Request::Select {
-                session: id,
-                size: self.pane_size,
-            },
-        }
+    pub fn select_request(&mut self, id: SessionId, request_id: u64) -> Option<ClientMessage> {
+        self.select_session(id);
+        self.requested_view = None;
+        self.view_request(self.outer_area, request_id)
+            .ok()
+            .flatten()
     }
 
     pub fn resize_request(&mut self, size: TerminalSize, request_id: u64) -> Option<ClientMessage> {
-        if size == self.pane_size {
+        if size == self.focused_size() {
             return None;
         }
         if self.copy.is_some() {
             self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
-        self.pane_size = size;
-        self.parser.screen_mut().set_size(size.rows, size.cols);
-        let rows = self.visible_rows();
-        self.ensure_selection_visible(&rows);
-        let session = self.selected?;
-        self.pending_screen = Some((session, request_id));
-        Some(ClientMessage {
-            request_id,
-            request: Request::Resize { session, size },
-        })
+        let sidebar = self.outer_area.width.min(40).min(self.outer_area.width / 2);
+        self.outer_area = Rect::new(
+            self.outer_area.x,
+            self.outer_area.y,
+            sidebar.saturating_add(size.cols),
+            size.rows.saturating_add(4),
+        );
+        self.requested_view = None;
+        self.view_request(self.outer_area, request_id)
+            .ok()
+            .flatten()
     }
 
     pub fn input_request(&self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
         if self.mode != InputMode::Terminal || !self.input_is_allowed() {
             return None;
         }
-        self.selected.map(|session| ClientMessage {
+        self.focused_session().map(|session| ClientMessage {
             request_id,
             request: Request::Input { session, bytes },
         })
     }
 
     pub(super) fn selected_phase(&self) -> Option<&SessionPhase> {
-        self.selected
+        self.focused_session()
             .and_then(|id| find_session(self, id))
             .map(|session| &session.phase)
     }
 
     fn input_is_allowed(&self) -> bool {
-        matches!(self.selected_phase(), None | Some(SessionPhase::Running))
+        matches!(self.selected_phase(), Some(SessionPhase::Running))
+            && self.focused_pane().is_some_and(|pane| pane.ready)
     }
 
     fn refuse_input(&mut self) -> DashboardAction {
@@ -1824,6 +2204,9 @@ impl Dashboard {
             Some(SessionPhase::Paused) => "Session paused; press r to resume".into(),
             Some(SessionPhase::Exited { .. }) => "Session exited".into(),
             None => "No session selected".into(),
+            Some(SessionPhase::Running) if !self.focused_pane().is_some_and(|pane| pane.ready) => {
+                "Pane is loading; retry input".into()
+            }
             Some(SessionPhase::Running) => return DashboardAction::None,
         });
         DashboardAction::Redraw

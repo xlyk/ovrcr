@@ -452,14 +452,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 },
             )],
             TreeRow::Workspace { .. } => &[(2, MAUVE)],
-            TreeRow::Session { id } if row_line == 0 && dashboard.selected != Some(*id) => &[(
-                2,
-                if dashboard.session_is_busy(*id) {
-                    GREEN
-                } else {
-                    MUTED
-                },
-            )],
+            TreeRow::Session { id }
+                if row_line == 0 && dashboard.focused_session() != Some(*id) =>
+            {
+                &[(
+                    2,
+                    if dashboard.session_is_busy(*id) {
+                        GREEN
+                    } else {
+                        MUTED
+                    },
+                )]
+            }
             _ => &[],
         };
         for &(column, color) in accents {
@@ -470,7 +474,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
 
     let selected = dashboard
-        .selected
+        .focused_session()
         .and_then(|id| find_session(dashboard, id));
     let metadata = selected.map_or_else(
         || {
@@ -530,7 +534,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     if layout.metadata.height > 1 {
         let metadata_hint = dashboard.history.as_ref().map_or_else(
             || "─".repeat(usize::from(layout.metadata.width)),
-            |view| history_hint(view, dashboard.pane_size),
+            |view| history_hint(view, dashboard.focused_size()),
         );
         frame.render_widget(
             Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),
@@ -551,12 +555,14 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     {
         render_history(frame, layout.terminal, view);
     } else {
-        render_terminal(
-            frame,
-            layout.terminal,
-            dashboard.parser.screen(),
-            dashboard.mode == InputMode::Terminal,
-        );
+        if let Some(pane) = dashboard.focused_pane() {
+            render_terminal(
+                frame,
+                layout.terminal,
+                pane.parser.screen(),
+                dashboard.mode == InputMode::Terminal,
+            );
+        }
     }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
@@ -760,7 +766,7 @@ fn tree_line_text(
                     base_style,
                 );
             };
-            let selected = dashboard.selected == Some(*id);
+            let selected = dashboard.focused_session() == Some(*id);
             let label = if session.name == "local" {
                 "terminal"
             } else {

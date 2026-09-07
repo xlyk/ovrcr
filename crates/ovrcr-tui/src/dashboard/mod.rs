@@ -27,6 +27,7 @@ pub use terminal_guard::TerminalGuard;
 use crate::task_tui::TasksView;
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
 use ovrcr_terminal::vt100;
+use ratatui::layout::Rect;
 use std::collections::HashSet;
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
@@ -72,13 +73,96 @@ pub enum KeyEncoding {
     Ignore,
 }
 
+pub struct PaneState {
+    pub session: Option<SessionId>,
+    pub parser: vt100::Parser,
+    pub size: TerminalSize,
+    pub desired_size: TerminalSize,
+    pub snapshot_installed: bool,
+    pub ready: bool,
+    pub error: Option<String>,
+}
+
+impl PaneState {
+    pub fn new(size: TerminalSize) -> Self {
+        Self {
+            session: None,
+            parser: vt100::Parser::new(size.rows, size.cols, 0),
+            size,
+            desired_size: size,
+            snapshot_installed: false,
+            ready: false,
+            error: None,
+        }
+    }
+}
+
+pub struct PaneRects {
+    pub pane_index: usize,
+    pub metadata: Rect,
+    pub terminal: Rect,
+}
+
+pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects> {
+    let pane_count = pane_count.min(2);
+    if pane_count == 0 {
+        return Vec::new();
+    }
+    let sidebar = area.width.min(40).min(area.width / 2);
+    let right = Rect::new(
+        area.x.saturating_add(sidebar),
+        area.y,
+        area.width.saturating_sub(sidebar),
+        area.height,
+    );
+    let terminal_y = right.y.saturating_add(3);
+    let terminal_height = right.height.saturating_sub(4);
+    if terminal_height == 0 || right.width == 0 {
+        return Vec::new();
+    }
+    if pane_count == 1 || right.width < 41 {
+        let index = focused.min(pane_count - 1);
+        return vec![PaneRects {
+            pane_index: index,
+            metadata: Rect::new(right.x, right.y.saturating_add(1), right.width, 2),
+            terminal: Rect::new(right.x, terminal_y, right.width, terminal_height),
+        }];
+    }
+    let available = right.width - 1;
+    let left_width = available / 2;
+    let right_width = available - left_width;
+    vec![
+        PaneRects {
+            pane_index: 0,
+            metadata: Rect::new(right.x, right.y.saturating_add(1), left_width, 2),
+            terminal: Rect::new(right.x, terminal_y, left_width, terminal_height),
+        },
+        PaneRects {
+            pane_index: 1,
+            metadata: Rect::new(
+                right.x.saturating_add(left_width).saturating_add(1),
+                right.y.saturating_add(1),
+                right_width,
+                2,
+            ),
+            terminal: Rect::new(
+                right.x.saturating_add(left_width).saturating_add(1),
+                terminal_y,
+                right_width,
+                terminal_height,
+            ),
+        },
+    ]
+}
+
 pub struct Dashboard {
     pub tasks: Option<TasksView>,
     pub hierarchy: HierarchySnapshot,
-    pub selected: Option<SessionId>,
     pub mode: InputMode,
-    pub parser: vt100::Parser,
-    pub pane_size: TerminalSize,
+    pub panes: Vec<PaneState>,
+    pub focused_pane: usize,
+    pub view_revision: u64,
+    pub outer_area: Rect,
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
@@ -91,8 +175,23 @@ pub struct Dashboard {
     palette: Option<palette::Palette>,
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
-    screen_session: Option<SessionId>,
-    pending_screen: Option<(SessionId, u64)>,
+    pub(super) last_view_request_id: Option<u64>,
+    pub(super) pending_view: Option<PendingView>,
+    pub(super) requested_view: Option<RequestedView>,
+    pub(super) force_view_refresh: bool,
+    pub(super) view_request_ids: HashSet<u64>,
+}
+
+#[derive(Clone)]
+pub(super) struct RequestedView {
+    pub revision: u64,
+    pub targets: Vec<(SessionId, TerminalSize)>,
+    pub focused: Option<SessionId>,
+}
+
+pub(super) struct PendingView {
+    pub request_id: u64,
+    pub view: RequestedView,
 }
 
 thread_local! {
