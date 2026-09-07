@@ -1,0 +1,220 @@
+use clap::{ArgGroup, Args, Parser, Subcommand};
+use ovrcr::session::AgentActivity;
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(name = "ovrcr")]
+pub(super) struct Cli {
+    #[arg(long, global = true)]
+    pub(super) json: bool,
+    #[command(subcommand)]
+    pub(super) command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+pub(super) enum Command {
+    Server,
+    #[command(visible_alias = "projects")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    #[command(visible_alias = "workspaces")]
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+    #[command(visible_alias = "terminals")]
+    Terminal {
+        #[command(subcommand)]
+        command: TerminalCommand,
+    },
+    New(NewArgs),
+    List,
+    Kill {
+        id: u64,
+    },
+    Pause {
+        id: u64,
+    },
+    Resume {
+        id: u64,
+    },
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+    Shutdown {
+        #[arg(long)]
+        kill: bool,
+    },
+    Report {
+        #[command(subcommand)]
+        command: ReportCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum ReportCommand {
+    Activity {
+        #[arg(long, value_parser = parse_activity_state)]
+        state: AgentActivity,
+        #[arg(long)]
+        sequence: Option<u64>,
+    },
+    Context {
+        #[arg(long)]
+        stdin_json: bool,
+        #[arg(long)]
+        sequence: Option<u64>,
+    },
+    Claude {
+        #[arg(long)]
+        stdin_json: bool,
+        #[arg(long)]
+        verbose: bool,
+    },
+    ClaudeContext {
+        #[arg(long)]
+        stdin_json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum ProjectCommand {
+    #[command(visible_alias = "create")]
+    Add {
+        name: String,
+        repo: PathBuf,
+        #[arg(long)]
+        workspace_root: PathBuf,
+    },
+    List,
+    Get {
+        name: String,
+    },
+    #[command(visible_alias = "delete")]
+    Remove {
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum WorkspaceCommand {
+    Create(WorkspaceCreateArgs),
+    List {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    Get {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+    },
+    #[command(visible_alias = "delete")]
+    Remove {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub(super) enum TerminalCommand {
+    Create(NewArgs),
+    List {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, requires = "project")]
+        workspace: Option<String>,
+    },
+    Read {
+        id: u64,
+        #[arg(long, value_parser = parse_positive_usize)]
+        max_lines: Option<usize>,
+    },
+    Send {
+        id: u64,
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        no_submit: bool,
+    },
+    Close {
+        id: u64,
+    },
+    Kill {
+        id: u64,
+    },
+    Remove {
+        id: u64,
+    },
+}
+
+#[derive(Args)]
+#[command(group(ArgGroup::new("branch_source").required(true).args(["new_branch", "branch"])))]
+pub(super) struct WorkspaceCreateArgs {
+    #[arg(long)]
+    pub(super) project: String,
+    #[arg(long)]
+    pub(super) name: String,
+    #[arg(long, conflicts_with = "branch", requires = "base")]
+    pub(super) new_branch: Option<String>,
+    #[arg(long, requires = "new_branch")]
+    pub(super) base: Option<String>,
+    #[arg(long, conflicts_with_all = ["new_branch", "base"])]
+    pub(super) branch: Option<String>,
+}
+
+#[derive(Args)]
+pub(super) struct NewArgs {
+    #[arg(long)]
+    pub(super) project: String,
+    #[arg(long)]
+    pub(super) workspace: String,
+    #[arg(long)]
+    pub(super) name: String,
+    #[arg(long)]
+    pub(super) label: Option<String>,
+    #[arg(last = true)]
+    pub(super) argv: Vec<OsString>,
+}
+
+#[derive(Subcommand)]
+pub(super) enum SessionCommand {
+    Context { id: u64 },
+    Remove { id: u64 },
+}
+
+pub(super) fn resolve_cli_path(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+pub(super) fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if value == 0 {
+        Err("must be greater than zero".to_owned())
+    } else {
+        Ok(value)
+    }
+}
+
+pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActivity, String> {
+    match value {
+        "unknown" => Ok(AgentActivity::Unknown),
+        "idle" => Ok(AgentActivity::Idle),
+        "busy" => Ok(AgentActivity::Busy),
+        "waiting-input" => Ok(AgentActivity::WaitingInput),
+        "error" => Ok(AgentActivity::Error),
+        _ => Err("must be one of: unknown, idle, busy, waiting-input, error".into()),
+    }
+}
