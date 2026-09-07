@@ -1,6 +1,7 @@
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ovrcr::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
 use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent,
     ServerMessage, WorkspaceSummary,
@@ -422,6 +423,139 @@ fn selected_session_uses_three_full_width_sidebar_lines() {
     assert!(rendered[0].contains("review"));
     assert!(rendered[1].contains("├ claude"));
     assert!(rendered[2].contains("└ run 0m  ctx —"));
+}
+
+#[test]
+fn context_sidebar_updates_and_expires() {
+    let mut dashboard = dashboard_fixture();
+    let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[0].clone();
+    summary.context_usage = Some(ContextUsageSnapshot {
+        report: ContextUsageReport {
+            source: ContextSource::Generic,
+            model: Some("sample-model".into()),
+            conversation: Some("sample-conversation".into()),
+            used_tokens: Some(25),
+            capacity_tokens: Some(100),
+        },
+        received_unix_ms: 1_000,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1_000))
+        .unwrap();
+    let receipt = terminal.backend().buffer();
+    let metrics = (0..39)
+        .map(|column| receipt[(column, 8)].symbol())
+        .collect::<String>();
+    assert_eq!(metrics.trim_end(), "     └ run 0m  ctx 25%");
+    let selected_rows = (6..=8)
+        .map(|row| {
+            (0..39)
+                .map(|column| receipt[(column, row)].bg)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let selected_prefix = (6..=7)
+        .map(|row| {
+            (0..39)
+                .map(|column| receipt[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 301_000))
+        .unwrap();
+    let expired = terminal.backend().buffer();
+    let expired_metrics = (0..39)
+        .map(|column| expired[(column, 8)].symbol())
+        .collect::<String>();
+    assert_eq!(expired_metrics.trim_end(), "     └ run 0m  ctx 25%~");
+    assert_eq!(
+        selected_prefix,
+        (6..=8)
+            .take(2)
+            .map(|row| {
+                (0..39)
+                    .map(|column| expired[(column, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        selected_rows,
+        (6..=8)
+            .map(|row| {
+                (0..39)
+                    .map(|column| expired[(column, row)].bg)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn context_sidebar_unknown_and_over_capacity() {
+    let mut dashboard = dashboard_fixture();
+    let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[0].clone();
+    summary.context_usage = Some(ContextUsageSnapshot {
+        report: ContextUsageReport {
+            source: ContextSource::Generic,
+            model: None,
+            conversation: None,
+            used_tokens: None,
+            capacity_tokens: None,
+        },
+        received_unix_ms: 10_000,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 10_000))
+        .unwrap();
+    let unknown = (0..39)
+        .map(|column| terminal.backend().buffer()[(column, 8)].symbol())
+        .collect::<String>();
+    assert_eq!(unknown.trim_end(), "     └ run 0m  ctx —");
+
+    let mut over_capacity = dashboard.hierarchy.projects[1].workspaces[1].sessions[0].clone();
+    over_capacity.context_usage = Some(ContextUsageSnapshot {
+        report: ContextUsageReport {
+            source: ContextSource::Generic,
+            model: None,
+            conversation: None,
+            used_tokens: Some(101),
+            capacity_tokens: Some(100),
+        },
+        received_unix_ms: 10_000,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+        over_capacity,
+    )));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 10_000))
+        .unwrap();
+    let over = (0..39)
+        .map(|column| terminal.backend().buffer()[(column, 8)].symbol())
+        .collect::<String>();
+    assert_eq!(over.trim_end(), "     └ run 0m  ctx >100%");
+
+    let mut narrow = Terminal::new(TestBackend::new(40, 20)).unwrap();
+    narrow
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 10_000))
+        .unwrap();
+    assert_eq!(narrow.backend().buffer()[(19, 8)].symbol(), "│");
+    assert!(
+        (0..19)
+            .map(|column| narrow.backend().buffer()[(column, 8)].symbol())
+            .collect::<String>()
+            .chars()
+            .count()
+            <= 19
+    );
 }
 
 #[test]

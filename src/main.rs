@@ -2,7 +2,8 @@ use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord};
 use ovrcr::context::{
-    ContextUsageSnapshot, format_context, parse_claude_context, parse_context_json,
+    ContextUsageSnapshot, context_is_stale, format_context, parse_claude_context,
+    parse_context_json,
 };
 use ovrcr::protocol::{
     AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
@@ -200,6 +201,7 @@ struct NewArgs {
 
 #[derive(Subcommand)]
 enum SessionCommand {
+    Context { id: u64 },
     Remove { id: u64 },
 }
 
@@ -299,6 +301,9 @@ fn run(cli: Cli) -> AppResult<()> {
             },
             json_output,
         ),
+        Command::Session {
+            command: SessionCommand::Context { id },
+        } => inspect_session_context(id),
         Command::Session {
             command: SessionCommand::Remove { id },
         } => mutate_started(
@@ -524,7 +529,11 @@ fn run_terminal(command: TerminalCommand, json_output: bool) -> AppResult<()> {
                         .is_none_or(|name| session.workspace == name)
             });
             sessions.sort_by_key(|session| session.id.0);
-            let values = sessions.iter().map(terminal_value).collect::<Vec<_>>();
+            let now_unix_ms = now_unix_ms();
+            let values = sessions
+                .iter()
+                .map(|session| terminal_value(session, now_unix_ms))
+                .collect::<Vec<_>>();
             print_values(values, json_output, print_terminal_row)
         }
         TerminalCommand::Read { id, max_lines } => {
@@ -605,7 +614,7 @@ fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()> {
     match response {
         Response::CreatedSession(summary) => {
             if json_output {
-                print_json(&terminal_value(&summary))
+                print_json(&terminal_value(&summary, now_unix_ms()))
             } else {
                 println!("{}", summary.id.0);
                 Ok(())
@@ -646,6 +655,32 @@ fn request_without_start(request: Request) -> AppResult<Response> {
         ));
     };
     response_or_error(send_request(&mut stream, request).map_err(RuntimeError::internal)?)
+}
+
+fn inspect_session_context(id: u64) -> AppResult<()> {
+    let response = request_without_start(Request::List)?;
+    let Response::Hierarchy(snapshot) = response else {
+        return Err(unexpected_response(response));
+    };
+    let session = snapshot
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| {
+            RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}"))
+        })?;
+    let now_unix_ms = now_unix_ms();
+    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    print_json(&json!({
+        "session": id,
+        "context_usage": session.context_usage,
+        "stale": session
+            .context_usage
+            .as_ref()
+            .map(|sample| context_is_stale(sample, now_unix_ms, exited)),
+    }))
 }
 
 fn response_or_error(response: Response) -> AppResult<Response> {
@@ -705,7 +740,7 @@ fn workspace_value(
     })
 }
 
-fn terminal_value(session: &SessionSummary) -> Value {
+fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Value {
     let (phase, exit_code, exit_signal) = match &session.phase {
         SessionPhase::Running => ("running", Value::Null, Value::Null),
         SessionPhase::Paused => ("paused", Value::Null, Value::Null),
@@ -733,7 +768,22 @@ fn terminal_value(session: &SessionSummary) -> Value {
         },
         "exit_code": exit_code,
         "exit_signal": exit_signal,
+        "context_usage": session.context_usage,
+        "context_stale": session.context_usage.as_ref().map(|sample| {
+            context_is_stale(
+                sample,
+                now_unix_ms,
+                matches!(session.phase, SessionPhase::Exited { .. }),
+            )
+        }),
     })
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn find_project<'a>(registry: &'a Registry, name: &str) -> AppResult<&'a ProjectRecord> {
@@ -890,6 +940,7 @@ fn print_legacy_response(response: Response, json_output: bool) -> AppResult<()>
             Ok(())
         }
         Response::Hierarchy(snapshot) if json_output => {
+            let now_unix_ms = now_unix_ms();
             let projects = snapshot
                 .projects
                 .into_iter()
@@ -901,7 +952,7 @@ fn print_legacy_response(response: Response, json_output: bool) -> AppResult<()>
                             let terminals = workspace
                                 .sessions
                                 .iter()
-                                .map(terminal_value)
+                                .map(|session| legacy_terminal_value(session, now_unix_ms))
                                 .collect::<Vec<_>>();
                             json!({
                                 "project": workspace.project,
@@ -939,6 +990,15 @@ fn print_legacy_response(response: Response, json_output: bool) -> AppResult<()>
         Response::Screen { .. } | Response::Ok => Ok(()),
         response => Err(unexpected_response(response)),
     }
+}
+
+fn legacy_terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Value {
+    let mut value = terminal_value(session, now_unix_ms);
+    if let Value::Object(fields) = &mut value {
+        fields.remove("context_usage");
+        fields.remove("context_stale");
+    }
+    value
 }
 
 fn send_request(stream: &mut std::os::unix::net::UnixStream, request: Request) -> Result<Response> {

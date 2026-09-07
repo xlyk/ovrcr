@@ -721,6 +721,247 @@ done
 }
 
 #[test]
+fn context_inspect_reports_unknown_and_sample() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let workspaces = root.path().join("workspaces");
+    setup_git_fixture(&repo, &workspaces);
+    let config = root.path().join("config.toml");
+    let socket = root.path().join("server.sock");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
+    let run = |args: &[&str]| {
+        let mut command = isolated_command(&root);
+        command.args(args);
+        run_cli_bounded(command).unwrap()
+    };
+    assert!(
+        run(&[
+            "project",
+            "add",
+            "fixture",
+            repo.to_str().unwrap(),
+            "--workspace-root",
+            workspaces.to_str().unwrap(),
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        run(&[
+            "workspace",
+            "create",
+            "--project",
+            "fixture",
+            "--name",
+            "hooks",
+            "--new-branch",
+            "feature/hooks",
+            "--base",
+            "main",
+        ])
+        .status
+        .success()
+    );
+
+    let marker = root.path().join("context-marker");
+    let first_gate = root.path().join("context-first");
+    let second_gate = root.path().join("context-second");
+    let script = r#"
+printf READY > "$2"
+while [ ! -e "$3" ]; do sleep 0.01; done
+printf '%s' '{"source":"generic","model":"inspect-model","conversation":"inspect-conversation","used_tokens":25,"capacity_tokens":100}' | "$1" report context --stdin-json
+printf CONTEXT1 >> "$2"
+while [ ! -e "$4" ]; do sleep 0.01; done
+printf '%s' '{"source":"generic","model":"replacement-model","conversation":"replacement-conversation","used_tokens":40}' | "$1" report context --stdin-json
+printf CONTEXT2 >> "$2"
+while IFS= read -r line; do :; done
+"#;
+    let mut created = isolated_command(&root);
+    created.args([
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "hooks",
+        "--name",
+        "context-inspector",
+        "--",
+        "sh",
+        "-c",
+        script,
+        "context-inspector",
+        bin,
+        marker.to_str().unwrap(),
+        first_gate.to_str().unwrap(),
+        second_gate.to_str().unwrap(),
+    ]);
+    let created = run_cli_bounded(created).unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let id = String::from_utf8_lossy(&created.stdout).trim().to_owned();
+    let numeric_id: u64 = id.parse().unwrap();
+    let pid_deadline = Instant::now() + Duration::from_secs(3);
+    let original_pid = loop {
+        if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List)
+            && let Some(pid) = snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .find(|session| session.id == SessionId(numeric_id))
+                .and_then(|session| session.pid)
+        {
+            break pid as libc::pid_t;
+        }
+        assert!(
+            Instant::now() < pid_deadline,
+            "managed context terminal PID not observed"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    };
+    let original_pgid = unsafe { libc::getpgid(original_pid) };
+    cleanup.capture_live_process_groups(&socket);
+    let marker_deadline = Instant::now() + Duration::from_secs(3);
+    while !marker.exists() && Instant::now() < marker_deadline {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "READY");
+
+    let unknown_output = run(&["session", "context", &id]);
+    assert!(unknown_output.status.success());
+    assert!(unknown_output.stderr.is_empty());
+    let unknown: serde_json::Value = serde_json::from_slice(&unknown_output.stdout).unwrap();
+    assert_eq!(
+        unknown,
+        serde_json::json!({
+            "session": numeric_id,
+            "context_usage": null,
+            "stale": null,
+        })
+    );
+    let unknown_json = run(&["--json", "session", "context", &id]);
+    assert!(unknown_json.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&unknown_json.stdout).unwrap(),
+        unknown
+    );
+
+    let list = run(&["list"]);
+    assert!(list.status.success());
+    assert_eq!(
+        String::from_utf8(list.stdout).unwrap(),
+        format!(
+            "project fixture\n  workspace hooks\n    session {} local running\n    session {id} context-inspector running\n",
+            numeric_id - 1
+        )
+    );
+
+    std::fs::write(&first_gate, b"go").unwrap();
+    let first_deadline = Instant::now() + Duration::from_secs(3);
+    while (!marker.exists()
+        || !std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("CONTEXT1"))
+        && Instant::now() < first_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        std::fs::read_to_string(&marker)
+            .unwrap()
+            .contains("CONTEXT1")
+    );
+    let sample_output = run(&["session", "context", &id]);
+    assert!(sample_output.status.success());
+    let sample: serde_json::Value = serde_json::from_slice(&sample_output.stdout).unwrap();
+    assert_eq!(sample["session"], numeric_id);
+    assert_eq!(sample["context_usage"]["report"]["used_tokens"], 25);
+    assert_eq!(sample["context_usage"]["report"]["capacity_tokens"], 100);
+    assert_eq!(sample["stale"], false);
+
+    std::fs::write(&second_gate, b"go").unwrap();
+    let second_deadline = Instant::now() + Duration::from_secs(3);
+    while (!marker.exists()
+        || !std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("CONTEXT2"))
+        && Instant::now() < second_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        std::fs::read_to_string(&marker)
+            .unwrap()
+            .contains("CONTEXT2")
+    );
+    let replacement: serde_json::Value =
+        serde_json::from_slice(&run(&["session", "context", &id]).stdout).unwrap();
+    assert_eq!(replacement["context_usage"]["report"]["used_tokens"], 40);
+    assert!(replacement["context_usage"]["report"]["capacity_tokens"].is_null());
+
+    let killed = run(&["terminal", "kill", &id]);
+    assert!(
+        killed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&killed.stderr)
+    );
+    let exited_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < exited_deadline {
+        if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List)
+            && snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .any(|session| {
+                    session.id == SessionId(numeric_id)
+                        && matches!(session.phase, SessionPhase::Exited { .. })
+                })
+        {
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let stale_output = run(&["session", "context", &id]);
+    assert!(stale_output.status.success());
+    let stale: serde_json::Value = serde_json::from_slice(&stale_output.stdout).unwrap();
+    assert_eq!(stale["context_usage"]["report"]["used_tokens"], 40);
+    assert_eq!(stale["stale"], true);
+
+    let group_deadline = Instant::now() + Duration::from_secs(2);
+    while unsafe { libc::kill(-original_pgid, 0) } != -1 && Instant::now() < group_deadline {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let group_absent = unsafe { libc::kill(-original_pgid, 0) } == -1;
+    eprintln!(
+        "context inspection cleanup: original_pgid={original_pgid} original_pgid_absent={group_absent} before_fixture_teardown=true"
+    );
+    assert!(
+        group_absent,
+        "managed process group {original_pgid} remained"
+    );
+    cleanup.confirm();
+}
+
+#[test]
+fn context_inspect_missing_session_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(&root)
+        .args(["--json", "session", "context", "99"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "NotFound");
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
 fn context_helper_missing_server_does_not_start_one() {
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("missing.sock");

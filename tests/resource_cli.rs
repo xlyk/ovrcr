@@ -487,3 +487,190 @@ fn agent_hook_resource_inventory_reports_activity() {
         assert!(!record.as_object().unwrap().contains_key(forbidden));
     }
 }
+
+#[test]
+fn context_resource_inventory_matches_inspection() {
+    let mut fixture = Fixture::new();
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let marker = fixture.root.path().join("context-marker");
+    let first_gate = fixture.root.path().join("context-first");
+    let second_gate = fixture.root.path().join("context-second");
+    let id = fixture
+        .ok(&[
+            "terminal",
+            "create",
+            "--project",
+            "fixture",
+            "--workspace",
+            "demo",
+            "--name",
+            "context-inventory",
+            "--",
+            "/bin/sh",
+            "-c",
+            r#"
+printf READY > "$2"
+while [ ! -e "$3" ]; do sleep 0.01; done
+printf '%s' '{"source":"generic","model":"inventory-model","conversation":"inventory-conversation","used_tokens":25,"capacity_tokens":100}' | "$1" report context --stdin-json
+printf CONTEXT1 >> "$2"
+while [ ! -e "$4" ]; do sleep 0.01; done
+printf '%s' '{"source":"generic","model":"replacement-model","conversation":"replacement-conversation","used_tokens":40}' | "$1" report context --stdin-json
+printf CONTEXT2 >> "$2"
+"#,
+            "context-inventory",
+            bin,
+            marker.to_str().unwrap(),
+            first_gate.to_str().unwrap(),
+            second_gate.to_str().unwrap(),
+        ])
+        .trim()
+        .to_owned();
+    let id_number: u64 = id.parse().unwrap();
+    let original_pid = fixture
+        .sessions()
+        .into_iter()
+        .find(|session| session.id == SessionId(id_number))
+        .and_then(|session| session.pid)
+        .expect("managed context terminal PID") as libc::pid_t;
+    let original_pgid = unsafe { libc::getpgid(original_pid) };
+    fixture.capture();
+    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    while (!marker.exists()
+        || !std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("READY"))
+        && Instant::now() < ready_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "READY");
+
+    let unknown = fixture.json(&[
+        "terminal",
+        "list",
+        "--project",
+        "fixture",
+        "--workspace",
+        "demo",
+    ]);
+    let unknown_record = unknown
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id_number)
+        .expect("unknown context terminal is listed");
+    assert!(unknown_record["context_usage"].is_null());
+    assert!(unknown_record["context_stale"].is_null());
+    let unknown_inspection: serde_json::Value =
+        serde_json::from_str(&fixture.ok(&["session", "context", &id])).unwrap();
+    assert_eq!(unknown_inspection["session"], id_number);
+    assert!(unknown_inspection["context_usage"].is_null());
+    assert!(unknown_inspection["stale"].is_null());
+
+    std::fs::write(&first_gate, b"go").unwrap();
+    let first_deadline = Instant::now() + Duration::from_secs(3);
+    while (!marker.exists()
+        || !std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("CONTEXT1"))
+        && Instant::now() < first_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        std::fs::read_to_string(&marker)
+            .unwrap()
+            .contains("CONTEXT1")
+    );
+    let first_inventory = fixture.json(&[
+        "terminal",
+        "list",
+        "--project",
+        "fixture",
+        "--workspace",
+        "demo",
+    ]);
+    let first_record = first_inventory
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id_number)
+        .unwrap();
+    let first_inspection: serde_json::Value =
+        serde_json::from_str(&fixture.ok(&["session", "context", &id])).unwrap();
+    assert_eq!(
+        first_record["context_usage"],
+        first_inspection["context_usage"]
+    );
+    assert_eq!(first_record["context_stale"], first_inspection["stale"]);
+    assert_eq!(
+        first_record["context_usage"]["report"]["capacity_tokens"],
+        100
+    );
+
+    std::fs::write(&second_gate, b"go").unwrap();
+    let second_deadline = Instant::now() + Duration::from_secs(3);
+    while (!marker.exists()
+        || !std::fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .contains("CONTEXT2"))
+        && Instant::now() < second_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert!(
+        std::fs::read_to_string(&marker)
+            .unwrap()
+            .contains("CONTEXT2")
+    );
+    let replacement: serde_json::Value =
+        serde_json::from_str(&fixture.ok(&["session", "context", &id])).unwrap();
+    assert_eq!(replacement["context_usage"]["report"]["used_tokens"], 40);
+    assert!(replacement["context_usage"]["report"]["capacity_tokens"].is_null());
+    let replacement_inventory = fixture.json(&["terminal", "list"]);
+    let replacement_record = replacement_inventory
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id_number)
+        .unwrap();
+    assert_eq!(
+        replacement_record["context_usage"],
+        replacement["context_usage"]
+    );
+    assert_eq!(replacement_record["context_stale"], replacement["stale"]);
+    assert!(replacement_record["context_usage"]["report"]["capacity_tokens"].is_null());
+
+    let exited_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < exited_deadline
+        && !fixture.sessions().into_iter().any(|session| {
+            session.id == SessionId(id_number)
+                && matches!(session.phase, SessionPhase::Exited { .. })
+        })
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let stale_inspection: serde_json::Value =
+        serde_json::from_str(&fixture.ok(&["session", "context", &id])).unwrap();
+    assert_eq!(stale_inspection["stale"], true);
+    let stale_inventory = fixture.json(&["terminal", "list"]);
+    let stale_record = stale_inventory
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == id_number)
+        .unwrap();
+    assert_eq!(
+        stale_record["context_usage"],
+        stale_inspection["context_usage"]
+    );
+    assert_eq!(stale_record["context_stale"], true);
+    let group_absent = wait_group_absent(original_pgid, Duration::from_secs(2));
+    eprintln!(
+        "context inventory cleanup: original_pgid={original_pgid} original_pgid_absent={group_absent} before_fixture_teardown=true"
+    );
+    assert!(
+        group_absent,
+        "managed process group {original_pgid} remained"
+    );
+}

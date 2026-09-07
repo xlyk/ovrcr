@@ -1,3 +1,4 @@
+use crate::context::format_context;
 use crate::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerEvent, ServerMessage,
 };
@@ -1627,8 +1628,13 @@ fn tree_line_text(
                 0 => format!("  {status} {}", session.name),
                 1 => format!("     ├ {label}"),
                 _ => format!(
-                    "     └ run {}  ctx —",
-                    format_elapsed_at(session.started_unix_ms, now_unix_ms)
+                    "     └ run {}  ctx {}",
+                    format_elapsed_at(session.started_unix_ms, now_unix_ms),
+                    format_context(
+                        session.context_usage.as_ref(),
+                        now_unix_ms,
+                        matches!(session.phase, SessionPhase::Exited { .. }),
+                    )
                 ),
             };
             let mut style = if selected {
