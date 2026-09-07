@@ -573,7 +573,7 @@ rtk proxy cargo build -p ovrcr --release
 Future additions, with priorities and release dates still to be decided:
 
 - [ ] Split panes to view multiple sessions side by side.
-- [ ] Historical scrollback to revisit output beyond the current screen.
+- [x] Historical scrollback to revisit output beyond the current screen.
 - [ ] Copy mode to select and copy terminal output with the keyboard.
 - [x] Pause and resume controls for sessions.
 - [ ] Agent hooks to report agent-specific activity and status.
