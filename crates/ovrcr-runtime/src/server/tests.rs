@@ -970,8 +970,9 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let completion_before_release = completion_result
         .recv_timeout(Duration::from_secs(2))
         .is_ok();
-    let disconnected_before_release =
-        state.dashboard_slot.lock().unwrap().is_none() && state.dashboard.lock().unwrap().is_none();
+    let disconnected_before_release = completion_before_release
+        && state.dashboard_slot.lock().unwrap().is_none()
+        && state.dashboard.lock().unwrap().is_none();
     let _ = parser_holder_release.send(());
     let parser_holder_joined = parser_holder.join().is_ok();
     let dispatcher_stopped = state.dispatch.send(DispatchMessage::Stop).is_ok();
