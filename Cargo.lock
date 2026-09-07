@@ -2685,6 +2685,8 @@ dependencies = [
 name = "ovrcr-terminal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "ovrcr-protocol",
  "vt100",
 ]
 

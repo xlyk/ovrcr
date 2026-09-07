@@ -4,6 +4,56 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+pub const HISTORY_ROWS: usize = 512;
+pub const PAGE_ROWS: u16 = 16;
+pub const PAGE_COLS: u16 = 128;
+pub const PAGE_BYTES: usize = 128 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistorySnapshotId(pub u64);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HistoryColor {
+    Default,
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryCell {
+    pub text: String,
+    pub width: u8,
+    pub fg: HistoryColor,
+    pub bg: HistoryColor,
+    pub attributes: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryRow {
+    pub width: u16,
+    pub cells: Vec<HistoryCell>,
+    pub wrapped: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryOpened {
+    pub session: SessionId,
+    pub snapshot: HistorySnapshotId,
+    pub revision: u64,
+    pub size: TerminalSize,
+    pub history_rows: u32,
+    pub total_rows: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryRows {
+    pub session: SessionId,
+    pub snapshot: HistorySnapshotId,
+    pub start_row: u32,
+    pub start_col: u16,
+    pub rows: Vec<HistoryRow>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientMessage {
     pub request_id: u64,

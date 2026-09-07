@@ -5,5 +5,6 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+anyhow = { workspace = true }
+ovrcr-protocol = { workspace = true }
 vt100 = { workspace = true }
-
