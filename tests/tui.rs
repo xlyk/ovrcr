@@ -429,12 +429,19 @@ fn agent_hook_summary_updates_drive_animation() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
-        bytes: b"PTY output".to_vec(),
+        bytes: b"PTY output\x1b]52;c;V0FJVElORw==\x1b\\".to_vec(),
     }));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("V0FJVElORw==")
     );
     assert_eq!(
         dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity,

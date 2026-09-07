@@ -973,6 +973,122 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
 }
 
 #[test]
+fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    eprintln!(
+        "copy acceptance fixture root: {}",
+        fixture._root.path().display()
+    );
+    eprintln!(
+        "copy acceptance fixture session process groups while alive: {:?}",
+        fixture.managed_pgids
+    );
+    let waiting_id = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.name == "waiting")
+        .context("waiting session id")?
+        .id;
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let outer_pid = dashboard
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
+    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.send(b"k")?;
+    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    let waiting_screen = fixture.read_terminal(waiting_id)?;
+    assert!(
+        waiting_screen.starts_with("WAITING_READY"),
+        "waiting snapshot did not start at (0,0): {waiting_screen:?}"
+    );
+    assert!(
+        dashboard
+            .rendered()
+            .lines()
+            .any(|line| line.contains("WAITING_READY")),
+        "waiting session snapshot did not render its marker"
+    );
+
+    dashboard.send(b"[g ")?;
+    dashboard.send(b"lllllly")?;
+    dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", Duration::from_secs(3))?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("COPY  "),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\rINPUT_TOKEN\r")?;
+    dashboard.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    assert!(
+        dashboard.rendered().contains("INPUT_ACK"),
+        "input acknowledgement did not reach the outer terminal"
+    );
+    let detach_result = dashboard.detach();
+    eprintln!("copy acceptance first dashboard detach: {detach_result:?}");
+    detach_result?;
+    eprintln!(
+        "copy acceptance fixture process groups after first detach: {:?}",
+        fixture.managed_pgids
+    );
+
+    let mut reattached = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let reattached_pid = reattached
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let reattached_pgid = reattached_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!(
+        "copy acceptance reattached dashboard pid/pgid while alive: {reattached_pid:?}/{reattached_pgid:?}"
+    );
+    reattached.wait_for(b"mouse", Duration::from_secs(3))?;
+    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    reattached.send(b"j")?;
+    reattached.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    let reattached_screen = reattached.rendered();
+    assert!(reattached_screen.contains("j/k/↑/↓"));
+    assert!(!reattached_screen.contains("Terminal mode"));
+    assert!(!reattached_screen.contains("COPY  "));
+    let detach_result = reattached.detach();
+    eprintln!("copy acceptance reattached dashboard detach: {detach_result:?}");
+    detach_result?;
+    let shutdown_result = fixture.shutdown();
+    eprintln!("copy acceptance fixture shutdown: {shutdown_result:?}");
+    shutdown_result?;
+    Ok(())
+}
+
+#[test]
 fn pause_resume_dashboard_round_trip() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
