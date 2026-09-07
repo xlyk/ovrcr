@@ -339,7 +339,7 @@ fn run_report_context(stdin_json: bool, sequence: Option<u64>) -> AppResult<()> 
     }
     let deadline = Instant::now() + Duration::from_secs(1);
     let input = report::read_hook_stdin(deadline).map_err(report_runtime_error)?;
-    let context = parse_context_json(&input).map_err(report_runtime_error)?;
+    let context = parse_context_json(&input).map_err(|_| invalid_context_input())?;
     report::send_report(AgentUpdate::Context(context), sequence, deadline)
         .map_err(report_runtime_error)
 }
@@ -353,7 +353,7 @@ fn run_report_claude_context(stdin_json: bool) -> AppResult<()> {
     }
     let deadline = Instant::now() + Duration::from_secs(1);
     let input = report::read_hook_stdin(deadline).map_err(report_runtime_error)?;
-    let report = parse_claude_context(&input).map_err(report_runtime_error)?;
+    let report = parse_claude_context(&input).map_err(|_| invalid_context_input())?;
     report::send_report(AgentUpdate::Context(report.clone()), None, deadline)
         .map_err(report_runtime_error)?;
     let sample = ContextUsageSnapshot {
@@ -408,6 +408,10 @@ fn report_runtime_error(error: anyhow::Error) -> RuntimeError {
     } else {
         RuntimeError::new(ErrorCode::Internal, "hook report failed")
     }
+}
+
+fn invalid_context_input() -> RuntimeError {
+    RuntimeError::new(ErrorCode::InvalidRequest, "hook input invalid")
 }
 
 fn run_project(command: ProjectCommand, json_output: bool) -> AppResult<()> {

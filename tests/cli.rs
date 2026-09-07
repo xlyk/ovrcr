@@ -605,11 +605,12 @@ fn context_helper_invalid_input_has_no_effect() {
     ]);
     cleanup.capture_live_process_groups(&socket);
     let result_log = root.path().join("context-results");
+    let diagnostic_log = root.path().join("context-diagnostics");
     let script = r#"
 count=0
 while IFS= read -r line; do
     if [ "$count" -eq 0 ]; then mode=context; else mode=context; fi
-    printf '%s' "$line" | "$1" report "$mode" --stdin-json > /dev/null
+    printf '%s' "$line" | "$1" report "$mode" --stdin-json > /dev/null 2> "$3"
     printf '%s:%s\n' "$mode" "$?" >> "$2"
     count=$((count + 1))
 done
@@ -632,6 +633,7 @@ done
         "context-invalid",
         bin,
         result_log.to_str().unwrap(),
+        diagnostic_log.to_str().unwrap(),
     ]);
     let created = run_cli_bounded(created).unwrap();
     assert!(created.status.success());
@@ -699,6 +701,10 @@ done
         std::fs::read_to_string(&result_log).unwrap(),
         "context:0\ncontext:1\n"
     );
+    assert_eq!(
+        std::fs::read_to_string(&diagnostic_log).unwrap(),
+        "InvalidRequest: hook input invalid\n"
+    );
     let after = match cli_request(&socket, Request::List).unwrap() {
         Response::Hierarchy(snapshot) => snapshot
             .projects
@@ -719,6 +725,7 @@ fn context_helper_missing_server_does_not_start_one() {
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("missing.sock");
     let config = root.path().join("missing.toml");
+    let valid = br#"{"source":"generic","model":"missing-server-model","conversation":"missing-server-conversation","used_tokens":1,"capacity_tokens":100}"#;
     let mut command = isolated_command(&root);
     command
         .args(["report", "context", "--stdin-json"])
@@ -730,15 +737,39 @@ fn context_helper_missing_server_does_not_start_one() {
         .stdin(Stdio::piped());
     let started = Instant::now();
     let mut captured = spawn_captured(command).unwrap();
-    let held_open = captured.child.stdin.take().unwrap();
+    let mut stdin = captured.child.stdin.take().unwrap();
+    stdin.write_all(valid).unwrap();
+    drop(stdin);
     let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(2)).unwrap();
-    drop(held_open);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(!output.stderr.is_empty());
+    assert_eq!(output.stderr, b"NotFound: hook server is unavailable\n");
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(!socket.exists());
     assert!(!config.exists());
+
+    let incomplete_root = tempfile::tempdir().unwrap();
+    let incomplete_socket = incomplete_root.path().join("incomplete.sock");
+    let incomplete_config = incomplete_root.path().join("incomplete.toml");
+    let mut incomplete = isolated_command(&incomplete_root);
+    incomplete
+        .args(["report", "context", "--stdin-json"])
+        .env("OVRCR_CONFIG", &incomplete_config)
+        .env("OVRCR_SOCKET", &incomplete_socket)
+        .env("OVRCR_HOOK_SOCKET", &incomplete_socket)
+        .env("OVRCR_SESSION_ID", "7")
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
+        .stdin(Stdio::piped());
+    let incomplete_started = Instant::now();
+    let mut incomplete = spawn_captured(incomplete).unwrap();
+    let held_open = incomplete.child.stdin.take().unwrap();
+    let output = wait_captured(&mut incomplete, Instant::now() + Duration::from_secs(2)).unwrap();
+    drop(held_open);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(incomplete_started.elapsed() < Duration::from_secs(2));
+    assert!(!incomplete_socket.exists());
+    assert!(!incomplete_config.exists());
 }
 
 fn setup_git_fixture(repo: &std::path::Path, workspaces: &std::path::Path) {
@@ -880,7 +911,11 @@ fn dashboard_request(stream: &mut UnixStream, request: Request) -> Result<Respon
         },
     )
     .map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(3);
     loop {
+        if Instant::now() >= deadline {
+            return Err("dashboard response deadline exceeded".into());
+        }
         match read_frame::<ServerMessage>(stream).map_err(|error| error.to_string())? {
             ServerMessage::Response {
                 request_id: 3,
