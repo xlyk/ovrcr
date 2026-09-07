@@ -1,9 +1,9 @@
 pub mod config;
-pub mod context;
+pub use ovrcr_protocol::context;
 pub mod git;
 #[cfg(feature = "gui")]
 pub mod gui;
-pub mod protocol;
+pub use ovrcr_protocol as protocol;
 pub mod report;
 pub mod server;
 pub mod service;

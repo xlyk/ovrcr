@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand};
-use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord};
+use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord, load_registry};
 use ovrcr::context::{
     ContextUsageSnapshot, context_is_stale, format_context, parse_claude_context,
     parse_context_json,
@@ -663,7 +663,7 @@ fn inspect() -> AppResult<(Registry, Vec<SessionSummary>)> {
     }
     let path = RegistryPath::resolve().map_err(RuntimeError::internal)?.0;
     Ok((
-        Registry::load(&path).map_err(RuntimeError::internal)?,
+        load_registry(&path).map_err(RuntimeError::internal)?,
         Vec::new(),
     ))
 }

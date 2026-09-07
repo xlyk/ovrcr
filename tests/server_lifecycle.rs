@@ -1,4 +1,4 @@
-use ovrcr::config::Registry;
+use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
@@ -168,7 +168,7 @@ impl ServerFixture {
 
     fn start(&mut self) {
         let registry = self.root.path().join("config.toml");
-        Registry::default().save_atomic(&registry).unwrap();
+        save_registry_atomic(&Registry::default(), &registry).unwrap();
         let paths = self.paths.clone();
         self.thread = Some(thread::spawn(move || run_server(paths, registry).unwrap()));
         self.wait_for_socket();
@@ -1105,7 +1105,7 @@ fn startup_stale_socket_is_recovered() {
 fn startup_concurrent_attempts_leave_one_server() {
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
-    Registry::default().save_atomic(&registry).unwrap();
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
     let executable = env!("CARGO_BIN_EXE_ovrcr");
     unsafe {
         std::env::set_var("OVRCR_SERVER_EXECUTABLE", executable);
@@ -1182,7 +1182,7 @@ fn startup_read_only_commands_do_not_start_a_missing_server() {
 fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
-    Registry::default().save_atomic(&registry).unwrap();
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
     std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
@@ -3926,9 +3926,7 @@ impl ControlFixture {
         );
         let socket = root.path().join("server.sock");
         let registry = root.path().join("config.toml");
-        ovrcr::config::Registry::default()
-            .save_atomic(&registry)
-            .unwrap();
+        save_registry_atomic(&ovrcr::config::Registry::default(), &registry).unwrap();
         let paths = ServerPaths {
             socket: socket.clone(),
         };
@@ -4774,7 +4772,7 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
         "relative project registration failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let registry = Registry::load(&fixture._root.path().join("config.toml")).unwrap();
+    let registry = load_registry(&fixture._root.path().join("config.toml")).unwrap();
     let project = registry
         .projects
         .iter()
@@ -4805,7 +4803,7 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
 
     let config = root.path().join("config.toml");
     let socket = root.path().join("server.sock");
-    Registry::default().save_atomic(&config).unwrap();
+    save_registry_atomic(&Registry::default(), &config).unwrap();
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let mut cleanup = CliLifecycleGuard::new(bin, &config, &socket);
     let server = Command::new(bin)
