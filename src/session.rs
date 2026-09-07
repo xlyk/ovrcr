@@ -1,3 +1,4 @@
+use crate::context::{ContextUsageSnapshot, validate_context};
 use crate::protocol::{AgentReport, AgentUpdate};
 use anyhow::{Context, Result, bail};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -89,6 +90,7 @@ pub struct SessionSummary {
     pub started_unix_ms: u64,
     pub phase: SessionPhase,
     pub activity: AgentActivity,
+    pub context_usage: Option<ContextUsageSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -127,6 +129,8 @@ struct SessionState {
     activity: AgentActivity,
     hook_capability: Option<[u8; 32]>,
     activity_order: ReportOrder,
+    context_usage: Option<ContextUsageSnapshot>,
+    context_order: ReportOrder,
 }
 
 struct JoinHandles {
@@ -271,6 +275,7 @@ impl Session {
                 started_unix_ms,
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
+                context_usage: None,
             },
             state: Mutex::new(SessionState {
                 phase: SessionPhase::Running,
@@ -278,6 +283,8 @@ impl Session {
                 activity: AgentActivity::Unknown,
                 hook_capability: spec.hook_env.as_ref().map(|hook| hook.capability),
                 activity_order: ReportOrder::default(),
+                context_usage: None,
+                context_order: ReportOrder::default(),
             }),
             state_changed: Condvar::new(),
             parser: Mutex::new(vt100::Parser::new(size.rows, size.cols, 0)),
@@ -335,6 +342,7 @@ impl Session {
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
         summary.activity = state.activity;
+        summary.context_usage = state.context_usage.clone();
         summary
     }
 
@@ -424,11 +432,32 @@ impl Session {
         {
             bail!("agent report rejected");
         }
-        let AgentUpdate::Activity(activity) = &report.update;
-        state.activity_order.accept(report.sequence)?;
-        let changed = state.activity != *activity;
-        state.activity = *activity;
-        Ok(changed)
+        match &report.update {
+            AgentUpdate::Activity(activity) => {
+                let mut next_order = state.activity_order;
+                next_order.accept(report.sequence)?;
+                let changed = state.activity != *activity;
+                state.activity_order = next_order;
+                state.activity = *activity;
+                Ok(changed)
+            }
+            AgentUpdate::Context(context) => {
+                validate_context(context)?;
+                let mut next_order = state.context_order.clone();
+                next_order.accept(report.sequence)?;
+                let snapshot = ContextUsageSnapshot {
+                    report: context.clone(),
+                    received_unix_ms: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                };
+                let changed = state.context_usage.as_ref() != Some(&snapshot);
+                state.context_order = next_order;
+                state.context_usage = Some(snapshot);
+                Ok(changed)
+            }
+        }
     }
 
     pub fn revoke_hook_capability(&self) {

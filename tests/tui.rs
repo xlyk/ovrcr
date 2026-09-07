@@ -38,6 +38,7 @@ fn dashboard_fixture() -> Dashboard {
         started_unix_ms,
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
+        context_usage: None,
     };
     dashboard.hierarchy = HierarchySnapshot {
         projects: vec![
@@ -774,6 +775,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                         started_unix_ms: 0,
                         phase: SessionPhase::Running,
                         activity: AgentActivity::Unknown,
+                        context_usage: None,
                     })
                     .collect(),
             }],
@@ -862,6 +864,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
             started_unix_ms: 0,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
+            context_usage: None,
         });
     }
     dashboard.select_session(SessionId(50));
