@@ -359,6 +359,426 @@ fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
     );
 }
 
+#[test]
+fn context_helper_reports_from_managed_pty() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let workspaces = root.path().join("workspaces");
+    setup_git_fixture(&repo, &workspaces);
+    let config = root.path().join("config.toml");
+    let socket = root.path().join("server.sock");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
+    let run = |args: &[&str]| {
+        let mut command = isolated_command(&root);
+        command.args(args);
+        let output = run_cli_bounded(command).unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        output
+    };
+    run(&[
+        "project",
+        "add",
+        "fixture",
+        repo.to_str().unwrap(),
+        "--workspace-root",
+        workspaces.to_str().unwrap(),
+    ]);
+    run(&[
+        "workspace",
+        "create",
+        "--project",
+        "fixture",
+        "--name",
+        "hooks",
+        "--new-branch",
+        "feature/hooks",
+        "--base",
+        "main",
+    ]);
+    cleanup.capture_live_process_groups(&socket);
+
+    let generic_stdout = root.path().join("context.stdout");
+    let claude_stdout = root.path().join("claude-context.stdout");
+    let result_log = root.path().join("context-results");
+    let script = r#"
+count=0
+while IFS= read -r line; do
+    if [ "$count" -eq 0 ]; then
+        mode=context
+        output="$2"
+    else
+        mode=claude-context
+        output="$3"
+    fi
+    printf '%s' "$line" | "$1" report "$mode" --stdin-json > "$output"
+    status=$?
+    printf '%s:%s\n' "$mode" "$status" >> "$4"
+    count=$((count + 1))
+done
+"#;
+    let mut created = isolated_command(&root);
+    created.args([
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "hooks",
+        "--name",
+        "context-helper",
+        "--",
+    ]);
+    created.args([
+        "sh",
+        "-c",
+        script,
+        "context-helper",
+        bin,
+        generic_stdout.to_str().unwrap(),
+        claude_stdout.to_str().unwrap(),
+        result_log.to_str().unwrap(),
+    ]);
+    let created = run_cli_bounded(created).unwrap();
+    assert!(
+        created.status.success(),
+        "create helper shell: stdout={} stderr={}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let id: u64 = String::from_utf8_lossy(&created.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    cleanup.capture_live_process_groups(&socket);
+    let mut dashboard = select_session(&socket, SessionId(id));
+
+    let generic = br#"{"source":"generic","model":"generic-model","conversation":"generic-conversation","used_tokens":12,"capacity_tokens":100}"#;
+    assert_eq!(
+        dashboard_request(
+            &mut dashboard,
+            Request::Input {
+                session: SessionId(id),
+                bytes: [generic.as_slice(), b"\n"].concat(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let generic_ack_deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&result_log).unwrap_or_default() != "context:0\n"
+        && Instant::now() < generic_ack_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert_eq!(std::fs::read_to_string(&result_log).unwrap(), "context:0\n");
+    let generic_state_deadline = Instant::now() + Duration::from_secs(3);
+    let mut generic_state = None;
+    while Instant::now() < generic_state_deadline {
+        if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List)
+            && let Some(session) = snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .find(|session| session.id == SessionId(id))
+            && session.context_usage.is_some()
+        {
+            generic_state = session.context_usage.clone();
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let generic_state = generic_state.expect("server never observed generic context");
+    assert_eq!(
+        generic_state.report.source,
+        ovrcr::context::ContextSource::Generic
+    );
+    assert_eq!(generic_state.report.model.as_deref(), Some("generic-model"));
+    assert_eq!(
+        generic_state.report.conversation.as_deref(),
+        Some("generic-conversation")
+    );
+    assert_eq!(generic_state.report.used_tokens, Some(12));
+    assert_eq!(generic_state.report.capacity_tokens, Some(100));
+
+    let claude = br#"{"session_id":"fixture-conversation","model":{"id":"fixture-model"},"context_window":{"context_window_size":200000,"current_usage":{"input_tokens":8500,"output_tokens":1200,"cache_creation_input_tokens":5000,"cache_read_input_tokens":2000}},"irrelevant":{"secret":"ignored"}}"#;
+    assert_eq!(
+        dashboard_request(
+            &mut dashboard,
+            Request::Input {
+                session: SessionId(id),
+                bytes: [claude.as_slice(), b"\n"].concat(),
+            },
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let claude_ack_deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&result_log).unwrap_or_default()
+        != "context:0\nclaude-context:0\n"
+        && Instant::now() < claude_ack_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&result_log).unwrap(),
+        "context:0\nclaude-context:0\n"
+    );
+    assert!(std::fs::read(&generic_stdout).unwrap().is_empty());
+    assert_eq!(std::fs::read_to_string(&claude_stdout).unwrap(), "ctx 7%\n");
+    let claude_state_deadline = Instant::now() + Duration::from_secs(3);
+    let mut claude_state = None;
+    while Instant::now() < claude_state_deadline {
+        if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List)
+            && let Some(session) = snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .find(|session| session.id == SessionId(id))
+            && session.context_usage.as_ref().is_some_and(|sample| {
+                sample.report.source == ovrcr::context::ContextSource::ClaudeCodeStatusline
+                    && sample.report.used_tokens == Some(15_500)
+            })
+        {
+            claude_state = session.context_usage.clone();
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let claude_state = claude_state.expect("server never observed Claude context replacement");
+    assert_eq!(claude_state.report.model.as_deref(), Some("fixture-model"));
+    assert_eq!(
+        claude_state.report.conversation.as_deref(),
+        Some("fixture-conversation")
+    );
+    assert_eq!(claude_state.report.used_tokens, Some(15_500));
+    assert_eq!(claude_state.report.capacity_tokens, Some(200_000));
+    cleanup.confirm();
+}
+
+#[test]
+fn context_helper_invalid_input_has_no_effect() {
+    let root = tempfile::tempdir().unwrap();
+    let repo = root.path().join("repo");
+    let workspaces = root.path().join("workspaces");
+    setup_git_fixture(&repo, &workspaces);
+    let config = root.path().join("config.toml");
+    let socket = root.path().join("server.sock");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let mut cleanup = CleanupGuard::new(bin, &config, &socket);
+    let run = |args: &[&str]| {
+        let mut command = isolated_command(&root);
+        command.args(args);
+        let output = run_cli_bounded(command).unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    run(&[
+        "project",
+        "add",
+        "fixture",
+        repo.to_str().unwrap(),
+        "--workspace-root",
+        workspaces.to_str().unwrap(),
+    ]);
+    run(&[
+        "workspace",
+        "create",
+        "--project",
+        "fixture",
+        "--name",
+        "hooks",
+        "--new-branch",
+        "feature/hooks",
+        "--base",
+        "main",
+    ]);
+    cleanup.capture_live_process_groups(&socket);
+    let result_log = root.path().join("context-results");
+    let script = r#"
+count=0
+while IFS= read -r line; do
+    if [ "$count" -eq 0 ]; then mode=context; else mode=context; fi
+    printf '%s' "$line" | "$1" report "$mode" --stdin-json > /dev/null
+    printf '%s:%s\n' "$mode" "$?" >> "$2"
+    count=$((count + 1))
+done
+"#;
+    let mut created = isolated_command(&root);
+    created.args([
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "hooks",
+        "--name",
+        "context-invalid",
+        "--",
+    ]);
+    created.args([
+        "sh",
+        "-c",
+        script,
+        "context-invalid",
+        bin,
+        result_log.to_str().unwrap(),
+    ]);
+    let created = run_cli_bounded(created).unwrap();
+    assert!(created.status.success());
+    let id: u64 = String::from_utf8_lossy(&created.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    cleanup.capture_live_process_groups(&socket);
+    let mut dashboard = select_session(&socket, SessionId(id));
+    let valid = br#"{"source":"generic","model":"stable-model","conversation":"stable-conversation","used_tokens":25,"capacity_tokens":100}"#;
+    assert_eq!(
+        dashboard_request(
+            &mut dashboard,
+            Request::Input {
+                session: SessionId(id),
+                bytes: [valid.as_slice(), b"\n"].concat()
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let valid_deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&result_log).unwrap_or_default() != "context:0\n"
+        && Instant::now() < valid_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    let before = loop {
+        if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List)
+            && let Some(session) = snapshot
+                .projects
+                .iter()
+                .flat_map(|project| project.workspaces.iter())
+                .flat_map(|workspace| workspace.sessions.iter())
+                .find(|session| session.id == SessionId(id))
+            && let Some(sample) = session.context_usage.clone()
+        {
+            break sample;
+        }
+        assert!(
+            Instant::now() < valid_deadline,
+            "valid context not observed"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    };
+    let invalid = br#"{"source":"generic","used_tokens":"secret-payload","capacity_tokens":100}"#;
+    assert_eq!(
+        dashboard_request(
+            &mut dashboard,
+            Request::Input {
+                session: SessionId(id),
+                bytes: [invalid.as_slice(), b"\n"].concat()
+            }
+        )
+        .unwrap(),
+        Response::Ok
+    );
+    let invalid_deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&result_log).unwrap_or_default() != "context:0\ncontext:1\n"
+        && Instant::now() < invalid_deadline
+    {
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&result_log).unwrap(),
+        "context:0\ncontext:1\n"
+    );
+    let after = match cli_request(&socket, Request::List).unwrap() {
+        Response::Hierarchy(snapshot) => snapshot
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .find(|session| session.id == SessionId(id))
+            .and_then(|session| session.context_usage.clone())
+            .unwrap(),
+        response => panic!("unexpected response: {response:?}"),
+    };
+    assert_eq!(after, before);
+    cleanup.confirm();
+}
+
+#[test]
+fn context_helper_missing_server_does_not_start_one() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("missing.sock");
+    let config = root.path().join("missing.toml");
+    let mut command = isolated_command(&root);
+    command
+        .args(["report", "context", "--stdin-json"])
+        .env("OVRCR_CONFIG", &config)
+        .env("OVRCR_SOCKET", &socket)
+        .env("OVRCR_HOOK_SOCKET", &socket)
+        .env("OVRCR_SESSION_ID", "7")
+        .env("OVRCR_HOOK_TOKEN", "ab".repeat(32))
+        .stdin(Stdio::piped());
+    let started = Instant::now();
+    let mut captured = spawn_captured(command).unwrap();
+    let held_open = captured.child.stdin.take().unwrap();
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(2)).unwrap();
+    drop(held_open);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.is_empty());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(!socket.exists());
+    assert!(!config.exists());
+}
+
+fn setup_git_fixture(repo: &std::path::Path, workspaces: &std::path::Path) {
+    std::fs::create_dir(repo).unwrap();
+    std::fs::create_dir(workspaces).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec!["config", "user.name", "OVRCR Tests"],
+        vec!["config", "user.email", "tests@example.invalid"],
+    ] {
+        let output = run_cli_bounded({
+            let mut command = Command::new("git");
+            command.args(args).current_dir(repo);
+            command
+        })
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "git setup: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    std::fs::write(repo.join("README"), "fixture\n").unwrap();
+    for args in [vec!["add", "README"], vec!["commit", "-m", "initial"]] {
+        let output = run_cli_bounded({
+            let mut command = Command::new("git");
+            command.args(args).current_dir(repo);
+            command
+        })
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "git fixture: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 fn accept_with_deadline(
     listener: &std::os::unix::net::UnixListener,
 ) -> (UnixStream, std::os::unix::net::SocketAddr) {
@@ -402,6 +822,72 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
     match read_frame::<ServerMessage>(&mut stream).map_err(|error| error.to_string())? {
         ServerMessage::Response { response, .. } => Ok(response),
         ServerMessage::Event(_) => Err("server sent an event before response".into()),
+    }
+}
+
+fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+        ServerMessage::Response {
+            request_id: 1,
+            response: Response::Hierarchy(_),
+        } => {}
+        response => panic!("unexpected dashboard hello response: {response:?}"),
+    }
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
+            },
+        },
+    )
+    .unwrap();
+    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Screen {
+                session: selected, ..
+            },
+        } => assert_eq!(selected, session),
+        response => panic!("unexpected select response: {response:?}"),
+    }
+    stream
+}
+
+fn dashboard_request(stream: &mut UnixStream, request: Request) -> Result<Response, String> {
+    write_frame(
+        stream,
+        &ClientMessage {
+            request_id: 3,
+            request,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    loop {
+        match read_frame::<ServerMessage>(stream).map_err(|error| error.to_string())? {
+            ServerMessage::Response {
+                request_id: 3,
+                response,
+            } => return Ok(response),
+            ServerMessage::Event(_) | ServerMessage::Response { .. } => {}
+        }
     }
 }
 

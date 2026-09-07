@@ -1,6 +1,9 @@
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use ovrcr::config::{ProjectRecord, Registry, RegistryPath, WorkspaceRecord};
+use ovrcr::context::{
+    ContextUsageSnapshot, format_context, parse_claude_context, parse_context_json,
+};
 use ovrcr::protocol::{
     AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode, Request, Response,
     ServerMessage, read_frame, write_frame,
@@ -75,11 +78,21 @@ enum ReportCommand {
         #[arg(long)]
         sequence: Option<u64>,
     },
+    Context {
+        #[arg(long)]
+        stdin_json: bool,
+        #[arg(long)]
+        sequence: Option<u64>,
+    },
     Claude {
         #[arg(long)]
         stdin_json: bool,
         #[arg(long)]
         verbose: bool,
+    },
+    ClaudeContext {
+        #[arg(long)]
+        stdin_json: bool,
     },
 }
 
@@ -305,11 +318,50 @@ fn run_report(command: ReportCommand) -> AppResult<()> {
             report::send_report(AgentUpdate::Activity(state), sequence, deadline)
                 .map_err(report_runtime_error)
         }
+        ReportCommand::Context {
+            stdin_json,
+            sequence,
+        } => run_report_context(stdin_json, sequence),
         ReportCommand::Claude {
             stdin_json,
             verbose,
         } => run_report_claude(stdin_json, verbose),
+        ReportCommand::ClaudeContext { stdin_json } => run_report_claude_context(stdin_json),
     }
+}
+
+fn run_report_context(stdin_json: bool, sequence: Option<u64>) -> AppResult<()> {
+    if !stdin_json {
+        return Err(RuntimeError::new(
+            ErrorCode::InvalidRequest,
+            "--stdin-json is required",
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let input = report::read_hook_stdin(deadline).map_err(report_runtime_error)?;
+    let context = parse_context_json(&input).map_err(report_runtime_error)?;
+    report::send_report(AgentUpdate::Context(context), sequence, deadline)
+        .map_err(report_runtime_error)
+}
+
+fn run_report_claude_context(stdin_json: bool) -> AppResult<()> {
+    if !stdin_json {
+        return Err(RuntimeError::new(
+            ErrorCode::InvalidRequest,
+            "--stdin-json is required",
+        ));
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let input = report::read_hook_stdin(deadline).map_err(report_runtime_error)?;
+    let report = parse_claude_context(&input).map_err(report_runtime_error)?;
+    report::send_report(AgentUpdate::Context(report.clone()), None, deadline)
+        .map_err(report_runtime_error)?;
+    let sample = ContextUsageSnapshot {
+        report,
+        received_unix_ms: 0,
+    };
+    println!("ctx {}", format_context(Some(&sample), 0, false));
+    Ok(())
 }
 
 fn run_report_claude(stdin_json: bool, verbose: bool) -> AppResult<()> {
