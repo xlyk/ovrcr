@@ -467,6 +467,12 @@ impl Session {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_terminal_lock_for_test(&self, operation: impl FnOnce()) {
+        let _terminal = self.terminal.lock().unwrap();
+        operation();
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_history_capture_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
         *self.history_capture_hook.lock().unwrap() = hook;
     }

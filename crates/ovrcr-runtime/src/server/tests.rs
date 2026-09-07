@@ -917,31 +917,77 @@ fn history_page_overflow_disconnects_without_parser_wait() {
             } if id == request_id
         ));
     }
-    for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-                projects: Vec::new(),
-            })),
-            completion: None,
-        }));
+    let (_page_cwd, page_session, page_receiver) = spawn_live_test_session(SessionId(12));
+    let page_events = apply_test_session_events(Arc::clone(&page_session), page_receiver);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(SessionId(12), Arc::clone(&page_session));
+    let (parser_holder_acquired_sender, parser_holder_acquired) = mpsc::sync_channel(1);
+    let (parser_holder_release, parser_holder_release_result) = mpsc::sync_channel(1);
+    let parser_holder_session = Arc::clone(&page_session);
+    let parser_holder = thread::spawn(move || {
+        parser_holder_session.with_terminal_lock_for_test(|| {
+            parser_holder_acquired_sender.send(()).unwrap();
+            parser_holder_release_result.recv().unwrap();
+        });
+    });
+    let parser_was_held = parser_holder_acquired
+        .recv_timeout(Duration::from_secs(2))
+        .is_ok();
+    let mut queue_filled = true;
+    if parser_was_held {
+        for _ in 0..DASHBOARD_QUEUE {
+            if !sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new(),
+                })),
+                completion: None,
+            }) {
+                queue_filled = false;
+                break;
+            }
+        }
     }
-    send_history_command(
-        &state,
-        &owner,
-        8,
-        HistoryRequest::Page {
-            session: SessionId(12),
-            snapshot: HistorySnapshotId(1),
-            start_row: 0,
-            rows: 1,
-            start_col: 0,
-            cols: 1,
-        },
-    );
-    assert!(state.dashboard_slot.lock().unwrap().is_none());
-    assert!(state.dashboard.lock().unwrap().is_none());
-    state.dispatch.send(DispatchMessage::Stop).unwrap();
-    dispatcher.join().unwrap();
+    let (completion, completion_result) = mpsc::sync_channel(1);
+    let page_sent = state
+        .dispatch
+        .send(DispatchMessage::History {
+            owner: owner.clone(),
+            request_id: 8,
+            request: HistoryRequest::Page {
+                session: SessionId(12),
+                snapshot: HistorySnapshotId(1),
+                start_row: 0,
+                rows: 1,
+                start_col: 0,
+                cols: 1,
+            },
+            completion,
+        })
+        .is_ok();
+    let completion_before_release = completion_result
+        .recv_timeout(Duration::from_secs(2))
+        .is_ok();
+    let disconnected_before_release =
+        state.dashboard_slot.lock().unwrap().is_none() && state.dashboard.lock().unwrap().is_none();
+    let _ = parser_holder_release.send(());
+    let parser_holder_joined = parser_holder.join().is_ok();
+    let dispatcher_stopped = state.dispatch.send(DispatchMessage::Stop).is_ok();
+    let dispatcher_joined = dispatcher.join().is_ok();
+    let cleanup_result = cleanup_test_session(&page_session, page_events);
+    let removed = state.remove_session(SessionId(12)).is_ok();
+    assert!(parser_was_held);
+    assert!(queue_filled);
+    assert!(page_sent);
+    assert!(completion_before_release);
+    assert!(disconnected_before_release);
+    assert!(parser_holder_joined);
+    assert!(dispatcher_stopped);
+    assert!(dispatcher_joined);
+    assert!(cleanup_result.is_ok());
+    assert!(removed);
 }
 
 #[test]
