@@ -730,9 +730,24 @@ fn copy_mode_routes_keys_and_freezes_output() {
         },
     });
     dashboard.key(KeyCode::Char('['));
-    dashboard.key(KeyCode::Home);
-    dashboard.key(KeyCode::Char('v'));
-    dashboard.key(KeyCode::Right);
+    dashboard.copy_notice = Some("stale movement notice".into());
+    assert_eq!(
+        dashboard.key(KeyCode::Home),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.copy_notice.is_none());
+    dashboard.copy_notice = Some("stale anchor notice".into());
+    assert_eq!(
+        dashboard.key(KeyCode::Char('v')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.copy_notice.is_none());
+    dashboard.copy_notice = Some("stale movement notice".into());
+    assert_eq!(
+        dashboard.key(KeyCode::Right),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.copy_notice.is_none());
     assert_eq!(
         dashboard.key(KeyCode::Char('y')),
         ovrcr::tui::DashboardAction::CopyText("ab".into())
