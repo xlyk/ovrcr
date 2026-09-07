@@ -213,39 +213,61 @@ mod tests {
     #[test]
     fn history_resize_keeps_old_width() {
         let mut parser = vt100::Parser::new(2, 12, HISTORY_ROWS);
-        parser.process(b"OLD\r\nNEW");
-        parser.screen_mut().set_size(2, 4);
-        parser.screen_mut().set_size(2, 12);
-        let mut frozen = FrozenHistory::capture(
+        parser.process(b"OLDROW_12345\r\nSECOND_ROW\r\nCURRENT");
+        let mut before_resize = FrozenHistory::capture(
             SessionId(1),
             HistorySnapshotId(3),
             2,
             parser.screen().clone(),
         )
         .unwrap();
-        let rows = frozen.page(0, 1, 0, 12).unwrap();
-        assert_eq!(rows.rows[0].width, 12);
-        assert_eq!(rows.rows[0].cells.len(), 12);
+        assert!(before_resize.opened().history_rows > 0);
+        let original = before_resize.page(0, 1, 0, 12).unwrap();
+        assert_eq!(original.rows[0].width, 12);
         assert_eq!(
-            rows.rows[0]
+            original.rows[0]
                 .cells
                 .iter()
                 .map(|cell| cell.text.as_str())
                 .collect::<String>()
                 .trim_end(),
-            "OLD"
+            "OLDROW_12345"
         );
+        parser.screen_mut().set_size(2, 4);
+        parser.screen_mut().set_size(2, 12);
+        let mut frozen = FrozenHistory::capture(
+            SessionId(1),
+            HistorySnapshotId(4),
+            3,
+            parser.screen().clone(),
+        )
+        .unwrap();
+        assert!(frozen.opened().history_rows > 0);
+        assert_eq!(frozen.page(0, 1, 0, 12).unwrap().rows, original.rows);
     }
 
     #[test]
     fn history_alternate_screen_has_no_transcript() {
         let mut parser = vt100::Parser::new(2, 12, HISTORY_ROWS);
-        parser.process(b"PRIMARY");
+        parser.process(b"PRIMARY_OLD\r\nPRIMARY_NEW\r\nLIVE");
+        let mut before_alternate = FrozenHistory::capture(
+            SessionId(1),
+            HistorySnapshotId(5),
+            4,
+            parser.screen().clone(),
+        )
+        .unwrap();
+        let before_history_rows = before_alternate.opened().history_rows;
+        let before_total_rows = before_alternate.opened().total_rows;
+        assert!(before_history_rows > 0);
+        let before_rows = before_alternate
+            .page(0, u16::try_from(before_history_rows).unwrap(), 0, 12)
+            .unwrap();
         parser.process(b"\x1b[?1049hALT");
         let error = FrozenHistory::capture(
             SessionId(1),
-            HistorySnapshotId(4),
-            3,
+            HistorySnapshotId(6),
+            5,
             parser.screen().clone(),
         )
         .unwrap_err();
@@ -253,19 +275,20 @@ mod tests {
         parser.process(b"\x1b[?1049l");
         let mut frozen = FrozenHistory::capture(
             SessionId(1),
-            HistorySnapshotId(5),
-            4,
+            HistorySnapshotId(7),
+            6,
             parser.screen().clone(),
         )
         .unwrap();
-        let rows = frozen.page(0, 2, 0, 12).unwrap();
-        assert!(rows.rows.iter().any(|row| {
-            row.cells
-                .iter()
-                .map(|cell| cell.text.as_str())
-                .collect::<String>()
-                .contains("PRIMARY")
-        }));
+        assert_eq!(frozen.opened().history_rows, before_history_rows);
+        assert_eq!(frozen.opened().total_rows, before_total_rows);
+        assert_eq!(
+            frozen
+                .page(0, u16::try_from(before_history_rows).unwrap(), 0, 12)
+                .unwrap()
+                .rows,
+            before_rows.rows
+        );
     }
 
     #[test]
