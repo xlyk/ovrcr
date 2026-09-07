@@ -664,7 +664,7 @@ fn pause_resume_dense_status_has_priority() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("pid: 555  elapsed: 0m  paused"));
+    assert!(rendered.contains("pid: 555  elapsed: 0m  agent busy  paused"));
     assert!(rendered.contains("p pause  r resume"));
     assert!(
         rendered
