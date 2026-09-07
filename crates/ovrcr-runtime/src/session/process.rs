@@ -4,6 +4,7 @@ use std::io as std_io;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 pub(super) fn verify_group_identity(pgid: libc::pid_t, allow_reaped_leader: bool) -> Result<()> {
     if pgid <= 1 || pgid == unsafe { libc::getpgrp() } {
         bail!("refusing unsafe process group")
