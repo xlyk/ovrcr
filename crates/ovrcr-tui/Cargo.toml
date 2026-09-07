@@ -1,0 +1,16 @@
+[package]
+name = "ovrcr-tui"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+crossterm = { workspace = true }
+libc = { workspace = true }
+ovrcr-protocol = { workspace = true }
+ovrcr-terminal = { workspace = true }
+ratatui = { workspace = true }
+serde_json = { workspace = true }
+signal-hook = { workspace = true }

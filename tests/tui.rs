@@ -135,6 +135,25 @@ fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "create terminal");
+    let mut helper_dashboard = dashboard_fixture();
+    palette_search(&mut helper_dashboard, "create terminal");
+    helper_dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(
+        event_to_request(
+            &mut helper_dashboard,
+            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+            100,
+        )
+        .is_none()
+    );
+    assert!(
+        event_to_request(
+            &mut helper_dashboard,
+            Event::Paste("blocked by palette".into()),
+            101,
+        )
+        .is_none()
+    );
     assert!(palette_text(&dashboard).contains("Create terminal"));
     assert!(!palette_text(&dashboard).contains("Register project"));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);

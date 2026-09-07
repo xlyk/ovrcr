@@ -1,6 +1,15 @@
-use super::*;
-use crate::protocol::{BranchRequest, CreateSessionRequest};
-use ratatui::widgets::{Clear, Wrap};
+use super::input::is_browse_key;
+use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
+use super::state::find_session;
+use super::{Dashboard, DashboardAction, InputMode};
+use crate::protocol::{BranchRequest, ClientMessage, CreateSessionRequest, Request, Response};
+use crate::session::SessionId;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
+use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 #[derive(Clone)]
 enum Command {

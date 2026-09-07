@@ -1,8 +1,10 @@
 //! Dedicated scheduled-task interface. Network work stays outside the input/render loop.
-use crate::task_manager::{TaskRequest, TaskResponse};
-use crate::tasks::*;
-use anyhow::{Result, bail};
+use crate::TaskRequestFn;
+use anyhow::{Context, Result, bail};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
+use ovrcr_protocol::task::{
+    Run, RunId, Schedule, Task, TaskId, TaskRequest, TaskResponse, TaskSpec, TaskTarget,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -16,6 +18,72 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+
+pub fn parse_duration(value: &str) -> Result<u64> {
+    if !value.is_ascii() || value.len() < 2 {
+        bail!("duration must be an integer followed by s, m, h, or d");
+    }
+    let (number, unit) = value.split_at(value.len() - 1);
+    let multiplier = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        _ => bail!("duration must use s, m, h, or d"),
+    };
+    let seconds = number
+        .parse::<u64>()
+        .context("duration must be a positive integer")?
+        .checked_mul(multiplier)
+        .context("duration is too large")?;
+    if seconds == 0 {
+        bail!("duration must be positive");
+    }
+    Ok(seconds)
+}
+
+pub fn event_text(event: &serde_json::Value) -> String {
+    let event = event.get("event").unwrap_or(event);
+    match event["type"].as_str().unwrap_or("") {
+        "message_update" if event["assistantMessageEvent"]["type"] == "text_delta" => {
+            event["assistantMessageEvent"]["delta"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned()
+        }
+        "tool_execution_start" => format!(
+            "\n[tool: {}]\n",
+            event["toolName"].as_str().unwrap_or("unknown")
+        ),
+        "tool_execution_end" => {
+            let mut text = String::new();
+            if let Some(content) = event["result"]["content"].as_array() {
+                for part in content {
+                    if part["type"] == "text" {
+                        text.push_str(part["text"].as_str().unwrap_or(""));
+                        text.push('\n');
+                    }
+                }
+            }
+            format!(
+                "\n{text}[tool {}]\n",
+                if event["isError"] == true {
+                    "failed"
+                } else {
+                    "finished"
+                }
+            )
+        }
+        "message_end" if event["message"]["stopReason"] == "error" => format!(
+            "\n[error: {}]\n",
+            event["message"]["errorMessage"]
+                .as_str()
+                .unwrap_or("provider error")
+        ),
+        "agent_settled" => "\n".into(),
+        _ => String::new(),
+    }
+}
 
 const TRANSCRIPT_LIMIT: usize = 256 * 1024;
 #[derive(Default)]
@@ -54,7 +122,7 @@ impl Transcript {
     }
     fn record(&mut self, bytes: &[u8]) {
         if let Ok(event) = serde_json::from_slice(bytes) {
-            self.text.push_str(&crate::task_cli::event_text(&event));
+            self.text.push_str(&crate::event_text(&event));
         } else {
             self.text.push_str(&String::from_utf8_lossy(bytes));
         }
@@ -156,7 +224,7 @@ impl TaskEditor {
         };
         let schedule = match f[5].trim() {
             "interval" => Schedule::Interval {
-                seconds: crate::task_cli::parse_duration(&f[6])?,
+                seconds: crate::parse_duration(&f[6])?,
             },
             "cron" => Schedule::Cron {
                 expression: f[6].clone(),
@@ -174,7 +242,7 @@ impl TaskEditor {
             schedule,
             model: f[8].clone(),
             thinking: f[9].clone(),
-            timeout_seconds: crate::task_cli::parse_duration(&f[10])?,
+            timeout_seconds: crate::parse_duration(&f[10])?,
         };
         spec.validate()?;
         Ok(spec)
@@ -566,16 +634,15 @@ pub struct TaskWorker {
     next_refresh: Instant,
 }
 impl TaskWorker {
-    pub fn start() -> std::io::Result<Self> {
+    pub fn start(send_request: TaskRequestFn) -> std::io::Result<Self> {
         let (sender, requests) = mpsc::sync_channel::<TaskRequest>(1);
         let (responses, receiver) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("ovrcr-task-control".into())
             .spawn(move || {
-                while let Ok(request) = requests.recv() {
-                    let result =
-                        crate::task_cli::request(request.clone()).map_err(|e| format!("{e:#}"));
-                    if responses.send((request, result)).is_err() {
+                while let Ok(task_request) = requests.recv() {
+                    let result = send_request(task_request.clone()).map_err(|e| format!("{e:#}"));
+                    if responses.send((task_request, result)).is_err() {
                         break;
                     }
                 }

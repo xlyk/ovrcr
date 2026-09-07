@@ -20,8 +20,20 @@ pub mod task_paging {
 pub mod task_runner {
     pub use ovrcr_runtime::task_runner::*;
 }
-pub mod task_tui;
 pub mod tasks {
     pub use ovrcr_runtime::tasks::*;
 }
-pub mod tui;
+pub mod task_tui {
+    pub use ovrcr_tui::task_tui::*;
+}
+pub mod tui {
+    pub use ovrcr_tui::{
+        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, InputMode, KeyEncoding,
+        TerminalGuard, TreeRow, actual_drawn_inner_rect, dashboard_message_channel, draw_dashboard,
+        draw_dashboard_at, encode_key, encode_paste, event_to_request, render_terminal,
+    };
+
+    pub fn run_dashboard(stream: std::os::unix::net::UnixStream) -> anyhow::Result<()> {
+        ovrcr_tui::run_dashboard(stream, crate::task_cli::request)
+    }
+}
