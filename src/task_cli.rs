@@ -10,6 +10,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub use ovrcr_tui::{event_text, parse_duration};
+
 #[derive(Args)]
 pub struct TaskArgs {
     #[command(subcommand)]
@@ -105,28 +107,6 @@ pub enum RunCommand {
         #[arg(long)]
         yes: bool,
     },
-}
-pub fn parse_duration(value: &str) -> Result<u64> {
-    if !value.is_ascii() || value.len() < 2 {
-        bail!("duration must be an integer followed by s, m, h, or d");
-    }
-    let (number, unit) = value.split_at(value.len() - 1);
-    let multiplier = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86400,
-        _ => bail!("duration must use s, m, h, or d"),
-    };
-    let seconds = number
-        .parse::<u64>()
-        .context("duration must be a positive integer")?
-        .checked_mul(multiplier)
-        .context("duration is too large")?;
-    if seconds == 0 {
-        bail!("duration must be positive");
-    }
-    Ok(seconds)
 }
 impl TaskFields {
     pub fn apply(self, name: String, previous: Option<TaskSpec>) -> Result<TaskSpec> {
@@ -382,49 +362,6 @@ fn print_row(value: &Value) {
             }
         });
     println!("{id}\t{name}\t{status}");
-}
-pub fn event_text(event: &Value) -> String {
-    // Accept raw Pi records or a saved envelope whose event field contains the record.
-    let event = event.get("event").unwrap_or(event);
-    match event["type"].as_str().unwrap_or("") {
-        "message_update" if event["assistantMessageEvent"]["type"] == "text_delta" => {
-            event["assistantMessageEvent"]["delta"]
-                .as_str()
-                .unwrap_or("")
-                .to_owned()
-        }
-        "tool_execution_start" => format!(
-            "\n[tool: {}]\n",
-            event["toolName"].as_str().unwrap_or("unknown")
-        ),
-        "tool_execution_end" => {
-            let mut text = String::new();
-            if let Some(content) = event["result"]["content"].as_array() {
-                for part in content {
-                    if part["type"] == "text" {
-                        text.push_str(part["text"].as_str().unwrap_or(""));
-                        text.push('\n');
-                    }
-                }
-            }
-            format!(
-                "\n{text}[tool {}]\n",
-                if event["isError"] == true {
-                    "failed"
-                } else {
-                    "finished"
-                }
-            )
-        }
-        "message_end" if event["message"]["stopReason"] == "error" => format!(
-            "\n[error: {}]\n",
-            event["message"]["errorMessage"]
-                .as_str()
-                .unwrap_or("provider error")
-        ),
-        "agent_settled" => "\n".into(),
-        _ => String::new(),
-    }
 }
 fn follow_logs(id: RunId, follow: bool, json_output: bool) -> Result<()> {
     let mut offset = 0;
