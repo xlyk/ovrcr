@@ -137,13 +137,14 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     if matches!(response, Response::Ok) {
                         (true, false)
                     } else {
-                        (
-                            dashboard_try_send(
+                        let delivered = dashboard_identity.as_ref().is_some_and(|owner| {
+                            dashboard_send_owner(
                                 &state,
+                                owner,
                                 response_message(message.request_id, response),
-                            ),
-                            false,
-                        )
+                            )
+                        });
+                        (delivered, false)
                     }
                 } else if !select {
                     if successful_shutdown {
@@ -492,8 +493,10 @@ fn dispatch_history_request(
     {
         return error_response(ErrorCode::Internal, "dispatcher is unavailable");
     }
-    let _ = result.recv();
-    Response::Ok
+    match result.recv() {
+        Ok(()) => Response::Ok,
+        Err(_) => error_response(ErrorCode::Internal, "dispatcher is unavailable"),
+    }
 }
 
 pub(super) fn error_for_lifecycle(error: anyhow::Error) -> Response {

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crate::session::AgentActivity;
 use ovrcr_protocol::{
-    HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, Response, ServerEvent, ServerMessage,
+    HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, Response, ServerEvent, ServerMessage,
 };
 use ovrcr_terminal::history::FrozenHistory;
 use std::io::Read;
@@ -430,6 +430,10 @@ fn history_owner_and_token_isolation() {
     let id = SessionId(11);
     let (_cwd, session, receiver) = spawn_live_test_session(id);
     let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let switched_id = SessionId(12);
+    let (_switched_cwd, switched_session, switched_receiver) = spawn_live_test_session(switched_id);
+    let switched_events =
+        apply_test_session_events(Arc::clone(&switched_session), switched_receiver);
     let (old_server, _old_client) = UnixStream::pair().unwrap();
     let old_sink = DashboardSink::new();
     let old_owner = Arc::new(());
@@ -442,6 +446,11 @@ fn history_owner_and_token_isolation() {
         .lock()
         .unwrap()
         .insert(id, Arc::clone(&session));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(switched_id, Arc::clone(&switched_session));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
 
@@ -495,6 +504,50 @@ fn history_owner_and_token_isolation() {
         }
     ));
 
+    let (switch_completion, switch_result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::Select {
+            request_id: 10,
+            session: switched_id,
+            size: TerminalSize { rows: 24, cols: 80 },
+            completion: switch_completion,
+        })
+        .unwrap();
+    switch_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("switch select completion");
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 10,
+            response: Response::Screen { session, .. },
+        } if session == switched_id
+    ));
+    send_history_command(
+        &state,
+        &old_owner,
+        11,
+        HistoryRequest::Page {
+            session: id,
+            snapshot: old_opened.snapshot,
+            start_row: 0,
+            rows: 1,
+            start_col: 0,
+            cols: 1,
+        },
+    );
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 11,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            },
+        }
+    ));
+
     let (new_server, _new_client) = UnixStream::pair().unwrap();
     let new_sink = DashboardSink::new();
     let new_owner = Arc::new(());
@@ -538,8 +591,24 @@ fn history_owner_and_token_isolation() {
 
     send_history_command(
         &state,
-        &old_owner,
+        &new_owner,
         5,
+        HistoryRequest::End {
+            session: id,
+            snapshot: new_opened.snapshot,
+        },
+    );
+    assert!(matches!(
+        queued_dashboard_message(&new_sink),
+        ServerMessage::Response {
+            request_id: 5,
+            response: Response::Ok,
+        }
+    ));
+    send_history_command(
+        &state,
+        &old_owner,
+        6,
         HistoryRequest::End {
             session: id,
             snapshot: replacement.snapshot,
@@ -549,7 +618,7 @@ fn history_owner_and_token_isolation() {
     send_history_command(
         &state,
         &new_owner,
-        6,
+        7,
         HistoryRequest::Page {
             session: id,
             snapshot: replacement.snapshot,
@@ -562,14 +631,14 @@ fn history_owner_and_token_isolation() {
     assert!(matches!(
         queued_dashboard_message(&new_sink),
         ServerMessage::Response {
-            request_id: 6,
+            request_id: 7,
             response: Response::HistoryRows(_),
         }
     ));
     send_history_command(
         &state,
         &new_owner,
-        7,
+        8,
         HistoryRequest::End {
             session: id,
             snapshot: replacement.snapshot,
@@ -578,7 +647,7 @@ fn history_owner_and_token_isolation() {
     assert!(matches!(
         queued_dashboard_message(&new_sink),
         ServerMessage::Response {
-            request_id: 7,
+            request_id: 8,
             response: Response::Ok,
         }
     ));
@@ -586,10 +655,211 @@ fn history_owner_and_token_isolation() {
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
     cleanup_test_session(&session, events).unwrap();
+    cleanup_test_session(&switched_session, switched_events).unwrap();
+
+    let (original_state, original_receiver) = test_state_with_dispatch(None, None);
+    let original_dispatcher = thread::spawn(move || {
+        if let Ok(DispatchMessage::History { completion, .. }) = original_receiver.recv() {
+            drop(completion);
+        }
+    });
+    let original_handler = thread::spawn({
+        let state = Arc::clone(&original_state);
+        move || {
+            let (server, mut client) = UnixStream::pair().unwrap();
+            let handler_state = Arc::clone(&state);
+            let handler = thread::spawn(move || handle_connection(handler_state, server));
+            write_frame(
+                &mut client,
+                &ClientMessage {
+                    request_id: 20,
+                    request: Request::DashboardHello,
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                read_frame::<ServerMessage>(&mut client).unwrap(),
+                ServerMessage::Response {
+                    request_id: 20,
+                    response: Response::Hierarchy(_),
+                }
+            ));
+            write_frame(
+                &mut client,
+                &ClientMessage {
+                    request_id: 21,
+                    request: Request::HistoryBegin { session: id },
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                read_frame::<ServerMessage>(&mut client).unwrap(),
+                ServerMessage::Response {
+                    request_id: 21,
+                    response: Response::Error {
+                        code: ErrorCode::Internal,
+                        ..
+                    },
+                }
+            ));
+            let _ = client.shutdown(Shutdown::Both);
+            handler.join().unwrap();
+        }
+    });
+    original_handler.join().unwrap();
+    original_dispatcher.join().unwrap();
+
+    let (replacement_state, replacement_receiver) = test_state_with_dispatch(None, None);
+    let (replacement_server, mut replacement_client) = UnixStream::pair().unwrap();
+    let replacement_handler_state = Arc::clone(&replacement_state);
+    let replacement_handler =
+        thread::spawn(move || handle_connection(replacement_handler_state, replacement_server));
+    write_frame(
+        &mut replacement_client,
+        &ClientMessage {
+            request_id: 30,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut replacement_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 30,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let old_identity = replacement_state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .identity
+        .clone();
+    let (new_server, _new_client) = UnixStream::pair().unwrap();
+    let replacement_sink = DashboardSink::new();
+    let replacement_owner = Arc::new(());
+    *replacement_state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+        sink: replacement_sink.clone(),
+        identity: replacement_owner,
+        stream: new_server,
+        history: None,
+        next_history_id: 1,
+    });
+    *replacement_state.dashboard.lock().unwrap() = Some(replacement_sink.clone());
+    drop(replacement_receiver);
+    write_frame(
+        &mut replacement_client,
+        &ClientMessage {
+            request_id: 31,
+            request: Request::HistoryBegin { session: id },
+        },
+    )
+    .unwrap();
+    replacement_handler.join().unwrap();
+    assert!(replacement_sink.queue.lock().unwrap().messages.is_empty());
+    assert!(
+        replacement_state
+            .dashboard_slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|slot| !Arc::ptr_eq(&slot.identity, &old_identity))
+    );
 }
 
 #[test]
 fn history_page_overflow_disconnects_without_parser_wait() {
+    let race_id = SessionId(14);
+    let (_race_cwd, race_session, race_receiver) = spawn_live_test_session(race_id);
+    let race_events = apply_test_session_events(Arc::clone(&race_session), race_receiver);
+    let (race_server, _race_client) = UnixStream::pair().unwrap();
+    let race_sink = DashboardSink::new();
+    let race_owner = Arc::new(());
+    let (race_state, race_dispatch_receiver) = test_state_with_dispatch(
+        Some(race_sink.clone()),
+        Some((race_owner.clone(), race_server)),
+    );
+    race_state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(race_id, Arc::clone(&race_session));
+    let (capture_entered, capture_entered_result) = mpsc::sync_channel(1);
+    let (capture_release, capture_release_result) = mpsc::sync_channel(1);
+    let capture_release_result = Arc::new(Mutex::new(capture_release_result));
+    let capture_release_waiter = Arc::clone(&capture_release_result);
+    race_session.set_history_capture_hook(Some(Arc::new(move || {
+        capture_entered.send(()).unwrap();
+        capture_release_waiter.lock().unwrap().recv().unwrap();
+    })));
+    let race_dispatcher_state = Arc::clone(&race_state);
+    let race_dispatcher =
+        thread::spawn(move || run_dispatcher(race_dispatcher_state, race_dispatch_receiver));
+    let (race_completion, race_completion_result) = mpsc::sync_channel(1);
+    race_state
+        .dispatch
+        .send(DispatchMessage::History {
+            owner: race_owner.clone(),
+            request_id: 100,
+            request: HistoryRequest::Begin { session: race_id },
+            completion: race_completion,
+        })
+        .unwrap();
+    capture_entered_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture pause entered");
+    let (parser_probe_done, parser_probe_result) = mpsc::sync_channel(1);
+    let parser_probe_session = Arc::clone(&race_session);
+    let parser_probe = thread::spawn(move || {
+        parser_probe_session.current_screen();
+        parser_probe_done.send(()).unwrap();
+    });
+    parser_probe_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture releases parser lock before install");
+    parser_probe.join().unwrap();
+    let (removed, removed_result) = mpsc::sync_channel(1);
+    let removal_state = Arc::clone(&race_state);
+    let removal_session = Arc::clone(&race_session);
+    let removal = thread::spawn(move || {
+        removal_session.terminate(Duration::from_secs(2)).unwrap();
+        removal_state.remove_session(race_id).unwrap();
+        removed.send(()).unwrap();
+    });
+    removed_result
+        .recv_timeout(Duration::from_secs(3))
+        .expect("session removed before capture resumes");
+    capture_release.send(()).unwrap();
+    race_completion_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture completion after removal");
+    assert!(matches!(
+        queued_dashboard_message(&race_sink),
+        ServerMessage::Response {
+            request_id: 100,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            },
+        }
+    ));
+    assert!(
+        race_state
+            .dashboard_slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .history
+            .is_none()
+    );
+    race_state.dispatch.send(DispatchMessage::Stop).unwrap();
+    race_dispatcher.join().unwrap();
+    removal.join().unwrap();
+    race_events.finish(Duration::from_secs(1)).unwrap();
+
     let (server_stream, _client_stream) = UnixStream::pair().unwrap();
     let sink = DashboardSink::new();
     let owner = Arc::new(());
@@ -616,9 +886,12 @@ fn history_page_overflow_disconnects_without_parser_wait() {
 
     for (request_id, rows, cols, start_row, start_col) in [
         (1, 0, 1, 0, 0),
-        (2, 1, PAGE_COLS + 1, 0, 0),
-        (3, 1, 1, 26, 0),
-        (4, 1, 1, u32::MAX, 0),
+        (2, 1, 0, 0, 0),
+        (3, PAGE_ROWS + 1, 1, 0, 0),
+        (4, 1, PAGE_COLS + 1, 0, 0),
+        (5, 1, 1, 26, 0),
+        (6, 1, 1, u32::MAX, 0),
+        (7, 1, 1, 0, u16::MAX),
     ] {
         send_history_command(
             &state,
@@ -655,7 +928,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     send_history_command(
         &state,
         &owner,
-        5,
+        8,
         HistoryRequest::Page {
             session: SessionId(12),
             snapshot: HistorySnapshotId(1),

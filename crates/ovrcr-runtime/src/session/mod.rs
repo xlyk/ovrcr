@@ -124,6 +124,8 @@ pub struct Session {
     signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
     signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
+    #[cfg(test)]
+    history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
@@ -278,6 +280,8 @@ impl Session {
             signal_hook,
             #[cfg(test)]
             signal_result_hook,
+            #[cfg(test)]
+            history_capture_hook: Mutex::new(None),
         });
 
         let reader_session = Arc::clone(&session);
@@ -455,7 +459,16 @@ impl Session {
             let terminal = self.terminal.lock().unwrap();
             (terminal.revision, terminal.parser.screen().clone())
         };
+        #[cfg(test)]
+        if let Some(hook) = self.history_capture_hook.lock().unwrap().clone() {
+            hook();
+        }
         FrozenHistory::capture(self.summary.id, snapshot, revision, screen)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_history_capture_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.history_capture_hook.lock().unwrap() = hook;
     }
 
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {

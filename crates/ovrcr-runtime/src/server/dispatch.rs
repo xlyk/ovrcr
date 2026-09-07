@@ -138,7 +138,6 @@ fn dispatch_history_begin(state: &ServerState, owner: &Arc<()>, request_id: u64,
         return;
     };
 
-    let _mutation = state.mutation_lock.lock().unwrap();
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else {
         send_history_response(
@@ -167,29 +166,35 @@ fn dispatch_history_begin(state: &ServerState, owner: &Arc<()>, request_id: u64,
         }
     };
     let opened = history.opened().clone();
-    if !state.sessions.lock().unwrap().contains_key(&id) {
-        send_history_response(
+    let install = {
+        let sessions = state.sessions.lock().unwrap();
+        if !sessions
+            .get(&id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, &session))
+        {
+            Err(())
+        } else {
+            let mut slot = state.dashboard_slot.lock().unwrap();
+            if slot
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
+            {
+                slot.as_mut().unwrap().history = Some(history);
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+    };
+    match install {
+        Ok(()) => send_history_response(state, owner, request_id, Response::HistoryOpened(opened)),
+        Err(()) if dashboard_owner_matches(state, owner) => send_history_response(
             state,
             owner,
             request_id,
             error_response(ErrorCode::NotFound, format!("session {} not found", id.0)),
-        );
-        return;
-    }
-    let installed = {
-        let mut slot = state.dashboard_slot.lock().unwrap();
-        if slot
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
-        {
-            slot.as_mut().unwrap().history = Some(history);
-            true
-        } else {
-            false
-        }
-    };
-    if installed {
-        send_history_response(state, owner, request_id, Response::HistoryOpened(opened));
+        ),
+        Err(()) => {}
     }
 }
 
