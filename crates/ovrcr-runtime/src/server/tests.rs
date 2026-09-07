@@ -620,6 +620,8 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     assert_eq!(state.view.lock().unwrap().clone(), Some(committed.clone()));
     assert_eq!(first.terminal_text().0, first_size);
     assert_eq!(second.terminal_text().0, second_size);
+    let initial_pty_sizes = (first.master_size().unwrap(), second.master_size().unwrap());
+    assert_eq!(initial_pty_sizes, (first_size, second_size));
 
     let mixed = DashboardView {
         revision: 5,
@@ -665,6 +667,10 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     assert_eq!(state.view.lock().unwrap().clone(), Some(committed.clone()));
     assert_eq!(first.terminal_text().0, first_size);
     assert_eq!(second.terminal_text().0, second_size);
+    assert_eq!(
+        (first.master_size().unwrap(), second.master_size().unwrap()),
+        initial_pty_sizes
+    );
 
     let stale = DashboardView {
         revision: 3,
@@ -710,6 +716,10 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     assert_eq!(state.view.lock().unwrap().clone(), Some(committed));
     assert_eq!(first.terminal_text().0, first_size);
     assert_eq!(second.terminal_text().0, second_size);
+    assert_eq!(
+        (first.master_size().unwrap(), second.master_size().unwrap()),
+        initial_pty_sizes
+    );
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
     cleanup_test_session(&second, second_events).unwrap();
@@ -728,6 +738,8 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
         test_state_with_dispatch(Some(sink), Some((owner.clone(), server_stream)));
     state.sessions.lock().unwrap().insert(id, session.clone());
     let snapshot = dashboard_snapshot(&state).expect("owner snapshot before dispatch");
+    let delayed_snapshot =
+        dashboard_snapshot(&state).expect("second owner snapshot before dispatch");
     let (start_cleanup, start_cleanup_result) = mpsc::sync_channel(1);
     let (cleanup_started, cleanup_started_result) = mpsc::sync_channel(1);
     let (cleanup_done, cleanup_done_result) = mpsc::sync_channel(1);
@@ -811,6 +823,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
         .recv_timeout(Duration::from_secs(2))
         .expect("cleanup completed after publication released the slot lock");
     cleanup_thread.join().unwrap();
+    disconnect_dashboard(&state, delayed_snapshot);
     let replacement_slot = state
         .dashboard_slot
         .lock()

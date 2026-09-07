@@ -380,6 +380,15 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn master_size(&self) -> Result<TerminalSize> {
+        let size = self.master.lock().unwrap().get_size()?;
+        Ok(TerminalSize {
+            rows: size.rows,
+            cols: size.cols,
+        })
+    }
+
     pub fn apply_event(&self, event: SessionEvent) {
         match event {
             SessionEvent::Output { id, bytes } if id == self.summary.id => {
