@@ -2647,6 +2647,7 @@ dependencies = [
  "ovrcr-protocol",
  "ovrcr-runtime",
  "ovrcr-terminal",
+ "ovrcr-tui",
  "portable-pty",
  "ratatui",
  "serde",
@@ -2687,6 +2688,19 @@ name = "ovrcr-terminal"
 version = "0.1.0"
 dependencies = [
  "vt100",
+]
+
+[[package]]
+name = "ovrcr-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "libc",
+ "ovrcr-protocol",
+ "ovrcr-terminal",
+ "ratatui",
+ "signal-hook",
 ]
 
 [[package]]
