@@ -35,22 +35,24 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     assert!(error.contains("another dashboard is already connected"));
 
     let (sender, receiver) = dashboard_message_channel();
+    let dashboard = staged_history_copy_dashboard();
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let terminal = Terminal::new(backend).unwrap();
     drop(sender);
     let error = next_dashboard_message(&receiver).unwrap_err().to_string();
     assert_eq!(error, "dashboard connection lost");
-
-    let mut dashboard = staged_history_copy_dashboard();
-    let mut bytes = Vec::new();
-    let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
-    assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
-    drop(terminal);
-    drop(dashboard);
     assert!(
-        bytes
-            .windows(b"\x1b]52;c;YQ==\x1b\\".len())
-            .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
+        dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .copy_completion
+            .is_some()
     );
+    drop(dashboard);
+    drop(terminal);
+    assert!(bytes.is_empty());
 }
 
 #[test]
