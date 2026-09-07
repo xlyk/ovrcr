@@ -11,7 +11,8 @@ pub use copy::{CopyMotion, CopyPoint, CopySelection};
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, event_to_request};
 pub use render::{
-    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_history, render_terminal,
+    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
+    render_terminal,
 };
 pub use state::{HistoryView, PendingHistoryBegin, PendingHistoryPage};
 pub use terminal_guard::TerminalGuard;

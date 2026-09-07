@@ -1,3 +1,4 @@
+use super::copy::{CopyPoint, CopySelection};
 use super::state::find_session;
 use super::{Dashboard, HistoryView, InputMode, TreeRow, history_view_size};
 use crate::context::format_context;
@@ -5,6 +6,7 @@ use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use ovrcr_protocol::HistoryColor;
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
+use ratatui::buffer::CellDiffOption;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -85,6 +87,30 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
         if row < rows && col < cols {
             frame.set_cursor_position((area.x + col, area.y + row));
         }
+    }
+}
+
+pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection) {
+    render_terminal(frame, area, &selection.screen, false);
+    for row in 0..selection.screen.size().0.min(area.height) {
+        for col in 0..selection.screen.size().1.min(area.width) {
+            if selection.contains(CopyPoint { row, col }) {
+                let cell = &mut frame.buffer_mut()[(area.x + col, area.y + row)];
+                cell.set_bg(TEAL).set_fg(BASE);
+                if selection
+                    .screen
+                    .cell(row, col)
+                    .is_some_and(|vt_cell| vt_cell.is_wide())
+                {
+                    cell.set_diff_option(CellDiffOption::ForcedWidth(
+                        std::num::NonZeroU16::new(1).unwrap(),
+                    ));
+                }
+            }
+        }
+    }
+    if selection.cursor.row < area.height && selection.cursor.col < area.width {
+        frame.set_cursor_position((area.x + selection.cursor.col, area.y + selection.cursor.row));
     }
 }
 
@@ -421,7 +447,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             ),
         );
     }
-    if let Some(view) = dashboard
+    if let Some(copy) = dashboard.copy.as_ref() {
+        render_copy(frame, layout.terminal, copy);
+    } else if let Some(view) = dashboard
         .history
         .as_ref()
         .filter(|_| dashboard.mode == InputMode::History)
@@ -437,6 +465,22 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
+            if let Some(notice) = dashboard.copy_notice.as_deref() {
+                return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
+            }
+            if dashboard.mode == InputMode::Copy {
+                return Line::from(vec![
+                    Span::styled("COPY  ", Style::default().fg(TEAL)),
+                    Span::styled("h/j/k/l", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" move  ", Style::default().fg(MUTED)),
+                    Span::styled("Space", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" anchor  ", Style::default().fg(MUTED)),
+                    Span::styled("y", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" copy  ", Style::default().fg(MUTED)),
+                    Span::styled("Esc", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" cancel", Style::default().fg(MUTED)),
+                ]);
+            }
             let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
             let narrow = layout.footer.width < 60;
             let mut footer = if dashboard.mode == InputMode::Terminal {

@@ -9,11 +9,11 @@ use ovrcr::protocol::{
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
-    DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding, dashboard_message_channel, encode_key,
-    encode_paste, event_to_request,
+    CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding,
+    dashboard_message_channel, encode_key, encode_paste, event_to_request, render_copy,
 };
-use ratatui::backend::{CrosstermBackend, TestBackend};
-use ratatui::layout::Rect;
+use ratatui::backend::{Backend, CrosstermBackend, TestBackend};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
@@ -765,6 +765,71 @@ fn copy_mode_routes_keys_and_freezes_output() {
         dashboard.event_action(Event::Paste("secret".into())),
         ovrcr::tui::DashboardAction::None
     );
+}
+
+#[test]
+fn copy_render_highlights_unicode_and_preserves_layout() {
+    let mut parser = vt100::Parser::new(2, 6, 0);
+    parser.process("A界B".as_bytes());
+    let mut selection = CopySelection::capture(SessionId(1), parser.screen());
+    selection.cursor = CopyPoint { row: 0, col: 1 };
+    selection.anchor = Some(selection.cursor);
+    assert!(selection.contains(CopyPoint { row: 0, col: 1 }));
+    assert!(selection.contains(CopyPoint { row: 0, col: 2 }));
+
+    let mut terminal = Terminal::new(TestBackend::new(6, 2)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_copy(frame, Rect::new(0, 0, 6, 2), &selection);
+            assert_eq!(frame.buffer_mut()[(2, 0)].fg, Color::Rgb(30, 30, 46));
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let base = Color::Rgb(30, 30, 46);
+    let teal = Color::Rgb(148, 226, 213);
+    let text = Color::Rgb(205, 214, 244);
+    assert_eq!(buffer[(0, 0)].symbol(), "A");
+    assert_eq!(buffer[(0, 0)].fg, text);
+    assert_eq!(buffer[(0, 0)].bg, base);
+    assert_eq!(buffer[(1, 0)].symbol(), "界");
+    assert_eq!(buffer[(1, 0)].fg, base);
+    assert_eq!(buffer[(1, 0)].bg, teal);
+    assert_eq!(buffer[(2, 0)].fg, base);
+    assert_eq!(buffer[(2, 0)].bg, teal);
+    assert_eq!(buffer[(3, 0)].symbol(), "B");
+    assert_eq!(buffer[(3, 0)].fg, text);
+    assert_eq!(buffer[(3, 0)].bg, base);
+    assert_eq!(
+        terminal.backend_mut().get_cursor_position().unwrap(),
+        Position::new(1, 0)
+    );
+}
+
+#[test]
+fn copy_render_tiny_pane_and_footer() {
+    let mut tiny = copy_ready_dashboard();
+    tiny.key(KeyCode::Char('['));
+    let mut tiny_terminal = Terminal::new(TestBackend::new(1, 1)).unwrap();
+    tiny_terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &tiny))
+        .unwrap();
+
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let footer = (0..120)
+        .map(|col| buffer[(col, 39)].symbol())
+        .collect::<String>();
+    assert!(footer.contains("COPY"));
+    assert!(footer.contains("Space"));
+    assert!(footer.contains('y'));
+    assert!(footer.contains("Esc"));
+    assert_eq!(buffer[(39, 1)].symbol(), "│");
+    assert_eq!(buffer[(39, 10)].symbol(), "│");
 }
 
 #[test]
