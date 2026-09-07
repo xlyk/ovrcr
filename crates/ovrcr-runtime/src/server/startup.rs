@@ -135,6 +135,10 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        #[cfg(test)]
+        before_view_publish_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
     });
     task_manager.start(Arc::downgrade(&state));

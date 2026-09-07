@@ -57,20 +57,7 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
         });
     if let Some(id) = first_session {
         write_client(&mut stream, 3, dashboard.select_request(id, 3).request)?;
-        if let Ok(message) = read_server(&mut stream) {
-            let terminal_error = matches!(
-                message,
-                ServerMessage::Response {
-                    response: Response::Error { .. },
-                    ..
-                }
-            );
-            dashboard.handle_server_message(message);
-            if !terminal_error {
-                let acknowledgement = read_server(&mut stream)?;
-                dashboard.handle_server_message(acknowledgement);
-            }
-        }
+        read_initial_selection(&mut stream, &mut dashboard, 3)?;
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
@@ -654,6 +641,41 @@ fn read_messages(
 
 fn read_server(stream: &mut UnixStream) -> Result<ServerMessage> {
     crate::protocol::read_frame(stream)
+}
+
+fn read_initial_selection(
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    request_id: u64,
+) -> Result<()> {
+    let mut screen_seen = false;
+    loop {
+        let message = read_server(stream)?;
+        let done = match &message {
+            ServerMessage::Response {
+                request_id: response_id,
+                response: Response::Screen { .. },
+            } if *response_id == request_id => {
+                screen_seen = true;
+                false
+            }
+            ServerMessage::Response {
+                request_id: response_id,
+                response: Response::Ok,
+            } if *response_id == request_id => screen_seen,
+            ServerMessage::Response {
+                request_id: response_id,
+                response: Response::Error { .. },
+            } if *response_id == request_id => true,
+            _ => false,
+        };
+        for request in dashboard.handle_server_message(message) {
+            write_frame(stream, &request)?;
+        }
+        if done {
+            return Ok(());
+        }
+    }
 }
 
 fn write_client(stream: &mut UnixStream, request_id: u64, request: Request) -> Result<()> {

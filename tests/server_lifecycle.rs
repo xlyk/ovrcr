@@ -2371,6 +2371,7 @@ impl HistoryDashboardParser {
 }
 
 fn history_request(connection: &mut HistoryConnection, id: u64, request: Request) -> Response {
+    let waits_for_screen = matches!(&request, Request::Select { .. });
     write_frame(
         &mut connection.stream,
         &ClientMessage {
@@ -2380,6 +2381,7 @@ fn history_request(connection: &mut HistoryConnection, id: u64, request: Request
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut screen = None;
     loop {
         assert!(
             Instant::now() < deadline,
@@ -2392,7 +2394,20 @@ fn history_request(connection: &mut HistoryConnection, id: u64, request: Request
             Some(ServerMessage::Response {
                 request_id,
                 response,
-            }) if request_id == id => return response,
+            }) if request_id == id => {
+                if waits_for_screen {
+                    match response {
+                        response @ Response::Screen { .. } => screen = Some(response),
+                        Response::Ok => {
+                            return screen.expect("select screen before acknowledgement");
+                        }
+                        response @ Response::Error { .. } => return response,
+                        response => panic!("select returned {response:?} before screen"),
+                    }
+                } else {
+                    return response;
+                }
+            }
             Some(_) => {}
         }
     }

@@ -33,8 +33,10 @@ use connections::{
     combine_control_and_refresh, error_chain_string, error_for_lifecycle, error_response,
     handle_connection, handle_request_with_id, input_error_code, response_message,
 };
-pub use dispatch::{DispatchMessage, HistoryRequest, run_dispatcher};
-use dispatch::{bridge_events, clear_dashboard_geometry, set_dashboard_geometry};
+pub use dispatch::{DispatchCompletion, DispatchMessage, HistoryRequest, run_dispatcher};
+use dispatch::{
+    bridge_events, clear_dashboard_geometry, clear_view_subscription, set_dashboard_geometry,
+};
 use outbound::{
     DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
     dashboard_send_owner, dashboard_send_owner_terminal, dashboard_snapshot, dashboard_try_send,
@@ -97,6 +99,11 @@ pub struct ServerState {
     pub stopping: AtomicBool,
     pub dashboard_size: Mutex<Option<DashboardGeometry>>,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
+    #[cfg(test)]
+    pub(super) resize_hook:
+        Mutex<Option<Arc<dyn Fn(&Session, TerminalSize) -> Result<()> + Send + Sync>>>,
+    #[cfg(test)]
+    pub(super) before_view_publish_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
 }
 
@@ -336,7 +343,8 @@ impl ServerState {
             .as_ref()
             .is_some_and(|current| current.focused == Some(id))
         {
-            *view = None;
+            drop(view);
+            clear_view_subscription(self, None);
         } else if let Some(current) = view.as_mut() {
             current.panes.retain(|pane| pane.session != id);
         }
@@ -365,6 +373,8 @@ impl ServerState {
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
+            resize_hook: Mutex::new(None),
+            before_view_publish_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         })
     }

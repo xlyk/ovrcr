@@ -1791,7 +1791,9 @@ impl Dashboard {
         self.parser.screen_mut().set_size(size.rows, size.cols);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
-        self.selected.map(|session| ClientMessage {
+        let session = self.selected?;
+        self.pending_screen = Some((session, request_id));
+        Some(ClientMessage {
             request_id,
             request: Request::Resize { session, size },
         })

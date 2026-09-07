@@ -1,5 +1,18 @@
 use super::*;
 
+const TERMINAL_FAILURE_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn await_view_completion(receiver: Receiver<DispatchCompletion>) -> Response {
+    match receiver.recv() {
+        Ok(DispatchCompletion::Complete) => Response::Ok,
+        Ok(DispatchCompletion::Terminal(delivery)) => {
+            let _ = delivery.recv_timeout(TERMINAL_FAILURE_CLOSE_TIMEOUT);
+            Response::Ok
+        }
+        Err(_) => error_response(ErrorCode::Internal, "dispatcher is unavailable"),
+    }
+}
+
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let mut role = ClientRole::Control;
     let mut dashboard_identity = None;
@@ -190,6 +203,15 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 }
             }
         };
+        if dashboard_sink.is_closing() {
+            if let Some(owner) = dashboard_identity.as_ref()
+                && let Some(snapshot) = dashboard_snapshot(&state)
+                    .filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
+            {
+                disconnect_dashboard(&state, snapshot);
+            }
+            break;
+        }
         if successful_shutdown {
             debug_assert!(dashboard_shutdown_attempt || matches!(role, ClientRole::Control));
             state.shutdown.store(true, Ordering::Release);
@@ -323,8 +345,7 @@ pub(super) fn handle_request_with_id(
             {
                 return error_response(ErrorCode::Internal, "dispatcher is unavailable");
             }
-            let _ = receiver.recv();
-            Response::Ok
+            await_view_completion(receiver)
         }
         Request::HistoryBegin { session } => dispatch_history_request(
             state,
@@ -433,8 +454,7 @@ pub(super) fn handle_request_with_id(
             {
                 return error_response(ErrorCode::Internal, "dispatcher is unavailable");
             }
-            let _ = receiver.recv();
-            Response::Ok
+            await_view_completion(receiver)
         }
         Request::Shutdown { kill } => state.request_shutdown(kill),
         Request::AddProject {
@@ -554,8 +574,7 @@ pub(super) fn handle_request_with_id(
             {
                 return error_response(ErrorCode::Internal, "dispatcher is unavailable");
             }
-            let _ = receiver.recv();
-            Response::Ok
+            await_view_completion(receiver)
         }
     }
 }

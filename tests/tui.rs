@@ -429,6 +429,61 @@ fn copy_ready_dashboard() -> Dashboard {
     dashboard
 }
 
+#[test]
+fn resize_matching_screen_restores_snapshot_and_ignores_stale_screen() {
+    let mut dashboard = dashboard_fixture();
+    let session = dashboard.selected.unwrap();
+    let size = TerminalSize { rows: 20, cols: 40 };
+    dashboard.select_request(session, 900);
+    let resize = dashboard
+        .resize_request(size, 901)
+        .expect("selected dashboard should request resize");
+    assert!(matches!(
+        resize.request,
+        Request::Resize {
+            session: request_session,
+            size: request_size,
+        } if request_session == session && request_size == size
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 900,
+        response: Response::Screen {
+            session,
+            revision: 1,
+            size,
+            bytes: b"STALE_SCREEN".to_vec(),
+        },
+    });
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("STALE_SCREEN")
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 901,
+        response: Response::Screen {
+            session,
+            revision: 2,
+            size,
+            bytes: b"RESTORED_SCREEN".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 901,
+        response: Response::Ok,
+    });
+    assert_eq!(dashboard.parser.screen().size(), (size.rows, size.cols));
+    assert!(
+        dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("RESTORED_SCREEN")
+    );
+}
+
 fn history_opened(total_rows: u32) -> HistoryOpened {
     HistoryOpened {
         session: SessionId(1),

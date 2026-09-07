@@ -14,9 +14,10 @@ enum DirtyState {
 
 pub(super) struct DashboardQueue {
     pub(super) messages: VecDeque<DashboardOutbound>,
+    terminal: Option<DashboardOutbound>,
     dirty: HashMap<(u64, SessionId), DirtyState>,
     closed: bool,
-    close_after: bool,
+    closing: bool,
 }
 
 pub struct DashboardSink {
@@ -35,9 +36,10 @@ impl DashboardSink {
         Arc::new(Self {
             queue: Mutex::new(DashboardQueue {
                 messages: VecDeque::with_capacity(DASHBOARD_QUEUE),
+                terminal: None,
                 dirty: HashMap::new(),
                 closed: false,
-                close_after: false,
+                closing: false,
             }),
             wake: Condvar::new(),
         })
@@ -45,7 +47,7 @@ impl DashboardSink {
 
     pub(super) fn enqueue(&self, outbound: DashboardOutbound) -> bool {
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed {
+        if queue.closed || queue.closing {
             return false;
         }
         if let ServerMessage::Event(ServerEvent::Output {
@@ -122,7 +124,7 @@ impl DashboardSink {
             return false;
         }
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed {
+        if queue.closed || queue.closing {
             return false;
         }
         queue.messages.retain(|queued| {
@@ -144,13 +146,27 @@ impl DashboardSink {
 
     pub(super) fn enqueue_terminal(&self, outbound: DashboardOutbound) -> bool {
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed || queue.close_after {
+        if queue.closed || queue.closing {
             return false;
         }
-        queue.messages.clear();
+        queue.closing = true;
+        let too_large =
+            bincode::serde::encode_to_vec(&outbound.message, bincode::config::standard())
+                .map_or(true, |bytes| bytes.len() > ovrcr_protocol::MAX_FRAME_BYTES);
+        queue.messages.retain(|queued| {
+            !matches!(
+                queued.message,
+                ServerMessage::Event(ServerEvent::Output { .. })
+            )
+        });
         queue.dirty.clear();
-        queue.close_after = true;
-        queue.messages.push_back(outbound);
+        if too_large || queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            queue.terminal = None;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.terminal = Some(outbound);
         self.wake.notify_one();
         true
     }
@@ -162,11 +178,10 @@ impl DashboardSink {
                 return None;
             }
             if let Some(message) = queue.messages.pop_front() {
-                if queue.close_after {
-                    queue.close_after = false;
-                    return Some(DashboardDelivery::Terminal(message));
-                }
                 return Some(DashboardDelivery::Message(message));
+            }
+            if let Some(message) = queue.terminal.take() {
+                return Some(DashboardDelivery::Terminal(message));
             }
             if let Some(((revision, session), state)) = queue
                 .dirty
@@ -194,6 +209,11 @@ impl DashboardSink {
         let mut queue = self.queue.lock().unwrap();
         queue.closed = true;
         self.wake.notify_all();
+    }
+
+    pub(super) fn is_closing(&self) -> bool {
+        let queue = self.queue.lock().unwrap();
+        queue.closed || queue.closing
     }
 
     #[cfg(test)]
@@ -254,7 +274,7 @@ pub(super) fn dashboard_owner_matches(state: &ServerState, owner: &Arc<()>) -> b
         .lock()
         .unwrap()
         .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing())
 }
 
 pub(super) fn dashboard_send_owner(
@@ -282,6 +302,7 @@ pub(super) fn dashboard_send_owner_terminal(
     state: &ServerState,
     owner: &Arc<()>,
     message: ServerMessage,
+    completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
     let Some(snapshot) =
         dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
@@ -290,7 +311,7 @@ pub(super) fn dashboard_send_owner_terminal(
     };
     if snapshot.sink.enqueue_terminal(DashboardOutbound {
         message,
-        completion: None,
+        completion,
     }) {
         true
     } else {
