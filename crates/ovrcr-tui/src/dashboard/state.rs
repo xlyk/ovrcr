@@ -581,7 +581,7 @@ impl Dashboard {
         self.panes.push(pane);
         self.focused_pane = 1;
         self.mode = InputMode::Browse;
-        self.requested_view = None;
+        self.invalidate_view_readiness();
         true
     }
 
@@ -592,7 +592,7 @@ impl Dashboard {
         self.release_for_selection_change();
         self.focused_pane = index;
         self.mode = InputMode::Browse;
-        self.requested_view = None;
+        self.invalidate_view_readiness();
         true
     }
 
@@ -604,7 +604,7 @@ impl Dashboard {
         self.panes.remove(self.focused_pane);
         self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
         self.mode = InputMode::Browse;
-        self.requested_view = None;
+        self.invalidate_view_readiness();
         true
     }
 
@@ -648,6 +648,10 @@ impl Dashboard {
         area: Rect,
         request_id: u64,
     ) -> anyhow::Result<Option<ClientMessage>> {
+        let geometry_changed = self.outer_area != area;
+        if geometry_changed && self.copy.is_some() {
+            self.cancel_copy(Some("Copy cancelled: terminal resized"));
+        }
         self.outer_area = area;
         let desired = self.desired_view();
         let pending_same = self
@@ -661,6 +665,22 @@ impl Dashboard {
                 .as_ref()
                 .is_some_and(|requested| Self::same_view(requested, &desired));
         let rects = super::pane_rects(area, self.panes.len(), self.focused_pane);
+        let desired_sessions = desired
+            .targets
+            .iter()
+            .map(|(session, _)| *session)
+            .collect::<HashSet<_>>();
+        if !unchanged && (self.pending_view.is_none() || !pending_same) {
+            for pane in &mut self.panes {
+                if pane
+                    .session
+                    .is_none_or(|session| !desired_sessions.contains(&session))
+                {
+                    pane.ready = false;
+                    pane.snapshot_installed = false;
+                }
+            }
+        }
         for rect in &rects {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -672,6 +692,7 @@ impl Dashboard {
                 } else if self.pending_view.is_some() {
                     if !pending_same {
                         pane.ready = false;
+                        pane.snapshot_installed = false;
                     }
                 } else if !pending_same {
                     pane.ready = false;
@@ -888,7 +909,7 @@ impl Dashboard {
                 pane.ready = false;
                 pane.error = None;
             }
-            self.requested_view = None;
+            self.invalidate_view_readiness();
             self.mode = InputMode::Browse;
         }
         let rows = self.visible_rows();
@@ -1463,6 +1484,14 @@ impl Dashboard {
                     snapshot: view.opened.snapshot,
                 },
             });
+        }
+    }
+
+    fn invalidate_view_readiness(&mut self) {
+        self.requested_view = None;
+        for pane in &mut self.panes {
+            pane.ready = false;
+            pane.snapshot_installed = false;
         }
     }
 
@@ -2108,42 +2137,50 @@ impl Dashboard {
     }
 
     fn update_hierarchy(&mut self, hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
+        let focused_before = self.focused_session();
         self.hierarchy = hierarchy;
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();
         let mut outgoing = Vec::new();
-        if self.panes.iter().any(|pane| {
-            pane.session
-                .is_some_and(|id| find_session(self, id).is_none())
-        }) {
-            self.release_for_selection_change();
-            if let Some(request) = self.take_pending_history_end() {
-                outgoing.push(request);
-            }
-            let existing = self
-                .hierarchy
-                .projects
-                .iter()
-                .flat_map(|project| project.workspaces.iter())
-                .flat_map(|workspace| workspace.sessions.iter())
-                .map(|session| session.id)
-                .collect::<HashSet<_>>();
+        let existing = self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .map(|session| session.id)
+            .collect::<HashSet<_>>();
+        let removed = self
+            .panes
+            .iter()
+            .any(|pane| pane.session.is_some_and(|id| !existing.contains(&id)));
+        if removed {
+            let focused_survives = focused_before.is_some_and(|id| existing.contains(&id));
             self.panes
                 .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
+            if !focused_survives {
+                self.release_for_selection_change();
+                if let Some(request) = self.take_pending_history_end() {
+                    outgoing.push(request);
+                }
+                self.invalidate_view_readiness();
+                self.mode = InputMode::Browse;
+            }
             if self.panes.is_empty() {
                 self.panes.push(super::PaneState::new(self.focused_size()));
             }
             self.focused_pane = self.focused_pane.min(self.panes.len() - 1);
-            self.mode = InputMode::Browse;
-            if let Some(id) = self.visible_rows().iter().find_map(|row| match row {
-                TreeRow::Session { id } => Some(*id),
-                TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
-            }) {
+            if self.panes.iter().all(|pane| pane.session.is_none())
+                && let Some(id) = self.visible_rows().iter().find_map(|row| match row {
+                    TreeRow::Session { id } => Some(*id),
+                    TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
+                })
+            {
                 self.select_session(id);
-                let request_id = self.next_request_id();
-                if let Ok(Some(request)) = self.view_request(self.outer_area, request_id) {
-                    outgoing.push(request);
-                }
+            }
+            let request_id = self.next_request_id();
+            if let Ok(Some(request)) = self.view_request(self.outer_area, request_id) {
+                outgoing.push(request);
             }
         }
         self.update_mode_for_selected_phase();
@@ -2152,7 +2189,6 @@ impl Dashboard {
 
     pub fn select_request(&mut self, id: SessionId, request_id: u64) -> Option<ClientMessage> {
         self.select_session(id);
-        self.requested_view = None;
         self.view_request(self.outer_area, request_id)
             .ok()
             .flatten()
@@ -2162,20 +2198,15 @@ impl Dashboard {
         if size == self.focused_size() {
             return None;
         }
-        if self.copy.is_some() {
-            self.cancel_copy(Some("Copy cancelled: terminal resized"));
-        }
         let sidebar = self.outer_area.width.min(40).min(self.outer_area.width / 2);
-        self.outer_area = Rect::new(
+        let area = Rect::new(
             self.outer_area.x,
             self.outer_area.y,
             sidebar.saturating_add(size.cols),
             size.rows.saturating_add(4),
         );
         self.requested_view = None;
-        self.view_request(self.outer_area, request_id)
-            .ok()
-            .flatten()
+        self.view_request(area, request_id).ok().flatten()
     }
 
     pub fn input_request(&self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
@@ -2195,8 +2226,15 @@ impl Dashboard {
     }
 
     fn input_is_allowed(&self) -> bool {
+        let Some(session) = self.focused_session() else {
+            return false;
+        };
         matches!(self.selected_phase(), Some(SessionPhase::Running))
             && self.focused_pane().is_some_and(|pane| pane.ready)
+            && self.requested_view.as_ref().is_some_and(|view| {
+                view.focused == Some(session)
+                    && view.targets.iter().any(|(target, _)| *target == session)
+            })
     }
 
     fn refuse_input(&mut self) -> DashboardAction {

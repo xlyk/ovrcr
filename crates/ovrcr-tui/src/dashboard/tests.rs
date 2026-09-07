@@ -9,7 +9,7 @@ use super::{
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
-    HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
+    HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize, write_frame,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -60,6 +60,95 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     drop(dashboard);
     drop(terminal);
     assert!(bytes.is_empty());
+}
+
+#[test]
+fn initial_selection_completes_zero_target_view_on_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 1, 1), 3)
+        .unwrap()
+        .expect("zero-target SetView should still be emitted");
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    thread::spawn(move || {
+        write_frame(
+            &mut sender,
+            &ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        )
+        .unwrap();
+    });
+    super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 0).unwrap();
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+}
+
+#[test]
+fn initial_selection_ignores_wrong_screen_before_matching_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 40, 8), 3)
+        .unwrap()
+        .expect("view should request a snapshot");
+    let revision = dashboard.view_revision;
+    let size = dashboard.panes[0].desired_size;
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    thread::spawn(move || {
+        for message in [
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(2),
+                    revision,
+                    size,
+                    bytes: b"wrong".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision: revision.saturating_sub(1),
+                    size,
+                    bytes: b"wrong revision".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision,
+                    size,
+                    bytes: b"right".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        ] {
+            write_frame(&mut sender, &message).unwrap();
+        }
+    });
+    super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 1).unwrap();
+    assert!(dashboard.requested_view.is_some());
+    assert!(dashboard.panes[0].ready);
+    assert!(
+        !dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("wrong")
+    );
 }
 
 #[test]

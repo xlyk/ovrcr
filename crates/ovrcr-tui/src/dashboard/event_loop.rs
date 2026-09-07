@@ -13,6 +13,7 @@ use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -61,8 +62,12 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
         let view = dashboard
             .view_request(Rect::new(0, 0, size.cols, size.rows), 3)?
             .context("create initial dashboard view")?;
+        let expected_screens = dashboard
+            .pending_view
+            .as_ref()
+            .map_or(0, |pending| pending.view.targets.len());
         write_frame(&mut stream, &view)?;
-        read_initial_selection(&mut stream, &mut dashboard, 3)?;
+        read_initial_selection(&mut stream, &mut dashboard, 3, expected_screens)?;
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
@@ -647,26 +652,48 @@ fn read_server(stream: &mut UnixStream) -> Result<ServerMessage> {
     crate::protocol::read_frame(stream)
 }
 
-fn read_initial_selection(
+pub(super) fn read_initial_selection(
     stream: &mut UnixStream,
     dashboard: &mut Dashboard,
     request_id: u64,
+    expected_screens: usize,
 ) -> Result<()> {
-    let mut screen_seen = false;
+    let expected_targets = dashboard
+        .pending_view
+        .as_ref()
+        .filter(|pending| pending.request_id == request_id)
+        .map(|pending| {
+            (
+                pending.view.revision,
+                pending
+                    .view
+                    .targets
+                    .iter()
+                    .map(|(session, _)| *session)
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    let mut screens_seen = HashSet::new();
     loop {
         let message = read_server(stream)?;
         let done = match &message {
             ServerMessage::Response {
                 request_id: response_id,
-                response: Response::Screen { .. },
+                response:
+                    Response::Screen {
+                        session, revision, ..
+                    },
             } if *response_id == request_id => {
-                screen_seen = true;
+                if *revision == expected_targets.0 && expected_targets.1.contains(session) {
+                    screens_seen.insert(*session);
+                }
                 false
             }
             ServerMessage::Response {
                 request_id: response_id,
                 response: Response::Ok,
-            } if *response_id == request_id => screen_seen,
+            } if *response_id == request_id => screens_seen.len() >= expected_screens,
             ServerMessage::Response {
                 request_id: response_id,
                 response: Response::Error { .. },

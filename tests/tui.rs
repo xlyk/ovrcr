@@ -9,8 +9,8 @@ use ovrcr::protocol::{
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
-    CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, HistoryCopyJob,
-    HistoryCopyPoint, HistoryCopyRange, HistoryCursor, HistoryView, KeyEncoding,
+    CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, HistoryCopyCompletion,
+    HistoryCopyJob, HistoryCopyPoint, HistoryCopyRange, HistoryCursor, HistoryView, KeyEncoding,
     append_history_selection, dashboard_message_channel, encode_key, encode_paste,
     event_to_request, pane_rects, render_copy, write_clipboard,
 };
@@ -112,8 +112,27 @@ fn dashboard_fixture() -> Dashboard {
     dashboard.hierarchy.projects[1].workspaces[0].sessions[0].pid = None;
     dashboard.outer_area = Rect::new(0, 0, 88, 38);
     dashboard.select_session(SessionId(1));
-    dashboard.panes[dashboard.focused_pane].snapshot_installed = true;
-    dashboard.panes[dashboard.focused_pane].ready = true;
+    let request = dashboard
+        .view_request(dashboard.outer_area, 999)
+        .unwrap()
+        .expect("fixture view should request a snapshot");
+    let revision = dashboard.view_revision;
+    let session = dashboard.focused_session().unwrap();
+    let size = dashboard.panes[dashboard.focused_pane].desired_size;
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Screen {
+            session,
+            revision,
+            size,
+            bytes: Vec::new(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
     dashboard
 }
 
@@ -143,6 +162,31 @@ fn acknowledge_view_request(dashboard: &mut Dashboard, request: ovrcr::protocol:
         response: Response::Ok,
     });
     assert!(dashboard.panes[dashboard.focused_pane].ready);
+}
+
+fn acknowledge_all_view_targets(
+    dashboard: &mut Dashboard,
+    request: ovrcr::protocol::ClientMessage,
+) {
+    let request_id = request.request_id;
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    for pane in view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Ok,
+    });
 }
 
 fn palette_text(dashboard: &Dashboard) -> String {
@@ -445,7 +489,10 @@ fn palette_active_field_remains_visible_in_a_small_window() {
 fn copy_ready_dashboard() -> Dashboard {
     let mut dashboard = dashboard_fixture();
     let id = dashboard.focused_session().unwrap();
-    dashboard.select_request(id, 900);
+    dashboard
+        .view_request(Rect::new(0, 0, 89, 38), 900)
+        .unwrap()
+        .expect("copy fixture should request a refreshed view");
     let size = dashboard.panes[dashboard.focused_pane].desired_size;
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 900,
@@ -1340,7 +1387,10 @@ fn browse_and_terminal_modes_keep_input_ownership_clear() {
 fn copy_mode_routes_keys_and_freezes_output() {
     let mut dashboard = dashboard_fixture();
     let id = dashboard.focused_session().unwrap();
-    dashboard.select_request(id, 900);
+    dashboard
+        .view_request(Rect::new(0, 0, 89, 38), 900)
+        .unwrap()
+        .expect("copy test should request a refreshed view");
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 900,
         response: Response::Screen {
@@ -1415,8 +1465,10 @@ fn copy_mode_routes_keys_and_freezes_output() {
     );
 
     let mut pending_screen = dashboard_fixture();
-    let pending_session = pending_screen.focused_session().unwrap();
-    pending_screen.select_request(pending_session, 901);
+    pending_screen
+        .view_request(Rect::new(0, 0, 89, 38), 901)
+        .unwrap()
+        .expect("pending copy fixture should have an in-flight view");
     assert_eq!(
         pending_screen.key_action(KeyEvent::new_with_kind(
             KeyCode::Char('['),
@@ -1894,7 +1946,10 @@ fn copy_mode_cancels_at_identity_boundaries() {
 fn copy_mode_waits_for_matching_screen() {
     let mut dashboard = dashboard_fixture();
     let first = dashboard.focused_session().unwrap();
-    dashboard.select_request(first, 901);
+    dashboard
+        .view_request(Rect::new(0, 0, 89, 38), 901)
+        .unwrap()
+        .expect("copy readiness test should request a refreshed view");
     dashboard.select_session(SessionId(5));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 901,
@@ -1966,7 +2021,10 @@ fn copy_mode_waits_for_matching_screen() {
 fn copy_mode_keeps_alternate_and_resync_snapshots() {
     let mut dashboard = dashboard_fixture();
     let id = dashboard.focused_session().unwrap();
-    dashboard.select_request(id, 903);
+    dashboard
+        .view_request(Rect::new(0, 0, 89, 38), 903)
+        .unwrap()
+        .expect("alternate screen test should request a refreshed view");
     let size = dashboard.panes[dashboard.focused_pane].desired_size;
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: 903,
@@ -2390,9 +2448,10 @@ fn history_live_output_preserves_anchor() {
         )),
     });
     let before = dashboard.history.clone().expect("history opened");
+    let current_revision = dashboard.view_revision;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
-        revision: 0,
+        revision: current_revision,
         bytes: b"LIVE_MARKER".to_vec(),
     }));
     let after = dashboard.history.as_ref().expect("history remains open");
@@ -2410,7 +2469,7 @@ fn history_live_output_preserves_anchor() {
     );
     let select = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(1),
-        revision: 0,
+        revision: current_revision,
     }));
     assert!(matches!(
         select.as_slice(),
@@ -6005,9 +6064,25 @@ fn split_state_focus_and_close_preserve_sessions() {
     assert_eq!(dashboard.focused_pane, 1);
     let right = dashboard.focused_session().unwrap();
     assert_ne!(right, SessionId(1));
+    assert!(!dashboard.split_pane());
     assert!(dashboard.close_focused_pane());
     assert_eq!(dashboard.panes.len(), 1);
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert!(!dashboard.close_focused_pane());
+
+    let mut single = dashboard_fixture();
+    for project in &mut single.hierarchy.projects {
+        for workspace in &mut project.workspaces {
+            workspace
+                .sessions
+                .retain(|session| session.id == SessionId(1));
+        }
+    }
+    assert!(!single.split_pane());
+    assert_eq!(
+        single.error.as_deref(),
+        Some("No other visible session to split")
+    );
 }
 
 #[test]
@@ -6069,6 +6144,428 @@ fn split_state_modes_and_input_are_local() {
             bytes: vec![b'x']
         }
     );
+}
+
+#[test]
+fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 20)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, request);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let focused = dashboard.focused_session().unwrap();
+    assert!(dashboard.input_request(vec![b'x'], 21).is_some());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    assert!(dashboard.key(KeyCode::Char('[')) == ovrcr::tui::DashboardAction::Redraw);
+    assert!(dashboard.copy.is_some());
+    let resized = dashboard
+        .resize_request(TerminalSize { rows: 40, cols: 50 }, 22)
+        .expect("resize should issue SetView through the shared path");
+    assert!(dashboard.copy.is_none());
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+
+    acknowledge_all_view_targets(&mut dashboard, resized);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 1, 1), 23)
+            .unwrap()
+            .is_some()
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 23,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 24).is_none());
+
+    let normal = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 25)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, normal);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert_eq!(dashboard.focused_session(), Some(focused));
+    assert!(dashboard.focus_pane(0));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 26).is_none());
+    let focused_view = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 27)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, focused_view);
+    assert!(dashboard.select_request(SessionId(1), 28).is_none());
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+}
+
+#[test]
+fn split_review_preserves_nonfirst_survivor_on_hierarchy_removal() {
+    let mut dashboard = dashboard_fixture();
+    let select = dashboard
+        .select_request(SessionId(2), 30)
+        .expect("selecting a running session should request a view");
+    acknowledge_view_request(&mut dashboard, select);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 31)
+        .unwrap()
+        .unwrap();
+    let survivor = dashboard.panes[0].session.unwrap();
+    let removed = dashboard.panes[1].session.unwrap();
+    acknowledge_all_view_targets(&mut dashboard, split);
+    let mut hierarchy = dashboard.hierarchy.clone();
+    for project in &mut hierarchy.projects {
+        for workspace in &mut project.workspaces {
+            workspace.sessions.retain(|session| session.id != removed);
+        }
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    assert_eq!(dashboard.panes.len(), 1);
+    assert_eq!(dashboard.panes[0].session, Some(survivor));
+}
+
+#[test]
+fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion() {
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 40)
+        .unwrap()
+        .unwrap();
+    let Request::SetView { view } = request.request.clone() else {
+        panic!("expected SetView");
+    };
+    let first = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Screen {
+            session: first.session,
+            revision: view.revision,
+            size: first.size,
+            bytes: b"first".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(dashboard.input_request(vec![b'x'], 41).is_none());
+
+    assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 80, 40), 42)
+            .unwrap()
+            .is_none()
+    );
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    let latest = outgoing.pop().expect("latest desired view request");
+    acknowledge_all_view_targets(&mut dashboard, latest);
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    assert!(
+        !dashboard
+            .panes
+            .iter()
+            .enumerate()
+            .any(|(index, pane)| index != dashboard.focused_pane && pane.ready)
+    );
+}
+
+#[test]
+fn split_review_replaces_a_b_a_and_rejects_old_completions() {
+    let mut dashboard = dashboard_fixture();
+    let first_a = dashboard
+        .select_request(SessionId(4), 50)
+        .expect("A selection should request a view");
+    let first_a_revision = dashboard.view_revision;
+    acknowledge_view_request(&mut dashboard, first_a.clone());
+
+    let b = dashboard
+        .select_request(SessionId(3), 51)
+        .expect("B selection should request a view");
+    let b_revision = dashboard.view_revision;
+    acknowledge_view_request(&mut dashboard, b.clone());
+
+    let second_a = dashboard
+        .select_request(SessionId(4), 52)
+        .expect("returning to A should request a distinct view");
+    assert_ne!(first_a.request_id, second_a.request_id);
+    assert_ne!(first_a_revision, dashboard.view_revision);
+    let current_revision = dashboard.view_revision;
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first_a.request_id,
+        response: Response::Screen {
+            session: SessionId(4),
+            revision: first_a_revision,
+            size: TerminalSize { rows: 34, cols: 44 },
+            bytes: b"old A".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: b.request_id,
+        response: Response::Screen {
+            session: SessionId(3),
+            revision: b_revision,
+            size: TerminalSize { rows: 34, cols: 44 },
+            bytes: b"old B".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(4),
+        revision: first_a_revision,
+        bytes: b"stale output".to_vec(),
+    }));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        session: SessionId(4),
+        revision: first_a_revision,
+    }));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first_a.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "old A error".into(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first_a.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(dashboard.view_revision, current_revision);
+    assert_eq!(dashboard.error, None);
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !pane.parser.screen().contents().contains("stale"))
+    );
+
+    let size = dashboard.panes[dashboard.focused_pane].desired_size;
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: second_a.request_id,
+        response: Response::Screen {
+            session: SessionId(4),
+            revision: current_revision,
+            size,
+            bytes: b"new A".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: second_a.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 53).is_some());
+}
+
+#[test]
+fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
+    let mut dashboard = dashboard_fixture();
+    let initial = dashboard
+        .select_request(SessionId(2), 54)
+        .expect("initial selection should request a view");
+    acknowledge_view_request(&mut dashboard, initial);
+    let next = dashboard
+        .select_request(SessionId(4), 55)
+        .expect("replacement should request a view");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: next.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "view refused".into(),
+        },
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert_eq!(dashboard.error.as_deref(), Some("Conflict: view refused"));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 56).is_none());
+}
+
+#[test]
+fn split_review_terminal_modes_use_each_panes_parser() {
+    let mut dashboard = dashboard_fixture();
+    let initial = dashboard
+        .select_request(SessionId(3), 57)
+        .expect("initial selection should request a view");
+    acknowledge_view_request(&mut dashboard, initial);
+    assert!(dashboard.split_pane());
+    let split = dashboard.select_request(SessionId(4), 58).unwrap();
+    acknowledge_all_view_targets(&mut dashboard, split);
+    let right = dashboard.focused_pane;
+    dashboard.panes[right]
+        .parser
+        .process(b"\x1b[?1l\x1b[?2004h");
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Up),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[A".to_vec())
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("right".into())),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[200~right\x1b[201~".to_vec())
+    );
+
+    assert!(dashboard.focus_pane(0));
+    let left_view = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 59)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, left_view);
+    dashboard.panes[0].parser.process(b"\x1b[?1h");
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Up),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1bOA".to_vec())
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("left".into())),
+        ovrcr::tui::DashboardAction::PtyBytes(b"left".to_vec())
+    );
+}
+
+#[test]
+fn split_review_keeps_history_a_while_b_changes_and_cancels_late_work() {
+    let mut dashboard = dashboard_fixture();
+    let select = dashboard
+        .select_request(SessionId(2), 60)
+        .expect("A selection should request a view");
+    acknowledge_view_request(&mut dashboard, select);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 61)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, split);
+    assert!(dashboard.focus_pane(0));
+    let focus_a = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 62)
+        .unwrap()
+        .unwrap();
+    acknowledge_all_view_targets(&mut dashboard, focus_a);
+    let a = dashboard.focused_session().unwrap();
+    let b = dashboard.panes[1].session.unwrap();
+    let revision = dashboard.view_revision;
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { session }, ..
+        }) if session == a
+    ));
+    let opened = HistoryOpened {
+        session: a,
+        snapshot: HistorySnapshotId(77),
+        revision: 1,
+        size: TerminalSize { rows: 34, cols: 39 },
+        history_rows: 0,
+        total_rows: 0,
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(opened.clone()),
+    });
+    let frozen_page = HistoryRows {
+        session: a,
+        snapshot: HistorySnapshotId(77),
+        start_row: 0,
+        start_col: 0,
+        rows: vec![HistoryRow {
+            width: 1,
+            cells: vec![history_cell("A frozen", 1)],
+            wrapped: false,
+        }],
+    };
+    dashboard
+        .history
+        .as_mut()
+        .unwrap()
+        .pages
+        .push_back(frozen_page);
+    dashboard.history.as_mut().unwrap().anchor = Some(HistoryCopyPoint { row: 0, col: 0 });
+    let frozen_pages = dashboard.history.as_ref().unwrap().pages.clone();
+    let frozen_anchor = dashboard.history.as_ref().unwrap().anchor;
+    assert_eq!(dashboard.history.as_ref().unwrap().opened.session, a);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: b,
+        revision,
+        bytes: b"B output".to_vec(),
+    }));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .find(|pane| pane.session == Some(b))
+            .unwrap()
+            .parser
+            .screen()
+            .contents()
+            .contains("B output")
+    );
+    assert_eq!(dashboard.history.as_ref().unwrap().opened, opened);
+    assert_eq!(dashboard.history.as_ref().unwrap().pages, frozen_pages);
+    assert_eq!(dashboard.history.as_ref().unwrap().anchor, frozen_anchor);
+
+    assert_eq!(
+        dashboard.key(KeyCode::Esc),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let begin = dashboard.key(KeyCode::PageUp);
+    let begin_request_id = match begin {
+        ovrcr::tui::DashboardAction::Request(request) => request.request_id,
+        action => panic!("expected second history begin, got {action:?}"),
+    };
+    assert!(dashboard.focus_pane(1));
+    assert!(dashboard.history.is_none());
+    let late = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin_request_id,
+        response: Response::HistoryOpened(opened),
+    });
+    assert!(dashboard.history.is_none());
+    assert!(late.iter().any(|request| matches!(
+        request.request,
+        Request::HistoryEnd {
+            session: SessionId(2),
+            ..
+        }
+    )));
+
+    let begin_b = match dashboard.key(KeyCode::PageUp) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected B history begin, got {action:?}"),
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin_b.request_id,
+        response: Response::HistoryOpened(HistoryOpened {
+            session: b,
+            snapshot: HistorySnapshotId(78),
+            revision: 1,
+            size: TerminalSize { rows: 34, cols: 39 },
+            history_rows: 0,
+            total_rows: 0,
+        }),
+    });
+    dashboard.history.as_mut().unwrap().copy_completion = Some(HistoryCopyCompletion {
+        id: 1,
+        range: HistoryCopyRange {
+            session: b,
+            snapshot: HistorySnapshotId(78),
+            anchor: HistoryCopyPoint { row: 0, col: 0 },
+            cursor: HistoryCopyPoint { row: 0, col: 0 },
+        },
+        text: "ready clipboard".into(),
+    });
+    assert!(dashboard.focus_pane(0));
+    assert!(dashboard.history.is_none());
 }
 
 #[test]
@@ -6161,6 +6658,10 @@ fn split_preserves_history_copy_and_paused_input() {
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.event_action(Event::Paste("blocked".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(
