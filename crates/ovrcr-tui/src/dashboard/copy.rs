@@ -476,6 +476,33 @@ fn append_history_text(output: &mut String, text: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn append_nonempty_history_text(
+    output: &mut String,
+    text: &str,
+    pending_blanks: &mut usize,
+) -> io::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let extra = pending_blanks.checked_add(text.len()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "Selection exceeds 65536 bytes")
+    })?;
+    if output
+        .len()
+        .checked_add(extra)
+        .is_none_or(|length| length > MAX_COPY_BYTES)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Selection exceeds 65536 bytes",
+        ));
+    }
+    output.extend(std::iter::repeat(' ').take(*pending_blanks));
+    *pending_blanks = 0;
+    output.push_str(text);
+    Ok(())
+}
+
 pub fn append_history_selection(
     output: &mut String,
     row: &HistoryRow,
@@ -527,22 +554,7 @@ pub fn append_history_selection(
                         io::Error::new(io::ErrorKind::InvalidInput, "Selection exceeds 65536 bytes")
                     })?;
                 } else {
-                    let extra = pending_blanks.checked_add(cell.text.len()).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "Selection exceeds 65536 bytes")
-                    })?;
-                    if output
-                        .len()
-                        .checked_add(extra)
-                        .is_none_or(|length| length > MAX_COPY_BYTES)
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "Selection exceeds 65536 bytes",
-                        ));
-                    }
-                    output.extend(std::iter::repeat(' ').take(*pending_blanks));
-                    *pending_blanks = 0;
-                    output.push_str(&cell.text);
+                    append_nonempty_history_text(output, &cell.text, pending_blanks)?;
                 }
                 col = col
                     .checked_add(1)
@@ -565,22 +577,7 @@ pub fn append_history_selection(
                     ));
                 }
                 if !cell.text.is_empty() {
-                    let extra = pending_blanks.checked_add(cell.text.len()).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "Selection exceeds 65536 bytes")
-                    })?;
-                    if output
-                        .len()
-                        .checked_add(extra)
-                        .is_none_or(|length| length > MAX_COPY_BYTES)
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "Selection exceeds 65536 bytes",
-                        ));
-                    }
-                    output.extend(std::iter::repeat(' ').take(*pending_blanks));
-                    *pending_blanks = 0;
-                    output.push_str(&cell.text);
+                    append_nonempty_history_text(output, &cell.text, pending_blanks)?;
                 }
                 col = continuation_col
                     .checked_add(1)
@@ -796,6 +793,31 @@ mod tests {
             format!("x界{}", "x".repeat(131))
         );
 
+        let mut edge_row: Vec<HistoryCell> = (0..260).map(|_| cell("x", 1)).collect();
+        edge_row[252] = cell("界", 2);
+        edge_row[253] = cell("", 0);
+        let mut edge = HistoryCopyJob::new(
+            8,
+            range(
+                HistoryCopyPoint { row: 0, col: 126 },
+                HistoryCopyPoint { row: 0, col: 259 },
+            ),
+        );
+        assert_eq!(edge.page_needed(), (0, 1, 125, 128));
+        assert!(
+            !edge
+                .consume_page(&page(0, 125, row(260, edge_row[125..253].to_vec(), false),))
+                .unwrap()
+        );
+        assert_eq!(edge.page_needed(), (0, 1, 251, 128));
+        assert!(
+            edge.consume_page(&page(0, 251, row(260, edge_row[251..260].to_vec(), false),))
+                .unwrap()
+        );
+        let edge_text = edge.into_completion().text;
+        assert_eq!(&edge_text[126..129], "界");
+        assert_eq!(edge_text.chars().count(), 133);
+
         let endpoint_continuation = HistoryCopyJob::new(
             6,
             range(
@@ -814,6 +836,52 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(endpoint_continuation.into_completion().text, "界");
+
+        let mut trailing_spaces = HistoryCopyJob::new(
+            7,
+            range(
+                HistoryCopyPoint { row: 0, col: 0 },
+                HistoryCopyPoint { row: 0, col: 3 },
+            ),
+        );
+        assert!(
+            trailing_spaces
+                .consume_page(&page(
+                    0,
+                    0,
+                    row(
+                        4,
+                        vec![cell("x", 1), cell("", 1), cell("", 1), cell(" ", 1)],
+                        false,
+                    ),
+                ))
+                .unwrap()
+        );
+        assert_eq!(trailing_spaces.into_completion().text, "x   ");
+
+        let mut empty_middle = HistoryCopyJob::new(
+            9,
+            range(
+                HistoryCopyPoint { row: 0, col: 0 },
+                HistoryCopyPoint { row: 2, col: 0 },
+            ),
+        );
+        assert!(
+            !empty_middle
+                .consume_page(&page(0, 0, row(1, vec![cell("x", 1)], false)))
+                .unwrap()
+        );
+        assert!(
+            !empty_middle
+                .consume_page(&page(1, 0, row(0, vec![], false)))
+                .unwrap()
+        );
+        assert!(
+            empty_middle
+                .consume_page(&page(2, 0, row(1, vec![cell("y", 1)], false)))
+                .unwrap()
+        );
+        assert_eq!(empty_middle.into_completion().text, "x\n\ny");
     }
 
     #[test]

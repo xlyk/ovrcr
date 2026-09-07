@@ -218,7 +218,7 @@ impl HistoryView {
         Some(canonical_page_bounds(&self.opened, row, col)?)
     }
 
-    pub fn resolve_cursor(&mut self, _viewport: TerminalSize) -> io::Result<bool> {
+    pub fn resolve_cursor(&mut self, viewport: TerminalSize) -> io::Result<bool> {
         let Some(target) = self.cursor_target else {
             return Ok(true);
         };
@@ -240,7 +240,7 @@ impl HistoryView {
             return Ok(false);
         };
         if row.width == 0 {
-            if row_end || requested_col == 0 || self.anchor.is_some() {
+            if row_end || self.anchor.is_some() {
                 self.cursor = Some(HistoryCursor {
                     point: HistoryCopyPoint {
                         row: row_number,
@@ -250,6 +250,9 @@ impl HistoryView {
                     cell_width: 1,
                 });
                 self.cursor_target = None;
+                if self.anchor.is_some() {
+                    self.reveal_cursor(viewport);
+                }
                 return Ok(true);
             }
             self.cursor = None;
@@ -295,6 +298,7 @@ impl HistoryView {
             return Ok(false);
         };
         let mut point_col = requested_col;
+        let mut normalized_from_continuation = false;
         let cell_width = if cell.width == 0 {
             let leader_col = point_col.checked_sub(1).ok_or_else(|| {
                 invalid_history_data("history cursor continuation lacks a leader")
@@ -309,7 +313,6 @@ impl HistoryView {
                     .map(|cell| (page.start_col, cell))
             });
             let Some((_, leader)) = leader else {
-                self.cursor = None;
                 self.cursor_target = Some(HistoryCursorTarget::At(HistoryCopyPoint {
                     row: row_number,
                     col: leader_col,
@@ -322,6 +325,7 @@ impl HistoryView {
                 ));
             }
             point_col = leader_col;
+            normalized_from_continuation = true;
             2
         } else if cell.width == 1 || cell.width == 2 {
             cell.width
@@ -337,7 +341,38 @@ impl HistoryView {
             cell_width,
         });
         self.cursor_target = None;
+        if self.anchor.is_some() || normalized_from_continuation {
+            self.reveal_cursor(viewport);
+        }
         Ok(true)
+    }
+
+    fn reveal_cursor(&mut self, viewport: TerminalSize) {
+        let Some(cursor) = self.cursor else {
+            return;
+        };
+        let rows = u32::from(viewport.rows.max(1));
+        let cols = u32::from(viewport.cols.max(1));
+        let max_top = self.opened.total_rows.saturating_sub(rows);
+        if cursor.point.row < self.top {
+            self.top = cursor.point.row;
+        } else if cursor.point.row >= self.top.saturating_add(rows) {
+            self.top = cursor.point.row.saturating_add(1).saturating_sub(rows);
+        }
+        self.top = self.top.min(max_top);
+
+        let cursor_col = u32::from(cursor.point.col);
+        if cursor_col < u32::from(self.left) {
+            self.left = cursor.point.col;
+        } else {
+            let end = cursor_col.saturating_add(u32::from(cursor.cell_width.max(1)));
+            let visible_end = u32::from(self.left).saturating_add(cols);
+            if end > visible_end {
+                self.left = u16::try_from(end.saturating_sub(cols)).unwrap_or(u16::MAX);
+            }
+        }
+        let max_left = u32::from(u16::MAX).saturating_sub(cols.saturating_sub(1));
+        self.left = self.left.min(u16::try_from(max_left).unwrap_or(u16::MAX));
     }
 
     fn cache_page(&mut self, page: HistoryRows) {
@@ -434,6 +469,21 @@ fn history_retry_key(code: KeyCode) -> bool {
             | KeyCode::Home
             | KeyCode::End
             | KeyCode::Char('0' | '$' | 'g' | 'G' | 'h' | 'j' | 'k' | 'l' | ' ' | 'v' | 'y')
+    )
+}
+
+fn history_motion_key(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char('0' | '$' | 'g' | 'G' | 'h' | 'j' | 'k' | 'l')
     )
 }
 
@@ -832,10 +882,16 @@ impl Dashboard {
     }
 
     fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
-        if key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(key.code, KeyCode::Char('g' | 'G'))
-            || matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
-        {
+        let exit_key = (key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('g' | 'G')))
+            || matches!(key.code, KeyCode::Esc | KeyCode::Char('q'));
+        if key.kind == KeyEventKind::Release {
+            return DashboardAction::None;
+        }
+        if exit_key && key.kind != KeyEventKind::Press {
+            return DashboardAction::None;
+        }
+        if exit_key {
             if matches!(key.code, KeyCode::Esc)
                 && self
                     .history
@@ -845,13 +901,14 @@ impl Dashboard {
                 if let Some(view) = self.history.as_mut() {
                     view.copy_job = None;
                     view.copy_completion = None;
+                    view.pending = None;
                 }
                 self.copy_notice = Some("Copy cancelled".into());
                 return DashboardAction::Redraw;
             }
             return self.leave_history();
         }
-        if key.kind == KeyEventKind::Release {
+        if key.kind == KeyEventKind::Repeat && !history_motion_key(key.code) {
             return DashboardAction::None;
         }
         let Some(view) = self.history.as_ref() else {
@@ -860,8 +917,9 @@ impl Dashboard {
         if view.copy_job.is_some() || view.copy_completion.is_some() {
             return DashboardAction::None;
         }
-        if view.cursor_target.is_some() {
-            if history_retry_key(key.code) {
+        let anchored = self.history.as_ref().and_then(|view| view.anchor).is_some();
+        if anchored && view.cursor_target.is_some() {
+            if key.kind == KeyEventKind::Press && history_retry_key(key.code) {
                 self.history_page_error = false;
                 self.error = None;
                 self.copy_notice = Some("Waiting for history cell".into());
@@ -872,7 +930,6 @@ impl Dashboard {
             return DashboardAction::None;
         }
         let size = history_view_size(self.pane_size);
-        let anchored = self.history.as_ref().and_then(|view| view.anchor).is_some();
         if !anchored {
             let Some(view) = self.history.as_mut() else {
                 return DashboardAction::None;
@@ -925,7 +982,6 @@ impl Dashboard {
             if !changed {
                 return DashboardAction::None;
             }
-            view.cursor = None;
             view.cursor_target =
                 (view.opened.total_rows > 0).then_some(HistoryCursorTarget::At(HistoryCopyPoint {
                     row: view.top,
@@ -1559,7 +1615,7 @@ impl Dashboard {
                     Ok(false) => {}
                     Err(error) => {
                         view.copy_job = None;
-                        self.history_page_error = true;
+                        self.history_page_error = error.kind() != io::ErrorKind::InvalidInput;
                         self.copy_notice = Some(error.to_string());
                     }
                 }

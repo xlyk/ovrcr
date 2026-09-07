@@ -1,7 +1,7 @@
 use super::copy::{CopyMotion, CopyPoint, CopySelection};
 use super::event_loop::{
-    dashboard_hello_result, dashboard_message_channel, emit_pending_history_copy,
-    next_dashboard_message,
+    dashboard_hello_result, dashboard_message_channel, drain_dashboard_input_then_emit_with,
+    drain_ready_dashboard_input, emit_pending_history_copy, next_dashboard_message,
 };
 use super::{
     Dashboard, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange, HistoryCursor,
@@ -80,6 +80,91 @@ fn dashboard_wait_reports_input_and_output_together() {
     .unwrap();
     assert!(activity.input_ready);
     assert!(activity.server_ready);
+}
+
+#[test]
+fn dashboard_input_boundary_defers_after_a_bounded_ready_batch() {
+    let mut polls = 0;
+    let mut processed = 0;
+    let boundary = drain_ready_dashboard_input(
+        || {
+            polls += 1;
+            Ok(true)
+        },
+        || {
+            processed += 1;
+            Ok(false)
+        },
+    )
+    .unwrap();
+    assert_eq!(boundary, super::event_loop::DashboardBoundary::InputPending);
+    assert_eq!(processed, 32);
+    assert_eq!(polls, 33);
+}
+
+#[test]
+fn dashboard_input_boundary_reports_detach_from_a_processed_event() {
+    let boundary = drain_ready_dashboard_input(|| Ok(true), || Ok(true)).unwrap();
+    assert_eq!(boundary, super::event_loop::DashboardBoundary::Detached);
+}
+
+#[test]
+fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
+    let (peer, mut sender) = UnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    sender.set_nonblocking(true).unwrap();
+    let mut dashboard = staged_history_copy_dashboard();
+    let mut ready_polls = 0;
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut mouse_enabled = false;
+    let boundary = drain_dashboard_input_then_emit_with(
+        &mut terminal,
+        &mut sender,
+        &mut dashboard,
+        &mut mouse_enabled,
+        || {
+            ready_polls += 1;
+            Ok(true)
+        },
+        |_, _, _, _| Ok(false),
+    )
+    .unwrap();
+    assert_eq!(boundary, super::event_loop::DashboardBoundary::InputPending);
+    assert_eq!(ready_polls, 33);
+    assert!(
+        dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .copy_completion
+            .is_some()
+    );
+    drop(terminal);
+    assert!(bytes.is_empty());
+
+    let mut dashboard = staged_history_copy_dashboard();
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut mouse_enabled = false;
+    let boundary = drain_dashboard_input_then_emit_with(
+        &mut terminal,
+        &mut sender,
+        &mut dashboard,
+        &mut mouse_enabled,
+        || Ok(false),
+        |_, _, _, _| Ok(false),
+    )
+    .unwrap();
+    assert_eq!(boundary, super::event_loop::DashboardBoundary::Work);
+    drop(terminal);
+    assert!(
+        bytes
+            .windows(b"\x1b]52;c;YQ==\x1b\\".len())
+            .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
+    );
 }
 
 #[test]

@@ -137,20 +137,17 @@ fn dashboard_loop<W: Write>(
         }
         wake.clear()?;
         pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
-        pending_redraw |= emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
+        match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)? {
+            DashboardBoundary::Detached => break,
+            DashboardBoundary::InputPending => {
+                pending_redraw = true;
+                continue;
+            }
+            DashboardBoundary::Work => pending_redraw = true,
+            DashboardBoundary::Idle => {}
+        }
         pending_redraw |= first_frame;
         first_frame = false;
-
-        // Crossterm may already have parsed an event while reading an escape
-        // sequence. Check its buffered event queue before polling the raw fd.
-        if event::poll(DASHBOARD_EVENT_PROBE)? {
-            if process_dashboard_input(terminal, stream, dashboard, &mut mouse_enabled)? {
-                break;
-            }
-            pending_redraw = true;
-            next_dashboard_messages(messages, dashboard, stream)?;
-            emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
-        }
         if pending_redraw && Instant::now() >= next_frame_redraw {
             update_mouse_capture(terminal, dashboard, &mut mouse_enabled)?;
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
@@ -227,10 +224,33 @@ fn dashboard_loop<W: Write>(
                     }
                 }
             }
+            match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)?
+            {
+                DashboardBoundary::Detached => return Ok(()),
+                DashboardBoundary::InputPending => {
+                    pending_redraw = true;
+                    continue;
+                }
+                DashboardBoundary::Work => pending_redraw = true,
+                DashboardBoundary::Idle => {}
+            }
             if wait.server_ready {
                 wake.clear()?;
                 pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
-                pending_redraw |= emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
+                match drain_dashboard_input_then_emit(
+                    terminal,
+                    stream,
+                    dashboard,
+                    &mut mouse_enabled,
+                )? {
+                    DashboardBoundary::Detached => return Ok(()),
+                    DashboardBoundary::InputPending => {
+                        pending_redraw = true;
+                        continue;
+                    }
+                    DashboardBoundary::Work => pending_redraw = true,
+                    DashboardBoundary::Idle => {}
+                }
             }
             if wait.timed_out {
                 pending_redraw = true;
@@ -242,8 +262,16 @@ fn dashboard_loop<W: Write>(
             // wake. Clear before draining so a producer racing this drain
             // leaves a wake for the next iteration.
             wake.clear()?;
-            let _ = next_dashboard_messages(messages, dashboard, stream)?;
-            let _ = emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
+            next_dashboard_messages(messages, dashboard, stream)?;
+            match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)?
+            {
+                DashboardBoundary::Detached => break,
+                DashboardBoundary::InputPending => {
+                    pending_redraw = true;
+                    continue;
+                }
+                DashboardBoundary::Work | DashboardBoundary::Idle => {}
+            }
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -322,21 +350,94 @@ pub(super) fn emit_pending_history_copy<W: Write>(
     true
 }
 
-fn emit_pending_history_copy_if_idle<W: Write>(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DashboardBoundary {
+    Detached,
+    InputPending,
+    Work,
+    Idle,
+}
+
+fn drain_dashboard_input_then_emit<W: Write>(
     terminal: &mut Terminal<CrosstermBackend<&mut W>>,
     stream: &mut UnixStream,
     dashboard: &mut Dashboard,
-) -> Result<bool> {
-    if event::poll(DASHBOARD_EVENT_PROBE)? {
-        return Ok(false);
+    mouse_enabled: &mut bool,
+) -> Result<DashboardBoundary> {
+    drain_dashboard_input_then_emit_with(
+        terminal,
+        stream,
+        dashboard,
+        mouse_enabled,
+        || event::poll(DASHBOARD_EVENT_PROBE).map_err(Into::into),
+        |terminal, stream, dashboard, mouse_enabled| {
+            process_dashboard_input(terminal, stream, dashboard, mouse_enabled)
+        },
+    )
+}
+
+pub(super) fn drain_dashboard_input_then_emit_with<
+    W: Write,
+    Poll: FnMut() -> Result<bool>,
+    Process: FnMut(
+        &mut Terminal<CrosstermBackend<&mut W>>,
+        &mut UnixStream,
+        &mut Dashboard,
+        &mut bool,
+    ) -> Result<bool>,
+>(
+    terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    mouse_enabled: &mut bool,
+    poll_ready: Poll,
+    mut process: Process,
+) -> Result<DashboardBoundary> {
+    let input_boundary = drain_ready_dashboard_input(poll_ready, || {
+        process(terminal, stream, dashboard, mouse_enabled)
+    })?;
+    if matches!(
+        input_boundary,
+        DashboardBoundary::Detached | DashboardBoundary::InputPending
+    ) {
+        return Ok(input_boundary);
     }
-    let emitted = emit_pending_history_copy(terminal, dashboard);
-    if emitted {
+
+    if emit_pending_history_copy(terminal, dashboard) {
         if let Some(request) = dashboard.history_request_if_needed() {
             write_frame(stream, &request)?;
         }
+        return Ok(DashboardBoundary::Work);
     }
-    Ok(emitted)
+    Ok(input_boundary)
+}
+
+pub(super) fn drain_ready_dashboard_input<Poll, Process>(
+    mut poll_ready: Poll,
+    mut process: Process,
+) -> Result<DashboardBoundary>
+where
+    Poll: FnMut() -> Result<bool>,
+    Process: FnMut() -> Result<bool>,
+{
+    let mut did_work = false;
+    for _ in 0..DASHBOARD_INPUT_BATCH_LIMIT {
+        if !poll_ready()? {
+            break;
+        }
+        did_work = true;
+        if process()? {
+            return Ok(DashboardBoundary::Detached);
+        }
+    }
+    if poll_ready()? {
+        return Ok(DashboardBoundary::InputPending);
+    }
+    Ok(if did_work {
+        DashboardBoundary::Work
+    } else {
+        DashboardBoundary::Idle
+    })
 }
 
 fn process_dashboard_input<W: Write>(

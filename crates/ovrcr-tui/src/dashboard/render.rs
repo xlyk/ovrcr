@@ -133,14 +133,6 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
                 continue;
             }
             if history_cell.width == 0 {
-                if history_selected(view, absolute_row, absolute_col) {
-                    frame
-                        .buffer_mut()
-                        .cell_mut((bounded.x + screen_col, bounded.y + screen_row))
-                        .expect("history continuation is in frame")
-                        .set_fg(BASE)
-                        .set_bg(TEAL);
-                }
                 continue;
             }
             if history_cell.width == 2
@@ -301,16 +293,19 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
         }
         row_start = row_start.saturating_add(16);
     }
-    let status = if view.copy_job.is_some() || view.copy_completion.is_some() {
-        "copying"
-    } else if view.cursor_target.is_some() {
-        "cursor loading"
-    } else if missing || view.pending.is_some() {
+    let status = if missing || view.pending.is_some() {
         "loading"
     } else if has_content {
         "loaded"
     } else {
         "empty"
+    };
+    let activity = if view.copy_job.is_some() || view.copy_completion.is_some() {
+        " · copying"
+    } else if view.cursor_target.is_some() {
+        " · cursor loading"
+    } else {
+        ""
     };
     let row_end = row_end.max(view.top);
     let col_end = col_end.max(u32::from(view.left));
@@ -325,7 +320,7 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
         ""
     };
     format!(
-        "{output} · {status} · row {}-{} · col {}-{}{limit}",
+        "{output} · {status}{activity} · row {}-{} · col {}-{}{limit}",
         view.top.saturating_add(1),
         row_end,
         u32::from(view.left).saturating_add(1),
