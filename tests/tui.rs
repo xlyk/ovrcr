@@ -752,6 +752,22 @@ fn copy_mode_routes_keys_and_freezes_output() {
         dashboard.key(KeyCode::Char('y')),
         ovrcr::tui::DashboardAction::CopyText("ab".into())
     );
+    let anchor = dashboard.copy.as_ref().and_then(|copy| copy.anchor);
+    dashboard.finish_copy(Err(io::Error::other("denied")));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
+    assert_eq!(dashboard.copy.as_ref().and_then(|copy| copy.anchor), anchor);
+    assert!(
+        dashboard
+            .copy_notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("denied"))
+    );
+    dashboard.finish_copy(Ok(()));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("Clipboard request sent; paste to verify")
+    );
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
         bytes: b"\rNEW".to_vec(),

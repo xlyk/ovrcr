@@ -1,4 +1,4 @@
-use super::copy::{CopyMotion, CopySelection};
+use super::copy::{CopyMotion, CopySelection, MAX_COPY_BYTES};
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, is_browse_key};
 use super::render::{
@@ -19,8 +19,6 @@ use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
-
-const MAX_COPY_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryBegin {
@@ -467,6 +465,13 @@ impl Dashboard {
         self.copy = None;
         self.mode = InputMode::Browse;
         self.copy_notice = notice.map(str::to_owned);
+    }
+
+    pub fn finish_copy(&mut self, result: std::io::Result<()>) {
+        self.copy_notice = Some(match result {
+            Ok(()) => "Clipboard request sent; paste to verify".to_owned(),
+            Err(error) => error.to_string(),
+        });
     }
 
     fn begin_history_request(&mut self) -> DashboardAction {

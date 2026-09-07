@@ -2,7 +2,7 @@ use super::render::{draw_dashboard, pane_size};
 use super::terminal_guard::TerminalGuard;
 use super::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, InputMode,
-    PANIC_TERMINAL_RESTORED, TreeRow,
+    PANIC_TERMINAL_RESTORED, TreeRow, write_clipboard,
 };
 use crate::protocol::{ClientMessage, Request, Response, ServerMessage};
 use crate::session::TerminalSize;
@@ -343,7 +343,11 @@ fn process_dashboard_input<W: Write>(
             }
             Ok(false)
         }
-        DashboardAction::CopyText(_) => Ok(false),
+        DashboardAction::CopyText(text) => {
+            let result = write_clipboard(terminal.backend_mut(), &text);
+            dashboard.finish_copy(result);
+            Ok(false)
+        }
         DashboardAction::Request(request) => {
             write_frame(stream, &request)?;
             Ok(false)

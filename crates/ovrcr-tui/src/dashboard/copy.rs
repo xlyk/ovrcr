@@ -1,6 +1,8 @@
 use ovrcr_protocol::SessionId;
 use ovrcr_terminal::vt100;
 
+pub(super) const MAX_COPY_BYTES: usize = 64 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CopyPoint {
     pub row: u16,
@@ -162,4 +164,83 @@ fn normalize_point(screen: &vt100::Screen, point: CopyPoint) -> CopyPoint {
         point.col = point.col.saturating_sub(1);
     }
     point
+}
+
+pub fn write_clipboard(writer: &mut impl std::io::Write, text: &str) -> std::io::Result<()> {
+    if text.is_empty() || text.len() > MAX_COPY_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Selection must contain 1..=65536 UTF-8 bytes",
+        ));
+    }
+    crossterm::execute!(
+        writer,
+        crossterm::clipboard::CopyToClipboard::to_clipboard_from(text)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_clipboard;
+    use std::io::{self, Write};
+
+    #[test]
+    fn copy_clipboard_emits_osc52() {
+        let mut output = Vec::new();
+        write_clipboard(&mut output, "foo").unwrap();
+        assert_eq!(output, b"\x1b]52;c;Zm9v\x1b\\");
+    }
+
+    #[test]
+    fn copy_clipboard_rejects_invalid_payload_and_io_failure() {
+        let mut output = Vec::new();
+        let error = write_clipboard(&mut output, "").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(output.is_empty());
+
+        let oversized = "x".repeat(65_537);
+        let error = write_clipboard(&mut output, &oversized).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(output.is_empty());
+
+        let mut broken_pipe = BrokenPipeWriter;
+        let error = write_clipboard(&mut broken_pipe, "foo").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+
+        let mut flush_failure = FlushFailureWriter::default();
+        let error = write_clipboard(&mut flush_failure, "foo").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(flush_failure.output, b"\x1b]52;c;Zm9v\x1b\\");
+    }
+
+    struct BrokenPipeWriter;
+
+    impl Write for BrokenPipeWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FlushFailureWriter {
+        output: Vec<u8>,
+    }
+
+    impl Write for FlushFailureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.output.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "flush failed",
+            ))
+        }
+    }
 }
