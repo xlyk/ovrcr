@@ -28,9 +28,11 @@ pub mod task_tui {
 }
 pub mod tui {
     pub use ovrcr_tui::{
-        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, InputMode, KeyEncoding,
-        TerminalGuard, TreeRow, actual_drawn_inner_rect, dashboard_message_channel, draw_dashboard,
-        draw_dashboard_at, encode_key, encode_paste, event_to_request, render_terminal,
+        DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, HistoryView, InputMode,
+        KeyEncoding, PendingHistoryBegin, PendingHistoryPage, TerminalGuard, TreeRow,
+        actual_drawn_inner_rect, dashboard_message_channel, draw_dashboard, draw_dashboard_at,
+        encode_key, encode_paste, event_to_request, history_view_size, render_history,
+        render_terminal,
     };
 
     pub fn run_dashboard(stream: std::os::unix::net::UnixStream) -> anyhow::Result<()> {

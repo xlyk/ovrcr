@@ -3,7 +3,8 @@ use crossterm::event::{
 };
 use ovrcr::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
 use ovrcr::protocol::{
-    ClientMessage, ErrorCode, HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent,
+    ClientMessage, ErrorCode, HierarchySnapshot, HistoryCell, HistoryColor, HistoryOpened,
+    HistoryRow, HistoryRows, HistorySnapshotId, ProjectSummary, Request, Response, ServerEvent,
     ServerMessage, WorkspaceSummary,
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
@@ -406,6 +407,62 @@ fn palette_active_field_remains_visible_in_a_small_window() {
         })
         .collect::<String>();
     assert!(text.contains("visible-command"), "{text}");
+}
+
+fn history_opened(total_rows: u32) -> HistoryOpened {
+    HistoryOpened {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        revision: 1,
+        size: TerminalSize { rows: 10, cols: 20 },
+        history_rows: total_rows.saturating_sub(10),
+        total_rows,
+    }
+}
+
+fn history_cell(text: &str, width: u8) -> HistoryCell {
+    HistoryCell {
+        text: text.into(),
+        width,
+        fg: HistoryColor::Default,
+        bg: HistoryColor::Default,
+        attributes: 0,
+    }
+}
+
+fn history_page(
+    start_row: u32,
+    start_col: u16,
+    width: u16,
+    cells: Vec<HistoryCell>,
+) -> HistoryRows {
+    HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row,
+        start_col,
+        rows: vec![HistoryRow {
+            width,
+            cells,
+            wrapped: false,
+        }],
+    }
+}
+
+fn history_tile_page(start_row: u32, start_col: u16, rows: u16, cols: u16) -> HistoryRows {
+    HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row,
+        start_col,
+        rows: (0..rows)
+            .map(|_| HistoryRow {
+                width: start_col.saturating_add(cols),
+                cells: (0..cols).map(|_| history_cell("", 1)).collect(),
+                wrapped: false,
+            })
+            .collect(),
+    }
 }
 
 #[test]
@@ -1073,6 +1130,876 @@ fn pause_resume_input_and_paste_stay_guarded() {
         dashboard.hierarchy.clone(),
     )));
     assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+}
+
+#[test]
+fn history_navigation_never_writes_to_pty() {
+    let mut dashboard = dashboard_fixture();
+    let begin = dashboard.key(KeyCode::PageUp);
+    assert_eq!(
+        begin,
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request_id: 1,
+            request: Request::HistoryBegin {
+                session: SessionId(1),
+            },
+        })
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[5~".to_vec())
+    );
+
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(HistoryOpened {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            revision: 1,
+            size: TerminalSize { rows: 10, cols: 20 },
+            history_rows: 90,
+            total_rows: 100,
+        }),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+
+    for key in [
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Char('k'),
+        KeyCode::Char('j'),
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Char('h'),
+        KeyCode::Char('l'),
+        KeyCode::Enter,
+    ] {
+        assert!(!matches!(
+            dashboard.key(key),
+            ovrcr::tui::DashboardAction::PtyBytes(_)
+        ));
+    }
+    assert!(!matches!(
+        dashboard.event_action(Event::Paste("blocked".into())),
+        ovrcr::tui::DashboardAction::PtyBytes(_)
+    ));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+    assert!(!matches!(
+        dashboard.key(KeyCode::End),
+        ovrcr::tui::DashboardAction::PtyBytes(_)
+    ));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('q')),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+
+    dashboard.key(KeyCode::Char(':'));
+    dashboard.event_action(Event::Paste("spacelift-agent progress local".into()));
+    let ovrcr::tui::DashboardAction::RequestBatch(requests) = dashboard.key(KeyCode::Enter) else {
+        panic!("palette switch did not preserve pending history release");
+    };
+    assert!(matches!(
+        requests.as_slice(),
+        [
+            ClientMessage {
+                request: Request::HistoryEnd {
+                    session: SessionId(1),
+                    snapshot: HistorySnapshotId(7),
+                },
+                ..
+            },
+            ClientMessage {
+                request: Request::Select {
+                    session: SessionId(3),
+                    ..
+                },
+                ..
+            }
+        ]
+    ));
+}
+
+#[test]
+fn history_begin_is_cancelled_and_captured_by_active_overlays() {
+    for overlay in ["palette", "tasks"] {
+        let mut dashboard = dashboard_fixture();
+        assert!(matches!(
+            dashboard.key(KeyCode::PageUp),
+            ovrcr::tui::DashboardAction::Request(ClientMessage {
+                request: Request::HistoryBegin {
+                    session: SessionId(1)
+                },
+                ..
+            })
+        ));
+        if overlay == "palette" {
+            assert_eq!(
+                dashboard.key(KeyCode::Char(':')),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+        } else {
+            assert_eq!(dashboard.ctrl('t'), ovrcr::tui::DashboardAction::Redraw);
+        }
+        assert!(
+            dashboard
+                .history_begin_request
+                .as_ref()
+                .is_some_and(|pending| pending.cancelled)
+        );
+        assert_eq!(
+            dashboard.key(KeyCode::PageUp),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        assert_eq!(
+            dashboard.key(KeyCode::Esc),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let requests = dashboard.handle_server_message(ServerMessage::Response {
+            request_id: 1,
+            response: Response::HistoryOpened(history_opened(100)),
+        });
+        assert!(dashboard.history.is_none());
+        assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+        assert!(matches!(
+            requests.as_slice(),
+            [ClientMessage {
+                request: Request::HistoryEnd {
+                    session: SessionId(1),
+                    snapshot: HistorySnapshotId(7),
+                },
+                ..
+            }]
+        ));
+    }
+}
+
+#[test]
+fn history_release_precedes_hierarchy_fallback_selection() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::PageUp);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    let mut hierarchy = dashboard.hierarchy.clone();
+    for workspace in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|project| &mut project.workspaces)
+    {
+        workspace
+            .sessions
+            .retain(|session| session.id != SessionId(1));
+    }
+    let requests = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::HierarchyChanged(hierarchy),
+    ));
+    assert!(dashboard.history.is_none());
+    assert_eq!(dashboard.selected, Some(SessionId(5)));
+    assert!(matches!(
+        requests.as_slice(),
+        [
+            ClientMessage {
+                request: Request::HistoryEnd {
+                    session: SessionId(1),
+                    snapshot: HistorySnapshotId(7),
+                },
+                ..
+            },
+            ClientMessage {
+                request: Request::Select {
+                    session: SessionId(5),
+                    ..
+                },
+                ..
+            }
+        ]
+    ));
+}
+
+#[test]
+fn history_live_output_preserves_anchor() {
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    let requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    let page_request = requests.first().cloned().expect("initial history page");
+    let (start_row, start_col, request_id) = match page_request.request {
+        Request::HistoryPage {
+            start_row,
+            start_col,
+            ..
+        } => (start_row, start_col, page_request.request_id),
+        request => panic!("unexpected history request: {request:?}"),
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::HistoryRows(history_page(
+            start_row,
+            start_col,
+            20,
+            vec![history_cell("frozen", 1)],
+        )),
+    });
+    let before = dashboard.history.clone().expect("history opened");
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(1),
+        bytes: b"LIVE_MARKER".to_vec(),
+    }));
+    let after = dashboard.history.as_ref().expect("history remains open");
+    assert_eq!(after.opened, before.opened);
+    assert_eq!(after.top, before.top);
+    assert_eq!(after.left, before.left);
+    assert_eq!(after.pages, before.pages);
+    assert!(after.new_output);
+    assert!(dashboard.parser.screen().contents().contains("LIVE_MARKER"));
+    let select = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        session: SessionId(1),
+    }));
+    assert!(matches!(
+        select.as_slice(),
+        [ClientMessage {
+            request: Request::Select {
+                session: SessionId(1),
+                ..
+            },
+            ..
+        }]
+    ));
+    let before_screen = dashboard.history.clone().expect("history remains open");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: select[0].request_id,
+        response: Response::Screen {
+            session: SessionId(1),
+            size: TerminalSize { rows: 12, cols: 30 },
+            bytes: b"SCREEN_MARKER".to_vec(),
+        },
+    });
+    let after_screen = dashboard.history.as_ref().expect("history remains open");
+    assert_eq!(after_screen.opened, before_screen.opened);
+    assert_eq!(after_screen.top, before_screen.top);
+    assert_eq!(after_screen.left, before_screen.left);
+    assert_eq!(after_screen.pages, before_screen.pages);
+    assert_eq!(dashboard.parser.screen().size(), (12, 30));
+    assert!(
+        dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("SCREEN_MARKER")
+    );
+}
+
+#[test]
+fn history_resize_preserves_capture() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::PageUp);
+    let requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    let page_request = requests.first().cloned().expect("initial history page");
+    let (start_row, start_col) = match page_request.request {
+        Request::HistoryPage {
+            start_row,
+            start_col,
+            ..
+        } => (start_row, start_col),
+        request => panic!("unexpected history request: {request:?}"),
+    };
+    let mut follow_up = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: page_request.request_id,
+        response: Response::HistoryRows(history_page(
+            start_row,
+            start_col,
+            20,
+            vec![history_cell("old", 1)],
+        )),
+    });
+    let mut captured_anchor = false;
+    while let Some(request) = follow_up.pop() {
+        let (start_row, start_col, rows, cols) = match request.request {
+            Request::HistoryPage {
+                start_row,
+                start_col,
+                rows,
+                cols,
+                ..
+            } => (start_row, start_col, rows, cols),
+            request => panic!("unexpected history request: {request:?}"),
+        };
+        captured_anchor |= start_row == 48;
+        follow_up = dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::HistoryRows(history_tile_page(start_row, start_col, rows, cols)),
+        });
+    }
+    assert!(captured_anchor);
+    dashboard.history.as_mut().unwrap().top = 60;
+    dashboard.history.as_mut().unwrap().left = 4;
+    let before = dashboard.history.clone().expect("history opened");
+    assert!(before.pages.iter().any(|page| page.start_row == 48));
+    let resize = dashboard
+        .resize_request(TerminalSize { rows: 50, cols: 30 }, 99)
+        .expect("live resize request");
+    assert!(matches!(resize.request, Request::Resize { .. }));
+    let after = dashboard.history.as_ref().expect("history remains open");
+    assert_eq!(after.opened, before.opened);
+    assert_eq!(after.pages, before.pages);
+    assert_eq!(after.top, before.top);
+    assert_eq!(after.left, before.left);
+    assert_eq!(dashboard.parser.screen().size(), (50, 30));
+}
+
+#[test]
+fn history_stale_response_is_ignored() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::PageUp);
+    let requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    let page_request = requests.first().cloned().expect("initial history page");
+    let pending = dashboard
+        .history
+        .as_ref()
+        .and_then(|view| view.pending.clone())
+        .expect("history page pending");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pending.request_id.wrapping_add(1),
+        response: Response::HistoryRows(history_page(
+            pending.start_row,
+            pending.start_col,
+            20,
+            vec![],
+        )),
+    });
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().pending.as_ref(),
+        Some(&pending)
+    );
+    assert!(dashboard.history.as_ref().unwrap().pages.is_empty());
+    for page in [
+        {
+            let mut page = history_page(pending.start_row, pending.start_col, 20, vec![]);
+            page.session = SessionId(5);
+            page
+        },
+        {
+            let mut page = history_page(pending.start_row, pending.start_col, 20, vec![]);
+            page.snapshot = HistorySnapshotId(8);
+            page
+        },
+        history_page(
+            pending.start_row.saturating_add(16),
+            pending.start_col,
+            20,
+            vec![],
+        ),
+        {
+            let mut page = history_page(pending.start_row, pending.start_col, 20, vec![]);
+            page.rows = (0..=pending.rows)
+                .map(|_| HistoryRow {
+                    width: pending.start_col,
+                    cells: Vec::new(),
+                    wrapped: false,
+                })
+                .collect();
+            page
+        },
+        {
+            let mut page = history_page(pending.start_row, pending.start_col, pending.cols, vec![]);
+            page.rows[0].width = pending.start_col.saturating_add(pending.cols);
+            page.rows[0].cells = vec![history_cell("x", 1); usize::from(pending.cols) + 1];
+            page
+        },
+    ] {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: pending.request_id,
+            response: Response::HistoryRows(page),
+        });
+        let view = dashboard.history.as_ref().expect("history remains pending");
+        assert_eq!(view.pending.as_ref(), Some(&pending));
+        assert!(view.pages.is_empty());
+    }
+    let accepted = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pending.request_id,
+        response: Response::HistoryRows(history_page(
+            pending.start_row,
+            pending.start_col,
+            pending.start_col,
+            vec![],
+        )),
+    });
+    assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 1);
+    assert!(accepted.len() <= 1);
+    dashboard.select_session(SessionId(5));
+    assert!(dashboard.history.is_none());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: page_request.request_id,
+        response: Response::HistoryRows(history_page(0, 0, 20, vec![history_cell("old", 1)])),
+    });
+    assert!(dashboard.history.is_none());
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+}
+
+#[test]
+fn history_pending_keys_coalesce() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::PageUp);
+    let requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(400)),
+    });
+    let page_request = requests.first().cloned().expect("initial history page");
+    let pending_before = dashboard
+        .history
+        .as_ref()
+        .and_then(|view| view.pending.clone())
+        .expect("one page pending");
+    for _ in 0..100 {
+        assert!(!matches!(
+            dashboard.key(KeyCode::PageUp),
+            ovrcr::tui::DashboardAction::Request(_)
+        ));
+    }
+    let pending_after = dashboard
+        .history
+        .as_ref()
+        .and_then(|view| view.pending.clone())
+        .expect("one page remains pending");
+    assert_eq!(pending_after.request_id, pending_before.request_id);
+    assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 0);
+    let (start_row, start_col) = match page_request.request {
+        Request::HistoryPage {
+            start_row,
+            start_col,
+            ..
+        } => (start_row, start_col),
+        request => panic!("unexpected history request: {request:?}"),
+    };
+    let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: page_request.request_id,
+        response: Response::HistoryRows(history_page(
+            start_row,
+            start_col,
+            20,
+            vec![history_cell("tile", 1)],
+        )),
+    });
+    assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 1);
+    assert_eq!(follow_up.len(), 1);
+    assert!(dashboard.history.as_ref().unwrap().pending.is_some());
+    assert!(dashboard.history.as_ref().unwrap().pages.len() <= 16);
+
+    let retry_id = dashboard
+        .history
+        .as_ref()
+        .unwrap()
+        .pending
+        .as_ref()
+        .unwrap()
+        .request_id;
+    let blocked = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry_id,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "history tile missing".into(),
+        },
+    });
+    assert!(blocked.is_empty());
+    assert!(dashboard.history.as_ref().unwrap().pending.is_none());
+    assert!(
+        dashboard
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("missing"))
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry_id,
+        response: Response::Ok,
+    });
+    assert!(
+        dashboard
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("missing"))
+    );
+    let retry = match dashboard.key(KeyCode::Down) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected explicit retry request, got {action:?}"),
+    };
+    assert!(dashboard.error.is_none());
+
+    let latest = dashboard.history.as_ref().unwrap().pending.clone().unwrap();
+    let latest_top = dashboard.history.as_ref().unwrap().top;
+    assert_eq!(latest.start_row, (latest_top / 16) * 16);
+    assert_eq!(latest.start_col, 0);
+
+    let initial_page = dashboard
+        .history
+        .as_ref()
+        .unwrap()
+        .pages
+        .front()
+        .unwrap()
+        .clone();
+    dashboard.pane_size = TerminalSize {
+        rows: 64,
+        cols: 256,
+    };
+    dashboard.history.as_mut().unwrap().top = 1;
+    dashboard.history.as_mut().unwrap().left = 1;
+    let mut next = ovrcr::tui::DashboardAction::Request(retry);
+    let mut starts = Vec::new();
+    while let ovrcr::tui::DashboardAction::Request(request) = next {
+        let (start_row, start_col, rows, cols) = match request.request {
+            Request::HistoryPage {
+                start_row,
+                start_col,
+                rows,
+                cols,
+                ..
+            } => (start_row, start_col, rows, cols),
+            request => panic!("unexpected history request: {request:?}"),
+        };
+        starts.push((start_row, start_col));
+        next = dashboard
+            .handle_server_message(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::HistoryRows(history_tile_page(
+                    start_row, start_col, rows, cols,
+                )),
+            })
+            .into_iter()
+            .next()
+            .map(ovrcr::tui::DashboardAction::Request)
+            .unwrap_or(ovrcr::tui::DashboardAction::Redraw);
+    }
+    let expected_tiles = (0..5)
+        .flat_map(|row| (0..3).map(move |col| (row * 16, col * 128)))
+        .collect::<std::collections::BTreeSet<_>>();
+    let cached_tiles = dashboard
+        .history
+        .as_ref()
+        .unwrap()
+        .pages
+        .iter()
+        .map(|page| (page.start_row, page.start_col))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(expected_tiles.is_subset(&cached_tiles));
+    assert!(starts.iter().any(|(row, col)| *row == 0 && *col == 0));
+    assert!(starts.iter().any(|(row, col)| *row == 64 && *col == 256));
+    dashboard.history.as_mut().unwrap().top = 200;
+    dashboard.history.as_mut().unwrap().left = 0;
+    let eviction = match dashboard.key(KeyCode::Down) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected eviction request, got {action:?}"),
+    };
+    let follow_eviction = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: eviction.request_id,
+        response: Response::HistoryRows(history_tile_page(192, 0, 16, 128)),
+    });
+    let eviction_two = follow_eviction
+        .first()
+        .cloned()
+        .expect("next eviction tile");
+    let (start_row, start_col, rows, cols) = match eviction_two.request {
+        Request::HistoryPage {
+            start_row,
+            start_col,
+            rows,
+            cols,
+            ..
+        } => (start_row, start_col, rows, cols),
+        request => panic!("unexpected eviction request: {request:?}"),
+    };
+    let second_page = history_tile_page(start_row, start_col, rows, cols);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: eviction_two.request_id,
+        response: Response::HistoryRows(second_page.clone()),
+    });
+    assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 16);
+    assert!(
+        dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .pages
+            .contains(&second_page)
+    );
+    assert!(
+        !dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .pages
+            .contains(&initial_page)
+    );
+}
+
+#[test]
+fn history_render_preserves_cells_and_clips() {
+    let mut view = ovrcr::tui::HistoryView::new(history_opened(1), 0);
+    let mut wide = history_cell("界", 2);
+    wide.fg = HistoryColor::Rgb(1, 2, 3);
+    view.pages.push_back(history_page(
+        0,
+        0,
+        4,
+        vec![
+            wide,
+            history_cell("", 0),
+            history_cell("e\u{301}", 1),
+            history_cell("X", 1),
+        ],
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(3, 1)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 3, 1), &view))
+        .unwrap();
+    terminal.show_cursor().unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 3, 1), &view))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "界");
+    assert_eq!(terminal.backend().buffer()[(1, 0)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(2, 0)].symbol(), "e\u{301}");
+    assert_eq!(terminal.backend().buffer()[(0, 0)].fg, Color::Rgb(1, 2, 3));
+    assert!(!terminal.backend().cursor_visible());
+
+    view.left = 1;
+    terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 3, 1), &view))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(1, 0)].symbol(), "e\u{301}");
+    assert_eq!(terminal.backend().buffer()[(2, 0)].symbol(), "X");
+
+    view.left = 0;
+    terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 1, 1), &view))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), " ");
+
+    let mut tiled_view = ovrcr::tui::HistoryView::new(history_opened(1), 0);
+    let mut left_cells = (0..128).map(|_| history_cell("", 1)).collect::<Vec<_>>();
+    left_cells[127] = history_cell("界", 2);
+    tiled_view
+        .pages
+        .push_back(history_page(0, 0, 130, left_cells));
+    tiled_view.pages.push_back(history_page(
+        0,
+        128,
+        130,
+        vec![history_cell("", 0), history_cell("R", 1)],
+    ));
+    let mut tiled_terminal = Terminal::new(TestBackend::new(130, 1)).unwrap();
+    tiled_terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 130, 1), &tiled_view))
+        .unwrap();
+    assert_eq!(tiled_terminal.backend().buffer()[(127, 0)].symbol(), "界");
+    assert_eq!(tiled_terminal.backend().buffer()[(128, 0)].symbol(), " ");
+    assert_eq!(tiled_terminal.backend().buffer()[(129, 0)].symbol(), "R");
+    tiled_view.left = 128;
+    tiled_terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 2, 1), &tiled_view))
+        .unwrap();
+    assert_eq!(tiled_terminal.backend().buffer()[(0, 0)].symbol(), " ");
+    assert_eq!(tiled_terminal.backend().buffer()[(1, 0)].symbol(), "R");
+
+    let mut dashboard = dashboard_fixture();
+    dashboard.mode = ovrcr::tui::InputMode::History;
+    let mut loading = ovrcr::tui::HistoryView::new(history_opened(100), 0);
+    loading.pending = Some(ovrcr::tui::PendingHistoryPage {
+        request_id: 2,
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        rows: 16,
+        start_col: 0,
+        cols: 128,
+    });
+    dashboard.history = Some(loading);
+    let mut dashboard_terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
+    dashboard_terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let dashboard_text = (0..40)
+        .map(|row| {
+            (0..180)
+                .map(|column| dashboard_terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dashboard_text.contains("loading"));
+    assert!(dashboard_text.contains("row 1"));
+    assert!(dashboard_text.contains("col 1"));
+    dashboard.history = Some(ovrcr::tui::HistoryView::new(history_opened(1), 0));
+    dashboard
+        .history
+        .as_mut()
+        .unwrap()
+        .pages
+        .push_back(history_page(0, 0, 4, vec![history_cell("payload", 1)]));
+    dashboard_terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let dashboard_text = (0..40)
+        .map(|row| {
+            (0..180)
+                .map(|column| dashboard_terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dashboard_text.contains("HISTORY · frozen · loaded"));
+    dashboard.history = Some(ovrcr::tui::HistoryView::new(history_opened(1), 0));
+    dashboard
+        .history
+        .as_mut()
+        .unwrap()
+        .pages
+        .push_back(history_page(0, 0, 0, vec![]));
+    dashboard_terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let dashboard_text = (0..40)
+        .map(|row| {
+            (0..180)
+                .map(|column| dashboard_terminal.backend().buffer()[(column, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(dashboard_text.contains("empty"));
+}
+
+#[test]
+fn history_cancelled_begin_releases_late_snapshot() {
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(
+        dashboard.key(KeyCode::Esc),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    assert!(
+        dashboard
+            .history_begin_request
+            .as_ref()
+            .is_some_and(|pending| pending.cancelled)
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.history.is_none());
+    assert_eq!(release.len(), 1);
+    assert_eq!(release[0].request_id, 2);
+    assert!(matches!(
+        release[0].request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    ));
+    assert!(dashboard.history_begin_request.is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { .. },
+            ..
+        })
+    ));
+
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(
+        dashboard.ctrl('g'),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.history.is_none());
+    assert_eq!(release.len(), 1);
+    assert!(matches!(
+        release[0].request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    ));
+    assert!(dashboard.history_begin_request.is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { .. },
+            ..
+        })
+    ));
+
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.ctrl('g'),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.history.is_none());
+    assert_eq!(release.len(), 1);
+    assert!(matches!(
+        release[0].request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    ));
+    assert!(dashboard.history_begin_request.is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(ClientMessage {
+            request: Request::HistoryBegin { .. },
+            ..
+        })
+    ));
 }
 
 #[test]

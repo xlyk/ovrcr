@@ -86,6 +86,9 @@ impl Palette {
 
 impl Dashboard {
     pub(super) fn open_palette(&mut self) -> DashboardAction {
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
         if self.palette.is_none() {
             self.palette = Some(Palette::new());
         }
