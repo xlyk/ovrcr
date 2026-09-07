@@ -2,6 +2,7 @@
 pub mod input;
 use anyhow::{Context, Result, bail};
 use eframe::egui;
+use ovrcr_terminal::vt100;
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -53,7 +54,10 @@ impl Demo {
         let workspaces = self.root.join("workspaces");
         fs::create_dir(&repositories)?;
         fs::create_dir(&workspaces)?;
-        crate::config::Registry::default().save_atomic(&self.root.join("config.toml"))?;
+        crate::config::save_registry_atomic(
+            &crate::config::Registry::default(),
+            &self.root.join("config.toml"),
+        )?;
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
         self.create_workspace_fixture("consigint", "worktree-lifecycle")?;

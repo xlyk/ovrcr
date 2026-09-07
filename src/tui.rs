@@ -9,6 +9,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::{cursor, execute, terminal as crossterm_terminal};
+pub use ovrcr_terminal::encode_paste;
+use ovrcr_terminal::vt100;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -682,17 +684,6 @@ fn function_key(number: u8) -> Option<Vec<u8>> {
         12 => b"\x1b[24~".to_vec(),
         _ => return None,
     })
-}
-
-pub fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
-    if bracketed {
-        let mut bytes = b"\x1b[200~".to_vec();
-        bytes.extend_from_slice(text.as_bytes());
-        bytes.extend_from_slice(b"\x1b[201~");
-        bytes
-    } else {
-        text.as_bytes().to_vec()
-    }
 }
 
 pub fn event_to_request(

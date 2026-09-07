@@ -2,7 +2,6 @@
 use crate::server::ServerState;
 use crate::tasks::*;
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -18,77 +17,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskRequest {
-    ListTasks,
-    PageTasks {
-        offset: usize,
-    },
-    PageRuns {
-        task: Option<TaskId>,
-        offset: usize,
-    },
-    GetTask(TaskId),
-    Create(TaskSpec),
-    Update {
-        id: TaskId,
-        spec: TaskSpec,
-    },
-    Pause(TaskId),
-    Resume(TaskId),
-    Delete(TaskId),
-    Enqueue(TaskId),
-    Concurrency(Option<usize>),
-    ListRuns(Option<TaskId>),
-    GetRun(RunId),
-    ReadLog {
-        id: RunId,
-        offset: u64,
-        max_bytes: usize,
-    },
-    Cancel(RunId),
-    Clean {
-        id: RunId,
-        confirmed: bool,
-    },
-}
-impl TaskRequest {
-    pub fn is_read_only(&self) -> bool {
-        matches!(
-            self,
-            Self::ListTasks
-                | Self::PageTasks { .. }
-                | Self::PageRuns { .. }
-                | Self::GetTask(_)
-                | Self::ListRuns(_)
-                | Self::GetRun(_)
-                | Self::ReadLog { .. }
-                | Self::Concurrency(None)
-        )
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskResponse {
-    Tasks(Vec<Task>),
-    TasksPage {
-        items: Vec<Task>,
-        next_offset: Option<usize>,
-    },
-    RunsPage {
-        items: Vec<Run>,
-        next_offset: Option<usize>,
-    },
-    Task(Task),
-    Runs(Vec<Run>),
-    Run(Run),
-    Concurrency(usize),
-    Log {
-        bytes: Vec<u8>,
-        next_offset: u64,
-        terminal: bool,
-    },
-    Ok,
-}
+pub use ovrcr_protocol::{TaskRequest, TaskResponse};
+
 struct Job {
     cancel: Arc<AtomicBool>,
     thread: JoinHandle<()>,
