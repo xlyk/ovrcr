@@ -10,8 +10,8 @@ current screen when it reconnects.
 OVRCR targets macOS and Linux and requires Rust. Build the binary with:
 
 ```sh
-cargo build --release
-install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
+rtk proxy cargo build -p ovrcr --release
+rtk proxy install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 ```
 
 The server uses `$XDG_RUNTIME_DIR` on Linux and `$TMPDIR` on macOS for its
@@ -475,7 +475,7 @@ The headless PTY wrapper exercises rendered terminal state, input and paste,
 resize, mouse selection, detach, reattach, and bounded cleanup:
 
 ```sh
-rtk cargo test --test terminal_acceptance -- --nocapture
+rtk proxy cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 ```
 
 ## Test in a GUI window (macOS)
@@ -511,7 +511,33 @@ The GUI dependency is enabled only by the `gui` feature. Ordinary builds and
 `cargo run` still use the CLI. To run the helper's focused tests:
 
 ```sh
-rtk proxy cargo test --features gui --test gui
+rtk proxy cargo test -p ovrcr --features gui --test gui
+```
+
+## Workspace development
+
+OVRCR is a Cargo workspace with five packages. `ovrcr` is the application
+package and owns the CLI entry point, client/report transport helpers, and the
+optional GUI. `ovrcr-protocol` owns shared wire, registry, session, and context
+types. `ovrcr-terminal` owns VT100 screen and paste handling. `ovrcr-runtime`
+owns configuration, Git worktrees, PTYs, sessions, and the synchronous server.
+`ovrcr-tui` owns dashboard state, input, rendering, and terminal lifecycle.
+The application depends on the internal packages; runtime and TUI depend on
+protocol and terminal and never depend on each other.
+
+Workspace checks and tests run every package and target:
+
+```sh
+rtk proxy cargo check --workspace --all-targets
+rtk proxy cargo test --workspace --all-targets --all-features
+rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Run the application package explicitly when using Cargo directly:
+
+```sh
+rtk proxy cargo run -p ovrcr --
+rtk proxy cargo build -p ovrcr --release
 ```
 
 ## Feature roadmap

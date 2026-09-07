@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(rtk proxy dirname "$0")/.."
-rtk proxy cargo build --features gui --bins
+rtk proxy cargo build -p ovrcr --features gui --bins
 bundle="$PWD/target/OVRCR GUI.app"
 rtk proxy mkdir -p "$bundle/Contents/MacOS"
 rtk proxy cp target/debug/ovrcr target/debug/ovrcr-gui "$bundle/Contents/MacOS/"

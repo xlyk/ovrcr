@@ -2638,7 +2638,6 @@ name = "ovrcr"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bincode",
  "clap",
  "crossterm",
  "directories",
@@ -2654,7 +2653,6 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "tempfile",
- "toml",
  "vt100",
 ]
 
