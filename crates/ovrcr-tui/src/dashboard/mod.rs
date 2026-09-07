@@ -8,7 +8,10 @@ mod tests;
 
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, event_to_request};
-pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
+pub use render::{
+    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_history, render_terminal,
+};
+pub use state::{HistoryView, PendingHistoryBegin, PendingHistoryPage};
 pub use terminal_guard::TerminalGuard;
 
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
@@ -17,10 +20,18 @@ use std::collections::HashSet;
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
+pub fn history_view_size(pane: TerminalSize) -> TerminalSize {
+    TerminalSize {
+        rows: pane.rows.clamp(1, 64),
+        cols: pane.cols.clamp(1, 256),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
     Browse,
     Terminal,
+    History,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +49,7 @@ pub enum DashboardAction {
     EnterBrowse,
     PtyBytes(Vec<u8>),
     Request(ClientMessage),
+    RequestBatch(Vec<ClientMessage>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,8 +68,11 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    pub history: Option<HistoryView>,
+    pub history_begin_request: Option<PendingHistoryBegin>,
     tree_offset: usize,
     next_request_id: u64,
+    history_end_after_selection: Option<ClientMessage>,
 }
 
 thread_local! {

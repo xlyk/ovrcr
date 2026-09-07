@@ -99,7 +99,7 @@ pub fn run_dashboard(mut stream: UnixStream) -> Result<()> {
         wake,
     );
     drop(terminal);
-    guard.mark_mouse(dashboard.mode == InputMode::Browse);
+    guard.mark_mouse(dashboard.mode != InputMode::Terminal);
     let _ = panic::take_hook();
     if let Some(prior) = prior_hook.lock().ok().and_then(|mut hooks| hooks.take()) {
         panic::set_hook(prior);
@@ -130,6 +130,9 @@ fn dashboard_loop<W: Write>(
         });
         let request_id = dashboard.next_request_id();
         if let Some(request) = dashboard.resize_request(next_size, request_id) {
+            write_frame(stream, &request)?;
+        }
+        if let Some(request) = dashboard.history_request_if_needed() {
             write_frame(stream, &request)?;
         }
         wake.clear()?;
@@ -175,6 +178,9 @@ fn dashboard_loop<W: Write>(
             if let Some(request) = dashboard.resize_request(next_size, request_id) {
                 write_frame(stream, &request)?;
             }
+            if let Some(request) = dashboard.history_request_if_needed() {
+                write_frame(stream, &request)?;
+            }
             // If both are ready, process keyboard input first so output floods
             // cannot delay a user's command.
             // Raw descriptor readiness can represent an incomplete escape
@@ -202,6 +208,9 @@ fn dashboard_loop<W: Write>(
                 });
                 let request_id = dashboard.next_request_id();
                 if let Some(request) = dashboard.resize_request(next_size, request_id) {
+                    write_frame(stream, &request)?;
+                }
+                if let Some(request) = dashboard.history_request_if_needed() {
                     write_frame(stream, &request)?;
                 }
             }
@@ -322,6 +331,9 @@ fn process_dashboard_input<W: Write>(
                     .context("enable dashboard mouse")?;
                 *mouse_enabled = true;
             }
+            if let Some(request) = dashboard.take_pending_history_end() {
+                write_frame(stream, &request)?;
+            }
             Ok(false)
         }
         DashboardAction::PtyBytes(bytes) => {
@@ -333,6 +345,12 @@ fn process_dashboard_input<W: Write>(
         }
         DashboardAction::Request(request) => {
             write_frame(stream, &request)?;
+            Ok(false)
+        }
+        DashboardAction::RequestBatch(requests) => {
+            for request in requests {
+                write_frame(stream, &request)?;
+            }
             Ok(false)
         }
     }

@@ -1,7 +1,8 @@
 use super::state::find_session;
-use super::{Dashboard, InputMode, TreeRow};
+use super::{Dashboard, HistoryView, InputMode, TreeRow, history_view_size};
 use crate::context::format_context;
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
+use ovrcr_protocol::HistoryColor;
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -84,6 +85,90 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
         if row < rows && col < cols {
             frame.set_cursor_position((area.x + col, area.y + row));
         }
+    }
+}
+
+pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
+    let bounded = Rect::new(area.x, area.y, area.width.min(256), area.height.min(64));
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let cell = frame
+                .buffer_mut()
+                .cell_mut((area.x + col, area.y + row))
+                .expect("history area is in frame");
+            cell.reset();
+            cell.set_bg(BASE).set_fg(TEXT).set_symbol(" ");
+        }
+    }
+    for screen_row in 0..bounded.height {
+        let absolute_row = view.top.saturating_add(u32::from(screen_row));
+        let Some((page, history_row)) = view.pages.iter().find_map(|page| {
+            let end = page.start_row.saturating_add(page.rows.len() as u32);
+            if absolute_row >= page.start_row && absolute_row < end {
+                Some((page, &page.rows[(absolute_row - page.start_row) as usize]))
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+        for screen_col in 0..bounded.width {
+            let absolute_col = u32::from(view.left).saturating_add(u32::from(screen_col));
+            if absolute_col > u32::from(u16::MAX) {
+                continue;
+            }
+            let absolute_col = absolute_col as u16;
+            if absolute_col < page.start_col || absolute_col >= history_row.width {
+                continue;
+            }
+            let index = usize::from(absolute_col - page.start_col);
+            let Some(history_cell) = history_row.cells.get(index) else {
+                continue;
+            };
+            if history_cell.width == 0
+                || (history_cell.width == 2
+                    && (screen_col.saturating_add(1) >= bounded.width
+                        || absolute_col.saturating_add(1) >= history_row.width))
+            {
+                continue;
+            }
+            let cell = frame
+                .buffer_mut()
+                .cell_mut((bounded.x + screen_col, bounded.y + screen_row))
+                .expect("history cell is in frame");
+            cell.set_symbol(if history_cell.text.is_empty() {
+                " "
+            } else {
+                &history_cell.text
+            });
+            cell.set_fg(history_color(history_cell.fg.clone(), TEXT));
+            cell.set_bg(history_color(history_cell.bg.clone(), BASE));
+            let mut modifier = Modifier::empty();
+            if history_cell.attributes & 1 != 0 {
+                modifier.insert(Modifier::BOLD);
+            }
+            if history_cell.attributes & 2 != 0 {
+                modifier.insert(Modifier::DIM);
+            }
+            if history_cell.attributes & 4 != 0 {
+                modifier.insert(Modifier::ITALIC);
+            }
+            if history_cell.attributes & 8 != 0 {
+                modifier.insert(Modifier::UNDERLINED);
+            }
+            if history_cell.attributes & 16 != 0 {
+                modifier.insert(Modifier::REVERSED);
+            }
+            cell.modifier = modifier;
+        }
+    }
+}
+
+fn history_color(value: HistoryColor, default: Color) -> Color {
+    match value {
+        HistoryColor::Default => default,
+        HistoryColor::Indexed(index) => Color::Indexed(index),
+        HistoryColor::Rgb(red, green, blue) => Color::Rgb(red, green, blue),
     }
 }
 
@@ -247,9 +332,27 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
     }
     if layout.metadata.height > 1 {
+        let metadata_hint = dashboard.history.as_ref().map_or_else(
+            || "─".repeat(usize::from(layout.metadata.width)),
+            |view| {
+                let output = if view.new_output {
+                    "HISTORY · frozen · new output"
+                } else {
+                    "HISTORY · frozen"
+                };
+                let viewport = history_view_size(dashboard.pane_size);
+                let limit = if dashboard.pane_size.rows > viewport.rows
+                    || dashboard.pane_size.cols > viewport.cols
+                {
+                    " · viewport limit"
+                } else {
+                    ""
+                };
+                format!("{output}{limit}")
+            },
+        );
         frame.render_widget(
-            Paragraph::new("─".repeat(usize::from(layout.metadata.width)))
-                .style(Style::default().fg(MUTED).bg(BASE)),
+            Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),
             Rect::new(
                 layout.metadata.x,
                 layout.metadata.y.saturating_add(1),
@@ -258,12 +361,20 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             ),
         );
     }
-    render_terminal(
-        frame,
-        layout.terminal,
-        dashboard.parser.screen(),
-        dashboard.mode == InputMode::Terminal,
-    );
+    if let Some(view) = dashboard
+        .history
+        .as_ref()
+        .filter(|_| dashboard.mode == InputMode::History)
+    {
+        render_history(frame, layout.terminal, view);
+    } else {
+        render_terminal(
+            frame,
+            layout.terminal,
+            dashboard.parser.screen(),
+            dashboard.mode == InputMode::Terminal,
+        );
+    }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
             let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
@@ -273,6 +384,17 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
                     Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
+                ]
+            } else if dashboard.mode == InputMode::History {
+                vec![
+                    Span::styled("↑/↓ k/j", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" row  ", Style::default().fg(MUTED)),
+                    Span::styled("PgUp/PgDn", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" page  ", Style::default().fg(MUTED)),
+                    Span::styled("h/l", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" column  ", Style::default().fg(MUTED)),
+                    Span::styled("q/Esc", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" browse", Style::default().fg(MUTED)),
                 ]
             } else if paused && narrow {
                 vec![
@@ -293,13 +415,16 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" resume  ", Style::default().fg(MUTED)),
                 ]
             };
-            if dashboard.mode != InputMode::Terminal && !(paused && narrow) {
+            if dashboard.mode != InputMode::Terminal
+                && dashboard.mode != InputMode::History
+                && !(paused && narrow)
+            {
                 footer.extend([
                     Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
                 ]);
             }
-            if dashboard.mode != InputMode::Terminal {
+            if dashboard.mode == InputMode::Browse {
                 footer.extend([
                     Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" detach", Style::default().fg(MUTED)),

@@ -4,9 +4,10 @@ use super::render::{
     METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_gap,
     tree_row_height,
 };
-use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow};
+use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
-    ClientMessage, HierarchySnapshot, Request, Response, ServerEvent, ServerMessage,
+    ClientMessage, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId, Request,
+    Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
@@ -15,8 +16,89 @@ use crossterm::event::{
 use ovrcr_terminal::encode_paste;
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingHistoryBegin {
+    pub request_id: u64,
+    pub session: SessionId,
+    pub cancelled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingHistoryPage {
+    pub request_id: u64,
+    pub session: SessionId,
+    pub snapshot: HistorySnapshotId,
+    pub start_row: u32,
+    pub rows: u16,
+    pub start_col: u16,
+    pub cols: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryView {
+    pub opened: HistoryOpened,
+    pub top: u32,
+    pub left: u16,
+    pub new_output: bool,
+    pub pages: VecDeque<HistoryRows>,
+    pub pending: Option<PendingHistoryPage>,
+}
+
+impl HistoryView {
+    pub fn new(opened: HistoryOpened, top: u32) -> Self {
+        Self {
+            opened,
+            top,
+            left: 0,
+            new_output: false,
+            pages: VecDeque::new(),
+            pending: None,
+        }
+    }
+
+    pub fn accept_page(&mut self, request_id: u64, page: HistoryRows) -> bool {
+        let Some(pending) = self.pending.as_ref() else {
+            return false;
+        };
+        if pending.request_id != request_id
+            || page.session != pending.session
+            || page.snapshot != pending.snapshot
+            || page.session != self.opened.session
+            || page.snapshot != self.opened.snapshot
+            || page.start_row != pending.start_row
+            || page.start_col != pending.start_col
+            || page.start_row > self.opened.total_rows
+            || page.rows.len() > usize::from(pending.rows)
+            || page.start_row.saturating_add(page.rows.len() as u32) > self.opened.total_rows
+            || page.rows.iter().any(|row| {
+                row.cells.len() > usize::from(pending.cols)
+                    || (!row.cells.is_empty()
+                        && (row.width < page.start_col
+                            || row.width.saturating_sub(page.start_col)
+                                < u16::try_from(row.cells.len()).unwrap_or(u16::MAX)))
+            })
+        {
+            return false;
+        }
+        self.pending = None;
+        if let Some(existing) = self.pages.iter_mut().find(|cached| {
+            cached.snapshot == page.snapshot
+                && cached.start_row == page.start_row
+                && cached.start_col == page.start_col
+        }) {
+            *existing = page;
+        } else {
+            self.pages.push_back(page);
+        }
+        while self.pages.len() > 16 {
+            self.pages.pop_front();
+        }
+        true
+    }
+}
 
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
@@ -31,8 +113,11 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
+            history: None,
+            history_begin_request: None,
             tree_offset: 0,
             next_request_id: 1,
+            history_end_after_selection: None,
         }
     }
 
@@ -115,6 +200,9 @@ impl Dashboard {
             None if delta < 0 => ids.len() - 1,
             None => 0,
         };
+        if self.selected != Some(ids[index]) {
+            self.release_for_selection_change();
+        }
         self.selected = Some(ids[index]);
         self.ensure_selection_visible(&rows);
     }
@@ -141,6 +229,9 @@ impl Dashboard {
     }
 
     pub fn select_session(&mut self, id: SessionId) {
+        if self.selected != Some(id) {
+            self.release_for_selection_change();
+        }
         self.selected = Some(id);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
@@ -187,7 +278,14 @@ impl Dashboard {
                     return DashboardAction::None;
                 }
                 match key.code {
+                    KeyCode::Esc if self.history_begin_request.is_some() => {
+                        if let Some(begin) = self.history_begin_request.as_mut() {
+                            begin.cancelled = true;
+                        }
+                        DashboardAction::EnterBrowse
+                    }
                     KeyCode::Char('q') => DashboardAction::Detach,
+                    KeyCode::PageUp => self.begin_history_request(),
                     KeyCode::Char('p') => self.pause_request(true),
                     KeyCode::Char('r') => self.pause_request(false),
                     KeyCode::Enter => {
@@ -223,7 +321,189 @@ impl Dashboard {
                     }
                 }
             }
+            InputMode::History => self.history_key_action(key),
         }
+    }
+
+    fn begin_history_request(&mut self) -> DashboardAction {
+        let Some(session) = self.selected else {
+            return DashboardAction::None;
+        };
+        if self.history.is_some() || self.history_begin_request.is_some() {
+            return DashboardAction::Redraw;
+        }
+        let request_id = self.next_request_id();
+        self.history_begin_request = Some(PendingHistoryBegin {
+            request_id,
+            session,
+            cancelled: false,
+        });
+        DashboardAction::Request(ClientMessage {
+            request_id,
+            request: Request::HistoryBegin { session },
+        })
+    }
+
+    fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('g' | 'G'))
+            || matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
+        {
+            return self.leave_history();
+        }
+        let Some(view) = self.history.as_mut() else {
+            return DashboardAction::None;
+        };
+        let size = history_view_size(self.pane_size);
+        let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
+        let max_left = u32::from(u16::MAX)
+            .saturating_sub(u32::from(size.cols))
+            .min(u32::from(u16::MAX));
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                view.top = view.top.saturating_sub(1).min(max_top);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                view.top = view.top.saturating_add(1).min(max_top);
+            }
+            KeyCode::PageUp => {
+                view.top = view.top.saturating_sub(u32::from(size.rows)).min(max_top);
+            }
+            KeyCode::PageDown => {
+                view.top = view.top.saturating_add(u32::from(size.rows)).min(max_top);
+            }
+            KeyCode::Home => view.top = 0,
+            KeyCode::End => view.top = max_top,
+            KeyCode::Left | KeyCode::Char('h') => view.left = view.left.saturating_sub(1),
+            KeyCode::Right | KeyCode::Char('l') => {
+                view.left = view
+                    .left
+                    .saturating_add(1)
+                    .min(u16::try_from(max_left).unwrap_or(u16::MAX));
+            }
+            KeyCode::Enter => return DashboardAction::None,
+            _ => return DashboardAction::None,
+        }
+        self.history_request_if_needed()
+            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+    }
+
+    fn leave_history(&mut self) -> DashboardAction {
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        let end = self.history.take().map(|view| {
+            let request_id = self.next_request_id();
+            ClientMessage {
+                request_id,
+                request: Request::HistoryEnd {
+                    session: view.opened.session,
+                    snapshot: view.opened.snapshot,
+                },
+            }
+        });
+        self.mode = InputMode::Browse;
+        self.history_end_after_selection = end;
+        DashboardAction::EnterBrowse
+    }
+
+    fn release_for_selection_change(&mut self) {
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        if let Some(view) = self.history.take() {
+            self.mode = InputMode::Browse;
+            let request_id = self.next_request_id();
+            self.history_end_after_selection = Some(ClientMessage {
+                request_id,
+                request: Request::HistoryEnd {
+                    session: view.opened.session,
+                    snapshot: view.opened.snapshot,
+                },
+            });
+        }
+    }
+
+    pub(super) fn take_pending_history_end(&mut self) -> Option<ClientMessage> {
+        self.history_end_after_selection.take()
+    }
+
+    pub(super) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
+        let (start_row, start_col, rows, cols, session, snapshot) = {
+            let view = self.history.as_mut()?;
+            if view.pending.is_some() {
+                return None;
+            }
+            let size = history_view_size(self.pane_size);
+            let row_end = view
+                .top
+                .saturating_add(u32::from(size.rows))
+                .min(view.opened.total_rows);
+            let col_end = u32::from(view.left).saturating_add(u32::from(size.cols));
+            let first_row = (view.top / 16) * 16;
+            let first_col = (u32::from(view.left) / 128) * 128;
+            let mut candidate = None;
+            let mut row_start = first_row;
+            while row_start < row_end {
+                let mut col_start = first_col;
+                while col_start < col_end {
+                    let start_col = u16::try_from(col_start).unwrap_or(u16::MAX);
+                    let cached = view.pages.iter().any(|page| {
+                        page.snapshot == view.opened.snapshot
+                            && page.start_row == row_start
+                            && page.start_col == start_col
+                    });
+                    if !cached {
+                        let rows = view.opened.total_rows.saturating_sub(row_start).min(16);
+                        let cols = u32::from(u16::MAX).saturating_sub(col_start).min(128);
+                        if rows > 0 && cols > 0 {
+                            candidate = Some((row_start, start_col, rows as u16, cols as u16));
+                            break;
+                        }
+                    }
+                    col_start = col_start.saturating_add(128);
+                }
+                if candidate.is_some() {
+                    break;
+                }
+                let Some(next_row) = row_start.checked_add(16) else {
+                    break;
+                };
+                row_start = next_row;
+            }
+            let (start_row, start_col, rows, cols) = candidate?;
+            (
+                start_row,
+                start_col,
+                rows,
+                cols,
+                view.opened.session,
+                view.opened.snapshot,
+            )
+        };
+        let request_id = self.next_request_id();
+        let pending = PendingHistoryPage {
+            request_id,
+            session,
+            snapshot,
+            start_row,
+            rows,
+            start_col,
+            cols,
+        };
+        let view = self.history.as_mut()?;
+        view.pending = Some(pending.clone());
+        Some(ClientMessage {
+            request_id,
+            request: Request::HistoryPage {
+                session: pending.session,
+                snapshot: pending.snapshot,
+                start_row,
+                rows,
+                start_col,
+                cols,
+            },
+        })
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> DashboardAction {
@@ -305,7 +585,12 @@ impl Dashboard {
             return DashboardAction::Redraw;
         };
         let request_id = self.next_request_id();
-        DashboardAction::Request(self.select_request(session, request_id))
+        let select = self.select_request(session, request_id);
+        if let Some(end) = self.history_end_after_selection.take() {
+            DashboardAction::RequestBatch(vec![end, select])
+        } else {
+            DashboardAction::Request(select)
+        }
     }
 
     fn pause_request(&mut self, paused: bool) -> DashboardAction {
@@ -330,11 +615,24 @@ impl Dashboard {
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
+        let mut outgoing = Vec::new();
         match message {
-            ServerMessage::Response { response, .. } => match response {
+            ServerMessage::Response {
+                request_id,
+                response,
+            } => match response {
                 Response::Hierarchy(hierarchy) => {
                     self.hierarchy = hierarchy;
                     self.update_mode_for_selected_phase();
+                    if self
+                        .selected
+                        .is_some_and(|selected| find_session(self, selected).is_none())
+                    {
+                        self.release_for_selection_change();
+                        if let Some(request) = self.take_pending_history_end() {
+                            outgoing.push(request);
+                        }
+                    }
                 }
                 Response::Screen {
                     session,
@@ -345,29 +643,90 @@ impl Dashboard {
                         self.pane_size = size;
                         self.parser = vt100::Parser::new(size.rows, size.cols, 0);
                         self.parser.process(&bytes);
+                        if let Some(view) = self.history.as_mut() {
+                            if view.opened.session == session {
+                                view.new_output = true;
+                            }
+                        }
                     }
                 }
                 Response::Ok => self.error = None,
                 Response::CreatedSession(_)
                 | Response::Inventory { .. }
-                | Response::TerminalText { .. }
-                | Response::HistoryOpened(_)
-                | Response::HistoryRows(_) => self.error = None,
+                | Response::TerminalText { .. } => self.error = None,
+                Response::HistoryOpened(opened) => {
+                    self.accept_history_opened(request_id, opened, &mut outgoing);
+                }
+                Response::HistoryRows(page) => {
+                    let accepted = self
+                        .history
+                        .as_mut()
+                        .is_some_and(|view| view.accept_page(request_id, page));
+                    if accepted {
+                        if let Some(request) = self.history_request_if_needed() {
+                            outgoing.push(request);
+                        }
+                    }
+                }
                 Response::Error { code, message } => {
+                    let mut matched_history = false;
+                    if self
+                        .history_begin_request
+                        .as_ref()
+                        .is_some_and(|pending| pending.request_id == request_id)
+                    {
+                        self.history_begin_request = None;
+                        matched_history = true;
+                    }
+                    if self
+                        .history
+                        .as_ref()
+                        .and_then(|view| view.pending.as_ref())
+                        .is_some_and(|pending| pending.request_id == request_id)
+                    {
+                        if let Some(view) = self.history.as_mut() {
+                            view.pending = None;
+                        }
+                        matched_history = true;
+                    }
                     self.error = Some(format!("{code:?}: {message}"));
+                    if matched_history {
+                        self.mode = if self.history.is_some() {
+                            InputMode::History
+                        } else {
+                            InputMode::Browse
+                        };
+                    }
                 }
             },
             ServerMessage::Event(event) => match event {
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     self.hierarchy = hierarchy;
                     self.update_mode_for_selected_phase();
+                    if self
+                        .selected
+                        .is_some_and(|selected| find_session(self, selected).is_none())
+                    {
+                        self.release_for_selection_change();
+                        if let Some(request) = self.take_pending_history_end() {
+                            outgoing.push(request);
+                        }
+                    }
                 }
                 ServerEvent::Output { session, bytes } if self.selected == Some(session) => {
                     self.parser.process(&bytes);
+                    if let Some(view) = self.history.as_mut() {
+                        if view.opened.session == session {
+                            view.new_output = true;
+                        }
+                    }
                 }
                 ServerEvent::ScreenDirty { session } if self.selected == Some(session) => {
+                    if let Some(view) = self.history.as_mut() {
+                        view.new_output = true;
+                    }
                     let request_id = self.next_request_id();
-                    return vec![self.select_request(session, request_id)];
+                    outgoing.push(self.select_request(session, request_id));
                 }
                 ServerEvent::SessionChanged(summary) => {
                     for session in self
@@ -387,7 +746,47 @@ impl Dashboard {
                 ServerEvent::Output { .. } | ServerEvent::ScreenDirty { .. } => {}
             },
         }
-        Vec::new()
+        outgoing
+    }
+
+    fn accept_history_opened(
+        &mut self,
+        request_id: u64,
+        opened: crate::protocol::HistoryOpened,
+        outgoing: &mut Vec<ClientMessage>,
+    ) {
+        let Some(pending) = self.history_begin_request.as_ref() else {
+            return;
+        };
+        if pending.request_id != request_id || pending.session != opened.session {
+            return;
+        }
+        let pending = self
+            .history_begin_request
+            .take()
+            .expect("history begin request checked above");
+        if pending.cancelled || self.selected != Some(opened.session) {
+            let end_request_id = self.next_request_id();
+            outgoing.push(ClientMessage {
+                request_id: end_request_id,
+                request: Request::HistoryEnd {
+                    session: opened.session,
+                    snapshot: opened.snapshot,
+                },
+            });
+            return;
+        }
+        let size = history_view_size(self.pane_size);
+        let max_top = opened.total_rows.saturating_sub(u32::from(size.rows));
+        let top = opened
+            .total_rows
+            .saturating_sub(u32::from(size.rows).saturating_mul(2))
+            .min(max_top);
+        self.history = Some(HistoryView::new(opened, top));
+        self.mode = InputMode::History;
+        if let Some(request) = self.history_request_if_needed() {
+            outgoing.push(request);
+        }
     }
 
     pub fn select_request(&mut self, id: SessionId, request_id: u64) -> ClientMessage {
@@ -416,7 +815,7 @@ impl Dashboard {
     }
 
     pub fn input_request(&self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
-        if !self.input_is_allowed() {
+        if self.mode != InputMode::Terminal || !self.input_is_allowed() {
             return None;
         }
         self.selected.map(|session| ClientMessage {
@@ -446,7 +845,7 @@ impl Dashboard {
     }
 
     fn update_mode_for_selected_phase(&mut self) {
-        if self.selected_phase() == Some(&SessionPhase::Paused) {
+        if self.mode != InputMode::History && self.selected_phase() == Some(&SessionPhase::Paused) {
             self.mode = InputMode::Browse;
         }
     }
