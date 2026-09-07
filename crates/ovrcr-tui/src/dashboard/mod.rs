@@ -1,3 +1,4 @@
+mod copy;
 mod event_loop;
 mod input;
 mod palette;
@@ -7,12 +8,20 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 
+pub use copy::{
+    CopyMotion, CopyPoint, CopySelection, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint,
+    HistoryCopyRange, append_history_selection, write_clipboard,
+};
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, event_to_request};
 pub use render::{
-    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_history, render_terminal,
+    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
+    render_terminal,
 };
-pub use state::{HistoryView, PendingHistoryBegin, PendingHistoryPage};
+pub use state::{
+    HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, PendingHistoryBegin,
+    PendingHistoryPage,
+};
 pub use terminal_guard::TerminalGuard;
 
 use crate::task_tui::TasksView;
@@ -34,6 +43,7 @@ pub enum InputMode {
     Browse,
     Terminal,
     History,
+    Copy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +60,7 @@ pub enum DashboardAction {
     Detach,
     EnterBrowse,
     PtyBytes(Vec<u8>),
+    CopyText(String),
     Request(ClientMessage),
     RequestBatch(Vec<ClientMessage>),
 }
@@ -71,6 +82,8 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    pub copy: Option<CopySelection>,
+    pub copy_notice: Option<String>,
     pub history: Option<HistoryView>,
     pub history_begin_request: Option<PendingHistoryBegin>,
     tree_offset: usize,
@@ -78,6 +91,8 @@ pub struct Dashboard {
     palette: Option<palette::Palette>,
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
+    screen_session: Option<SessionId>,
+    pending_screen: Option<(SessionId, u64)>,
 }
 
 thread_local! {
