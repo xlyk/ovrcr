@@ -58,7 +58,18 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
     if let Some(id) = first_session {
         write_client(&mut stream, 3, dashboard.select_request(id, 3).request)?;
         if let Ok(message) = read_server(&mut stream) {
+            let terminal_error = matches!(
+                message,
+                ServerMessage::Response {
+                    response: Response::Error { .. },
+                    ..
+                }
+            );
             dashboard.handle_server_message(message);
+            if !terminal_error {
+                let acknowledgement = read_server(&mut stream)?;
+                dashboard.handle_server_message(acknowledgement);
+            }
         }
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.

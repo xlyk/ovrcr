@@ -126,7 +126,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         registry_path,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
-        selected: Mutex::new(None),
+        view: Mutex::new(None),
         dashboard: Mutex::new(None),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),

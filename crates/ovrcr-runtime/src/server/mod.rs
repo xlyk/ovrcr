@@ -7,10 +7,11 @@ use crate::session::{
 use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
-    BranchRequest, ClientMessage, ClientRole, ErrorCode, HierarchySnapshot, ProjectSummary,
-    Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame, write_frame,
+    BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
+    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
+    write_frame,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -36,7 +37,8 @@ pub use dispatch::{DispatchMessage, HistoryRequest, run_dispatcher};
 use dispatch::{bridge_events, clear_dashboard_geometry, set_dashboard_geometry};
 use outbound::{
     DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
-    dashboard_send_owner, dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
+    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_snapshot, dashboard_try_send,
+    disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
 pub use startup::{ServerPaths, run_server};
@@ -86,7 +88,7 @@ pub struct ServerState {
     pub registry_path: PathBuf,
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
-    pub selected: Mutex<Option<SessionId>>,
+    pub view: Mutex<Option<DashboardView>>,
     pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
@@ -329,9 +331,14 @@ impl ServerState {
         {
             slot.history.take();
         }
-        let mut selected = self.selected.lock().unwrap();
-        if selected.as_ref() == Some(&id) {
-            *selected = None;
+        let mut view = self.view.lock().unwrap();
+        if view
+            .as_ref()
+            .is_some_and(|current| current.focused == Some(id))
+        {
+            *view = None;
+        } else if let Some(current) = view.as_mut() {
+            current.panes.retain(|pane| pane.session != id);
         }
         Ok(())
     }
@@ -349,7 +356,7 @@ impl ServerState {
             registry_path,
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
-            selected: Mutex::new(None),
+            view: Mutex::new(None),
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),

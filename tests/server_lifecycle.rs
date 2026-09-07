@@ -2181,12 +2181,21 @@ fn dashboard_select(stream: &mut UnixStream, request_id: u64, session: SessionId
         },
     )
     .unwrap();
+    let mut screen = None;
     loop {
         match read_frame::<ServerMessage>(stream).unwrap() {
             ServerMessage::Response {
                 request_id: id,
                 response: Response::Screen { bytes, .. },
-            } if id == request_id => return bytes,
+            } if id == request_id => screen = Some(bytes),
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if id == request_id => return screen.expect("select screen before acknowledgement"),
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Error { message, .. },
+            } if id == request_id => panic!("select failed: {message}"),
             _ => {}
         }
     }

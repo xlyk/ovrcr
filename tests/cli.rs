@@ -1140,6 +1140,13 @@ fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
         } => assert_eq!(selected, session),
         response => panic!("unexpected select response: {response:?}"),
     }
+    match read_frame::<ServerMessage>(&mut stream).unwrap() {
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        } => {}
+        response => panic!("unexpected select acknowledgement: {response:?}"),
+    }
     stream
 }
 
