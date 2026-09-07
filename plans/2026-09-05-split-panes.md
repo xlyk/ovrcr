@@ -17,7 +17,7 @@
 - The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
 - Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
 - Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
-- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --workspace --all-targets --all-features` after that step.
 - Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
 - Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
@@ -37,15 +37,15 @@ Read against Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. 
 
 | Existing location | Relevant behavior |
 | --- | --- |
-| `src/tui.rs` | `Dashboard` holds one `selected`, `parser`, and `pane_size`. |
-| `src/tui.rs` and message handling | Keyboard/paste encoding reads that parser's modes; incoming output is accepted only for the selected session. |
-| `src/tui.rs` and event batching | Event loop limits input to 32 events, drains at most 64 server messages per batch, coalesces frames at 16 ms, and drains messages before drawing. |
-| `src/tui.rs` and layout calculation | Dense sidebar and two metadata rows precede one terminal rectangle. At 120×40 the terminal is `(40, 3, 80, 36)`. |
-| `src/protocol.rs` | `Select` returns a `Screen`; `Input`, `Resize`, `Output`, and `ScreenDirty` carry a session ID. |
-| `src/server.rs` and dispatcher entry points | Server stores one selected session; selection joins the same dispatcher as PTY output so its snapshot precedes subsequent increments. |
-| `src/server.rs` | `DashboardSink` already tracks dirty state per session, but `replace_selection` discards output for the old and new selection. |
-| `src/session.rs` | `Session::resize` changes the real PTY and parser; `current_screen` uses `state_formatted()` to reconstruct terminal state. |
-| `tests/tui.rs`, `tests/server_lifecycle.rs`, `tests/terminal_acceptance.rs` | Existing TestBackend checks, socket/PTY fixtures, slow-dashboard recovery, 50-session cleanup, and real outer-PTY acceptance can be extended. |
+| `crates/ovrcr-tui/src/dashboard/{state,mod}.rs` | `Dashboard` holds one `selected`, `parser`, and `pane_size`. |
+| `crates/ovrcr-tui/src/dashboard/{input,event_loop}.rs` | Keyboard/paste encoding reads that parser's modes; incoming output is accepted only for the selected session. |
+| `crates/ovrcr-tui/src/dashboard/event_loop.rs` | Event loop limits input to 32 events, drains at most 64 server messages per batch, coalesces frames at 16 ms, and drains messages before drawing. |
+| `crates/ovrcr-tui/src/dashboard/render.rs` | Dense sidebar and two metadata rows precede one terminal rectangle. At 120×40 the terminal is `(40, 3, 80, 36)`. |
+| `crates/ovrcr-protocol/src/wire.rs` | `Select` returns a `Screen`; `Input`, `Resize`, `Output`, and `ScreenDirty` carry a session ID. |
+| `crates/ovrcr-runtime/src/server/{dispatch,mod}.rs` | Server stores one selected session; selection joins the same dispatcher as PTY output so its snapshot precedes subsequent increments. |
+| `crates/ovrcr-runtime/src/server/outbound.rs` | `DashboardSink` tracks dirty state per session, but `replace_selection` discards output for the old and new selection. |
+| `crates/ovrcr-runtime/src/session/mod.rs` | `Session::resize` changes the real PTY and parser; `current_screen` uses `state_formatted()` to reconstruct terminal state. |
+| root `tests/{tui,server_lifecycle,terminal_acceptance}.rs` | Existing TestBackend checks, socket/PTY fixtures, slow-dashboard recovery, 50-session cleanup, and real outer-PTY acceptance can be extended. |
 
 ## Proposed defaults and boundaries
 
@@ -60,11 +60,11 @@ Read against Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. 
 
 ## Files and interfaces
 
-Modify only these implementation files when execution is authorized: `src/protocol.rs`, `src/server.rs`, `src/tui.rs`, `tests/tui.rs`, `tests/server_lifecycle.rs`, and `tests/terminal_acceptance.rs`. Add unit tests inside the existing protocol/server test modules. `src/session.rs` is an inspected dependency, not a planned lifecycle rewrite. No changes to `Cargo.toml`, registry storage, CLI commands, GUI helper, or Git/worktree code are needed. Existing protocol constructors and exhaustive matches in these files must be migrated together. Document shipped controls in `README.md` only during a separately authorized implementation closeout; leave the roadmap unchecked while this is a proposal.
+Modify only these implementation files when execution is authorized: `crates/ovrcr-protocol/src/wire.rs`, `crates/ovrcr-runtime/src/server/{dispatch,connections,outbound,mod}.rs`, `crates/ovrcr-tui/src/dashboard/{state,input,render,event_loop,mod}.rs`, and root `tests/{tui,server_lifecycle,terminal_acceptance}.rs`. Add unit tests inside the existing protocol/runtime test modules. `crates/ovrcr-runtime/src/session/mod.rs` is an inspected dependency, not a planned lifecycle rewrite. No changes to workspace manifests, registry storage, CLI commands, GUI helper, or Git/worktree code are needed. Existing protocol constructors and exhaustive matches in these files must be migrated together. Document shipped controls in `README.md` only during a separately authorized implementation closeout; leave the roadmap unchecked while this is a proposal.
 
 ### Wire and server contract
 
-Add these types to `src/protocol.rs` with the existing serde/clone/debug/equality derives:
+Add these types to `crates/ovrcr-protocol/src/wire.rs` with the existing serde/clone/debug/equality derives:
 
 ```rust
 pub struct PaneTarget {
@@ -96,7 +96,7 @@ Output dispatch parses every PTY before testing membership in the committed view
 
 ### Dashboard contract
 
-In `src/tui.rs`, replace the three single-pane fields with these concrete fields and helpers. Keep hierarchy, sidebar collapse/scroll, and global mode on `Dashboard`:
+In `crates/ovrcr-tui/src/dashboard/{state,mod}.rs`, replace the three single-pane fields with these concrete fields and helpers. Keep hierarchy, sidebar collapse/scroll, and global mode on `Dashboard`:
 
 ```rust
 pub struct PaneState {
@@ -143,6 +143,12 @@ Each task follows RED → implementation → GREEN. Run the named command before
 
 ### Current integration paths and task checkpoints
 
+### Workspace handoff
+
+- Direct imports use the public `ovrcr_protocol` re-exports backed by `crates/ovrcr-protocol/src/wire.rs` for pane/view messages; the current `wire` module is private. Runtime dispatch and authority use `ovrcr_runtime::server`, while pane state/input/rendering remain private children of `ovrcr_tui::dashboard` exposed through its facade. The root application continues to consume that facade through `src/lib.rs`; do not add an application compatibility module.
+- Package-focused unit commands are `rtk proxy cargo test -p ovrcr-protocol --lib split_view_ -- --nocapture` (**2 protocol tests**) and `rtk proxy cargo test -p ovrcr-runtime --lib split_delivery_ -- --nocapture` (**3 runtime tests**). The dashboard state/layout cases are root integration tests in `tests/tui.rs`, so run `rtk proxy cargo test -p ovrcr --test tui split_state_ -- --nocapture` (**3 root tests**) and `rtk proxy cargo test -p ovrcr --test tui split_layout_ -- --nocapture` (**2 root tests**).
+- Root integration commands are `rtk proxy cargo test -p ovrcr --test server_lifecycle split_server_ -- --nocapture` (**1 root test**) and `rtk proxy cargo test -p ovrcr --test terminal_acceptance split_terminal_ -- --nocapture` (**1 root test**); dashboard executable checks use `rtk proxy cargo run -p ovrcr --`.
+
 With the recommended order, the dashboard already supports Paused, reported activity/context, History, and Copy. In Task 3, replace single-pane parser access through `focused_session` and pane helpers, including all input, metadata, animation, history-entry, copy-entry, and dirty-recovery callers. Preserve exhaustive mode routing: only Terminal can send application keys/paste; only Browse can split/focus/close by their bindings. The Enter predicate is **Running and ready**, not merely non-Exited.
 
 Keep History/Copy state at dashboard scope, tagged by captured session. A focus change or focused-session replacement ends history (including pending-Begin cancellation) and cancels copy before building the new view. Resizing cancels current-screen Copy; frozen History retains original cells and changes only its viewport. An unfocused pane's output updates that pane's live parser without replacing the focused frozen view. Closing/hiding a pane changes subscriptions only; it must never reach `CloseTerminal`, kill, or remove.
@@ -161,7 +167,7 @@ Expand the constructor-update allowance to `src/gui.rs` and existing integration
 
 ## Task 1: Define the bounded view contract
 
-**Files:** `src/protocol.rs` and existing constructors/matches in `src/server.rs`, `src/tui.rs`, `tests/tui.rs`, `tests/server_lifecycle.rs`.
+**Files:** `crates/ovrcr-protocol/src/wire.rs` and existing constructors/matches in `crates/ovrcr-runtime/src/server/{mod,dispatch,connections,outbound}.rs`, `crates/ovrcr-tui/src/dashboard/{mod,state,input,event_loop}.rs`, `tests/tui.rs`, `tests/server_lifecycle.rs`.
 
 **Consumes:** Existing `SessionId`, `TerminalSize`, framed serialization.
 **Produces:** `PaneTarget`, `DashboardView::validate`, revision fields and `Request::SetView` above.
@@ -187,12 +193,12 @@ write_frame(&mut wire, &message).unwrap();
 assert_eq!(read_frame::<ClientMessage>(&mut wire.as_slice()).unwrap(), message);
 ```
 
-- [ ] Run `rtk proxy cargo test --lib split_view_ -- --nocapture`; expect initial RED, then exactly 2 tests after implementation.
+- [ ] Run `rtk proxy cargo test -p ovrcr-protocol --lib split_view_ -- --nocapture`; expect initial RED, then exactly 2 tests after implementation.
 - [ ] Implement validation with a length check and a maximum-two nested comparison; no general subscription manager. Add exhaustive match handling and migrate constructors with explicit revision values so later tasks start from a compiling contract. Until Task 2 lands, return a concrete unsupported-request error for `SetView`.
 
 ### Task 2: Publish two ordered snapshots and bound overflow recovery
 
-**Files:** `src/server.rs` and its inline tests; dispatcher variant in `src/protocol.rs`.
+**Files:** `crates/ovrcr-protocol/src/wire.rs` for the wire-level `Request::SetView` shape, and `crates/ovrcr-runtime/src/server/{mod,dispatch,connections,outbound}.rs` plus its owning unit tests for `DispatchMessage::SetView`, dispatch ownership, and completion channels.
 
 **Consumes:** Task 1 view contract and existing dashboard owner identity.
 **Produces:** `dispatch_set_view`, `DashboardSink::replace_view`, owner-scoped view state and revision-tagged delivery.
@@ -222,7 +228,7 @@ assert!(matches!(sink.next(), Some(DashboardDelivery::Message(DashboardOutbound 
 }))));
 ```
 
-- [ ] Run `rtk proxy cargo test --lib split_delivery_ -- --nocapture`; expect RED, then exactly 3 tests.
+- [ ] Run `rtk proxy cargo test -p ovrcr-runtime --lib split_delivery_ -- --nocapture`; expect RED, then exactly 3 tests.
 - [ ] Implement the ordered path. The dispatcher algorithm is: verify owner → validate revision and every session → resize changed sessions → obtain screens → reserve/enqueue snapshots+Ok → commit view → signal completion. Reuse `Session::resize/current_screen`; never hold the view lock across PTY writes or socket operations. The request reader waits for dispatcher completion, preserving geometry/focus-before-subsequent-input ordering.
 - [ ] Extend the dirty test to fill the 64-entry queue with interleaved sessions, force dirty state for both, replace the view, and deliver the old writer completion. Assert dirty keys are bounded by the current two members and old completion does not alter the replacement. Suppress further increments only for the dirty `(revision, session)`. A finite burst must leave one deliverable dirty marker after queued messages drain.
 - [ ] Extend the owner/input test using the existing server-state fixture: owner A's queued view cannot mutate owner B; stale revisions and unknown sessions leave committed view and PTY geometry unchanged; nonfocused/hidden-session and control-client input are rejected. An injected second-resize failure leaves no subscription and reports `PartialFailure` without terminating either process. Extract the local resize loop as `resize_view_targets(targets: &[(Arc<Session>, TerminalSize)], resize: impl FnMut(&Session, TerminalSize) -> anyhow::Result<()>) -> anyhow::Result<()>`; production passes `Session::resize`, tests return a concrete error on the second call. No new public session trait.
@@ -230,7 +236,7 @@ assert!(matches!(sink.next(), Some(DashboardDelivery::Message(DashboardOutbound 
 
 ### Task 3: Make focus, terminal modes, and replacement pane-local
 
-**Files:** `src/tui.rs`, `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{mod,state,input,event_loop}.rs`, `tests/tui.rs`.
 
 **Consumes:** Revision-tagged screens/output from Tasks 1–2.
 **Produces:** Pane state and dashboard methods declared above; existing action/input paths use them.
@@ -256,13 +262,13 @@ assert_eq!(d.input_request(vec![b'x'], 21).unwrap().request,
     Request::Input { session: right, bytes: vec![b'x'] });
 ```
 
-- [ ] Run `rtk proxy cargo test --test tui split_state_ -- --nocapture`; expect RED, then exactly 3 tests.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui split_state_ -- --nocapture`; expect RED, then exactly 3 tests.
 - [ ] Implement the fixed two-slot transitions and map browse controls to them. Use existing sorted visible tree rows for choosing the next different session. The left parser must remain normal-cursor/unbracketed when right has enabled modes. Test Ctrl-g, literal Tab/`v`/`x` forwarding in terminal mode, empty/exited/loading input refusal, and same-session selection focusing the other slot.
 - [ ] Implement message dispatch by revision and session. In the stale test: assign A, then B, then A again; inject the first A snapshot/output/dirty marker and assert the new A remains unready and unchanged. Apply the current A screen and assert readiness. Inject a hierarchy without A, rebuild the desired view, and verify no old response can populate its replacement. Closing a pane returns a view update, never `KillSession`/`RemoveSession`.
 
 ### Task 4: Draw exact pane rectangles and resize every visible PTY
 
-**Files:** `src/tui.rs`, `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{mod,state,input,render,event_loop}.rs`, `tests/tui.rs`.
 
 **Consumes:** Task 3 pane state and `view_request`.
 **Produces:** `pane_rects`, shared rendering/resize/hit-test geometry and unchanged bounded event-loop behavior.
@@ -280,7 +286,7 @@ assert_eq!(narrow[0].terminal, Rect::new(40, 3, 40, 20));
 assert!(pane_rects(Rect::new(0, 0, 1, 1), 2, 1).is_empty());
 ```
 
-- [ ] Run `rtk proxy cargo test --test tui split_layout_ -- --nocapture`; expect RED, then exactly 2 tests.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui split_layout_ -- --nocapture`; expect RED, then exactly 2 tests.
 - [ ] Implement `pane_rects` by splitting the existing right body before applying its metadata height. Preserve `actual_drawn_inner_rect` as the existing single-pane helper. Draw the separator through the right body's height and use each pane's metadata width for clipping. In split mode the metadata starts with `> waiting 39x36` for a ready focused session named waiting, or `  mouse 40x36` for the other pane; append PID/elapsed fields as width permits. An unready pane says `loading waiting` instead. Keep the current singleton metadata layout. Retain dense tree rows, accent focus color, and square separators. Give only the focused ready pane permission to set the cursor, and only in terminal mode.
 - [ ] In the TestBackend test, put red `LEFT` and green `RIGHT` in separate parsers, put a wide character at the penultimate column and a marker on each last row, then assert cells do not spill into the separator. Assert the exact cursor offset with left/right focus, hidden application cursor, browse mode, tiny fallback, and return to split width. Click terminal rectangles in browse mode to select focus; separator/metadata clicks and all terminal-mode clicks send no bytes.
 - [ ] Replace all three single-size calculations in `dashboard_loop` with shared view geometry reconciliation. Send a `SetView` only when assignment, focus, or visible sizes change, or a dirty notification requests refresh. Do not reset local parsers on every poll or optimistically resize them before the authoritative snapshot. Preserve geometry-before-input ordering when SIGWINCH and input arrive together.
@@ -301,7 +307,7 @@ SIDE=LEFT; printf '%s_READY\n' "$SIDE"; while IFS= read -r line; do case "$line"
 
 This is a PTY fixture command body passed through `CreateSessionRequest`, not a developer shell command. Use `write_frame`/`read_frame` with two-second read deadlines, revisions 1 onward, and an absolute deadline for each predicate. Submit a view with sizes 36×39 and 36×40, wait for both snapshots and Ok, input `SIZE\n` to the focus, switch focus and repeat. Parse `LEFT_SIZE_36 39` and `RIGHT_SIZE_36 40` from actual output. Update both to 26×29/26×30, then verify both reported sizes again; assert a hidden third session retains its previous PTY size.
 - [ ] Trigger both finite bursts, stop reading the dashboard while polling CLI hierarchy/control responsiveness, then drain until dirty notifications arrive and request a new view. Maintain a `vt100::Parser` for each session and assert both reconstructed final markers, including when bursts have already stopped. Check no old-revision output is applied after replacement. Disconnect, assert both PIDs/process groups remain live, attach a new singleton then two-pane view and verify markers, and finish with existing shutdown-and-join cleanup plus process-group absence checks. A socket error, missing marker, zero test count, or timeout is a failure.
-- [ ] Run `rtk proxy cargo test --test server_lifecycle split_server_ -- --nocapture`; expect RED before full integration, then exactly 1 test. Also run `rtk proxy cargo test --lib split_delivery_ -- --nocapture` to prove queue limits deterministically rather than relying only on socket buffering to trigger overflow.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test server_lifecycle split_server_ -- --nocapture`; expect RED before full integration, then exactly 1 test. Also run `rtk proxy cargo test -p ovrcr-runtime --lib split_delivery_ -- --nocapture` to prove queue limits deterministically rather than relying only on socket buffering to trigger overflow.
 - [ ] Add `split_terminal_acceptance_preserves_input_and_geometry` using the existing fixture's `waiting` and `mouse` sessions. This executable core selects waiting, opens mouse in the second pane, verifies distinct commands, then resizes both:
 
 ```rust
@@ -334,14 +340,14 @@ fixture.shutdown()?;
 ```
 
 - [ ] Complete that test with per-rectangle assertions against `d.parser.screen()`: `WAITING_ACK` only in the left terminal, `MOUSE_ACK` only in the right. Wait for a post-resize screen/readiness marker rather than treating a previously rendered title as evidence that resize completed. Exercise narrow fallback, expansion, `x`, reattachment into one pane, and rebuilding two panes without changing managed PIDs. Reuse fixture `Drop` and bounded shutdown so failing assertions still clean up or preserve the fixture with a concrete error.
-- [ ] Run `rtk proxy cargo test --test terminal_acceptance split_terminal_ -- --nocapture`; expect exactly 1 new test. Run `rtk proxy cargo test --test terminal_acceptance default_dashboard_acceptance_wrapper_exercises_pty_controls -- --exact --nocapture`; expect exactly 1 existing test, including its recorded nonzero latency samples and p95 <100 ms assertions.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance split_terminal_ -- --nocapture`; expect exactly 1 new test. Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance default_dashboard_acceptance_wrapper_exercises_pty_controls -- --exact --nocapture`; expect exactly 1 existing test, including its recorded nonzero latency samples and p95 <100 ms assertions.
 
 ### Task 6: Review regression evidence and visible acceptance
 
 **Files:** No new implementation files; review the files above and existing test output.
 
-- [ ] Run `rtk proxy cargo fmt --all -- --check`, then `rtk proxy cargo test --lib --test tui --test server_lifecycle --test terminal_acceptance`. The new filters account for 12 tests (2 protocol, 3 delivery, 3 state, 2 layout, 1 socket, 1 outer-PTY); require each named test to execute and retain existing suites. Do not assert a fixed combined count before collecting it.
-- [ ] Run `rtk proxy cargo test --test server_lifecycle fifty_sessions_survive_detach_and_leave_no_process_groups -- --exact --nocapture` only if that named test was absent from the preceding run or needs a failure rerun; expected 1 test. It must retain the existing cleanup assertions, not just return a successful exit code.
+- [ ] Run `rtk proxy cargo fmt --all -- --check`, then `rtk proxy cargo test --workspace --all-targets --all-features`. The new filters account for 12 tests (2 protocol, 3 delivery, 3 state, 2 layout, 1 socket, 1 outer-PTY); require each named test to execute and retain existing suites. Do not assert a fixed combined count before collecting it.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test server_lifecycle fifty_sessions_survive_detach_and_leave_no_process_groups -- --exact --nocapture` only if that named test was absent from the preceding run or needs a failure rerun; expected 1 test. It must retain the existing cleanup assertions, not just return a successful exit code.
 - [ ] Use the existing disposable GUI helper with `rtk proxy just gui`. In a real terminal or that helper, show two independent full-screen applications, switch focus through browse mode, send bracketed paste, resize through split→narrow→split, close a pane, detach and reattach. Verify actual visible text, cursor, colors, sidebar line spacing, and that an unfocused pane continues rendering. On macOS use the existing accessibility rows to confirm both pane labels. Record macOS/Linux checks separately; unavailable GUI/platform evidence remains explicitly unverified.
 - [ ] Review that no pane action invokes session kill/remove, no new dependency/runtime/persistence exists, and no closed/hidden pane retains a live output subscription. Report only actual test results. Completing this plan document does not run these implementation checks.
 

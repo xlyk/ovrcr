@@ -2773,9 +2773,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "chrono",
- "chrono-tz",
  "clap",
- "croner",
  "crossterm",
  "directories",
  "eframe",
@@ -2790,7 +2788,6 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "tempfile",
- "toml",
  "vt100",
 ]
 

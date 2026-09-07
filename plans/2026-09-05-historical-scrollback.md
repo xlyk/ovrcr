@@ -15,7 +15,7 @@
 - The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
 - Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
 - Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
-- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --workspace --all-targets --all-features` after that step.
 - Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
 - Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
@@ -35,11 +35,11 @@ Inspected at Git HEAD `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb`; recheck HEAD a
 
 | Location | Existing behavior and planned change |
 | --- | --- |
-| `src/session.rs`, `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, `wait_for_output` | Parser currently has zero history. Add retention and capture screen plus revision under one terminal-state lock. |
-| `src/server.rs`, `run_dispatcher`, `dispatch_select`, `dispatch_session_event` | Ordered event processing and selected output. Add session-scoped history commands through that dispatcher. |
-| `src/server.rs`, `DashboardSink`, `DashboardSlot`, `handle_connection` | Bounded messages, dirty notifications and one connection owner. Store one history snapshot with that owner and enqueue ordinary responses. |
-| `src/protocol.rs` | Typed framed requests; `MAX_FRAME_BYTES = 1_048_576`. Add bounded tiled history messages, without sending a full history frame. |
-| `src/tui.rs`, `Dashboard`, `key_action`, `handle_server_message`, `render_terminal` | One live parser and Browse/Terminal modes. Add separate frozen history navigation/rendering state. |
+| `crates/ovrcr-runtime/src/session/mod.rs`, `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, `wait_for_output` | Parser currently has zero history. Add ring retention and capture entry points under one terminal-state lock. |
+| `crates/ovrcr-runtime/src/server/dispatch.rs` and `crates/ovrcr-runtime/src/server/mod.rs`, dispatcher entry points | Ordered event processing and selected output. Add session-scoped history requests through the dispatcher. |
+| `crates/ovrcr-runtime/src/server/connections.rs` and `outbound.rs` | Bounded messages, dirty notifications, and the connection owner. Store one history snapshot with that owner and enqueue ordinary responses. |
+| `crates/ovrcr-protocol/src/wire.rs` (shared wire declarations); `crates/ovrcr-protocol/src/codec.rs` (framing and `MAX_FRAME_BYTES = 1_048_576`) | Add bounded tiled history messages, without sending a full history frame. |
+| `crates/ovrcr-tui/src/dashboard/{state,input,render}.rs` and `dashboard/mod.rs` | One live parser and Browse/Terminal modes. Add separate frozen history navigation/rendering state. |
 | `tests/server_lifecycle.rs` | Real `ControlFixture`, dirty recovery, selected-snapshot ordering and 50-session lifecycle gates. Extend these patterns. |
 | `tests/tui.rs`, `tests/terminal_acceptance.rs` | `dashboard_fixture`, Ratatui buffers and real outer PTY acceptance harness. Reuse them. |
 
@@ -60,7 +60,9 @@ These are deliberate minimal defaults. Measuring worst-case history overhead at 
 
 ## Shared interfaces
 
-Create `src/history.rs` and export it from `src/lib.rs`. All wire types below derive `Clone, Debug, PartialEq, Eq, Serialize, Deserialize`; IDs also derive `Copy`. These types are the optional integration contract for [`2026-09-05-copy-mode.md`](2026-09-05-copy-mode.md).
+Place shared history wire data in `crates/ovrcr-protocol/src/wire.rs`; do not create a root `src/history.rs`. All shared wire types below derive `Clone, Debug, PartialEq, Eq, Serialize, Deserialize`; IDs also derive `Copy`. These types are the optional integration contract for [`2026-09-05-copy-mode.md`](2026-09-05-copy-mode.md).
+
+The future implementation boundary is explicit: `HistorySnapshotId`, `HistoryColor`, `HistoryCell`, `HistoryRow`, `HistoryOpened`, `HistoryRows`, and the page limits belong to the protocol crate. `FrozenHistory` and its VT100 capture/page implementation belong in a new `crates/ovrcr-terminal/src/history.rs` module; the terminal crate may add its direct protocol dependency when this feature is implemented. `Session::capture_history` remains in `crates/ovrcr-runtime/src/session/mod.rs`. `HistoryRequest` and `DispatchMessage::History`, including owner and completion channels, belong in `crates/ovrcr-runtime/src/server/dispatch.rs`. The client `HistoryView`, pending requests, and cache belong in `crates/ovrcr-tui/src/dashboard/state.rs`; history key routing and rendering belong in `dashboard/input.rs` and `dashboard/render.rs`.
 
 ```rust
 pub const HISTORY_ROWS: usize = 512;
@@ -123,6 +125,12 @@ Changing only the clone's scroll offset during paging is allowed; its cells, dim
 
 ## Current integration paths and task checkpoints
 
+### Workspace handoff
+
+- Direct imports cross package boundaries through the public `ovrcr_protocol` re-exports backed by `crates/ovrcr-protocol/src/wire.rs` for shared history data, `ovrcr_runtime::session`/`server` for ownership and dispatch, and the existing `ovrcr_tui` facade for client state and rendering. The application facade in root `src/lib.rs` and CLI in `src/cli/` remain integration consumers; the protocol crate's `wire` module is currently private.
+- Focused package checks are `rtk proxy cargo test -p ovrcr-protocol --lib`, `rtk proxy cargo test -p ovrcr-terminal --lib`, `rtk proxy cargo test -p ovrcr-runtime --lib history_`, and `rtk proxy cargo test -p ovrcr-tui --lib history_`. Use the package test command that owns the changed unit module.
+- Root integration commands are `rtk proxy cargo test -p ovrcr --test server_lifecycle history_`, `rtk proxy cargo test -p ovrcr --test tui history_`, and `rtk proxy cargo test -p ovrcr --test terminal_acceptance history_`; all final executable behavior is exercised through the root `ovrcr` binary.
+
 Task 1 replaces the parser/revision mutex arrangement, so migrate every existing caller together: `apply_event`, `resize`, `current_screen`, `terminal_text`, `send_text`, and `wait_for_output`. `terminal_text` remains the resource CLI's **live current-screen** read; it must not read the frozen clone or change its existing max-lines behavior. `send_text` samples bracketed-paste mode under the terminal-state lock, releases it, then follows pause admission and the existing writer lock. The condition-variable wait must use the same mutex that protects the revision it observes.
 
 Use these explicit client request records in Task 3 instead of an unqualified request-ID field:
@@ -141,11 +149,11 @@ Cancellation must handle an accepted Begin whose response arrives late. Keep a s
 
 Connect cancellation to every actual selection/removal/connection reset path. A resize keeps the frozen snapshot and changes only desired page coordinates; late pages for the old viewport may populate the bounded cache only when they still match the outstanding request. They do not restore the old desired viewport. History keeps consuming the live parser's Output and same-session dirty snapshots.
 
-The split-pane plan runs later and must preserve one snapshot per dashboard, tagged with its captured session. Before finishing Task 1 and final acceptance, run `rtk proxy cargo test --test resource_cli terminal_cli_drives_real_session_and_preserves_workspace_removal_guards -- --exact --nocapture` (one executed test) to cover the migrated text/paste paths. A separate history test cannot stand in for that regression.
+The split-pane plan runs later and must preserve one snapshot per dashboard, tagged with its captured session. Before finishing Task 1 and final acceptance, run `rtk proxy cargo test -p ovrcr --test resource_cli terminal_cli_drives_real_session_and_preserves_workspace_removal_guards -- --exact --nocapture` (one executed test) to cover the migrated text/paste paths. A separate history test cannot stand in for that regression.
 
 ## Task 1: Retain rows and expose frozen, Unicode-safe tiles
 
-**Files:** Create `src/history.rs`; modify `src/lib.rs` and `src/session.rs`; unit tests in `src/history.rs` and `src/session.rs`.
+**Files:** Create `crates/ovrcr-terminal/src/history.rs` for `FrozenHistory`; modify `crates/ovrcr-protocol/src/wire.rs` for shared history records, `crates/ovrcr-runtime/src/session/mod.rs` for capture, and the owning private unit-test modules. The root `src/lib.rs` facade remains unchanged unless a later public re-export is required by an accepted interface.
 
 **Consumes:** Existing `vt100`, `SessionId`, `TerminalSize`, `apply_event`, `current_screen`.
 **Produces:** All shared types and `FrozenHistory`/`Session::capture_history` methods above.
@@ -170,7 +178,7 @@ fn history_retention_is_frozen_and_evicts_oldest() {
 }
 ```
 
-- [ ] Run `rtk proxy cargo test --lib history::tests::history_retention_is_frozen_and_evicts_oldest -- --exact --nocapture`. Expected before implementation: compile failure for missing types, then one failing behavioral test; after implementation: exactly **1 passed**. Use the same command for RED/GREEN, not a zero-match filter.
+- [ ] Run `rtk proxy cargo test -p ovrcr-terminal --lib history::tests::history_retention_is_frozen_and_evicts_oldest -- --exact --nocapture`. Expected before implementation: compile failure for missing types, then one failing behavioral test; after implementation: exactly **1 passed**. Use the same command for RED/GREEN, not a zero-match filter.
 - [ ] Implement capture and paging without mutating the live parser. Capture rejects alternate screen, sets the clone's scrollback to `usize::MAX` to obtain `history_rows`, and restores zero. For absolute row `r < history_rows`, set clone offset `history_rows-r` and read visible row zero; otherwise set offset zero and read row `r-history_rows`. Validate requested start/count with checked arithmetic; clamp only the returned end to `total_rows`.
 - [ ] Convert `screen.cell(row,col)` to the specified text, width, colors and five flags. Find physical width with binary search for the first missing cell over `0..=u16::MAX`; public `cell` addresses retained rows at their original width. Read only the requested column tile, leaving `cells` empty when `start_col >= width`. Preserve `wrapped`, including across tile boundaries. Example conversion core:
 
@@ -184,15 +192,15 @@ let attributes = u8::from(cell.bold()) | (u8::from(cell.dim()) << 1)
 
 - [ ] Use `TerminalState { parser: vt100::Parser, revision: u64 }` under one `Mutex` in `Session`; keep `parser_changed` and use this mutex with its wait. Instantiate the parser with `HISTORY_ROWS`, increment revision on each parsed event and parser resize, and preserve `current_screen()` at offset zero. Capture clone and revision under that same lock. Do not change reader chunking or event queues.
 - [ ] Add five more named unit cases: `history_tiles_preserve_wide_combining_and_wrap`, `history_resize_keeps_old_width`, `history_alternate_screen_has_no_transcript`, `history_partial_escape_survives_capture`, `history_bounds_reject_bad_ranges`. Use `"界e\u{301}X"` at width 4 to assert wide continuation, combined `é`, and soft wrapping after another printable byte; use split UTF-8/CSI calls with capture between them and compare the live parser to an uninterrupted parser. Resize 12→4→12 and assert old 12-cell history still pages fully. Enter/exit `\x1b[?1049h`/`l`, asserting capture refusal inside and unchanged primary history afterward.
-- [ ] Run `rtk proxy cargo test --lib history_ -- --nocapture`; expected **at least 6 tests**, all pass. Re-run `rtk proxy cargo test --lib session::tests -- --nocapture`; expected **at least 4 tests**, retaining real PTY resize/final-output checks.
+- [ ] Run `rtk proxy cargo test -p ovrcr-terminal --lib history_ -- --nocapture`; expected **at least 6 tests**, all pass. Re-run `rtk proxy cargo test -p ovrcr-runtime --lib session::tests -- --nocapture`; expected **at least 4 tests**, retaining real PTY resize/final-output checks.
 
 ## Task 2: Deliver session-scoped bounded history responses
 
-**Files:** Modify `src/protocol.rs`, `src/server.rs`; unit tests in those files.
+**Files:** Modify `crates/ovrcr-protocol/src/wire.rs` and `crates/ovrcr-runtime/src/server/{dispatch,connections,outbound,mod}.rs`; unit tests stay in the owning protocol/runtime modules.
 **Consumes:** Task 1's frozen types/capture. **Produces:** The exact request/response/dispatcher contract above; one owner-bound snapshot in `DashboardSlot`.
 
 - [ ] Add `history_page_round_trip_and_size_bound`, building the maximum 16×128 tile, every text field 22 bytes with RGB/style/wide flags, then round-trip it through `write_frame`/`read_frame` and assert the encoded frame payload is `<= PAGE_BYTES`. Include explicit request validation cases for zero/oversize tile counts, invalid row start, and overflowing range arithmetic. Do not allocate based on a caller's requested counts before validating them.
-- [ ] Run `rtk proxy cargo test --lib history_page_round_trip_and_size_bound -- --nocapture`; RED is missing protocol variants, GREEN must execute **1 test**.
+- [ ] Run `rtk proxy cargo test -p ovrcr-protocol --lib history_page_round_trip_and_size_bound -- --nocapture`; RED is missing protocol variants, GREEN must execute **1 test**.
 - [ ] Implement dashboard request routing by extending the existing special `Select` response path: history responses are queued exactly once by the dispatcher, while the connection thread waits only for completion. The dispatcher never waits for a socket write. Code shape:
 
 ```rust
@@ -206,16 +214,16 @@ DispatchMessage::History { owner, request_id, request, completion } => {
 
 - [ ] Store `history: Option<FrozenHistory>` and `next_history_id: u64` in the dashboard-owned state. Check `Arc::ptr_eq` against the current owner before work and response delivery. Release old snapshot before cloning its replacement. Capture a referenced session outside the sessions-map lock, using the established lock order; no sink/slot lock while waiting on a session/parser lock. Release history on removal/disconnect, without holding a parser lock during socket operations.
 - [ ] Add `history_owner_and_token_isolation`, `history_page_overflow_disconnects_without_parser_wait`, and `history_capture_orders_with_output`. Exercise owner mismatch after reconnect, old End versus new token, a saturated response queue, and dispatcher commands `Output(A) → Begin → Output(B) → Page`. The page includes A and excludes B while the live screen includes both. Use sync channels to establish order, not sleeps.
-- [ ] Run `rtk proxy cargo test --lib history_ -- --nocapture`; expected **at least 10 tests** including Task 1. Run `rtk proxy cargo test --test server_lifecycle selection_snapshot_precedes_later_quiet_tail_output -- --nocapture`; expected **1 test**. Frame-size and existing current-screen protocol limits remain unchanged.
+- [ ] Run the owning package gates separately: `rtk proxy cargo test -p ovrcr-terminal --lib history_ -- --nocapture` (at least **6 tests**), `rtk proxy cargo test -p ovrcr-protocol --lib history_page_round_trip_and_size_bound -- --nocapture` (exactly **1 test**), and `rtk proxy cargo test -p ovrcr-runtime --lib history_ -- --nocapture` (exactly **3 tests** from Task 2). Re-run `rtk proxy cargo test -p ovrcr-runtime --lib session::tests -- --nocapture` (at least **4 existing session tests** from Task 1), then run `rtk proxy cargo test -p ovrcr --test server_lifecycle selection_snapshot_precedes_later_quiet_tail_output -- --nocapture` (exactly **1 root integration test**). Frame-size and existing current-screen protocol limits remain unchanged.
 
 ## Task 3: Add a bounded history reading state to the dashboard
 
-**Files:** Modify `src/tui.rs` and `tests/tui.rs`.
+**Files:** Modify `crates/ovrcr-tui/src/dashboard/{mod,state,input,render}.rs` and root `tests/tui.rs`.
 **Consumes:** Task 2 messages; existing live parser and request IDs. **Produces:** `InputMode::History`, `Dashboard.history: Option<HistoryView>`, `HistoryView::accept_page`, navigation and rendering.
 
 Define `HistoryView { opened: HistoryOpened, top: u32, left: u16, new_output: bool, pages: VecDeque<HistoryRows>, pending: Option<PendingHistoryPage> }`; keep at most sixteen pages. Dashboard also tracks `history_begin_request: Option<PendingHistoryBegin>`. `HistoryView::accept_page(&mut self, request_id: u64, page: HistoryRows) -> bool` accepts only the outstanding request and matching session/snapshot; false means discard. `history_view_size(pane: TerminalSize) -> TerminalSize` returns positive dimensions clamped to 64×256. Define `render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView)` for direct cell rendering.
 
-- [ ] Add `history_navigation_never_writes_to_pty`, using `dashboard_fixture()` and a synthetic `HistoryOpened`. Assert Browse PageUp requests Begin; Terminal PageUp remains PTY bytes; then assert all history navigation, Enter and paste yield no `PtyBytes` action. Test q returns Browse, and End remains History. RED/GREEN command: `rtk proxy cargo test --test tui history_navigation_never_writes_to_pty -- --nocapture`; expected **1 test**.
+- [ ] Add `history_navigation_never_writes_to_pty`, using `dashboard_fixture()` and a synthetic `HistoryOpened`. Assert Browse PageUp requests Begin; Terminal PageUp remains PTY bytes; then assert all history navigation, Enter and paste yield no `PtyBytes` action. Test q returns Browse, and End remains History. RED/GREEN command: `rtk proxy cargo test -p ovrcr --test tui history_navigation_never_writes_to_pty -- --nocapture`; expected **1 test**.
 - [ ] Implement navigation with saturating row arithmetic and `u32` intermediate column arithmetic. Clamp top to `total_rows.saturating_sub(view_rows)`; clamp left to the terminal-coordinate ceiling. An empty tile must render blanks, not stale cells. Request only missing visible tiles aligned to 16 rows/128 columns; maintain one outstanding page and update the desired viewport on subsequent keys. Example navigation core:
 
 ```rust
@@ -227,7 +235,7 @@ view.top = view.top.saturating_add_signed(delta).min(max_top);
 - [ ] Continue the existing `Output` parser path while history is visible. Dirty notifications continue requesting the ordinary live snapshot and set `new_output`; live `Screen` responses never replace frozen history or its anchors. Match history responses by request ID as well as snapshot/session. If Begin completes after cancellation, send matching End to release it. Session switch releases history and clears pending state; stale responses cannot reopen it.
 - [ ] Render cell tiles with the existing terminal colors/styles; hide the PTY cursor. Draw history position and frozen/new-output/viewport-limit hints in existing footer/metadata areas. Wide continuation cells are never rendered as independent glyphs; blank a clipped half-wide glyph at either viewport edge. Combining strings remain attached to the leading cell. Missing pages display a loading indicator. History draws at most 64×256 cells; no repainting or parsing the entire history on each input.
 - [ ] Add `history_live_output_preserves_anchor`, `history_resize_preserves_capture`, `history_stale_response_is_ignored`, `history_pending_keys_coalesce`, and `history_render_preserves_cells_and_clips`. Test live parser receives a marker while a prior frozen page remains byte-for-byte equal; inject an old snapshot after session switch; flood 100 PageUp events and assert only one request remains outstanding and cache length never exceeds sixteen. Use Ratatui `TestBackend` for colored `界é`, a continuation at the left edge, width clipping and hidden cursor.
-- [ ] Run `rtk proxy cargo test --test tui history_ -- --nocapture`; expected **at least 6 tests**. Run `rtk proxy cargo test --test tui -- --nocapture`; require a nonzero full suite, preserving sidebar browse navigation, paste, cursor and resize expectations.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui history_ -- --nocapture`; expected **at least 6 tests**. Run `rtk proxy cargo test -p ovrcr --test tui -- --nocapture`; require a nonzero full suite, preserving sidebar browse navigation, paste, cursor and resize expectations.
 
 ## Task 4: Prove detach, live output, eviction and resource behavior with real PTYs
 
@@ -246,11 +254,11 @@ printf 'FINAL_HISTORY_MARKER\n'
 ```
 
 Assert old frozen cells remain unchanged, a newly captured snapshot has evicted `OLD_VISIBLE`, and its current/history rows contain `FINAL_HISTORY_MARKER` only after the real session becomes Exited. Detach and reconnect before capture in the reattach case, proving historical output was retained by the server while no dashboard existed. Read all needed tiles with one request outstanding and assert every encoded response stays within 128 KiB. In the slow-reader case stop output at the final marker, drain existing dirty recovery, and obtain history successfully without needing another PTY byte.
-- [ ] Run `rtk proxy cargo test --test server_lifecycle history_ -- --nocapture`; expected **3 tests**. RED must be an observed missing historical marker, ordering failure or missing interface; do not use a passing zero-match filter. Cleanup uses existing fixture shutdown and process-group assertions even on failure.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test server_lifecycle history_ -- --nocapture`; expected **3 tests**. RED must be an observed missing historical marker, ordering failure or missing interface; do not use a passing zero-match filter. Cleanup uses existing fixture shutdown and process-group assertions even on failure.
 - [ ] Add `history_keyboard_reads_old_output_during_live_session` to the existing outer-PTY harness in `tests/terminal_acceptance.rs`. Print 100 numbered lines, wait for the final rendered marker, use Ctrl-g then PageUp, and verify an older marker and HISTORY footer through the outer parser. Have the child wait on a fixture-owned FIFO after its initial output; write a token to that FIFO to trigger more output while history is frozen. Do not send `Request::Input` from a control connection, which the existing server rejects. Verify the old marker stays, resize the outer PTY, and leave history to verify the new live marker. Use harness polling deadlines/observed screen content, not fixed sleeps as evidence.
-- [ ] Run `rtk proxy cargo test --test terminal_acceptance history_keyboard_reads_old_output_during_live_session -- --nocapture`; expected **1 test**. Run existing `rtk proxy cargo test --test server_lifecycle fifty_sessions_survive_detach_and_leave_no_process_groups -- --nocapture` and `rtk proxy cargo test --test server_lifecycle slow_dashboard_recovers_after_output_burst -- --nocapture`; each must execute **1 test**.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance history_keyboard_reads_old_output_during_live_session -- --nocapture`; expected **1 test**. Run existing `rtk proxy cargo test -p ovrcr --test server_lifecycle fifty_sessions_survive_detach_and_leave_no_process_groups -- --nocapture` and `rtk proxy cargo test -p ovrcr --test server_lifecycle slow_dashboard_recovers_after_output_burst -- --nocapture`; each must execute **1 test**.
 - [ ] During a disposable 50-session acceptance run, fill each session past 512 lines at 80 columns, then repeat at 512 columns; capture exactly one history snapshot. Record retained-row counts and process peak/resident memory before/after fill and capture (`rtk proxy /usr/bin/time -l` on macOS or `rtk proxy /usr/bin/time -v` on Linux around the bounded fixture run). Use fixed finite output and lifecycle completion barriers. Report measured overhead and geometry with no claimed universal byte ceiling. Fail retention acceptance if repeated finite bursts grow retained row counts beyond 512 or create more than one snapshot; investigate memory growth beyond the explained row/grid allocations before sign-off.
-- [ ] Finish with `rtk proxy cargo fmt --check`, `rtk proxy cargo test --all-targets`, and `rtk proxy cargo test --features gui --test gui`. Require nonzero test totals and record actual counts. The optional GUI helper uses the real TUI, so manually verify its history keys, clipped wide cells and resize if its desktop surface is available; otherwise explicitly retain the GUI acceptance gap.
+- [ ] Finish with `rtk proxy cargo fmt --all -- --check`, `rtk proxy cargo test --workspace --all-targets --all-features`, and `rtk proxy cargo test -p ovrcr --features gui --test gui`. Require nonzero test totals and record actual counts. The optional GUI helper uses the real TUI, so manually verify its history keys, clipped wide cells and resize if its desktop surface is available; otherwise explicitly retain the GUI acceptance gap.
 
 ## Acceptance criteria and dependencies
 

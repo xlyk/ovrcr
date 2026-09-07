@@ -47,12 +47,9 @@ required-features = ["gui"]
 
 [dependencies]
 anyhow = { workspace = true }
-bincode = { workspace = true }
 chrono = { workspace = true }
-chrono-tz = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
-croner = { workspace = true }
 directories = { workspace = true }
 eframe = { workspace = true, optional = true }
 libc = { workspace = true }
@@ -61,13 +58,13 @@ ovrcr-terminal = { workspace = true }
 ovrcr-runtime = { workspace = true }
 ovrcr-tui = { workspace = true }
 portable-pty = { workspace = true }
-ratatui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-signal-hook = { workspace = true }
-toml = { workspace = true }
 tempfile = { workspace = true, optional = true }
 vt100 = { workspace = true }
 
 [dev-dependencies]
+bincode = { workspace = true }
+ratatui = { workspace = true }
+signal-hook = { workspace = true }
 tempfile = { workspace = true }
