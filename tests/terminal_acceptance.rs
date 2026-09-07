@@ -504,6 +504,36 @@ impl OuterDashboard {
         self.parser.screen().contents()
     }
 
+    fn find_text_in_rect(&self, area: ratatui::layout::Rect, needle: &str) -> Result<(u16, u16)> {
+        let screen = self.parser.screen();
+        for row in area.y..area.y.saturating_add(area.height) {
+            let mut line = String::new();
+            let mut cell_starts = Vec::new();
+            for col in area.x..area.x.saturating_add(area.width) {
+                cell_starts.push((line.len(), col));
+                let contents = screen.cell(row, col).map_or(" ", |cell| {
+                    if cell.contents().is_empty() {
+                        " "
+                    } else {
+                        cell.contents()
+                    }
+                });
+                line.push_str(contents);
+            }
+            if let Some(offset) = line.find(needle) {
+                let col = cell_starts
+                    .iter()
+                    .find_map(|(start, col)| (*start == offset).then_some(*col))
+                    .context("visible text did not start on a terminal cell")?;
+                return Ok((row.saturating_sub(area.y), col.saturating_sub(area.x)));
+            }
+        }
+        bail!(
+            "outer terminal did not render {needle:?} in pane {area:?}: {}",
+            self.rendered()
+        )
+    }
+
     fn click_visible_text(&mut self, needle: &str) -> Result<()> {
         let row = self
             .rendered()
@@ -1079,6 +1109,24 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     assert!(reattached_screen.contains("j/k/↑/↓"));
     assert!(!reattached_screen.contains("Terminal mode"));
     assert!(!reattached_screen.contains("COPY  "));
+    let pane = ovrcr::tui::actual_drawn_inner_rect(ratatui::layout::Rect::new(0, 0, 100, 30));
+    let (ack_row, ack_col) = reattached.find_text_in_rect(pane, "INPUT_ACK")?;
+    eprintln!("copy acceptance retained INPUT_ACK pane position: row={ack_row} col={ack_col}");
+    reattached.send(b"[")?;
+    reattached.wait_for_screen(|screen| screen.contains("COPY  "), Duration::from_secs(3))?;
+    reattached.send(b"y")?;
+    reattached.wait_for_screen(
+        |screen| screen.contains("Set an anchor with Space"),
+        Duration::from_secs(3),
+    )?;
+    let mut select_ack = vec![b'g'];
+    select_ack.extend(vec![b'j'; usize::from(ack_row)]);
+    select_ack.extend(vec![b'l'; usize::from(ack_col)]);
+    select_ack.push(b' ');
+    select_ack.extend(vec![b'l'; b"INPUT_ACK".len() - 1]);
+    select_ack.push(b'y');
+    reattached.send(&select_ack)?;
+    reattached.wait_for_output(b"\x1b]52;c;SU5QVVRfQUNL\x1b\\", Duration::from_secs(3))?;
     let detach_result = reattached.detach();
     eprintln!("copy acceptance reattached dashboard detach: {detach_result:?}");
     detach_result?;
