@@ -1,3 +1,4 @@
+mod copy;
 mod event_loop;
 mod input;
 mod render;
@@ -6,6 +7,7 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 
+pub use copy::{CopyMotion, CopyPoint, CopySelection};
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, event_to_request};
 pub use render::{
