@@ -231,8 +231,10 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl App {
+    fn show(&mut self, ui: &mut egui::Ui) {
+        let open_palette =
+            ui.input_mut(|input| input.consume_key(egui::Modifiers::MAC_CMD, egui::Key::K));
         if ui.input(|input| input.viewport().close_requested()) && !self.closing {
             match self.close() {
                 Ok(()) => self.closing = true,
@@ -259,7 +261,7 @@ impl eframe::App for App {
                 if let Some(status) = &status {
                     ui.horizontal(|ui| {
                         ui.label(format!("Dashboard exited: {status}"));
-                        if ui.button("Restart dashboard").clicked() {
+                        if ui.button("Restart dashboard").clicked() || open_palette {
                             self.terminal.take();
                             match self.demo.dashboard(40, 120, ui.ctx().clone()) {
                                 Ok(terminal) => {
@@ -285,8 +287,14 @@ impl eframe::App for App {
                 });
                 let (rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
-                if response.clicked() || ui.memory(|memory| memory.focused().is_none()) {
+                if open_palette
+                    || response.clicked()
+                    || ui.memory(|memory| memory.focused().is_none())
+                {
                     response.request_focus();
+                }
+                if open_palette && let Err(error) = terminal.send(b"\x07:") {
+                    self.error = Some(format!("{error:#}"));
                 }
                 ui.memory_mut(|memory| {
                     memory.set_focus_lock_filter(
@@ -347,6 +355,12 @@ impl eframe::App for App {
         // Observe quiet child exits too; terminal output requests immediate repaints.
         ui.ctx().request_repaint_after(Duration::from_millis(100));
     }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Err(error) = self.close() {
@@ -356,6 +370,86 @@ impl eframe::App for App {
             );
         }
     }
+}
+
+#[test]
+fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> {
+    let context = egui::Context::default();
+    let executable = std::env::current_exe()?
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("ovrcr");
+    let demo = Demo::start(&executable)?;
+    let root = demo.root().to_owned();
+    let terminal = demo.dashboard(40, 120, context.clone())?;
+    let mut app = App {
+        terminal: Some(terminal),
+        demo,
+        fonts: TerminalFonts::current_monospace(),
+        error: None,
+        closing: false,
+    };
+    for detached in [false, true] {
+        if detached {
+            app.terminal.as_mut().unwrap().stop()?;
+        }
+        let mut other_text = String::new();
+        let mut output = context.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::K,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        mac_cmd: true,
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                let other = ui.text_edit_singleline(&mut other_text);
+                other.request_focus();
+                app.show(ui);
+                assert_ne!(
+                    ui.memory(|m| m.focused()),
+                    Some(other.id),
+                    "Cmd-K must move focus into the popup"
+                );
+                assert!(
+                    !ui.input(|i| i.events.iter().any(|e| matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::K,
+                            pressed: true,
+                            ..
+                        }
+                    ))),
+                    "shortcut must be consumed globally"
+                );
+            },
+        );
+        output.textures_delta.clear();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !app
+            .terminal
+            .as_ref()
+            .unwrap()
+            .screen()
+            .contents()
+            .contains("Command palette")
+        {
+            anyhow::ensure!(std::time::Instant::now() < deadline, "palette never opened");
+            std::thread::yield_now();
+        }
+    }
+    app.close()?;
+    assert!(!root.exists());
+    Ok(())
 }
 
 fn paint_terminal(

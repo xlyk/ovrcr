@@ -107,6 +107,285 @@ fn dashboard_fixture() -> Dashboard {
     dashboard
 }
 
+fn palette_text(dashboard: &Dashboard) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..40)
+        .map(|y| {
+            (0..120)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn palette_search(dashboard: &mut Dashboard, query: &str) {
+    dashboard.key(KeyCode::Char(':'));
+    dashboard.event_action(Event::Paste(query.into()));
+}
+
+#[test]
+fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "create terminal");
+    assert!(palette_text(&dashboard).contains("Create terminal"));
+    assert!(!palette_text(&dashboard).contains("Register project"));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("consigint"));
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    dashboard.event_action(Event::Paste("palette-shell".into()));
+    dashboard.key(KeyCode::Tab);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("form did not submit");
+    };
+    let ovrcr::protocol::Request::CreateSession(request) = message.request else {
+        panic!("wrong request");
+    };
+    assert_eq!(
+        (
+            request.project.as_str(),
+            request.workspace.as_str(),
+            request.name.as_str()
+        ),
+        ("consigint", "auth", "palette-shell")
+    );
+    assert_eq!(request.argv.len(), 1);
+    assert!(!request.argv[0].is_empty());
+    assert_eq!(
+        dashboard.event_action(Event::Paste("never execute".into())),
+        DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        DashboardAction::Redraw,
+        "pending submit must not repeat"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "Name already exists".into(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id + 1,
+        response: Response::Ok,
+    });
+    assert!(palette_text(&dashboard).contains("Name already exists"));
+    assert!(palette_text(&dashboard).contains("palette-shell"));
+    dashboard.key(KeyCode::Esc);
+    assert!(!palette_text(&dashboard).contains("Name already exists"));
+}
+
+#[test]
+fn palette_switches_by_search_and_confirms_exact_close_target() {
+    use ovrcr::protocol::Request;
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "spacelift-agent progress local");
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("switch missing");
+    };
+    assert!(matches!(
+        message.request,
+        Request::Select {
+            session: SessionId(3),
+            ..
+        }
+    ));
+    dashboard.ctrl('g');
+    palette_search(&mut dashboard, "close terminal");
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("spacelift-agent / progress / local"));
+    dashboard.key(KeyCode::Esc);
+    palette_search(&mut dashboard, "close terminal");
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("close missing");
+    };
+    assert_eq!(
+        message.request,
+        Request::CloseTerminal {
+            session: SessionId(3)
+        }
+    );
+}
+
+#[test]
+fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() {
+    use ovrcr::protocol::{BranchRequest, Request};
+    use ovrcr::tui::DashboardAction;
+    let cases = [
+        (
+            "create workspace",
+            vec!["consigint", "new-space", "feature/palette", "main"],
+            Request::CreateWorkspace {
+                project: "consigint".into(),
+                name: "new-space".into(),
+                branch: BranchRequest::New {
+                    branch: "feature/palette".into(),
+                    base: "main".into(),
+                },
+            },
+        ),
+        (
+            "create workspace",
+            vec!["consigint", "existing", "topic", ""],
+            Request::CreateWorkspace {
+                project: "consigint".into(),
+                name: "existing".into(),
+                branch: BranchRequest::Existing {
+                    branch: "topic".into(),
+                },
+            },
+        ),
+        (
+            "register project",
+            vec!["repo", "/tmp/repo with spaces", "/tmp/worktrees"],
+            Request::AddProject {
+                name: "repo".into(),
+                repo: "/tmp/repo with spaces".into(),
+                workspace_root: "/tmp/worktrees".into(),
+            },
+        ),
+        (
+            "remove workspace",
+            vec!["consigint", "auth"],
+            Request::RemoveWorkspace {
+                project: "consigint".into(),
+                name: "auth".into(),
+            },
+        ),
+        (
+            "remove project",
+            vec!["consigint"],
+            Request::RemoveProject {
+                name: "consigint".into(),
+            },
+        ),
+    ];
+    for (query, values, expected) in cases {
+        let mut dashboard = dashboard_fixture();
+        palette_search(&mut dashboard, query);
+        dashboard.key(KeyCode::Enter);
+        for (index, value) in values.iter().enumerate() {
+            dashboard.ctrl('u');
+            dashboard.event_action(Event::Paste((*value).into()));
+            for (width, height) in [(120, 40), (40, 12), (12, 5), (1, 1)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+                    .unwrap();
+            }
+            if index + 1 < values.len() {
+                dashboard.key(KeyCode::Tab);
+            }
+        }
+        let mut action = dashboard.key(KeyCode::Enter);
+        if query.starts_with("remove") {
+            assert_eq!(action, DashboardAction::Redraw);
+            action = dashboard.key(KeyCode::Enter);
+        }
+        let DashboardAction::Request(message) = action else {
+            panic!("{query}: did not submit");
+        };
+        assert_eq!(message.request, expected);
+    }
+}
+
+#[test]
+fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(
+        dashboard.key(KeyCode::Char(':')),
+        DashboardAction::PtyBytes(b":".to_vec())
+    );
+    dashboard.ctrl('g');
+    palette_search(&mut dashboard, "register project");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert!(palette_text(&dashboard).contains("Name is required"));
+    dashboard.event_action(Event::Paste("é\nname\u{1b}".into()));
+    dashboard.key(KeyCode::Backspace);
+    assert!(palette_text(&dashboard).contains("énam"));
+}
+
+#[test]
+fn palette_close_updates_selection_and_clears_removed_screen() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.parser.process(b"removed terminal output");
+    palette_search(&mut dashboard, "close terminal");
+    dashboard.key(KeyCode::Enter);
+    let ovrcr::tui::DashboardAction::Request(close) = dashboard.key(KeyCode::Enter) else {
+        panic!("close missing");
+    };
+    let mut hierarchy = dashboard.hierarchy.clone();
+    for workspace in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|p| &mut p.workspaces)
+    {
+        workspace.sessions.retain(|s| s.id != SessionId(1));
+    }
+    let requests = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::HierarchyChanged(hierarchy),
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: close.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(dashboard.selected, Some(SessionId(5)));
+    assert!(matches!(
+        requests.as_slice(),
+        [ovrcr::protocol::ClientMessage {
+            request: ovrcr::protocol::Request::Select {
+                session: SessionId(5),
+                ..
+            },
+            ..
+        }]
+    ));
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("removed terminal output")
+    );
+}
+
+#[test]
+fn palette_active_field_remains_visible_in_a_small_window() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "create terminal");
+    dashboard.key(KeyCode::Enter);
+    for _ in 0..3 {
+        dashboard.key(KeyCode::Tab);
+    }
+    dashboard.event_action(Event::Paste("visible-command".into()));
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let text = (0..12)
+        .map(|y| {
+            (0..40)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<String>();
+    assert!(text.contains("visible-command"), "{text}");
+}
+
 #[test]
 fn dashboard_layout() {
     let mut dashboard = dashboard_fixture();

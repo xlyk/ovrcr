@@ -25,6 +25,8 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod palette;
+
 thread_local! {
     static PANIC_TERMINAL_RESTORED: Cell<bool> = const { Cell::new(false) };
 }
@@ -105,6 +107,7 @@ pub struct Dashboard {
     pub busy_sessions: HashSet<SessionId>,
     tree_offset: usize,
     next_request_id: u64,
+    palette: Option<palette::Palette>,
 }
 
 impl Dashboard {
@@ -123,7 +126,8 @@ impl Dashboard {
             error: None,
             busy_sessions: HashSet::new(),
             tree_offset: 0,
-            next_request_id: 1,
+            next_request_id: 4,
+            palette: None,
         }
     }
 
@@ -278,6 +282,9 @@ impl Dashboard {
             }
             return DashboardAction::Redraw;
         }
+        if self.palette.is_some() {
+            return self.palette_key(key);
+        }
         match self.mode {
             InputMode::Browse => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -288,6 +295,7 @@ impl Dashboard {
                     return DashboardAction::None;
                 }
                 match key.code {
+                    KeyCode::Char(':') => self.open_palette(),
                     KeyCode::Char('q') => DashboardAction::Detach,
                     KeyCode::Enter => {
                         self.mode = InputMode::Terminal;
@@ -338,6 +346,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         match event {
+            Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
             Event::Paste(text) if self.mode == InputMode::Terminal => DashboardAction::PtyBytes(
                 encode_paste(&text, self.parser.screen().bracketed_paste()),
@@ -350,6 +359,7 @@ impl Dashboard {
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         if self.tasks.is_some()
+            || self.palette.is_some()
             || self.mode == InputMode::Terminal
             || mouse.kind != MouseEventKind::Down(MouseButton::Left)
         {
@@ -402,9 +412,17 @@ impl Dashboard {
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && let Some(requests) = self.palette_response(*request_id, response)
+        {
+            return requests;
+        }
         match message {
             ServerMessage::Response { response, .. } => match response {
-                Response::Hierarchy(hierarchy) => self.hierarchy = hierarchy,
+                Response::Hierarchy(hierarchy) => return self.update_hierarchy(hierarchy),
                 Response::Screen {
                     session,
                     size,
@@ -426,7 +444,9 @@ impl Dashboard {
                 }
             },
             ServerMessage::Event(event) => match event {
-                ServerEvent::HierarchyChanged(hierarchy) => self.hierarchy = hierarchy,
+                ServerEvent::HierarchyChanged(hierarchy) => {
+                    return self.update_hierarchy(hierarchy);
+                }
                 ServerEvent::Output { session, bytes } if self.selected == Some(session) => {
                     self.parser.process(&bytes);
                 }
@@ -450,6 +470,27 @@ impl Dashboard {
                 }
                 ServerEvent::Output { .. } | ServerEvent::ScreenDirty { .. } => {}
             },
+        }
+        Vec::new()
+    }
+
+    fn update_hierarchy(&mut self, hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
+        self.hierarchy = hierarchy;
+        if self
+            .selected
+            .is_some_and(|id| find_session(self, id).is_none())
+        {
+            self.selected = None;
+            self.mode = InputMode::Browse;
+            self.parser = vt100::Parser::new(self.pane_size.rows, self.pane_size.cols, 0);
+            if let Some(id) = self.visible_rows().iter().find_map(|row| match row {
+                TreeRow::Session { id } => Some(*id),
+                _ => None,
+            }) {
+                self.select_session(id);
+                let request_id = self.next_request_id();
+                return vec![self.select_request(id, request_id)];
+            }
         }
         Vec::new()
     }
@@ -589,7 +630,7 @@ pub fn event_to_request(
     event: Event,
     request_id: u64,
 ) -> Option<ClientMessage> {
-    if dashboard.mode != InputMode::Terminal {
+    if dashboard.palette.is_some() || dashboard.mode != InputMode::Terminal {
         return None;
     }
     match event {
@@ -1363,7 +1404,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         frame,
         layout.terminal,
         dashboard.parser.screen(),
-        dashboard.mode == InputMode::Terminal,
+        dashboard.mode == InputMode::Terminal && dashboard.palette.is_none(),
     );
     let footer = dashboard.error.as_deref().map_or_else(
         || {
@@ -1378,6 +1419,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 Span::styled(" tasks  ", Style::default().fg(MUTED)),
                 Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
                 Span::styled(" detach", Style::default().fg(MUTED)),
+                Span::styled("  : commands", Style::default().fg(MAUVE)),
             ])
         },
         |error| {
@@ -1391,6 +1433,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         Paragraph::new(footer).style(Style::default().bg(CRUST)),
         layout.footer,
     );
+    dashboard.draw_palette(frame);
 }
 
 fn dashboard_layout(area: Rect) -> DashboardLayout {
