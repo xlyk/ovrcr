@@ -1258,7 +1258,7 @@ mod tests {
                 argv: vec![
                     "sh".into(),
                     "-c".into(),
-                    "printf 'EXIT_%s' READY; sleep 1".into(),
+                    "printf 'EXIT_%s' READY; IFS= read -r _".into(),
                 ],
             },
             TerminalSize { rows: 24, cols: 80 },
@@ -1293,6 +1293,7 @@ mod tests {
             "EXIT_READY",
             Duration::from_secs(2)
         ));
+        session.write(b"\n").unwrap();
         assert!(
             exit_ready_receiver
                 .recv_timeout(Duration::from_secs(2))
