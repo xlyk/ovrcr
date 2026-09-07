@@ -17,7 +17,7 @@
 - The orchestrator assigns **one plan** to a `gpt-5.6-luna` worker at **xhigh** effort, with the checkout path, actual base SHA, this file, and the preceding worker's interface/test handoff. The model setting belongs to the agent launch configuration; mentioning it in a prompt alone does not set it.
 - Integrate plans serially in this order: **pause/resume → agent hooks → context usage → historical scrollback → copy mode → split panes → mouse forwarding → multiple dashboards → session restore**. This is an integration order, not a product priority. Context requires hooks; historical copying requires scrollback. The other ordering choices avoid simultaneous edits to shared session, protocol, server, and TUI files.
 - Read this file, repository instructions, and the named source symbols first. Resolve symbols with `rtk proxy rg -n`; line numbers and code sketches are not a substitute for the landed implementation. If a preceding plan is already implemented, preserve its behavior and use its actual interfaces. Resolve a conflicting contract before coding that dependent task; do not build a second transport or state owner.
-- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --all-targets --all-features` after that step.
+- Work through one numbered task at a time. Add its focused failing behavioral check, implement the smallest change, then require that check to execute and pass. When adding enum variants or fields, update all constructors and exhaustive matches in the same compiling step, including CLI JSON and optional GUI fixtures. Run `rtk proxy cargo check --workspace --all-targets --all-features` after that step.
 - Fixture helpers are private to their integration-test binary. Add cases in the named existing file; a new test file needs its own explicitly defined fixture. Confirm a test filter with `-- --list` when uncertain; zero executed tests never satisfy a gate. Runtime/GUI acceptance commands below are future checks, not evidence already obtained.
 - Use the defaults specified here when assigned to implement. Keep the roadmap checkbox unchecked until the required acceptance gates pass. Return the implemented task range, actual base/head, changed interfaces, exact checks with executed counts, cleanup evidence, and any unverified gate. Do not start a sibling plan as an incidental fix.
 
@@ -37,14 +37,8 @@ Inspected baseline: `9ca7a2d8c49c9743c7ba419fce3e3ae9e302cadb` on 2026-09-05. Th
 
 | Source | Relevant existing behavior |
 |---|---|
-| `src/tui.rs` | `Dashboard` has one `selected`, `parser`, `pane_size`, and browse/terminal mode. |
-| `src/tui.rs` | `mouse_action` consumes browse-mode left clicks in the sidebar and rejects terminal-mode mouse. |
-| `src/tui.rs` | `handle_server_message` resets the parser from `Response::Screen`, feeds incremental output, and requests selection again for `ScreenDirty`. |
-| `src/tui.rs` | `select_request`, `resize_request`, and `input_request` already construct the needed protocol requests. |
-| `src/tui.rs` | `update_mouse_capture` disables all capture in terminal mode regardless of application requests. |
-| `src/tui.rs` | `process_dashboard_input` passes the real outer rectangle for mouse input but discards focus events. |
-| `src/tui.rs` | `actual_drawn_inner_rect` returns the actual terminal content rectangle; it excludes sidebar, title, metadata, and footer. |
-| `src/session.rs` | `current_screen` uses `state_formatted()`, which includes input modes. No extra mouse snapshot field is required. |
+| `crates/ovrcr-tui/src/dashboard/{mod,state,input,render,event_loop}.rs` | `Dashboard` has one `selected`, `parser`, `pane_size`, and browse/terminal mode; mouse routing, server-message handling, request construction, capture reconciliation, event batching, and drawn geometry live in these child modules. |
+| `crates/ovrcr-runtime/src/session/mod.rs` | `current_screen` uses `state_formatted()`, which includes input modes. No extra mouse snapshot field is required. |
 | `src/gui/input.rs` | The optional GUI helper encodes button press/release only. It does not currently emit wheel or motion input. |
 | `src/bin/ovrcr-gui.rs` | The GUI input loop calls that stateless encoder; passing GUI clicks alone cannot prove drag/wheel acceptance. |
 | `tests/terminal_acceptance.rs` | `OuterDashboard` drives the real dashboard executable through an outer PTY and parses its rendered output. |
@@ -74,7 +68,7 @@ No historical scrolling, copy selection, pane splitting, configurable bindings, 
 
 ## File and interface map
 
-Production changes stay in `src/tui.rs`. Existing session/protocol/server code needs no new wire type. Add focused tests to `tests/tui.rs` and `tests/terminal_acceptance.rs`; add the raw fixture in `tests/support/mouse_app.rs`. `README.md` can be updated only during later implementation, after acceptance; this planning task edits this plan alone.
+Production changes stay in `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,mod,terminal_guard}.rs` and `render.rs` only where the existing terminal rectangle is consumed. Existing runtime/protocol/server code needs no new wire type. Add focused tests to root `tests/tui.rs` and `tests/terminal_acceptance.rs`; add the raw fixture in `tests/support/mouse_app.rs`. `src/lib.rs` continues to re-export the TUI facade and `src/main.rs`/`src/cli/` are outside this feature. `README.md` can be updated only during later implementation, after acceptance; this planning task edits this plan alone.
 
 Expose the pure encoder alongside `encode_key` and `encode_paste`:
 
@@ -126,6 +120,13 @@ fn reconcile_mouse_protocol(&mut self); // clear state after parsed mode changes
 
 ## Current integration paths and task checkpoints
 
+### Workspace handoff
+
+- Mouse routing and parser-mode inspection belong to `ovrcr-tui::dashboard::{input,state,event_loop}` with rendering geometry in `dashboard::render`; the application imports the public facade from `ovrcr_tui` through root `src/lib.rs`.
+- The selected-session identity, terminal size, and other shared request records are re-exported by `ovrcr_protocol`; their wire definitions remain in `crates/ovrcr-protocol/src/wire.rs`. `MouseProtocolMode` and `MouseProtocolEncoding` are VT100 types reached through the `ovrcr_terminal::vt100` re-export, while PTY/parser ownership stays in `ovrcr_runtime::session`; no new runtime or protocol message is needed.
+- Focused checks are `rtk proxy cargo test -p ovrcr --test tui mouse_ -- --nocapture`, `rtk proxy cargo test -p ovrcr --test terminal_acceptance mouse_ -- --nocapture`, and `rtk proxy cargo check -p ovrcr-tui --all-targets`; the real executable path is `rtk proxy cargo run -p ovrcr --`.
+- The root `src/gui.rs`, `src/gui/input.rs`, `src/bin/ovrcr-gui.rs`, and `tests/gui.rs` remain optional helper surfaces. Their current click-only encoder cannot establish wheel/drag acceptance and is not part of this plan's production path.
+
 In the recommended order, split panes and copy/history already exist. Use the landed `pane_rects` and focused `PaneState` as the only geometry/parser source. Browse retains sidebar/pane focus clicks; History and Copy consume mouse without PTY forwarding; Terminal forwards only inside the ready, Running, focused pane. A click in the other pane while in Terminal must neither forward there nor switch focus. Paused sessions never admit new mouse input.
 
 Reuse the pane's view/readiness state instead of introducing an independently authoritative `mouse_ready` boolean. For a singleton baseline the `MouseAwaiting` sketches below apply; with SetView, eligibility requires the focused pane's matching Screen **and** that view request's final Ok. A snapshot for another pane, old revision, or old request cannot enable capture. Resize and dirty refresh clear readiness before the request and reconcile capture after the new view completes. Output that only changes DEC mouse modes must still trigger reconciliation.
@@ -146,7 +147,7 @@ Use [computer-use testing](../docs/testing-computer-use.md) for the native gate 
 
 ## Task 1: Encode the parser's supported mouse protocols
 
-**Files:** `src/tui.rs`; `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/input.rs`; `tests/tui.rs`.
 
 **Consumes:** Crossterm `MouseEvent`, vt100 mouse enums. **Produces:** `encode_mouse` above.
 
@@ -166,7 +167,7 @@ assert_eq!(encode_mouse(up, vt100::MouseProtocolMode::Press,
     vt100::MouseProtocolEncoding::Default), None);
 ```
 
-- [ ] Run `rtk proxy cargo test --test tui mouse_encode_ -- --nocapture`; expect RED before the function exists and exactly 3 passing tests after implementation. Zero matching tests is failure.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui mouse_encode_ -- --nocapture`; expect RED before the function exists and exactly 3 passing tests after implementation. Zero matching tests is failure.
 - [ ] Implement button IDs 0/1/2, unpressed movement 3+32, drag button+32, and wheel up/down/left/right 64/65/66/67. Add modifiers except in X10. Use SGR's `m` only for `Up`; use legacy release button 3 plus modifiers. Serialize legacy fields with checked additions/conversions.
 
 ```rust
@@ -182,7 +183,7 @@ if x > limit || y > limit { return None; }
 
 ## Task 2: Route owned gestures through the real terminal geometry
 
-**Files:** `src/tui.rs`; `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,terminal_guard}.rs`; `tests/tui.rs`.
 
 **Consumes:** Task 1 encoder and `actual_drawn_inner_rect`. **Produces:** terminal branch of `mouse_action`, held-state cancellation, and bounded cleanup.
 
@@ -204,7 +205,7 @@ assert!(matches!(cleanup.request, Request::Input { session, bytes }
 assert!(d.take_mouse_cleanup().is_none());
 ```
 
-- [ ] Run `rtk proxy cargo test --test tui mouse_route_ -- --nocapture`; expect RED, then exactly 3 passing tests.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui mouse_route_ -- --nocapture`; expect RED, then exactly 3 passing tests.
 - [ ] Branch on browse versus terminal ownership first. Preserve current sidebar logic in browse. In terminal mode, reject an invalid rectangle before subtraction, intersect dimensions with `screen.size()`, gate through `terminal_mouse_enabled`, then call `encode_mouse`. Record a held press only when complete bytes are emitted.
 - [ ] For motion, require an owned button for `Drag`; permit `Moved` only with no held button. Track the last delivered event to suppress duplicates. Outside drag/release cancels ownership using the last valid position. Treat a coordinate beyond the negotiated encoding limit the same way: release at the last representable cell rather than silently dropping the final release. An orphan release does nothing. A release clears only its matching button; check a two-button chord and its two ordered releases.
 - [ ] Add cancellation before selected-ID mutation in `select_session`, `move_selection`, and `select_request`, before resize, and on Ctrl-g. Concatenate held releases into the one old-session cleanup frame, allocate its request ID once, and clear ownership immediately. Prevent a second transition from overwriting undrained cleanup; central call sites drain it synchronously.
@@ -212,7 +213,7 @@ assert!(d.take_mouse_cleanup().is_none());
 
 ## Task 3: Reconcile capture, focus, snapshots, and event-loop cleanup
 
-**Files:** `src/tui.rs`; `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,terminal_guard}.rs`; `tests/tui.rs`.
 
 **Consumes:** Task 2 state/cleanup. **Produces:** mode-responsive capture and an input route safe across snapshot and geometry changes.
 
@@ -230,7 +231,7 @@ d.parser.process(b"\x1b[?1000l");
 assert!(!d.mouse_capture_required());
 ```
 
-- [ ] Run `rtk proxy cargo test --test tui mouse_state_ -- --nocapture`; expect RED, then exactly 3 passing tests.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui mouse_state_ -- --nocapture`; expect RED, then exactly 3 passing tests.
 - [ ] Set readiness false whenever requesting a selected screen or resize, record that request/session, and allow mouse again only on its matching `Screen`/resize `Ok`. Ignore stale screen replies rather than letting them replace the parser. Clear readiness on matching error, selected exit/removal, and connection loss. Keep mouse blocked while a `ScreenDirty` refresh is outstanding.
 - [ ] Around output/snapshot parser changes, compare tracking/encoding; call `reconcile_mouse_protocol` and clear invalid ownership. A fresh reattach starts with empty ownership and learns modes from `state_formatted`; add a snapshot round-trip assertion for each supported tracking mode and encoding.
 - [ ] Make `update_mouse_capture` use `mouse_capture_required`. Reconcile after bounded server batches and immediately after input transitions, retaining the current 64-message/32-event batching and frame cadence. Remove the separate EnterBrowse capture special case so there is one capture policy.
@@ -271,15 +272,15 @@ dashboard.wait_for(b"MOUSE_CHECK_1:1b5b3c303b333b344d1b5b3c303b333b346d:END",
 - [ ] Send `D`; wait for disabled marker and capture-off state. Inject the same outer reports followed by `Q` and require the next checkpoint's empty payload. This ordered checkpoint proves suppression; a sleep or absence of screen output does not.
 - [ ] Re-enable, hold a button, send Ctrl-g, select the existing `mouse` shell, enter it, and verify `MOUSE_TOKEN` reaches that shell. Return to the fixture and checkpoint its cleanup release. Check no duplicate release after an orphan Up. Exercise sidebar/metadata exclusion, resize while held, focus-out while held, and fresh forwarding after focus-in.
 - [ ] Detach and reattach while the fixture still requests mouse; select it, enter terminal mode, and require capture plus a fresh encoded click without sending `E` again. Finish via existing bounded shutdown, child joins, socket absence, and process-group absence checks.
-- [ ] Run `rtk proxy cargo test --test terminal_acceptance mouse_forwarding_outer_pty_round_trip -- --exact --nocapture`; expect RED before integration and exactly 1 passing test afterward. Any missing marker, wrong byte, ignored acceptance, or timeout is failure.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance mouse_forwarding_outer_pty_round_trip -- --exact --nocapture`; expect RED before integration and exactly 1 passing test afterward. Any missing marker, wrong byte, ignored acceptance, or timeout is failure.
 
 ## Task 5: Focused regression and visible acceptance
 
 **Files:** existing tests; later implementation may update `README.md` after observed acceptance.
 
-- [ ] Run `rtk proxy cargo test --test tui`; require all discovered nonignored tests to run, including the 9 new mouse tests. Record the actual nonzero total; do not invent a baseline total.
-- [ ] Run `rtk proxy cargo test --test terminal_acceptance default_dashboard_acceptance_wrapper_exercises_pty_controls -- --exact --nocapture`; require exactly 1 test, existing nonzero latency samples, and its p95 assertions.
-- [ ] Run `rtk proxy cargo test --lib`; require nonzero execution and terminal guard restoration checks. Run `rtk proxy cargo fmt -- --check` and `rtk proxy cargo clippy --all-targets -- -D warnings` after source changes.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test tui`; require all discovered nonignored tests to run, including the 9 new mouse tests. Record the actual nonzero total; do not invent a baseline total.
+- [ ] Run `rtk proxy cargo test -p ovrcr --test terminal_acceptance default_dashboard_acceptance_wrapper_exercises_pty_controls -- --exact --nocapture`; require exactly 1 test, existing nonzero latency samples, and its p95 assertions.
+- [ ] Run `rtk proxy cargo test -p ovrcr-tui --lib -- --nocapture` for the TUI unit suite (3 existing dashboard tests), then `rtk proxy cargo test -p ovrcr --test tui terminal_guard_ -- --nocapture` for the 3 existing root terminal-guard tests. Run `rtk proxy cargo fmt --all -- --check` and `rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings` after source changes.
 - [ ] In a real macOS/Linux terminal, use a mouse-aware application such as Vim with `:set mouse=a`: click to position, drag selection, wheel, press Ctrl-g, change sessions, resize while held, and return. Record the app/host versions and visible result. Turn application mouse off and verify host selection behavior returns. Unavailable platform/UI evidence remains unverified.
 - [ ] The disposable GUI helper can validate clicks and Ctrl-g with `rtk proxy just gui`, but its current encoder lacks drag/wheel. Use a real terminal for the complete gate. If extending that helper is separately authorized, change `src/gui/input.rs`, `src/bin/ovrcr-gui.rs`, and `tests/gui.rs` to add pointer position/button state and wheel/motion translation; do not claim those events were covered by today's click-only helper.
 

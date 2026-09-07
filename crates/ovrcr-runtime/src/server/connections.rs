@@ -436,7 +436,7 @@ pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
     }
 }
 
-pub(super) fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
+fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
     error
         .chain()
         .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
@@ -501,7 +501,7 @@ pub(super) fn lifecycle_response_with_partial_hierarchy(
     response
 }
 
-pub(super) fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
+fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
     dashboard_send(state, message, None)
 }
 
@@ -569,10 +569,6 @@ pub(super) fn response_message(request_id: u64, response: Response) -> ServerMes
         response,
     }
 }
-pub(super) fn send_direct(
-    stream: &mut UnixStream,
-    request_id: u64,
-    response: Response,
-) -> Result<()> {
+fn send_direct(stream: &mut UnixStream, request_id: u64, response: Response) -> Result<()> {
     write_frame(stream, &response_message(request_id, response))
 }

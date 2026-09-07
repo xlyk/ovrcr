@@ -1,0 +1,269 @@
+use anyhow::Context;
+use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
+use ovrcr::context::context_is_stale;
+use ovrcr::protocol::{BranchRequest, CreateSessionRequest, ErrorCode, Request, Response};
+use ovrcr::session::{SessionId, SessionPhase};
+use serde_json::json;
+use std::io::Write;
+
+use super::args::*;
+use super::output::*;
+use super::{
+    AppResult, RuntimeError, inspect, request_started, request_without_start, unexpected_response,
+};
+
+pub(super) fn run_project(command: ProjectCommand, json_output: bool) -> AppResult<()> {
+    match command {
+        ProjectCommand::Add {
+            name,
+            repo,
+            workspace_root,
+        } => mutate_started(
+            Request::AddProject {
+                name,
+                repo: resolve_cli_path(repo).map_err(RuntimeError::internal)?,
+                workspace_root: resolve_cli_path(workspace_root).map_err(RuntimeError::internal)?,
+            },
+            json_output,
+        ),
+        ProjectCommand::List => {
+            let (registry, _) = inspect()?;
+            let mut projects = registry.projects.iter().collect::<Vec<_>>();
+            projects.sort_by(|left, right| left.name.cmp(&right.name));
+            let values = projects.into_iter().map(project_value).collect::<Vec<_>>();
+            print_values(values, json_output, print_project_row)
+        }
+        ProjectCommand::Get { name } => {
+            let (registry, _) = inspect()?;
+            let project = find_project(&registry, &name)?;
+            print_value(project_value(project), json_output, print_project)
+        }
+        ProjectCommand::Remove { name } => {
+            mutate_started(Request::RemoveProject { name }, json_output)
+        }
+    }
+}
+
+pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> AppResult<()> {
+    match command {
+        WorkspaceCommand::Create(args) => {
+            let branch = match (args.new_branch, args.branch, args.base) {
+                (Some(branch), None, Some(base)) => BranchRequest::New { branch, base },
+                (None, Some(branch), None) => BranchRequest::Existing { branch },
+                _ => unreachable!("clap validates branch arguments"),
+            };
+            mutate_started(
+                Request::CreateWorkspace {
+                    project: args.project,
+                    name: args.name,
+                    branch,
+                },
+                json_output,
+            )
+        }
+        WorkspaceCommand::List { project } => {
+            let (registry, sessions) = inspect()?;
+            if let Some(name) = project.as_deref() {
+                find_project(&registry, name)?;
+            }
+            let mut workspaces = registry
+                .projects
+                .iter()
+                .filter(|record| project.as_deref().is_none_or(|name| record.name == name))
+                .flat_map(|record| {
+                    record
+                        .workspaces
+                        .iter()
+                        .map(move |workspace| (&record.name, workspace))
+                })
+                .collect::<Vec<_>>();
+            workspaces.sort_by(|(left_project, left), (right_project, right)| {
+                (left.name.as_str(), left_project.as_str())
+                    .cmp(&(right.name.as_str(), right_project.as_str()))
+            });
+            let values = workspaces
+                .into_iter()
+                .map(|(project, workspace)| workspace_value(project, workspace, &sessions))
+                .collect::<Vec<_>>();
+            print_values(values, json_output, print_workspace_row)
+        }
+        WorkspaceCommand::Get { project, name } => {
+            let (registry, sessions) = inspect()?;
+            let workspace = find_workspace(&registry, &project, &name)?;
+            print_value(
+                workspace_value(&project, workspace, &sessions),
+                json_output,
+                print_workspace,
+            )
+        }
+        WorkspaceCommand::Remove { project, name } => {
+            mutate_started(Request::RemoveWorkspace { project, name }, json_output)
+        }
+    }
+}
+
+pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppResult<()> {
+    match command {
+        TerminalCommand::Create(args) => create_terminal(args, json_output),
+        TerminalCommand::List { project, workspace } => {
+            let (registry, mut sessions) = inspect()?;
+            if let Some(project) = project.as_deref() {
+                find_project(&registry, project)?;
+                if let Some(workspace) = workspace.as_deref() {
+                    find_workspace(&registry, project, workspace)?;
+                }
+            }
+            sessions.retain(|session| {
+                project
+                    .as_deref()
+                    .is_none_or(|name| session.project == name)
+                    && workspace
+                        .as_deref()
+                        .is_none_or(|name| session.workspace == name)
+            });
+            sessions.sort_by_key(|session| session.id.0);
+            let now_unix_ms = now_unix_ms();
+            let values = sessions
+                .iter()
+                .map(|session| terminal_value(session, now_unix_ms))
+                .collect::<Vec<_>>();
+            print_values(values, json_output, print_terminal_row)
+        }
+        TerminalCommand::Read { id, max_lines } => {
+            match request_without_start(Request::ReadTerminal {
+                session: SessionId(id),
+                max_lines,
+            })? {
+                Response::TerminalText {
+                    session,
+                    size,
+                    text,
+                } => {
+                    if json_output {
+                        print_json(&json!({
+                            "id": session.0,
+                            "rows": size.rows,
+                            "cols": size.cols,
+                            "text": text,
+                        }))
+                    } else {
+                        print!("{text}");
+                        std::io::stdout().flush().map_err(RuntimeError::internal)
+                    }
+                }
+                response => Err(unexpected_response(response)),
+            }
+        }
+        TerminalCommand::Send {
+            id,
+            text,
+            no_submit,
+        } => mutate_without_start(
+            Request::SendTerminal {
+                session: SessionId(id),
+                text,
+                submit: !no_submit,
+            },
+            json_output,
+        ),
+        TerminalCommand::Close { id } => mutate_without_start(
+            Request::CloseTerminal {
+                session: SessionId(id),
+            },
+            json_output,
+        ),
+        TerminalCommand::Kill { id } => mutate_started(
+            Request::KillSession {
+                session: SessionId(id),
+            },
+            json_output,
+        ),
+        TerminalCommand::Remove { id } => mutate_started(
+            Request::RemoveSession {
+                session: SessionId(id),
+            },
+            json_output,
+        ),
+    }
+}
+
+pub(super) fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()> {
+    let argv = if args.argv.is_empty() {
+        vec![
+            std::env::var_os("SHELL")
+                .context("SHELL is unset and no command was provided")
+                .map_err(RuntimeError::internal)?,
+        ]
+    } else {
+        args.argv
+    };
+    let response = request_started(Request::CreateSession(CreateSessionRequest {
+        project: args.project,
+        workspace: args.workspace,
+        name: args.name,
+        label: args.label,
+        argv,
+    }))?;
+    match response {
+        Response::CreatedSession(summary) => {
+            if json_output {
+                print_json(&terminal_value(&summary, now_unix_ms()))
+            } else {
+                println!("{}", summary.id.0);
+                Ok(())
+            }
+        }
+        response => Err(unexpected_response(response)),
+    }
+}
+
+fn find_project<'a>(registry: &'a Registry, name: &str) -> AppResult<&'a ProjectRecord> {
+    registry
+        .projects
+        .iter()
+        .find(|project| project.name == name)
+        .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("project not found: {name}")))
+}
+
+fn find_workspace<'a>(
+    registry: &'a Registry,
+    project: &str,
+    name: &str,
+) -> AppResult<&'a WorkspaceRecord> {
+    find_project(registry, project)?
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.name == name)
+        .ok_or_else(|| {
+            RuntimeError::new(
+                ErrorCode::NotFound,
+                format!("workspace not found: {project}/{name}"),
+            )
+        })
+}
+
+pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {
+    let response = request_without_start(Request::List)?;
+    let Response::Hierarchy(snapshot) = response else {
+        return Err(unexpected_response(response));
+    };
+    let session = snapshot
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| {
+            RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}"))
+        })?;
+    let now_unix_ms = now_unix_ms();
+    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    print_json(&json!({
+        "session": id,
+        "context_usage": session.context_usage,
+        "stale": session
+            .context_usage
+            .as_ref()
+            .map(|sample| context_is_stale(sample, now_unix_ms, exited)),
+    }))
+}

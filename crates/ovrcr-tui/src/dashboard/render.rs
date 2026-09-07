@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy)]
-pub(super) struct DashboardLayout {
+struct DashboardLayout {
     title: Rect,
     footer: Rect,
     sidebar: Rect,
