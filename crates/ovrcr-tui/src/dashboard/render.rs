@@ -1,5 +1,5 @@
 use super::copy::{CopyPoint, CopySelection};
-use super::state::find_session;
+use super::state::{find_session, history_page_covers};
 use super::{Dashboard, HistoryView, InputMode, TreeRow, history_view_size};
 use crate::context::format_context;
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
@@ -124,37 +124,28 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
                 continue;
             }
             let absolute_col = absolute_col as u16;
-            let Some((page_start_col, history_row)) = view
-                .pages
-                .iter()
-                .filter_map(|page| {
-                    let end = page.start_row.saturating_add(page.rows.len() as u32);
-                    if absolute_row >= page.start_row && absolute_row < end && !page.rows.is_empty()
-                    {
-                        Some((
-                            page.start_col,
-                            &page.rows[(absolute_row - page.start_row) as usize],
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .filter(|(start_col, _)| absolute_col >= *start_col)
-                .max_by_key(|(start_col, _)| *start_col)
+            let Some((page_start_col, history_row, history_cell)) =
+                history_cell_at(view, absolute_row, absolute_col)
             else {
                 continue;
             };
             if absolute_col < page_start_col || absolute_col >= history_row.width {
                 continue;
             }
-            let index = usize::from(absolute_col - page_start_col);
-            let Some(history_cell) = history_row.cells.get(index) else {
+            if history_cell.width == 0 {
+                if history_selected(view, absolute_row, absolute_col) {
+                    frame
+                        .buffer_mut()
+                        .cell_mut((bounded.x + screen_col, bounded.y + screen_row))
+                        .expect("history continuation is in frame")
+                        .set_fg(BASE)
+                        .set_bg(TEAL);
+                }
                 continue;
-            };
-            if history_cell.width == 0
-                || (history_cell.width == 2
-                    && (screen_col.saturating_add(1) >= bounded.width
-                        || absolute_col.saturating_add(1) >= history_row.width))
+            }
+            if history_cell.width == 2
+                && (screen_col.saturating_add(1) >= bounded.width
+                    || absolute_col.saturating_add(1) >= history_row.width)
             {
                 continue;
             }
@@ -186,8 +177,90 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
                 modifier.insert(Modifier::REVERSED);
             }
             cell.modifier = modifier;
+            if history_selected(view, absolute_row, absolute_col) {
+                cell.set_fg(BASE).set_bg(TEAL);
+                if history_cell.width == 2
+                    && screen_col.saturating_add(1) < bounded.width
+                    && absolute_col.saturating_add(1) < history_row.width
+                {
+                    frame
+                        .buffer_mut()
+                        .cell_mut((
+                            bounded.x + screen_col.saturating_add(1),
+                            bounded.y + screen_row,
+                        ))
+                        .expect("wide history cell is in frame")
+                        .set_fg(BASE)
+                        .set_bg(TEAL);
+                }
+            }
         }
     }
+    if let Some(cursor) = view.cursor.filter(|_| view.cursor_target.is_none()) {
+        if cursor.row_width > 0
+            && cursor.point.row >= view.top
+            && cursor.point.row < view.top.saturating_add(bounded.height as u32)
+            && cursor.point.col >= view.left
+        {
+            let screen_row = cursor.point.row.saturating_sub(view.top) as u16;
+            let screen_col = cursor.point.col.saturating_sub(view.left);
+            if screen_row < bounded.height
+                && screen_col < bounded.width
+                && (cursor.cell_width != 2 || screen_col.saturating_add(1) < bounded.width)
+                && history_cell_at(view, cursor.point.row, cursor.point.col)
+                    .is_some_and(|(_, _, cell)| cell.width != 0)
+            {
+                frame.set_cursor_position((
+                    bounded.x.saturating_add(screen_col),
+                    bounded.y.saturating_add(screen_row),
+                ));
+            }
+        }
+    }
+}
+
+fn history_cell_at<'a>(
+    view: &'a HistoryView,
+    row: u32,
+    col: u16,
+) -> Option<(
+    u16,
+    &'a crate::protocol::HistoryRow,
+    &'a crate::protocol::HistoryCell,
+)> {
+    view.pages
+        .iter()
+        .filter_map(|page| {
+            let history_row = page
+                .rows
+                .get(usize::try_from(row.checked_sub(page.start_row)?).ok()?)?;
+            let end = page
+                .start_col
+                .saturating_add(history_row.cells.len() as u16);
+            if col < page.start_col || col >= end {
+                return None;
+            }
+            let cell = history_row.cells.get(usize::from(col - page.start_col))?;
+            Some((page.start_col, history_row, cell))
+        })
+        .max_by_key(|(start_col, _, _)| *start_col)
+}
+
+fn history_selected(view: &HistoryView, row: u32, col: u16) -> bool {
+    let Some(anchor) = view.anchor else {
+        return false;
+    };
+    let Some(cursor) = view.cursor else {
+        return false;
+    };
+    let cursor = cursor.point;
+    let (start, end) = if anchor <= cursor {
+        (anchor, cursor)
+    } else {
+        (cursor, anchor)
+    };
+    let point = super::copy::HistoryCopyPoint { row, col };
+    start <= point && point <= end
 }
 
 fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
@@ -208,10 +281,11 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
             let Some(page_start_col) = u16::try_from(col_start).ok() else {
                 break;
             };
+            let rows = view.opened.total_rows.saturating_sub(row_start).min(16) as u16;
+            let cols =
+                u16::try_from(u32::from(u16::MAX).saturating_sub(col_start).min(128)).unwrap_or(0);
             let cached = view.pages.iter().find(|page| {
-                page.snapshot == view.opened.snapshot
-                    && page.start_row == row_start
-                    && page.start_col == page_start_col
+                history_page_covers(&view.opened, page, row_start, page_start_col, rows, cols)
             });
             let Some(page) = cached else {
                 missing = true;
@@ -227,7 +301,11 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
         }
         row_start = row_start.saturating_add(16);
     }
-    let status = if missing || view.pending.is_some() {
+    let status = if view.copy_job.is_some() || view.copy_completion.is_some() {
+        "copying"
+    } else if view.cursor_target.is_some() {
+        "cursor loading"
+    } else if missing || view.pending.is_some() {
         "loading"
     } else if has_content {
         "loaded"
@@ -253,6 +331,33 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
         u32::from(view.left).saturating_add(1),
         col_end,
     )
+}
+
+fn history_footer(dashboard: &Dashboard) -> Line<'static> {
+    let text = dashboard.history.as_ref().map_or_else(
+        || "HISTORY  arrows/hjkl scroll  PgUp/PgDn page  Home/End bounds  Space/v anchor  Esc/q exit".to_owned(),
+        |view| {
+            if view.copy_job.is_some() || view.copy_completion.is_some() {
+                "HISTORY COPY  Copying selection  Esc cancel  q exit".to_owned()
+            } else if view.cursor_target.is_some() {
+                "HISTORY  Waiting for history cell  Esc/q exit".to_owned()
+            } else if view.anchor.is_some() {
+                view.cursor.map_or_else(
+                    || "HISTORY  Nothing to select on this row  Esc/q exit".to_owned(),
+                    |cursor| {
+                        format!(
+                            "HISTORY SELECT  row {}:{}  arrows/hjkl move  Space/v anchor  y copy  Esc/q exit",
+                            cursor.point.row.saturating_add(1),
+                            u32::from(cursor.point.col).saturating_add(1),
+                        )
+                    },
+                )
+            } else {
+                "HISTORY  arrows/hjkl scroll  PgUp/PgDn page  Home/End bounds  Space/v anchor  Esc/q exit".to_owned()
+            }
+        },
+    );
+    Line::from(Span::styled(text, Style::default().fg(TEXT)))
 }
 
 fn history_color(value: HistoryColor, default: Color) -> Color {
@@ -480,16 +585,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
                 ]
             } else if dashboard.mode == InputMode::History {
-                vec![
-                    Span::styled("↑/↓ k/j", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" row  ", Style::default().fg(MUTED)),
-                    Span::styled("PgUp/PgDn", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" page  ", Style::default().fg(MUTED)),
-                    Span::styled("h/l", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" column  ", Style::default().fg(MUTED)),
-                    Span::styled("q/Esc", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" browse", Style::default().fg(MUTED)),
-                ]
+                return history_footer(dashboard);
             } else if paused && narrow {
                 vec![
                     Span::styled("r", Style::default().fg(Color::Rgb(249, 226, 175))),

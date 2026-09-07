@@ -1,10 +1,20 @@
 use super::copy::{CopyMotion, CopyPoint, CopySelection};
 use super::event_loop::{
-    dashboard_hello_result, dashboard_message_channel, next_dashboard_message,
+    dashboard_hello_result, dashboard_message_channel, emit_pending_history_copy,
+    next_dashboard_message,
 };
-use crate::protocol::{ErrorCode, Response, ServerMessage, SessionId};
+use super::{
+    Dashboard, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange, HistoryCursor,
+    HistoryView, InputMode,
+};
+use crate::protocol::{
+    ErrorCode, HistoryOpened, HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
+};
+use crossterm::event::KeyCode;
 use ovrcr_terminal::vt100;
-use std::io::Write;
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::thread;
@@ -70,6 +80,96 @@ fn dashboard_wait_reports_input_and_output_together() {
     .unwrap();
     assert!(activity.input_ready);
     assert!(activity.server_ready);
+}
+
+#[test]
+fn completed_history_copy_emits_once_through_the_writer_adapter() {
+    let mut dashboard = staged_history_copy_dashboard();
+
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
+    assert!(!emit_pending_history_copy(&mut terminal, &mut dashboard));
+    drop(terminal);
+    assert!(
+        bytes
+            .windows(b"\x1b]52;c;YQ==\x1b\\".len())
+            .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
+    );
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("Clipboard request sent; paste to verify")
+    );
+}
+
+struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("clipboard writer failed"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn staged_history_copy_dashboard() -> Dashboard {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
+    dashboard.mode = InputMode::History;
+    dashboard.selected = Some(SessionId(1));
+    let opened = HistoryOpened {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        revision: 1,
+        size: TerminalSize { rows: 4, cols: 20 },
+        history_rows: 0,
+        total_rows: 1,
+    };
+    let range = HistoryCopyRange {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        anchor: HistoryCopyPoint { row: 0, col: 0 },
+        cursor: HistoryCopyPoint { row: 0, col: 0 },
+    };
+    let mut view = HistoryView::new(opened, 0);
+    view.cursor = Some(HistoryCursor {
+        point: range.cursor,
+        row_width: 1,
+        cell_width: 1,
+    });
+    view.cursor_target = None;
+    view.anchor = Some(range.anchor);
+    view.copy_completion = Some(HistoryCopyCompletion {
+        id: 3,
+        range,
+        text: "a".into(),
+    });
+    dashboard.history = Some(view);
+    dashboard
+}
+
+#[test]
+fn failed_history_copy_writer_preserves_selection_for_retry() {
+    let mut dashboard = staged_history_copy_dashboard();
+    let mut writer = FailingWriter;
+    let backend = CrosstermBackend::new(&mut writer);
+    let mut terminal = Terminal::new(backend).unwrap();
+    assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
+    drop(terminal);
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("clipboard writer failed")
+    );
+    {
+        let view = dashboard.history.as_ref().unwrap();
+        assert_eq!(dashboard.mode, InputMode::History);
+        assert_eq!(view.anchor, Some(HistoryCopyPoint { row: 0, col: 0 }));
+        assert!(view.copy_completion.is_none());
+    }
+    let _ = dashboard.key(KeyCode::Char('y'));
+    assert!(dashboard.history.as_ref().unwrap().copy_job.is_some());
 }
 
 #[test]

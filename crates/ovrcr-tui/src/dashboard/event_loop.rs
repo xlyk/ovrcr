@@ -137,6 +137,7 @@ fn dashboard_loop<W: Write>(
         }
         wake.clear()?;
         pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
+        pending_redraw |= emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
         pending_redraw |= first_frame;
         first_frame = false;
 
@@ -147,7 +148,8 @@ fn dashboard_loop<W: Write>(
                 break;
             }
             pending_redraw = true;
-            pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
+            next_dashboard_messages(messages, dashboard, stream)?;
+            emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
         }
         if pending_redraw && Instant::now() >= next_frame_redraw {
             update_mouse_capture(terminal, dashboard, &mut mouse_enabled)?;
@@ -228,6 +230,7 @@ fn dashboard_loop<W: Write>(
             if wait.server_ready {
                 wake.clear()?;
                 pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
+                pending_redraw |= emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
             }
             if wait.timed_out {
                 pending_redraw = true;
@@ -239,7 +242,8 @@ fn dashboard_loop<W: Write>(
             // wake. Clear before draining so a producer racing this drain
             // leaves a wake for the next iteration.
             wake.clear()?;
-            next_dashboard_messages(messages, dashboard, stream)?;
+            let _ = next_dashboard_messages(messages, dashboard, stream)?;
+            let _ = emit_pending_history_copy_if_idle(terminal, stream, dashboard)?;
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -304,6 +308,35 @@ fn next_dashboard_messages(
         }
     }
     Ok(redraw)
+}
+
+pub(super) fn emit_pending_history_copy<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+    dashboard: &mut Dashboard,
+) -> bool {
+    let Some(text) = dashboard.take_pending_history_copy() else {
+        return false;
+    };
+    let result = write_clipboard(terminal.backend_mut(), &text);
+    dashboard.finish_copy(result);
+    true
+}
+
+fn emit_pending_history_copy_if_idle<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+) -> Result<bool> {
+    if event::poll(DASHBOARD_EVENT_PROBE)? {
+        return Ok(false);
+    }
+    let emitted = emit_pending_history_copy(terminal, dashboard);
+    if emitted {
+        if let Some(request) = dashboard.history_request_if_needed() {
+            write_frame(stream, &request)?;
+        }
+    }
+    Ok(emitted)
 }
 
 fn process_dashboard_input<W: Write>(

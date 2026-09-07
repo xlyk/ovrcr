@@ -14,7 +14,7 @@ use ovrcr::tui::{
     append_history_selection, dashboard_message_channel, encode_key, encode_paste,
     event_to_request, render_copy,
 };
-use ovrcr_terminal::history::FrozenHistory;
+use ovrcr_terminal::{history::FrozenHistory, vt100};
 use ratatui::backend::{Backend, CrosstermBackend, TestBackend};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
@@ -2472,13 +2472,21 @@ fn history_render_preserves_cells_and_clips() {
     assert!(dashboard_text.contains("loading"));
     assert!(dashboard_text.contains("row 1"));
     assert!(dashboard_text.contains("col 1"));
-    dashboard.history = Some(ovrcr::tui::HistoryView::new(history_opened(1), 0));
+    let mut loaded_history = ovrcr::tui::HistoryView::new(history_opened(1), 0);
+    loaded_history.cursor_target = None;
+    dashboard.history = Some(loaded_history);
     dashboard
         .history
         .as_mut()
         .unwrap()
         .pages
-        .push_back(history_page(0, 0, 4, vec![history_cell("payload", 1)]));
+        .push_back(history_complete_page(
+            0,
+            0,
+            1,
+            4,
+            vec![history_cell("payload", 1)],
+        ));
     dashboard_terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -2491,7 +2499,86 @@ fn history_render_preserves_cells_and_clips() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(dashboard_text.contains("HISTORY · frozen · loaded"));
-    dashboard.history = Some(ovrcr::tui::HistoryView::new(history_opened(1), 0));
+
+    let mut selected_row = special_history_row(15);
+    selected_row.cells[129] = history_cell("N", 1);
+    let mut selected_view = ovrcr::tui::HistoryView::new(history_opened(1), 0);
+    selected_view.anchor = Some(HistoryCopyPoint { row: 0, col: 126 });
+    selected_view.cursor = Some(HistoryCursor {
+        point: HistoryCopyPoint { row: 0, col: 129 },
+        row_width: 132,
+        cell_width: 1,
+    });
+    selected_view.pages.push_back(HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        start_col: 0,
+        rows: vec![selected_row.clone()],
+    });
+    let mut selected_terminal = Terminal::new(TestBackend::new(132, 1)).unwrap();
+    selected_terminal
+        .draw(|frame| {
+            ovrcr::tui::render_history(frame, Rect::new(0, 0, 132, 1), &selected_view);
+            for col in 126..=129 {
+                assert_eq!(frame.buffer_mut()[(col, 0)].fg, Color::Rgb(30, 30, 46));
+                assert_eq!(frame.buffer_mut()[(col, 0)].bg, Color::Rgb(148, 226, 213));
+            }
+        })
+        .unwrap();
+    for col in [126, 127, 129] {
+        assert_eq!(
+            selected_terminal.backend().buffer()[(col, 0)].fg,
+            Color::Rgb(30, 30, 46)
+        );
+        assert_eq!(
+            selected_terminal.backend().buffer()[(col, 0)].bg,
+            Color::Rgb(148, 226, 213)
+        );
+    }
+    assert_eq!(
+        selected_terminal.backend().buffer()[(127, 0)].symbol(),
+        "界"
+    );
+    assert_eq!(selected_terminal.backend().buffer()[(128, 0)].symbol(), " ");
+    assert_eq!(selected_terminal.backend().buffer()[(129, 0)].symbol(), "N");
+
+    let mut crossterm_bytes = Vec::new();
+    {
+        crossterm::style::force_color_output(true);
+        let backend = CrosstermBackend::new(&mut crossterm_bytes);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 132, 1)),
+            },
+        )
+        .unwrap();
+        terminal
+            .draw(|frame| {
+                ovrcr::tui::render_history(frame, Rect::new(0, 0, 132, 1), &selected_view)
+            })
+            .unwrap();
+    }
+    let mut round_trip = vt100::Parser::new(1, 132, 0);
+    round_trip.process(&crossterm_bytes);
+    for col in [126, 127, 129] {
+        let cell = round_trip.screen().cell(0, col).unwrap();
+        assert_eq!(cell.fgcolor(), vt100::Color::Rgb(30, 30, 46));
+        assert_eq!(cell.bgcolor(), vt100::Color::Rgb(148, 226, 213));
+    }
+    assert_eq!(round_trip.screen().cell(0, 127).unwrap().contents(), "界");
+    assert_eq!(round_trip.screen().cell(0, 129).unwrap().contents(), "N");
+    crossterm::style::force_color_output(false);
+
+    let mut clipped_terminal = Terminal::new(TestBackend::new(128, 1)).unwrap();
+    clipped_terminal
+        .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 128, 1), &selected_view))
+        .unwrap();
+    assert_eq!(clipped_terminal.backend().buffer()[(127, 0)].symbol(), " ");
+    let mut empty_history = ovrcr::tui::HistoryView::new(history_opened(1), 0);
+    empty_history.cursor_target = None;
+    dashboard.history = Some(empty_history);
     dashboard
         .history
         .as_mut()

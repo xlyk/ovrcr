@@ -892,6 +892,193 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
 }
 
 #[test]
+fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let fifo = fixture._root.path().join("historical-copy-trigger.fifo");
+    let fifo_arg = fifo.to_string_lossy().into_owned();
+    let output = fixture.cli(&[
+        "new",
+        "--project",
+        "fixture",
+        "--workspace",
+        "work",
+        "--name",
+        "history-copy",
+        "--",
+        "sh",
+        "-c",
+        r##"fifo="$1"; rm -f "$fifo"; mkfifo "$fifo"; printf 'INITIAL_READY\n'; IFS= read -r token < "$fifo"; printf '\033[2J\033[H'; xs=$(printf '%*s' 125 '' | tr ' ' x); i=0; while [ "$i" -lt 40 ]; do printf 'ROW_%03d%s\r\n' "$i" "$xs"; i=$((i+1)); done; printf 'HISTORY_DONE\n'; while IFS= read -r token; do printf 'LIVE_%s\n' "$token"; done < "$fifo""##,
+        "history-copy-child",
+        &fifo_arg,
+    ])?;
+    require_success(output, "historical copy session")?;
+    let history_id = fixture
+        .list()?
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.name == "history-copy")
+        .context("historical copy session id")?
+        .id;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    let server_pid = fixture.server.as_ref().map(Child::id);
+    let server_pgid = server_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!(
+        "historical copy fixture root: {} server pid/pgid: {server_pid:?}/{server_pgid:?} session id: {:?} groups: {:?}",
+        fixture._root.path().display(),
+        history_id,
+        fixture.managed_pgids,
+    );
+    let fifo_deadline = Instant::now() + Duration::from_secs(3);
+    while !fifo.exists() && Instant::now() < fifo_deadline {
+        thread::yield_now();
+    }
+    if !fifo.exists() {
+        bail!("historical copy child did not create its FIFO");
+    }
+    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    let mut ready_seen = false;
+    while Instant::now() < ready_deadline {
+        if fixture.read_terminal(history_id)?.contains("INITIAL_READY") {
+            ready_seen = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        ready_seen,
+        "historical copy child did not render its ready marker"
+    );
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 180,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    let outer_pid = dashboard
+        .child
+        .as_ref()
+        .and_then(|child| child.process_id());
+    let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
+    eprintln!("historical copy outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
+    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.click_visible_text("history-copy")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("INITIAL_READY"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+
+    write_fifo_bounded(&fifo, b"GO\n", Duration::from_secs(3))?;
+    let history_done_deadline = Instant::now() + Duration::from_secs(3);
+    let mut history_done = false;
+    while Instant::now() < history_done_deadline {
+        if fixture.read_terminal(history_id)?.contains("HISTORY_DONE") {
+            history_done = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        history_done,
+        "historical copy child did not render all rows"
+    );
+
+    dashboard.send(b"\x1b[5~")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY · frozen"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY · frozen · loaded"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b[H")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("ROW_000")
+                && screen.contains("row 1-")
+                && screen.contains("HISTORY  arrows/hjkl scroll")
+        },
+        Duration::from_secs(3),
+    )?;
+    for row in 1..=15 {
+        dashboard.send(b"j")?;
+        let expected = format!("row {}-", row + 1);
+        dashboard.wait_for_screen(
+            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            Duration::from_secs(3),
+        )?;
+    }
+    for col in 1..=126 {
+        dashboard.send(b"l")?;
+        let expected = format!("col {}-", col + 1);
+        dashboard.wait_for_screen(
+            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            Duration::from_secs(3),
+        )?;
+    }
+    dashboard.send(b" ")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 16:127"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"j")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 17:127"),
+        Duration::from_secs(3),
+    )?;
+    for col in 128..=130 {
+        dashboard.send(b"l")?;
+        let expected = format!("HISTORY SELECT  row 17:{col}");
+        dashboard.wait_for_screen(|screen| screen.contains(&expected), Duration::from_secs(3))?;
+    }
+
+    let expected = format!("{}\nROW_016{}", "x".repeat(6), "x".repeat(123));
+    let mut expected_osc = Vec::new();
+    ovrcr::tui::write_clipboard(&mut expected_osc, &expected)?;
+    dashboard.send(b"y")?;
+    dashboard.wait_for_output(&expected_osc, Duration::from_secs(3))?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Clipboard request sent; paste to verify"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"j")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("HISTORY SELECT  row 18:130"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("j/k/↑/↓") && !screen.contains("HISTORY SELECT"),
+        Duration::from_secs(3),
+    )?;
+    let detach_result = dashboard.detach();
+    eprintln!("historical copy outer dashboard detach: {detach_result:?}");
+    detach_result?;
+    let shutdown_result = fixture.shutdown();
+    eprintln!("historical copy fixture shutdown: {shutdown_result:?}");
+    shutdown_result?;
+    Ok(())
+}
+
+#[test]
 fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
