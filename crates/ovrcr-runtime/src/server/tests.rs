@@ -1046,7 +1046,11 @@ fn history_capture_orders_with_output() {
         .collect::<Vec<_>>();
     assert!(matches!(
         &messages[0],
-        ServerMessage::Event(ServerEvent::Output { session, bytes })
+        ServerMessage::Event(ServerEvent::Output {
+            session,
+            revision: _,
+            bytes,
+        })
             if *session == id && bytes == b"A"
     ));
     assert!(matches!(
@@ -1058,7 +1062,11 @@ fn history_capture_orders_with_output() {
     ));
     assert!(matches!(
         &messages[2],
-        ServerMessage::Event(ServerEvent::Output { session, bytes })
+        ServerMessage::Event(ServerEvent::Output {
+            session,
+            revision: _,
+            bytes,
+        })
             if *session == id && bytes == b"B"
     ));
     let page = match &messages[3] {
@@ -1105,6 +1113,7 @@ fn dashboard_overflow_closes_affected_connection() {
         &state,
         ServerMessage::Event(ServerEvent::ScreenDirty {
             session: SessionId(2),
+            revision: 0,
         }),
     );
     let mut byte = [0_u8; 1];

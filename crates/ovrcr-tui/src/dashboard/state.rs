@@ -1452,6 +1452,7 @@ impl Dashboard {
                 Response::Hierarchy(hierarchy) => outgoing.extend(self.update_hierarchy(hierarchy)),
                 Response::Screen {
                     session,
+                    revision: _,
                     size,
                     bytes,
                 } => {
@@ -1570,7 +1571,11 @@ impl Dashboard {
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     outgoing.extend(self.update_hierarchy(hierarchy));
                 }
-                ServerEvent::Output { session, bytes } if self.selected == Some(session) => {
+                ServerEvent::Output {
+                    session,
+                    revision: _,
+                    bytes,
+                } if self.selected == Some(session) => {
                     self.parser.process(&bytes);
                     if let Some(view) = self.history.as_mut() {
                         if view.opened.session == session {
@@ -1578,7 +1583,10 @@ impl Dashboard {
                         }
                     }
                 }
-                ServerEvent::ScreenDirty { session } if self.selected == Some(session) => {
+                ServerEvent::ScreenDirty {
+                    session,
+                    revision: _,
+                } if self.selected == Some(session) => {
                     if let Some(view) = self.history.as_mut() {
                         view.new_output = true;
                     }

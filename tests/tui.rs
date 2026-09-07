@@ -421,6 +421,7 @@ fn copy_ready_dashboard() -> Dashboard {
         request_id: 900,
         response: Response::Screen {
             session: id,
+            revision: 0,
             size,
             bytes: b"abc".to_vec(),
         },
@@ -940,6 +941,7 @@ fn agent_hook_summary_updates_drive_animation() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
+        revision: 0,
         bytes: b"PTY output\x1b]52;c;V0FJVElORw==\x1b\\".to_vec(),
     }));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
@@ -1243,6 +1245,7 @@ fn copy_mode_routes_keys_and_freezes_output() {
         request_id: 900,
         response: Response::Screen {
             session: id,
+            revision: 0,
             size: dashboard.pane_size,
             bytes: b"abc".to_vec(),
         },
@@ -1288,6 +1291,7 @@ fn copy_mode_routes_keys_and_freezes_output() {
     );
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        revision: 0,
         bytes: b"\rNEW".to_vec(),
     }));
     assert!(dashboard.parser.screen().contents().contains("NEW"));
@@ -1581,6 +1585,7 @@ fn copy_render_tiny_pane_and_footer() {
     let id = dashboard.selected.unwrap();
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        revision: 0,
         bytes: b"\rLIVE".to_vec(),
     }));
     assert_eq!(
@@ -1779,6 +1784,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: 901,
         response: Response::Screen {
             session: first,
+            revision: 0,
             size: dashboard.pane_size,
             bytes: b"late-first".to_vec(),
         },
@@ -1788,6 +1794,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: 901,
         response: Response::Screen {
             session: SessionId(5),
+            revision: 0,
             size: dashboard.pane_size,
             bytes: b"old-request".to_vec(),
         },
@@ -1797,6 +1804,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: 902,
         response: Response::Screen {
             session: SessionId(5),
+            revision: 0,
             size: dashboard.pane_size,
             bytes: b"matching".to_vec(),
         },
@@ -1819,6 +1827,7 @@ fn copy_mode_keeps_alternate_and_resync_snapshots() {
         request_id: 903,
         response: Response::Screen {
             session: id,
+            revision: 0,
             size,
             bytes: b"\x1b[?1049hALT".to_vec(),
         },
@@ -1830,6 +1839,7 @@ fn copy_mode_keeps_alternate_and_resync_snapshots() {
     let requests =
         dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
             session: id,
+            revision: 0,
         }));
     assert!(matches!(
         requests.as_slice(),
@@ -1842,12 +1852,14 @@ fn copy_mode_keeps_alternate_and_resync_snapshots() {
         request_id: requests[0].request_id,
         response: Response::Screen {
             session: id,
+            revision: 0,
             size,
             bytes: b"\x1b[?1049lPRIMARY".to_vec(),
         },
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        revision: 0,
         bytes: b"-LIVE".to_vec(),
     }));
     assert!(
@@ -2227,6 +2239,7 @@ fn history_live_output_preserves_anchor() {
     let before = dashboard.history.clone().expect("history opened");
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        revision: 0,
         bytes: b"LIVE_MARKER".to_vec(),
     }));
     let after = dashboard.history.as_ref().expect("history remains open");
@@ -2238,6 +2251,7 @@ fn history_live_output_preserves_anchor() {
     assert!(dashboard.parser.screen().contents().contains("LIVE_MARKER"));
     let select = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(1),
+        revision: 0,
     }));
     assert!(matches!(
         select.as_slice(),
@@ -2254,6 +2268,7 @@ fn history_live_output_preserves_anchor() {
         request_id: select[0].request_id,
         response: Response::Screen {
             session: SessionId(1),
+            revision: 0,
             size: TerminalSize { rows: 12, cols: 30 },
             bytes: b"SCREEN_MARKER".to_vec(),
         },
@@ -3105,6 +3120,7 @@ fn copy_history_range_survives_live_eviction() {
     live_parser.process(live_bytes.as_bytes());
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        revision: 0,
         bytes: live_bytes.into_bytes(),
     }));
     assert!(dashboard.history.as_ref().unwrap().new_output);
@@ -5720,6 +5736,7 @@ fn dashboard_reader_channel_applies_bounded_backpressure() {
         sender
             .send(ServerMessage::Event(ServerEvent::ScreenDirty {
                 session: SessionId(1),
+                revision: 0,
             }))
             .unwrap();
     }

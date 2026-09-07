@@ -288,11 +288,13 @@ fn dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open() {
     d.ctrl('t');
     d.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        revision: 0,
         bytes: b"still draining".to_vec(),
     }));
     assert!(d.parser.screen().contents().contains("still draining"));
     let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(1),
+        revision: 0,
     }));
     assert_eq!(requests.len(), 1);
     assert!(matches!(requests[0].request, Request::Select { .. }));

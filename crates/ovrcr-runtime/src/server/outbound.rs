@@ -108,6 +108,7 @@ impl DashboardSink {
                 request_id,
                 response: Response::Screen {
                     session,
+                    revision: 0,
                     size,
                     bytes,
                 },

@@ -325,7 +325,11 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
         if state.selected.lock().unwrap().as_ref() == Some(&id) {
             dashboard_try_send(
                 state,
-                ServerMessage::Event(ServerEvent::Output { session: id, bytes }),
+                ServerMessage::Event(ServerEvent::Output {
+                    session: id,
+                    revision: 0,
+                    bytes,
+                }),
             );
         }
     } else {

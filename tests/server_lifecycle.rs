@@ -1364,9 +1364,11 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
                 response: Response::Screen { bytes, .. },
                 ..
             }
-            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, session: _ })
-                if String::from_utf8_lossy(&bytes).contains("READY") =>
-            {
+            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output {
+                bytes,
+                session: _,
+                revision: _,
+            }) if String::from_utf8_lossy(&bytes).contains("READY") => {
                 ready = true;
                 break;
             }
@@ -2345,7 +2347,12 @@ impl HistoryDashboardParser {
     }
 
     fn forward(&mut self, message: &ServerMessage) {
-        if let ServerMessage::Event(ServerEvent::Output { session, bytes }) = message {
+        if let ServerMessage::Event(ServerEvent::Output {
+            session,
+            bytes,
+            revision: _,
+        }) = message
+        {
             self.screens
                 .entry(*session)
                 .or_insert_with(|| vt100::Parser::new(24, 80, HISTORY_ROWS))
@@ -4045,6 +4052,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
         match dashboard.next(Instant::now() + Duration::from_millis(50)) {
             Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
                 session: dirty_session,
+                revision: _,
             }))) if dirty_session == session => dirty = true,
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -4176,11 +4184,10 @@ fn slow_dashboard_recovers_after_output_burst() {
     let mut saw_dirty = false;
     while !saw_dirty {
         match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
-            ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session })
-                if session == burst =>
-            {
-                saw_dirty = true
-            }
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                session,
+                revision: _,
+            }) if session == burst => saw_dirty = true,
             _ => {}
         }
     }
@@ -4213,11 +4220,10 @@ fn slow_dashboard_recovers_after_output_burst() {
     let quiet_deadline = Instant::now() + Duration::from_millis(250);
     while Instant::now() < quiet_deadline {
         match read_frame::<ServerMessage>(&mut dashboard) {
-            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session }))
-                if session == burst =>
-            {
-                dirty_count += 1
-            }
+            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                session,
+                revision: _,
+            })) if session == burst => dirty_count += 1,
             Ok(_) => {}
             Err(error)
                 if matches!(

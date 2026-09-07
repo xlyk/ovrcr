@@ -71,7 +71,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                                     (outbound.message, outbound.completion, None)
                                 }
                                 DashboardDelivery::Dirty(session) => (
-                                    ServerMessage::Event(ServerEvent::ScreenDirty { session }),
+                                    ServerMessage::Event(ServerEvent::ScreenDirty {
+                                        session,
+                                        revision: 0,
+                                    }),
                                     None,
                                     Some(session),
                                 ),
@@ -468,6 +471,10 @@ pub(super) fn handle_request_with_id(
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")
             }
         }
+        Request::SetView { .. } => error_response(
+            ErrorCode::InvalidRequest,
+            "SetView is not supported until split-pane runtime support is available",
+        ),
     }
 }
 
