@@ -88,7 +88,7 @@ pub fn event_to_request(
     event: Event,
     request_id: u64,
 ) -> Option<ClientMessage> {
-    if dashboard.mode != InputMode::Terminal {
+    if dashboard.palette.is_some() || dashboard.mode != InputMode::Terminal {
         return None;
     }
     match event {

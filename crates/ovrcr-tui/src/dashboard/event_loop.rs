@@ -61,6 +61,8 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
             dashboard.handle_server_message(message);
         }
     }
+    // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
+    dashboard.next_request_id = 4;
 
     let mut guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(guard.writer_mut());
