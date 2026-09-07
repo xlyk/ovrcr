@@ -34,6 +34,7 @@ pub enum InputMode {
     Browse,
     Terminal,
     History,
+    Copy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub enum DashboardAction {
     Detach,
     EnterBrowse,
     PtyBytes(Vec<u8>),
+    CopyText(String),
     Request(ClientMessage),
     RequestBatch(Vec<ClientMessage>),
 }
@@ -70,12 +72,16 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    pub copy: Option<CopySelection>,
+    pub copy_notice: Option<String>,
     pub history: Option<HistoryView>,
     pub history_begin_request: Option<PendingHistoryBegin>,
     tree_offset: usize,
     next_request_id: u64,
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
+    screen_session: Option<SessionId>,
+    pending_screen: Option<(SessionId, u64)>,
 }
 
 thread_local! {

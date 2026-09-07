@@ -343,6 +343,7 @@ fn process_dashboard_input<W: Write>(
             }
             Ok(false)
         }
+        DashboardAction::CopyText(_) => Ok(false),
         DashboardAction::Request(request) => {
             write_frame(stream, &request)?;
             Ok(false)

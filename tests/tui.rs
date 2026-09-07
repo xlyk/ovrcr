@@ -111,6 +111,22 @@ fn dashboard_fixture() -> Dashboard {
     dashboard
 }
 
+fn copy_ready_dashboard() -> Dashboard {
+    let mut dashboard = dashboard_fixture();
+    let id = dashboard.selected.unwrap();
+    let size = dashboard.pane_size;
+    dashboard.select_request(id, 900);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 900,
+        response: Response::Screen {
+            session: id,
+            size,
+            bytes: b"abc".to_vec(),
+        },
+    });
+    dashboard
+}
+
 fn history_opened(total_rows: u32) -> HistoryOpened {
     HistoryOpened {
         session: SessionId(1),
@@ -698,6 +714,231 @@ fn browse_and_terminal_modes_keep_input_ownership_clear() {
         dashboard.key_action(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
         ovrcr::tui::DashboardAction::Detach
     );
+}
+
+#[test]
+fn copy_mode_routes_keys_and_freezes_output() {
+    let mut dashboard = dashboard_fixture();
+    let id = dashboard.selected.unwrap();
+    dashboard.select_request(id, 900);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 900,
+        response: Response::Screen {
+            session: id,
+            size: dashboard.pane_size,
+            bytes: b"abc".to_vec(),
+        },
+    });
+    dashboard.key(KeyCode::Char('['));
+    dashboard.key(KeyCode::Home);
+    dashboard.key(KeyCode::Char('v'));
+    dashboard.key(KeyCode::Right);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('y')),
+        ovrcr::tui::DashboardAction::CopyText("ab".into())
+    );
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: id,
+        bytes: b"\rNEW".to_vec(),
+    }));
+    assert!(dashboard.parser.screen().contents().contains("NEW"));
+    assert_eq!(
+        dashboard.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("ab")
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("secret".into())),
+        ovrcr::tui::DashboardAction::None
+    );
+}
+
+#[test]
+fn copy_mode_cancels_at_identity_boundaries() {
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.copy.is_none());
+
+    let mut dashboard = copy_ready_dashboard();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert!(
+        dashboard
+            .history_begin_request
+            .as_ref()
+            .is_some_and(|pending| !pending.cancelled)
+    );
+    dashboard.key(KeyCode::Char('['));
+    assert!(
+        dashboard
+            .history_begin_request
+            .as_ref()
+            .is_some_and(|pending| pending.cancelled)
+    );
+    let release = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert!(matches!(
+        release.as_slice(),
+        [ClientMessage {
+            request: Request::HistoryEnd { .. },
+            ..
+        }]
+    ));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
+    assert!(dashboard.copy.is_some());
+
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::PageUp);
+    dashboard.key(KeyCode::Char('['));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "cancelled".into(),
+        },
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
+    assert!(dashboard.copy.is_some());
+
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    dashboard.select_session(SessionId(5));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.copy.is_none());
+
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    dashboard.resize_request(TerminalSize { rows: 20, cols: 40 }, 901);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.copy.is_none());
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("Copy cancelled: terminal resized")
+    );
+
+    for key in [KeyCode::Char('q'), KeyCode::Char('\u{7}')] {
+        let mut dashboard = copy_ready_dashboard();
+        dashboard.key(KeyCode::Char('['));
+        assert_eq!(dashboard.key(key), ovrcr::tui::DashboardAction::Redraw);
+        assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+        assert!(dashboard.copy.is_none());
+    }
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    assert_eq!(dashboard.ctrl('g'), ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.copy.is_none());
+
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    let hierarchy = dashboard.hierarchy.clone();
+    let mut removed = hierarchy;
+    removed.projects[1].workspaces[1]
+        .sessions
+        .retain(|session| session.id != SessionId(1));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(removed)));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(dashboard.copy.is_none());
+}
+
+#[test]
+fn copy_mode_waits_for_matching_screen() {
+    let mut dashboard = dashboard_fixture();
+    let first = dashboard.selected.unwrap();
+    dashboard.select_request(first, 901);
+    dashboard.select_request(SessionId(5), 902);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 901,
+        response: Response::Screen {
+            session: first,
+            size: dashboard.pane_size,
+            bytes: b"late-first".to_vec(),
+        },
+    });
+    assert!(!dashboard.parser.screen().contents().contains("late-first"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 901,
+        response: Response::Screen {
+            session: SessionId(5),
+            size: dashboard.pane_size,
+            bytes: b"old-request".to_vec(),
+        },
+    });
+    assert!(!dashboard.parser.screen().contents().contains("old-request"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 902,
+        response: Response::Screen {
+            session: SessionId(5),
+            size: dashboard.pane_size,
+            bytes: b"matching".to_vec(),
+        },
+    });
+    assert!(dashboard.parser.screen().contents().contains("matching"));
+    assert_eq!(
+        dashboard.key(KeyCode::Char('[')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
+}
+
+#[test]
+fn copy_mode_keeps_alternate_and_resync_snapshots() {
+    let mut dashboard = dashboard_fixture();
+    let id = dashboard.selected.unwrap();
+    let size = dashboard.pane_size;
+    dashboard.select_request(id, 903);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 903,
+        response: Response::Screen {
+            session: id,
+            size,
+            bytes: b"\x1b[?1049hALT".to_vec(),
+        },
+    });
+    dashboard.key(KeyCode::Char('['));
+    dashboard.key(KeyCode::Home);
+    dashboard.key(KeyCode::Char('v'));
+    dashboard.key(KeyCode::Right);
+    let requests =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+            session: id,
+        }));
+    assert!(matches!(
+        requests.as_slice(),
+        [ClientMessage {
+            request: Request::Select { session, .. },
+            ..
+        }] if *session == id
+    ));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: requests[0].request_id,
+        response: Response::Screen {
+            session: id,
+            size,
+            bytes: b"\x1b[?1049lPRIMARY".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: id,
+        bytes: b"-LIVE".to_vec(),
+    }));
+    assert!(
+        dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("PRIMARY-LIVE")
+    );
+    assert_eq!(
+        dashboard.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("AL")
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Copy);
 }
 
 #[test]

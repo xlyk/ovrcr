@@ -1,3 +1,4 @@
+use super::copy::{CopyMotion, CopySelection};
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, is_browse_key};
 use super::render::{
@@ -11,13 +12,15 @@ use crate::protocol::{
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ovrcr_terminal::encode_paste;
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
+
+const MAX_COPY_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryBegin {
@@ -113,12 +116,16 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
+            copy: None,
+            copy_notice: None,
             history: None,
             history_begin_request: None,
             tree_offset: 0,
             next_request_id: 1,
             history_page_error: false,
             history_end_after_selection: None,
+            screen_session: None,
+            pending_screen: None,
         }
     }
 
@@ -292,6 +299,7 @@ impl Dashboard {
                         DashboardAction::EnterBrowse
                     }
                     KeyCode::Char('q') => DashboardAction::Detach,
+                    KeyCode::Char('[') if key.kind == KeyEventKind::Press => self.begin_copy(),
                     KeyCode::PageUp => self.begin_history_request(),
                     KeyCode::Char('p') => self.pause_request(true),
                     KeyCode::Char('r') => self.pause_request(false),
@@ -332,7 +340,133 @@ impl Dashboard {
                 }
             }
             InputMode::History => self.history_key_action(key),
+            InputMode::Copy => self.copy_key_action(key),
         }
+    }
+
+    fn begin_copy(&mut self) -> DashboardAction {
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        let Some(session) = self.selected else {
+            self.error = Some("Waiting for terminal screen".into());
+            return DashboardAction::Redraw;
+        };
+        if self.screen_session != Some(session)
+            || self.pending_screen.is_some()
+            || find_session(self, session).is_none()
+        {
+            self.error = Some("Waiting for terminal screen".into());
+            return DashboardAction::Redraw;
+        }
+        self.error = None;
+        self.copy_notice = None;
+        self.copy = Some(CopySelection::capture(session, self.parser.screen()));
+        self.mode = InputMode::Copy;
+        DashboardAction::Redraw
+    }
+
+    fn copy_key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.kind == KeyEventKind::Release {
+            return DashboardAction::None;
+        }
+        if key.kind == KeyEventKind::Press && is_browse_key(key) {
+            self.cancel_copy(None);
+            return DashboardAction::Redraw;
+        }
+        if key.kind != KeyEventKind::Press && !matches!(key.kind, KeyEventKind::Repeat) {
+            return DashboardAction::None;
+        }
+        if key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            return DashboardAction::None;
+        }
+        if key.kind != KeyEventKind::Press {
+            return match key.code {
+                KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Char('h' | 'j' | 'k' | 'l')
+                | KeyCode::Home
+                | KeyCode::Char('0')
+                | KeyCode::End
+                | KeyCode::Char('$')
+                | KeyCode::Char('g' | 'G') => self.copy_move(key.code),
+                _ => DashboardAction::None,
+            };
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.cancel_copy(None);
+                DashboardAction::Redraw
+            }
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Char('h' | 'j' | 'k' | 'l')
+            | KeyCode::Home
+            | KeyCode::Char('0')
+            | KeyCode::End
+            | KeyCode::Char('$')
+            | KeyCode::Char('g' | 'G') => self.copy_move(key.code),
+            KeyCode::Char(' ' | 'v') => {
+                if let Some(copy) = self.copy.as_mut() {
+                    copy.set_anchor();
+                    self.copy_notice = None;
+                    DashboardAction::Redraw
+                } else {
+                    DashboardAction::None
+                }
+            }
+            KeyCode::Char('y') | KeyCode::Enter => {
+                let Some(text) = self.copy.as_ref().and_then(CopySelection::selected_text) else {
+                    self.copy_notice = Some("Set an anchor with Space".into());
+                    return DashboardAction::Redraw;
+                };
+                if text.is_empty() {
+                    self.copy_notice = Some("Nothing to copy".into());
+                    return DashboardAction::Redraw;
+                }
+                if text.len() > MAX_COPY_BYTES {
+                    self.copy_notice = Some("Selection exceeds 64 KiB".into());
+                    return DashboardAction::Redraw;
+                }
+                self.copy_notice = None;
+                DashboardAction::CopyText(text)
+            }
+            _ => DashboardAction::None,
+        }
+    }
+
+    fn copy_move(&mut self, code: KeyCode) -> DashboardAction {
+        let Some(copy) = self.copy.as_mut() else {
+            self.mode = InputMode::Browse;
+            return DashboardAction::None;
+        };
+        let motion = match code {
+            KeyCode::Left | KeyCode::Char('h') => CopyMotion::Left,
+            KeyCode::Right | KeyCode::Char('l') => CopyMotion::Right,
+            KeyCode::Up | KeyCode::Char('k') => CopyMotion::Up,
+            KeyCode::Down | KeyCode::Char('j') => CopyMotion::Down,
+            KeyCode::Home | KeyCode::Char('0') => CopyMotion::RowStart,
+            KeyCode::End | KeyCode::Char('$') => CopyMotion::RowEnd,
+            KeyCode::Char('g') => CopyMotion::First,
+            KeyCode::Char('G') => CopyMotion::Last,
+            _ => return DashboardAction::None,
+        };
+        copy.move_cursor(motion);
+        self.copy_notice = None;
+        DashboardAction::Redraw
+    }
+
+    pub fn cancel_copy(&mut self, notice: Option<&str>) {
+        self.copy = None;
+        self.mode = InputMode::Browse;
+        self.copy_notice = notice.map(str::to_owned);
     }
 
     fn begin_history_request(&mut self) -> DashboardAction {
@@ -422,6 +556,7 @@ impl Dashboard {
     }
 
     fn release_for_selection_change(&mut self) {
+        self.cancel_copy(None);
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -555,8 +690,7 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if self.mode == InputMode::Terminal || mouse.kind != MouseEventKind::Down(MouseButton::Left)
-        {
+        if self.mode != InputMode::Browse || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return DashboardAction::None;
         }
         let sidebar = sidebar_area(area);
@@ -640,6 +774,7 @@ impl Dashboard {
             } => match response {
                 Response::Hierarchy(hierarchy) => {
                     self.hierarchy = hierarchy;
+                    self.cancel_copy_if_session_missing();
                     self.update_mode_for_selected_phase();
                     if self
                         .selected
@@ -656,7 +791,12 @@ impl Dashboard {
                     size,
                     bytes,
                 } => {
-                    if self.selected == Some(session) {
+                    let matched_screen = self.pending_screen == Some((session, request_id));
+                    if matched_screen {
+                        self.pending_screen = None;
+                        self.screen_session = Some(session);
+                    }
+                    if matched_screen && self.selected == Some(session) {
                         self.pane_size = size;
                         self.parser = vt100::Parser::new(size.rows, size.cols, 0);
                         self.parser.process(&bytes);
@@ -688,6 +828,12 @@ impl Dashboard {
                 }
                 Response::Error { code, message } => {
                     let mut matched_history = false;
+                    let matched_screen = self
+                        .pending_screen
+                        .is_some_and(|(_, pending_id)| pending_id == request_id);
+                    if matched_screen {
+                        self.pending_screen = None;
+                    }
                     if self
                         .history_begin_request
                         .as_ref()
@@ -709,7 +855,7 @@ impl Dashboard {
                         matched_history = true;
                     }
                     self.error = Some(format!("{code:?}: {message}"));
-                    if matched_history {
+                    if matched_history && self.copy.is_none() {
                         self.mode = if self.history.is_some() {
                             InputMode::History
                         } else {
@@ -721,6 +867,7 @@ impl Dashboard {
             ServerMessage::Event(event) => match event {
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     self.hierarchy = hierarchy;
+                    self.cancel_copy_if_session_missing();
                     self.update_mode_for_selected_phase();
                     if self
                         .selected
@@ -809,7 +956,14 @@ impl Dashboard {
     }
 
     pub fn select_request(&mut self, id: SessionId, request_id: u64) -> ClientMessage {
+        if self.screen_session != Some(id) {
+            if self.copy.is_some() {
+                self.cancel_copy(None);
+            }
+            self.screen_session = None;
+        }
         self.selected = Some(id);
+        self.pending_screen = Some((id, request_id));
         ClientMessage {
             request_id,
             request: Request::Select {
@@ -822,6 +976,9 @@ impl Dashboard {
     pub fn resize_request(&mut self, size: TerminalSize, request_id: u64) -> Option<ClientMessage> {
         if size == self.pane_size {
             return None;
+        }
+        if self.copy.is_some() {
+            self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
         self.pane_size = size;
         self.parser.screen_mut().set_size(size.rows, size.cols);
@@ -864,8 +1021,20 @@ impl Dashboard {
     }
 
     fn update_mode_for_selected_phase(&mut self) {
-        if self.mode != InputMode::History && self.selected_phase() == Some(&SessionPhase::Paused) {
+        if self.mode != InputMode::History
+            && self.mode != InputMode::Copy
+            && self.selected_phase() == Some(&SessionPhase::Paused)
+        {
             self.mode = InputMode::Browse;
+        }
+    }
+
+    fn cancel_copy_if_session_missing(&mut self) {
+        let Some(session) = self.copy.as_ref().map(|copy| copy.session) else {
+            return;
+        };
+        if find_session(self, session).is_none() {
+            self.cancel_copy(None);
         }
     }
 
