@@ -2,13 +2,13 @@ use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
-    HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, PAGE_BYTES, PAGE_COLS, PAGE_ROWS,
-    Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
+    HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES,
+    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::ffi::OsString;
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
@@ -2214,6 +2214,129 @@ struct HistoryDashboardParser {
     screens: std::collections::HashMap<SessionId, vt100::Parser>,
 }
 
+struct HistoryFrameReader {
+    header: [u8; 4],
+    header_len: usize,
+    body: Vec<u8>,
+    body_len: usize,
+}
+
+impl HistoryFrameReader {
+    fn new() -> Self {
+        Self {
+            header: [0; 4],
+            header_len: 0,
+            body: Vec::new(),
+            body_len: 0,
+        }
+    }
+
+    fn read_some(
+        stream: &mut UnixStream,
+        bytes: &mut [u8],
+        deadline: Instant,
+    ) -> std::io::Result<Option<usize>> {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            stream.set_read_timeout(Some(remaining))?;
+            match stream.read(bytes) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "dashboard closed while reading a history frame",
+                    ));
+                }
+                Ok(read) => return Ok(Some(read)),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) && Instant::now() < deadline => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn next(
+        &mut self,
+        stream: &mut UnixStream,
+        deadline: Instant,
+    ) -> std::io::Result<Option<ServerMessage>> {
+        while self.header_len < self.header.len() {
+            let read = match Self::read_some(stream, &mut self.header[self.header_len..], deadline)?
+            {
+                Some(read) => read,
+                None => return Ok(None),
+            };
+            self.header_len += read;
+        }
+
+        let frame_len = u32::from_be_bytes(self.header) as usize;
+        if frame_len > MAX_FRAME_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("history frame too large: {frame_len} bytes"),
+            ));
+        }
+        if self.body.len() != frame_len {
+            self.body.resize(frame_len, 0);
+        }
+        while self.body_len < frame_len {
+            let read = match Self::read_some(stream, &mut self.body[self.body_len..], deadline)? {
+                Some(read) => read,
+                None => return Ok(None),
+            };
+            self.body_len += read;
+        }
+
+        let mut frame = Vec::with_capacity(4 + frame_len);
+        frame.extend_from_slice(&self.header);
+        frame.extend_from_slice(&self.body);
+        let message = read_frame::<ServerMessage>(&mut Cursor::new(frame)).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+        })?;
+        self.header_len = 0;
+        self.body.clear();
+        self.body_len = 0;
+        Ok(Some(message))
+    }
+}
+
+struct HistoryConnection {
+    stream: UnixStream,
+    frames: HistoryFrameReader,
+    parser: HistoryDashboardParser,
+}
+
+impl HistoryConnection {
+    fn connect(socket: &Path) -> Self {
+        Self {
+            stream: UnixStream::connect(socket).unwrap(),
+            frames: HistoryFrameReader::new(),
+            parser: HistoryDashboardParser::new(),
+        }
+    }
+
+    fn next(&mut self, deadline: Instant) -> std::io::Result<Option<ServerMessage>> {
+        let message = self.frames.next(&mut self.stream, deadline)?;
+        if let Some(message) = &message {
+            self.parser.forward(message);
+        }
+        Ok(message)
+    }
+}
+
 impl HistoryDashboardParser {
     fn new() -> Self {
         Self {
@@ -2231,9 +2354,9 @@ impl HistoryDashboardParser {
     }
 }
 
-fn history_request(stream: &mut UnixStream, id: u64, request: Request) -> Response {
+fn history_request(connection: &mut HistoryConnection, id: u64, request: Request) -> Response {
     write_frame(
-        stream,
+        &mut connection.stream,
         &ClientMessage {
             request_id: id,
             request,
@@ -2241,33 +2364,20 @@ fn history_request(stream: &mut UnixStream, id: u64, request: Request) -> Respon
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
-    let mut parser = HistoryDashboardParser::new();
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(
-            !remaining.is_zero(),
+            Instant::now() < deadline,
             "history response exceeded two-second deadline"
         );
-        stream
-            .set_read_timeout(Some(remaining.min(Duration::from_millis(100))))
-            .unwrap();
-        match read_frame::<ServerMessage>(stream) {
-            Ok(ServerMessage::Response {
+        match connection.next(deadline).unwrap_or_else(|error| {
+            panic!("history request {id} failed: {error}");
+        }) {
+            None => panic!("history response {id} exceeded two-second deadline"),
+            Some(ServerMessage::Response {
                 request_id,
                 response,
             }) if request_id == id => return response,
-            Ok(message) => parser.forward(&message),
-            Err(error)
-                if error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| {
-                        matches!(
-                            error.kind(),
-                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                        )
-                    }) => {}
-            Err(error) => panic!("history request {id} failed: {error:#}"),
+            Some(_) => {}
         }
     }
 }
@@ -2286,7 +2396,7 @@ fn history_response_size(id: u64, response: &Response) -> usize {
 }
 
 fn history_page_all(
-    stream: &mut UnixStream,
+    connection: &mut HistoryConnection,
     session: SessionId,
     snapshot: HistorySnapshotId,
     opened: &HistoryOpened,
@@ -2300,7 +2410,7 @@ fn history_page_all(
         let id = *next_id;
         *next_id += 1;
         let response = history_request(
-            stream,
+            connection,
             id,
             Request::HistoryPage {
                 session,
@@ -2361,7 +2471,7 @@ fn history_ready_shell(fixture: &ControlFixture) -> SessionId {
         vec![
             "sh".into(),
             "-c".into(),
-            "printf 'OLD_VISIBLE\nHISTORY_READY\n'; read gate; i=0; while [ \"$i\" -lt 700 ]; do printf 'NEW_%04d\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\n'".into(),
+            "printf 'OLD_VISIBLE\nHISTORY_READY\n'; read gate; i=0; while [ \"$i\" -lt 600 ]; do printf 'NEW_%04d\n' \"$i\"; i=$((i+1)); done; printf 'DETACHED_OFFSCREEN_000\n'; i=0; while [ \"$i\" -lt 40 ]; do printf 'DETACHED_TAIL_%03d\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\n'".into(),
         ],
     );
     fixture.record_process_group(&summary);
@@ -2422,35 +2532,23 @@ fn current_rss_kib() -> u64 {
         .expect("current RSS ps output is KiB")
 }
 
-fn drain_dashboard_events(stream: &mut UnixStream) {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(2)))
-        .unwrap();
+fn drain_dashboard_events(connection: &mut HistoryConnection) {
+    let deadline = Instant::now() + Duration::from_millis(2);
     loop {
-        match read_frame::<ServerMessage>(stream) {
-            Ok(ServerMessage::Event(_)) => {}
-            Ok(message) => panic!("unexpected dashboard response while draining: {message:?}"),
-            Err(error)
-                if error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| {
-                        matches!(
-                            error.kind(),
-                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                        )
-                    }) =>
-            {
-                break;
+        match connection.next(deadline) {
+            Ok(Some(ServerMessage::Event(_))) => {}
+            Ok(Some(message)) => {
+                panic!("unexpected dashboard response while draining: {message:?}")
             }
-            Err(error) => panic!("dashboard event drain failed: {error:#}"),
+            Ok(None) => break,
+            Err(error) => panic!("dashboard event drain failed: {error}"),
         }
     }
 }
 
 fn wait_memory_marker(
     fixture: &ControlFixture,
-    dashboard: &mut UnixStream,
+    dashboard: &mut HistoryConnection,
     session: SessionId,
     marker: &str,
     deadline: Instant,
@@ -2476,7 +2574,7 @@ fn wait_memory_marker(
 }
 
 fn history_memory_probe_all(
-    dashboard: &mut UnixStream,
+    dashboard: &mut HistoryConnection,
     sessions: &[SessionId],
     cols: u16,
     fill_stage: usize,
@@ -3523,7 +3621,7 @@ fn history_memory_measurements() {
         Response::Ok
     );
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
     assert!(matches!(
         history_request(&mut dashboard, 1, Request::DashboardHello),
         Response::Hierarchy(_)
@@ -3715,7 +3813,7 @@ fn history_reattach_reads_retained_output() {
     let session = history_ready_shell(&fixture);
     fixture.wait_terminal_contains(session, "HISTORY_READY");
 
-    let mut first = UnixStream::connect(&fixture.socket).unwrap();
+    let mut first = HistoryConnection::connect(&fixture.socket);
     let hello = history_request(&mut first, 1, Request::DashboardHello);
     assert!(matches!(hello, Response::Hierarchy(_)));
     let screen = history_request(
@@ -3744,7 +3842,7 @@ fn history_reattach_reads_retained_output() {
     );
     fixture.wait_exited(session);
 
-    let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reattached = HistoryConnection::connect(&fixture.socket);
     assert!(matches!(
         history_request(&mut reattached, 10, Request::DashboardHello),
         Response::Hierarchy(_)
@@ -3760,7 +3858,9 @@ fn history_reattach_reads_retained_output() {
     let Response::Screen { bytes, .. } = screen else {
         panic!("reattached select did not return a screen");
     };
-    assert!(String::from_utf8_lossy(&bytes).contains("FINAL_HISTORY_MARKER"));
+    let live_text = String::from_utf8_lossy(&bytes);
+    assert!(live_text.contains("FINAL_HISTORY_MARKER"));
+    assert!(!live_text.contains("DETACHED_OFFSCREEN_000"));
 
     let opened_id = 12;
     let opened = history_request(
@@ -3774,7 +3874,10 @@ fn history_reattach_reads_retained_output() {
     assert!(
         history_response_size(opened_id, &Response::HistoryOpened(opened.clone())) <= PAGE_BYTES
     );
+    assert!(opened.history_rows > 0);
     let rows = history_page_all(&mut reattached, session, opened.snapshot, &opened, &mut 13);
+    let retained_rows = &rows[..opened.history_rows as usize];
+    assert!(history_rows_text(retained_rows).contains("DETACHED_OFFSCREEN_000"));
     assert!(history_rows_text(&rows).contains("FINAL_HISTORY_MARKER"));
     assert_eq!(
         history_request(
@@ -3802,7 +3905,7 @@ fn history_frozen_page_survives_eviction_and_exit() {
     history_workspace(&fixture, "feature/history-eviction");
     let session = history_ready_shell(&fixture);
     fixture.wait_terminal_contains(session, "HISTORY_READY");
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
     assert!(matches!(
         history_request(&mut dashboard, 1, Request::DashboardHello),
         Response::Hierarchy(_)
@@ -3917,7 +4020,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
     fixture.record_process_group(&summary);
     let session = summary.id;
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = HistoryConnection::connect(&fixture.socket);
     assert!(matches!(
         history_request(&mut dashboard, 1, Request::DashboardHello),
         Response::Hierarchy(_)
@@ -3939,28 +4042,15 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
     let drain_deadline = Instant::now() + Duration::from_secs(2);
     let mut dirty = false;
     while Instant::now() < drain_deadline {
-        dashboard
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
-        match read_frame::<ServerMessage>(&mut dashboard) {
-            Ok(ServerMessage::Event(ServerEvent::ScreenDirty {
+        match dashboard.next(Instant::now() + Duration::from_millis(50)) {
+            Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
                 session: dirty_session,
-            })) if dirty_session == session => dirty = true,
-            Ok(_) => {}
-            Err(error)
-                if error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| {
-                        matches!(
-                            error.kind(),
-                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                        )
-                    }) =>
-            {
+            }))) if dirty_session == session => dirty = true,
+            Ok(Some(_)) => {}
+            Ok(None) => {
                 break;
             }
-            Err(error) => panic!("draining slow dashboard failed: {error:#}"),
+            Err(error) => panic!("draining slow dashboard failed: {error}"),
         }
     }
     assert!(dirty, "finite burst did not emit dirty recovery");

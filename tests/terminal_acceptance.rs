@@ -5,6 +5,7 @@ use ovrcr::protocol::{
 };
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -644,6 +645,51 @@ fn read_outer(mut reader: Box<dyn Read + Send>, sender: Sender<Vec<u8>>) {
     }
 }
 
+fn write_fifo_bounded(path: &Path, bytes: &[u8], timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    let mut writer = loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+        {
+            Ok(writer) => break writer,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::NotFound
+                ) || error.raw_os_error() == Some(libc::ENXIO) =>
+            {
+                if Instant::now() >= deadline {
+                    bail!("timed out opening FIFO writer {}: {error}", path.display());
+                }
+                thread::yield_now();
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    let mut written = 0;
+    while written < bytes.len() {
+        match writer.write(&bytes[written..]) {
+            Ok(0) => bail!("FIFO writer closed before token was written"),
+            Ok(count) => written += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                if Instant::now() >= deadline {
+                    bail!("timed out writing FIFO token to {}", path.display());
+                }
+                thread::yield_now();
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
@@ -759,19 +805,52 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     assert!(frozen.contains("HIST_OLD_000"));
     assert!(frozen.contains("HISTORY · frozen"));
 
-    let mut trigger = std::fs::OpenOptions::new().write(true).open(&fifo)?;
-    trigger.write_all(b"LIVE_TOKEN\n")?;
-    trigger.flush()?;
-    drop(trigger);
+    write_fifo_bounded(&fifo, b"LIVE_TOKEN\n", Duration::from_secs(3))?;
+    let live_deadline = Instant::now() + Duration::from_secs(3);
+    let mut live_seen = false;
+    while Instant::now() < live_deadline {
+        if fixture
+            .read_terminal(ovrcr::session::SessionId(history_id))?
+            .contains("HIST_NEW_LIVE_TOKEN")
+        {
+            live_seen = true;
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(
+        live_seen,
+        "fixture terminal did not observe live output while history was frozen"
+    );
     dashboard.wait_for_screen(
-        |screen| screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen"),
+        |screen| {
+            screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
+        },
         Duration::from_secs(3),
     )?;
+    let frozen_with_new_output = dashboard.rendered();
+    assert!(frozen_with_new_output.contains("HIST_OLD_000"));
+    assert!(frozen_with_new_output.contains("HISTORY · frozen · new output"));
+    let frozen_status = frozen_with_new_output
+        .lines()
+        .find(|line| line.contains("HISTORY · frozen · new output"))
+        .context("frozen history status line")?
+        .to_owned();
     dashboard.resize(40, 120)?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen"),
+        |screen| {
+            screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
+        },
         Duration::from_secs(3),
     )?;
+    let resized = dashboard.rendered();
+    assert!(resized.contains("HIST_OLD_000"));
+    assert!(resized.contains("HISTORY · frozen · new output"));
+    let resized_status = resized
+        .lines()
+        .find(|line| line.contains("HISTORY · frozen · new output"))
+        .context("resized history status line")?;
+    assert_ne!(resized_status, frozen_status);
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HIST_NEW_LIVE_TOKEN"),
