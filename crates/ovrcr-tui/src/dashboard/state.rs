@@ -1,4 +1,7 @@
-use super::copy::{CopyMotion, CopySelection, MAX_COPY_BYTES};
+use super::copy::{
+    CopyMotion, CopySelection, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint,
+    HistoryCopyRange, MAX_COPY_BYTES,
+};
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, is_browse_key};
 use super::render::{
@@ -7,8 +10,8 @@ use super::render::{
 };
 use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
-    ClientMessage, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId, Request,
-    Response, ServerEvent, ServerMessage,
+    ClientMessage, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId,
+    Request, Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crossterm::event::{
@@ -18,6 +21,7 @@ use ovrcr_terminal::encode_paste;
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
+use std::io;
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +40,27 @@ pub struct PendingHistoryPage {
     pub rows: u16,
     pub start_col: u16,
     pub cols: u16,
+    pub purpose: HistoryPagePurpose,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryPagePurpose {
+    Viewport,
+    Cursor,
+    Copy(u64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryCursor {
+    pub point: HistoryCopyPoint,
+    pub row_width: u16,
+    pub cell_width: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryCursorTarget {
+    At(HistoryCopyPoint),
+    RowEnd(u32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,10 +71,16 @@ pub struct HistoryView {
     pub new_output: bool,
     pub pages: VecDeque<HistoryRows>,
     pub pending: Option<PendingHistoryPage>,
+    pub cursor: Option<HistoryCursor>,
+    pub cursor_target: Option<HistoryCursorTarget>,
+    pub anchor: Option<HistoryCopyPoint>,
+    pub copy_job: Option<HistoryCopyJob>,
+    pub copy_completion: Option<HistoryCopyCompletion>,
 }
 
 impl HistoryView {
     pub fn new(opened: HistoryOpened, top: u32) -> Self {
+        let has_rows = opened.total_rows > 0;
         Self {
             opened,
             top,
@@ -57,12 +88,24 @@ impl HistoryView {
             new_output: false,
             pages: VecDeque::new(),
             pending: None,
+            cursor: None,
+            cursor_target: has_rows.then_some(HistoryCursorTarget::At(HistoryCopyPoint {
+                row: top,
+                col: 0,
+            })),
+            anchor: None,
+            copy_job: None,
+            copy_completion: None,
         }
     }
 
-    pub fn accept_page(&mut self, request_id: u64, page: HistoryRows) -> bool {
+    pub fn accept_page(
+        &mut self,
+        request_id: u64,
+        page: HistoryRows,
+    ) -> io::Result<Option<HistoryRows>> {
         let Some(pending) = self.pending.as_ref() else {
-            return false;
+            return Ok(None);
         };
         if pending.request_id != request_id
             || page.session != pending.session
@@ -71,20 +114,236 @@ impl HistoryView {
             || page.snapshot != self.opened.snapshot
             || page.start_row != pending.start_row
             || page.start_col != pending.start_col
-            || page.start_row > self.opened.total_rows
-            || page.rows.len() > usize::from(pending.rows)
-            || page.start_row.saturating_add(page.rows.len() as u32) > self.opened.total_rows
-            || page.rows.iter().any(|row| {
-                row.cells.len() > usize::from(pending.cols)
-                    || (!row.cells.is_empty()
-                        && (row.width < page.start_col
-                            || row.width.saturating_sub(page.start_col)
-                                < u16::try_from(row.cells.len()).unwrap_or(u16::MAX)))
-            })
         {
-            return false;
+            return Ok(None);
+        }
+        let pending = pending.clone();
+        if pending.rows == 0
+            || pending.rows > 16
+            || pending.cols == 0
+            || pending.cols > 128
+            || pending.start_row > self.opened.total_rows
+            || pending.start_col == u16::MAX
+            || u32::from(pending.start_col) + u32::from(pending.cols) > u32::from(u16::MAX)
+        {
+            self.pending = None;
+            return Err(invalid_history_data(
+                "history page request bounds are invalid",
+            ));
+        }
+        let expected_rows = self
+            .opened
+            .total_rows
+            .saturating_sub(pending.start_row)
+            .min(u32::from(pending.rows));
+        if page.rows.len() != usize::try_from(expected_rows).unwrap_or(usize::MAX) {
+            self.pending = None;
+            return Err(invalid_history_data("history page row count is incomplete"));
+        }
+        for row in &page.rows {
+            let expected_cells = usize::from(
+                pending
+                    .cols
+                    .min(row.width.saturating_sub(pending.start_col)),
+            );
+            if row.cells.len() != expected_cells {
+                self.pending = None;
+                return Err(invalid_history_data(
+                    "history page cell count is incomplete",
+                ));
+            }
+            for (index, cell) in row.cells.iter().enumerate() {
+                if cell.width > 2 {
+                    self.pending = None;
+                    return Err(invalid_history_data("history cell width is invalid"));
+                }
+                let col = u32::from(pending.start_col) + u32::try_from(index).unwrap_or(u32::MAX);
+                if cell.width == 2 {
+                    if col + 1 >= u32::from(row.width) {
+                        self.pending = None;
+                        return Err(invalid_history_data(
+                            "wide history cell exceeds the physical row",
+                        ));
+                    }
+                    if index + 1 < row.cells.len() && row.cells[index + 1].width != 0 {
+                        self.pending = None;
+                        return Err(invalid_history_data(
+                            "wide history cell lacks a continuation",
+                        ));
+                    }
+                } else if cell.width == 0 && index > 0 && row.cells[index - 1].width != 2 {
+                    self.pending = None;
+                    return Err(invalid_history_data(
+                        "history continuation lacks a wide leader",
+                    ));
+                }
+            }
         }
         self.pending = None;
+        Ok(Some(page))
+    }
+
+    pub fn copy_range(&self) -> Option<HistoryCopyRange> {
+        let anchor = self.anchor?;
+        let cursor = self.cursor?;
+        if self.cursor_target.is_some() {
+            return None;
+        }
+        Some(HistoryCopyRange {
+            session: self.opened.session,
+            snapshot: self.opened.snapshot,
+            anchor,
+            cursor: cursor.point,
+        })
+    }
+
+    pub fn cursor_page_needed(&self) -> Option<(u32, u16, u16, u16)> {
+        let target = self.cursor_target?;
+        let (row, col) = match target {
+            HistoryCursorTarget::At(point) => (point.row, point.col),
+            HistoryCursorTarget::RowEnd(row) => {
+                let row_width = self
+                    .pages
+                    .iter()
+                    .find_map(|page| row_in_page(page, row).map(|row| row.width));
+                let Some(width) = row_width else {
+                    return Some(canonical_page_bounds(&self.opened, row, 0)?);
+                };
+                if width == 0 {
+                    return None;
+                }
+                (row, width - 1)
+            }
+        };
+        Some(canonical_page_bounds(&self.opened, row, col)?)
+    }
+
+    pub fn resolve_cursor(&mut self, _viewport: TerminalSize) -> io::Result<bool> {
+        let Some(target) = self.cursor_target else {
+            return Ok(true);
+        };
+        let (row_number, requested_col, row_end) = match target {
+            HistoryCursorTarget::At(point) => (point.row, point.col, false),
+            HistoryCursorTarget::RowEnd(row) => (row, 0, true),
+        };
+        if row_number >= self.opened.total_rows {
+            self.cursor = None;
+            self.cursor_target = None;
+            return Ok(true);
+        }
+        let Some(row) = self
+            .pages
+            .iter()
+            .find_map(|page| row_in_page(page, row_number))
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        if row.width == 0 {
+            if row_end || requested_col == 0 || self.anchor.is_some() {
+                self.cursor = Some(HistoryCursor {
+                    point: HistoryCopyPoint {
+                        row: row_number,
+                        col: 0,
+                    },
+                    row_width: 0,
+                    cell_width: 1,
+                });
+                self.cursor_target = None;
+                return Ok(true);
+            }
+            self.cursor = None;
+            self.cursor_target = None;
+            return Ok(true);
+        }
+        let requested_col = if row_end {
+            row.width - 1
+        } else {
+            requested_col
+        };
+        let requested_col = if requested_col >= row.width {
+            if self.anchor.is_some() {
+                row.width - 1
+            } else {
+                self.cursor = None;
+                self.cursor_target = None;
+                return Ok(true);
+            }
+        } else {
+            requested_col
+        };
+        let Some((_page_start_col, cell)) = self
+            .pages
+            .iter()
+            .filter_map(|page| {
+                let row = row_in_page(page, row_number)?;
+                let end = page.start_col.saturating_add(row.cells.len() as u16);
+                if requested_col >= page.start_col && requested_col < end {
+                    row.cells
+                        .get(usize::from(requested_col - page.start_col))
+                        .map(|cell| (page.start_col, cell))
+                } else {
+                    None
+                }
+            })
+            .next()
+        else {
+            self.cursor_target = Some(HistoryCursorTarget::At(HistoryCopyPoint {
+                row: row_number,
+                col: requested_col,
+            }));
+            return Ok(false);
+        };
+        let mut point_col = requested_col;
+        let cell_width = if cell.width == 0 {
+            let leader_col = point_col.checked_sub(1).ok_or_else(|| {
+                invalid_history_data("history cursor continuation lacks a leader")
+            })?;
+            let leader = self.pages.iter().find_map(|page| {
+                let row = row_in_page(page, row_number)?;
+                if leader_col < page.start_col {
+                    return None;
+                }
+                row.cells
+                    .get(usize::from(leader_col - page.start_col))
+                    .map(|cell| (page.start_col, cell))
+            });
+            let Some((_, leader)) = leader else {
+                self.cursor = None;
+                self.cursor_target = Some(HistoryCursorTarget::At(HistoryCopyPoint {
+                    row: row_number,
+                    col: leader_col,
+                }));
+                return Ok(false);
+            };
+            if leader.width != 2 {
+                return Err(invalid_history_data(
+                    "history cursor continuation lacks a wide leader",
+                ));
+            }
+            point_col = leader_col;
+            2
+        } else if cell.width == 1 || cell.width == 2 {
+            cell.width
+        } else {
+            return Err(invalid_history_data("history cursor cell width is invalid"));
+        };
+        self.cursor = Some(HistoryCursor {
+            point: HistoryCopyPoint {
+                row: row_number,
+                col: point_col,
+            },
+            row_width: row.width,
+            cell_width,
+        });
+        self.cursor_target = None;
+        Ok(true)
+    }
+
+    fn cache_page(&mut self, page: HistoryRows) {
+        if !is_canonical_page(&self.opened, &page) {
+            return;
+        }
         if let Some(existing) = self.pages.iter_mut().find(|cached| {
             cached.snapshot == page.snapshot
                 && cached.start_row == page.start_row
@@ -97,8 +356,85 @@ impl HistoryView {
         while self.pages.len() > 16 {
             self.pages.pop_front();
         }
-        true
     }
+}
+
+fn invalid_history_data(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn canonical_page_bounds(
+    opened: &HistoryOpened,
+    row: u32,
+    col: u16,
+) -> Option<(u32, u16, u16, u16)> {
+    if row >= opened.total_rows {
+        return None;
+    }
+    let start_row = (row / 16) * 16;
+    let start_col = (u32::from(col) / 128) * 128;
+    let start_col = u16::try_from(start_col).ok()?;
+    let rows = opened.total_rows.saturating_sub(start_row).min(16) as u16;
+    let cols = u16::try_from(
+        u32::from(u16::MAX)
+            .saturating_sub(u32::from(start_col))
+            .min(128),
+    )
+    .ok()?;
+    (rows > 0 && cols > 0).then_some((start_row, start_col, rows, cols))
+}
+
+fn row_in_page(page: &HistoryRows, row: u32) -> Option<&crate::protocol::HistoryRow> {
+    let offset = row.checked_sub(page.start_row)?;
+    page.rows.get(usize::try_from(offset).ok()?)
+}
+
+pub(super) fn history_page_covers(
+    opened: &HistoryOpened,
+    page: &HistoryRows,
+    start_row: u32,
+    start_col: u16,
+    rows: u16,
+    cols: u16,
+) -> bool {
+    if !is_canonical_page(opened, page)
+        || page.start_row != start_row
+        || page.start_col != start_col
+    {
+        return false;
+    }
+    let expected_rows = opened
+        .total_rows
+        .saturating_sub(start_row)
+        .min(u32::from(rows));
+    if page.rows.len() != usize::try_from(expected_rows).unwrap_or(usize::MAX) {
+        return false;
+    }
+    page.rows
+        .iter()
+        .all(|row| usize::from(cols.min(row.width.saturating_sub(start_col))) == row.cells.len())
+}
+
+fn is_canonical_page(opened: &HistoryOpened, page: &HistoryRows) -> bool {
+    page.session == opened.session
+        && page.snapshot == opened.snapshot
+        && page.start_row % 16 == 0
+        && u32::from(page.start_col) % 128 == 0
+}
+
+fn history_retry_key(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Char('0' | '$' | 'g' | 'G' | 'h' | 'j' | 'k' | 'l' | ' ' | 'v' | 'y')
+    )
 }
 
 impl Dashboard {
@@ -500,43 +836,220 @@ impl Dashboard {
             && matches!(key.code, KeyCode::Char('g' | 'G'))
             || matches!(key.code, KeyCode::Esc | KeyCode::Char('q'))
         {
+            if matches!(key.code, KeyCode::Esc)
+                && self
+                    .history
+                    .as_ref()
+                    .is_some_and(|view| view.copy_job.is_some() || view.copy_completion.is_some())
+            {
+                if let Some(view) = self.history.as_mut() {
+                    view.copy_job = None;
+                    view.copy_completion = None;
+                }
+                self.copy_notice = Some("Copy cancelled".into());
+                return DashboardAction::Redraw;
+            }
             return self.leave_history();
         }
-        let Some(view) = self.history.as_mut() else {
+        if key.kind == KeyEventKind::Release {
+            return DashboardAction::None;
+        }
+        let Some(view) = self.history.as_ref() else {
             return DashboardAction::None;
         };
+        if view.copy_job.is_some() || view.copy_completion.is_some() {
+            return DashboardAction::None;
+        }
+        if view.cursor_target.is_some() {
+            if history_retry_key(key.code) {
+                self.history_page_error = false;
+                self.error = None;
+                self.copy_notice = Some("Waiting for history cell".into());
+                return self
+                    .history_request_if_needed()
+                    .map_or(DashboardAction::Redraw, DashboardAction::Request);
+            }
+            return DashboardAction::None;
+        }
         let size = history_view_size(self.pane_size);
-        let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
-        let max_left = u32::from(u16::MAX)
-            .saturating_sub(u32::from(size.cols))
-            .min(u32::from(u16::MAX));
+        let anchored = self.history.as_ref().and_then(|view| view.anchor).is_some();
+        if !anchored {
+            let Some(view) = self.history.as_mut() else {
+                return DashboardAction::None;
+            };
+            let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
+            let max_left = u32::from(u16::MAX)
+                .saturating_sub(u32::from(size.cols))
+                .min(u32::from(u16::MAX));
+            let changed = match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    view.top = view.top.saturating_sub(1).min(max_top);
+                    true
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    view.top = view.top.saturating_add(1).min(max_top);
+                    true
+                }
+                KeyCode::PageUp => {
+                    view.top = view.top.saturating_sub(u32::from(size.rows)).min(max_top);
+                    true
+                }
+                KeyCode::PageDown => {
+                    view.top = view.top.saturating_add(u32::from(size.rows)).min(max_top);
+                    true
+                }
+                KeyCode::Home => {
+                    view.top = 0;
+                    true
+                }
+                KeyCode::End => {
+                    view.top = max_top;
+                    true
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    view.left = view.left.saturating_sub(1);
+                    true
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    view.left = view
+                        .left
+                        .saturating_add(1)
+                        .min(u16::try_from(max_left).unwrap_or(u16::MAX));
+                    true
+                }
+                KeyCode::Char(' ' | 'v') => return self.anchor_history_cursor(),
+                KeyCode::Char('y') => return self.start_history_copy(),
+                KeyCode::Enter => false,
+                _ => false,
+            };
+            if !changed {
+                return DashboardAction::None;
+            }
+            view.cursor = None;
+            view.cursor_target =
+                (view.opened.total_rows > 0).then_some(HistoryCursorTarget::At(HistoryCopyPoint {
+                    row: view.top,
+                    col: view.left,
+                }));
+            self.history_page_error = false;
+            self.error = None;
+            self.copy_notice = None;
+            return self
+                .history_request_if_needed()
+                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+        }
         match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                view.top = view.top.saturating_sub(1).min(max_top);
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                view.top = view.top.saturating_add(1).min(max_top);
-            }
-            KeyCode::PageUp => {
-                view.top = view.top.saturating_sub(u32::from(size.rows)).min(max_top);
-            }
-            KeyCode::PageDown => {
-                view.top = view.top.saturating_add(u32::from(size.rows)).min(max_top);
-            }
-            KeyCode::Home => view.top = 0,
-            KeyCode::End => view.top = max_top,
-            KeyCode::Left | KeyCode::Char('h') => view.left = view.left.saturating_sub(1),
-            KeyCode::Right | KeyCode::Char('l') => {
-                view.left = view
-                    .left
-                    .saturating_add(1)
-                    .min(u16::try_from(max_left).unwrap_or(u16::MAX));
-            }
-            KeyCode::Enter => return DashboardAction::None,
-            _ => return DashboardAction::None,
+            KeyCode::Char(' ' | 'v') => self.anchor_history_cursor(),
+            KeyCode::Char('y') => self.start_history_copy(),
+            KeyCode::Enter => DashboardAction::None,
+            _ => self.move_history_cursor(key.code, size),
+        }
+    }
+
+    fn anchor_history_cursor(&mut self) -> DashboardAction {
+        if self
+            .history
+            .as_ref()
+            .is_some_and(|view| view.cursor_target.is_some())
+        {
+            self.copy_notice = Some("Waiting for history cell".into());
+            return self
+                .history_request_if_needed()
+                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+        }
+        let Some(cursor) = self.history.as_ref().and_then(|view| view.cursor) else {
+            self.copy_notice = Some("Nothing to select on this row".into());
+            return DashboardAction::Redraw;
+        };
+        if let Some(view) = self.history.as_mut() {
+            view.anchor = Some(cursor.point);
         }
         self.history_page_error = false;
         self.error = None;
+        self.copy_notice = None;
+        DashboardAction::Redraw
+    }
+
+    fn start_history_copy(&mut self) -> DashboardAction {
+        let Some(view) = self.history.as_ref() else {
+            return DashboardAction::None;
+        };
+        if view.cursor_target.is_some() {
+            self.copy_notice = Some("Waiting for history cell".into());
+            return self
+                .history_request_if_needed()
+                .map_or(DashboardAction::Redraw, DashboardAction::Request);
+        }
+        let Some(range) = view.copy_range() else {
+            self.copy_notice = Some("Set an anchor with Space".into());
+            return DashboardAction::Redraw;
+        };
+        let job_id = self.next_request_id();
+        if let Some(view) = self.history.as_mut() {
+            view.copy_job = Some(HistoryCopyJob::new(job_id, range));
+        }
+        self.history_page_error = false;
+        self.error = None;
+        self.copy_notice = None;
+        self.history_request_if_needed()
+            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+    }
+
+    fn move_history_cursor(&mut self, code: KeyCode, size: TerminalSize) -> DashboardAction {
+        let Some(view) = self.history.as_ref() else {
+            return DashboardAction::None;
+        };
+        let Some(cursor) = view.cursor else {
+            return DashboardAction::None;
+        };
+        let last_row = view.opened.total_rows.saturating_sub(1);
+        let target = match code {
+            KeyCode::Left | KeyCode::Char('h') => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row,
+                col: cursor.point.col.saturating_sub(1),
+            }),
+            KeyCode::Right | KeyCode::Char('l') => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row,
+                col: cursor
+                    .point
+                    .col
+                    .saturating_add(u16::from(cursor.cell_width)),
+            }),
+            KeyCode::Up | KeyCode::Char('k') => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row.saturating_sub(1),
+                col: cursor.point.col,
+            }),
+            KeyCode::Down | KeyCode::Char('j') => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row.saturating_add(1).min(last_row),
+                col: cursor.point.col,
+            }),
+            KeyCode::PageUp => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row.saturating_sub(u32::from(size.rows)),
+                col: cursor.point.col,
+            }),
+            KeyCode::PageDown => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor
+                    .point
+                    .row
+                    .saturating_add(u32::from(size.rows))
+                    .min(last_row),
+                col: cursor.point.col,
+            }),
+            KeyCode::Home | KeyCode::Char('0') => HistoryCursorTarget::At(HistoryCopyPoint {
+                row: cursor.point.row,
+                col: 0,
+            }),
+            KeyCode::End | KeyCode::Char('$') => HistoryCursorTarget::RowEnd(cursor.point.row),
+            KeyCode::Char('g') => HistoryCursorTarget::At(HistoryCopyPoint { row: 0, col: 0 }),
+            KeyCode::Char('G') => HistoryCursorTarget::RowEnd(last_row),
+            _ => return DashboardAction::None,
+        };
+        if let Some(view) = self.history.as_mut() {
+            view.cursor_target = Some(target);
+        }
+        self.history_page_error = false;
+        self.error = None;
+        self.copy_notice = None;
         self.history_request_if_needed()
             .map_or(DashboardAction::Redraw, DashboardAction::Request)
     }
@@ -556,6 +1069,7 @@ impl Dashboard {
             }
         });
         self.mode = InputMode::Browse;
+        self.copy_notice = None;
         self.history_end_after_selection = end;
         DashboardAction::EnterBrowse
     }
@@ -582,62 +1096,105 @@ impl Dashboard {
         self.history_end_after_selection.take()
     }
 
-    pub(super) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
+    pub fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
         if self.history_page_error {
             return None;
         }
-        let (start_row, start_col, rows, cols, session, snapshot) = {
+        let mut resolve_error = None;
+        let request = {
             let view = self.history.as_mut()?;
-            if view.pending.is_some() {
+            if view.pending.is_some() || view.copy_completion.is_some() {
                 return None;
             }
-            let size = history_view_size(self.pane_size);
-            let row_end = view
-                .top
-                .saturating_add(u32::from(size.rows))
-                .min(view.opened.total_rows);
-            let col_end = u32::from(view.left).saturating_add(u32::from(size.cols));
-            let first_row = (view.top / 16) * 16;
-            let first_col = (u32::from(view.left) / 128) * 128;
-            let mut candidate = None;
-            let mut row_start = first_row;
-            while row_start < row_end {
-                let mut col_start = first_col;
-                while col_start < col_end {
-                    let start_col = u16::try_from(col_start).unwrap_or(u16::MAX);
-                    let cached = view.pages.iter().any(|page| {
-                        page.snapshot == view.opened.snapshot
-                            && page.start_row == row_start
-                            && page.start_col == start_col
-                    });
-                    if !cached {
-                        let rows = view.opened.total_rows.saturating_sub(row_start).min(16);
-                        let cols = u32::from(u16::MAX).saturating_sub(col_start).min(128);
-                        if rows > 0 && cols > 0 {
-                            candidate = Some((row_start, start_col, rows as u16, cols as u16));
+            let (purpose, bounds) = if let Some(job) = view.copy_job.as_ref() {
+                (HistoryPagePurpose::Copy(job.id), job.page_needed())
+            } else {
+                if view.cursor_target.is_some() {
+                    if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
+                        resolve_error = Some(error);
+                    }
+                }
+                if resolve_error.is_some() {
+                    self.history_page_error = true;
+                    self.error = resolve_error.as_ref().map(ToString::to_string);
+                    return None;
+                } else if view.cursor_target.is_some() {
+                    (HistoryPagePurpose::Cursor, view.cursor_page_needed()?)
+                } else {
+                    let size = history_view_size(self.pane_size);
+                    let row_end = view
+                        .top
+                        .saturating_add(u32::from(size.rows))
+                        .min(view.opened.total_rows);
+                    let col_end = u32::from(view.left).saturating_add(u32::from(size.cols));
+                    let first_row = (view.top / 16) * 16;
+                    let first_col = (u32::from(view.left) / 128) * 128;
+                    let mut candidate = None;
+                    let mut row_start = first_row;
+                    while row_start < row_end {
+                        let mut col_start = first_col;
+                        while col_start < col_end {
+                            let start_col = u16::try_from(col_start).unwrap_or(u16::MAX);
+                            let rows = view.opened.total_rows.saturating_sub(row_start).min(16);
+                            let cols = u32::from(u16::MAX).saturating_sub(col_start).min(128);
+                            if rows > 0
+                                && cols > 0
+                                && !view.pages.iter().any(|page| {
+                                    history_page_covers(
+                                        &view.opened,
+                                        page,
+                                        row_start,
+                                        start_col,
+                                        rows as u16,
+                                        cols as u16,
+                                    )
+                                })
+                            {
+                                candidate = Some((row_start, start_col, rows as u16, cols as u16));
+                                break;
+                            }
+                            col_start = col_start.saturating_add(128);
+                        }
+                        if candidate.is_some() {
                             break;
                         }
+                        let Some(next_row) = row_start.checked_add(16) else {
+                            break;
+                        };
+                        row_start = next_row;
                     }
-                    col_start = col_start.saturating_add(128);
+                    (HistoryPagePurpose::Viewport, candidate?)
                 }
-                if candidate.is_some() {
-                    break;
-                }
-                let Some(next_row) = row_start.checked_add(16) else {
-                    break;
+            };
+            let (start_row, start_col, rows, cols) =
+                if matches!(purpose, HistoryPagePurpose::Copy(_)) {
+                    (bounds.0, bounds.2, bounds.1, bounds.3)
+                } else {
+                    (bounds.0, bounds.1, bounds.2, bounds.3)
                 };
-                row_start = next_row;
-            }
-            let (start_row, start_col, rows, cols) = candidate?;
-            (
+            Some((
+                purpose,
                 start_row,
                 start_col,
                 rows,
                 cols,
                 view.opened.session,
                 view.opened.snapshot,
-            )
+            ))
         };
+        let Some(request) = request else {
+            if let Some(error) = resolve_error {
+                self.history_page_error = true;
+                self.error = Some(error.to_string());
+            }
+            return None;
+        };
+        if let Some(error) = resolve_error {
+            self.history_page_error = true;
+            self.error = Some(error.to_string());
+            return None;
+        }
+        let (purpose, start_row, start_col, rows, cols, session, snapshot) = request;
         let request_id = self.next_request_id();
         let pending = PendingHistoryPage {
             request_id,
@@ -647,6 +1204,7 @@ impl Dashboard {
             rows,
             start_col,
             cols,
+            purpose,
         };
         let view = self.history.as_mut()?;
         view.pending = Some(pending.clone());
@@ -821,18 +1379,46 @@ impl Dashboard {
                     self.accept_history_opened(request_id, opened, &mut outgoing);
                 }
                 Response::HistoryRows(page) => {
-                    let accepted = self
+                    let purpose = self
                         .history
-                        .as_mut()
-                        .is_some_and(|view| view.accept_page(request_id, page));
-                    if accepted {
-                        if let Some(request) = self.history_request_if_needed() {
-                            outgoing.push(request);
+                        .as_ref()
+                        .and_then(|view| view.pending.as_ref())
+                        .filter(|pending| pending.request_id == request_id)
+                        .map(|pending| pending.purpose);
+                    let accepted = self.history.as_mut().and_then(|view| {
+                        match view.accept_page(request_id, page) {
+                            Ok(page) => Some(Ok((view.opened.clone(), page))),
+                            Err(error) => Some(Err(error)),
                         }
+                    });
+                    match (purpose, accepted) {
+                        (Some(purpose), Some(Ok((opened, Some(page))))) => {
+                            self.history_page_error = false;
+                            self.handle_history_page(purpose, opened, page);
+                            if let Some(request) = self.history_request_if_needed() {
+                                outgoing.push(request);
+                            }
+                        }
+                        (Some(_), Some(Ok((_opened, None)))) => {}
+                        (Some(_), Some(Err(error))) => {
+                            self.history_page_error = true;
+                            self.error = Some(error.to_string());
+                            if let Some(view) = self.history.as_mut() {
+                                view.copy_job = None;
+                                view.copy_completion = None;
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 Response::Error { code, message } => {
                     let mut matched_history = false;
+                    let matched_page = self
+                        .history
+                        .as_ref()
+                        .and_then(|view| view.pending.as_ref())
+                        .filter(|pending| pending.request_id == request_id)
+                        .cloned();
                     let matched_screen = self
                         .pending_screen
                         .is_some_and(|(_, pending_id)| pending_id == request_id);
@@ -847,17 +1433,26 @@ impl Dashboard {
                         self.history_begin_request = None;
                         matched_history = true;
                     }
-                    if self
-                        .history
-                        .as_ref()
-                        .and_then(|view| view.pending.as_ref())
-                        .is_some_and(|pending| pending.request_id == request_id)
-                    {
-                        if let Some(view) = self.history.as_mut() {
-                            view.pending = None;
-                        }
+                    if matched_page.is_some() {
                         self.history_page_error = true;
                         matched_history = true;
+                        if matches!(code, ErrorCode::Conflict | ErrorCode::NotFound) {
+                            if let Some(view) = self.history.take() {
+                                self.mode = InputMode::Browse;
+                                let end_request_id = self.next_request_id();
+                                outgoing.push(ClientMessage {
+                                    request_id: end_request_id,
+                                    request: Request::HistoryEnd {
+                                        session: view.opened.session,
+                                        snapshot: view.opened.snapshot,
+                                    },
+                                });
+                            }
+                        } else if let Some(view) = self.history.as_mut() {
+                            view.pending = None;
+                            view.copy_job = None;
+                            view.copy_completion = None;
+                        }
                     }
                     self.error = Some(format!("{code:?}: {message}"));
                     if matched_history && self.copy.is_none() {
@@ -920,6 +1515,73 @@ impl Dashboard {
         outgoing
     }
 
+    fn handle_history_page(
+        &mut self,
+        purpose: HistoryPagePurpose,
+        opened: HistoryOpened,
+        page: HistoryRows,
+    ) {
+        match purpose {
+            HistoryPagePurpose::Viewport | HistoryPagePurpose::Cursor => {
+                if let Some(view) = self.history.as_mut() {
+                    view.cache_page(page);
+                    if matches!(purpose, HistoryPagePurpose::Cursor) {
+                        if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
+                            self.history_page_error = true;
+                            self.error = Some(error.to_string());
+                        }
+                    }
+                }
+            }
+            HistoryPagePurpose::Copy(job_id) => {
+                let Some(view) = self.history.as_mut() else {
+                    return;
+                };
+                let Some(job) = view.copy_job.as_mut() else {
+                    return;
+                };
+                if job.id != job_id
+                    || job.range.session != opened.session
+                    || job.range.snapshot != opened.snapshot
+                {
+                    return;
+                }
+                match job.consume_page(&page) {
+                    Ok(true) => {
+                        let job = view.copy_job.take().expect("copy job exists");
+                        let completion = job.into_completion();
+                        if completion.text.is_empty() {
+                            self.copy_notice = Some("Nothing to copy".into());
+                        } else {
+                            view.copy_completion = Some(completion);
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        view.copy_job = None;
+                        self.history_page_error = true;
+                        self.copy_notice = Some(error.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn take_pending_history_copy(&mut self) -> Option<String> {
+        let Some(view) = self.history.as_mut() else {
+            return None;
+        };
+        let Some(completion) = view.copy_completion.take() else {
+            return None;
+        };
+        let valid = self.mode == InputMode::History
+            && self.selected == Some(completion.range.session)
+            && view.opened.session == completion.range.session
+            && view.opened.snapshot == completion.range.snapshot
+            && view.copy_range() == Some(completion.range);
+        if valid { Some(completion.text) } else { None }
+    }
+
     fn accept_history_opened(
         &mut self,
         request_id: u64,
@@ -946,6 +1608,17 @@ impl Dashboard {
                 },
             });
             return;
+        }
+        let replaced = self.history.take();
+        if let Some(view) = replaced {
+            let end_request_id = self.next_request_id();
+            outgoing.push(ClientMessage {
+                request_id: end_request_id,
+                request: Request::HistoryEnd {
+                    session: view.opened.session,
+                    snapshot: view.opened.snapshot,
+                },
+            });
         }
         let size = history_view_size(self.pane_size);
         let max_top = opened.total_rows.saturating_sub(u32::from(size.rows));

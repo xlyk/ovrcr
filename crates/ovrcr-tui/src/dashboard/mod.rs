@@ -17,7 +17,10 @@ pub use render::{
     actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
     render_terminal,
 };
-pub use state::{HistoryView, PendingHistoryBegin, PendingHistoryPage};
+pub use state::{
+    HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, PendingHistoryBegin,
+    PendingHistoryPage,
+};
 pub use terminal_guard::TerminalGuard;
 
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};

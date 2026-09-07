@@ -9,9 +9,12 @@ use ovrcr::protocol::{
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::tui::{
-    CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, KeyEncoding,
-    dashboard_message_channel, encode_key, encode_paste, event_to_request, render_copy,
+    CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, HistoryCopyJob,
+    HistoryCopyPoint, HistoryCopyRange, HistoryCursor, HistoryView, KeyEncoding,
+    append_history_selection, dashboard_message_channel, encode_key, encode_paste,
+    event_to_request, render_copy,
 };
+use ovrcr_terminal::history::FrozenHistory;
 use ratatui::backend::{Backend, CrosstermBackend, TestBackend};
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier};
@@ -167,6 +170,35 @@ fn history_page(
     }
 }
 
+fn history_complete_page(
+    start_row: u32,
+    start_col: u16,
+    rows: u16,
+    width: u16,
+    first_cells: Vec<HistoryCell>,
+) -> HistoryRows {
+    let expected = usize::from(width.saturating_sub(start_col));
+    let mut first_cells = first_cells;
+    first_cells.resize(expected, history_cell("", 1));
+    HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row,
+        start_col,
+        rows: (0..rows)
+            .map(|row| HistoryRow {
+                width,
+                cells: if row == 0 {
+                    first_cells.clone()
+                } else {
+                    vec![history_cell("", 1); expected]
+                },
+                wrapped: false,
+            })
+            .collect(),
+    }
+}
+
 fn history_tile_page(start_row: u32, start_col: u16, rows: u16, cols: u16) -> HistoryRows {
     HistoryRows {
         session: SessionId(1),
@@ -181,6 +213,184 @@ fn history_tile_page(start_row: u32, start_col: u16, rows: u16, cols: u16) -> Hi
             })
             .collect(),
     }
+}
+
+fn numbered_history() -> (vt100::Parser, FrozenHistory, Vec<String>) {
+    let mut parser = vt100::Parser::new(4, 132, 512);
+    let lines = (0..400)
+        .map(|row| format!("OLD_{row:03}{}", "x".repeat(123)))
+        .collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let suffix = if index + 1 == lines.len() { "" } else { "\r\n" };
+        parser.process(format!("{line}{suffix}").as_bytes());
+    }
+    let frozen = FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(7),
+        1,
+        parser.screen().clone(),
+    )
+    .unwrap();
+    (parser, frozen, lines)
+}
+
+fn pump_frozen_history(
+    dashboard: &mut Dashboard,
+    frozen: &mut FrozenHistory,
+    mut requests: Vec<ClientMessage>,
+) {
+    for _ in 0..512 {
+        let Some(request) = requests.pop() else {
+            return;
+        };
+        let (request_id, start_row, rows, start_col, cols) = match request.request {
+            Request::HistoryPage {
+                session,
+                snapshot,
+                start_row,
+                rows,
+                start_col,
+                cols,
+            } => {
+                assert_eq!(session, frozen.opened().session);
+                assert_eq!(snapshot, frozen.opened().snapshot);
+                assert!((1..=16).contains(&rows));
+                assert!((1..=128).contains(&cols));
+                (request.request_id, start_row, rows, start_col, cols)
+            }
+            request => panic!("unexpected history request: {request:?}"),
+        };
+        let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::HistoryRows(
+                frozen
+                    .page(start_row, rows, start_col, cols)
+                    .expect("frozen history page"),
+            ),
+        });
+        assert!(
+            dashboard
+                .history
+                .as_ref()
+                .and_then(|view| view.pending.as_ref())
+                .is_none_or(|pending| pending.request_id != request_id)
+        );
+        assert!(
+            dashboard
+                .history
+                .as_ref()
+                .is_none_or(|view| view.pages.len() <= 16)
+        );
+        requests.extend(follow_up);
+    }
+    panic!("history request pump did not settle");
+}
+
+fn pump_frozen_action(
+    dashboard: &mut Dashboard,
+    frozen: &mut FrozenHistory,
+    action: ovrcr::tui::DashboardAction,
+) {
+    let requests = match action {
+        ovrcr::tui::DashboardAction::Request(request) => vec![request],
+        ovrcr::tui::DashboardAction::RequestBatch(requests) => requests,
+        _ => return,
+    };
+    pump_frozen_history(dashboard, frozen, requests);
+}
+
+fn pump_frozen_key(dashboard: &mut Dashboard, frozen: &mut FrozenHistory, key: KeyCode) {
+    let action = dashboard.key(key);
+    pump_frozen_action(dashboard, frozen, action);
+}
+
+fn special_history_row(row: u32) -> HistoryRow {
+    match row {
+        15 => {
+            let mut cells = vec![history_cell("", 1); 132];
+            cells[126] = history_cell("e\u{301}", 1);
+            cells[127] = history_cell("界", 2);
+            cells[128] = history_cell("", 0);
+            cells[129] = history_cell(" ", 1);
+            cells[131] = history_cell("R", 1);
+            HistoryRow {
+                width: 132,
+                cells,
+                wrapped: true,
+            }
+        }
+        16 => HistoryRow {
+            width: 5,
+            cells: vec![
+                history_cell("C", 1),
+                history_cell("", 1),
+                history_cell("", 1),
+                history_cell("", 1),
+                history_cell("D", 1),
+            ],
+            wrapped: false,
+        },
+        17 => HistoryRow {
+            width: 4,
+            cells: vec![
+                history_cell("R", 1),
+                history_cell("", 1),
+                history_cell("S", 1),
+                history_cell("T", 1),
+            ],
+            wrapped: false,
+        },
+        _ => HistoryRow {
+            width: 0,
+            cells: Vec::new(),
+            wrapped: false,
+        },
+    }
+}
+
+fn special_history_page(start_row: u32, rows: u16, start_col: u16, cols: u16) -> HistoryRows {
+    let rows = (0..rows)
+        .map(|offset| {
+            let row = special_history_row(start_row + u32::from(offset));
+            let cells = if start_col >= row.width {
+                Vec::new()
+            } else {
+                let end = row.width.min(start_col.saturating_add(cols));
+                row.cells[usize::from(start_col)..usize::from(end)].to_vec()
+            };
+            HistoryRow { cells, ..row }
+        })
+        .collect();
+    HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row,
+        start_col,
+        rows,
+    }
+}
+
+fn pump_special_history(dashboard: &mut Dashboard, mut requests: Vec<ClientMessage>) {
+    for _ in 0..32 {
+        let Some(request) = requests.pop() else {
+            return;
+        };
+        let (request_id, start_row, rows, start_col, cols) = match request.request {
+            Request::HistoryPage {
+                start_row,
+                rows,
+                start_col,
+                cols,
+                ..
+            } => (request.request_id, start_row, rows, start_col, cols),
+            request => panic!("unexpected special history request: {request:?}"),
+        };
+        requests.extend(dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::HistoryRows(special_history_page(start_row, rows, start_col, cols)),
+        }));
+    }
+    panic!("special history request pump did not settle");
 }
 
 #[test]
@@ -1378,19 +1588,21 @@ fn history_live_output_preserves_anchor() {
         response: Response::HistoryOpened(history_opened(100)),
     });
     let page_request = requests.first().cloned().expect("initial history page");
-    let (start_row, start_col, request_id) = match page_request.request {
+    let (start_row, start_col, rows, request_id) = match page_request.request {
         Request::HistoryPage {
             start_row,
             start_col,
+            rows,
             ..
-        } => (start_row, start_col, page_request.request_id),
+        } => (start_row, start_col, rows, page_request.request_id),
         request => panic!("unexpected history request: {request:?}"),
     };
     dashboard.handle_server_message(ServerMessage::Response {
         request_id,
-        response: Response::HistoryRows(history_page(
+        response: Response::HistoryRows(history_complete_page(
             start_row,
             start_col,
+            rows,
             20,
             vec![history_cell("frozen", 1)],
         )),
@@ -1453,19 +1665,21 @@ fn history_resize_preserves_capture() {
         response: Response::HistoryOpened(history_opened(100)),
     });
     let page_request = requests.first().cloned().expect("initial history page");
-    let (start_row, start_col) = match page_request.request {
+    let (start_row, start_col, rows) = match page_request.request {
         Request::HistoryPage {
             start_row,
             start_col,
+            rows,
             ..
-        } => (start_row, start_col),
+        } => (start_row, start_col, rows),
         request => panic!("unexpected history request: {request:?}"),
     };
     let mut follow_up = dashboard.handle_server_message(ServerMessage::Response {
         request_id: page_request.request_id,
-        response: Response::HistoryRows(history_page(
+        response: Response::HistoryRows(history_complete_page(
             start_row,
             start_col,
+            rows,
             20,
             vec![history_cell("old", 1)],
         )),
@@ -1521,9 +1735,10 @@ fn history_stale_response_is_ignored() {
         .expect("history page pending");
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: pending.request_id.wrapping_add(1),
-        response: Response::HistoryRows(history_page(
+        response: Response::HistoryRows(history_complete_page(
             pending.start_row,
             pending.start_col,
+            pending.rows,
             20,
             vec![],
         )),
@@ -1550,23 +1765,6 @@ fn history_stale_response_is_ignored() {
             20,
             vec![],
         ),
-        {
-            let mut page = history_page(pending.start_row, pending.start_col, 20, vec![]);
-            page.rows = (0..=pending.rows)
-                .map(|_| HistoryRow {
-                    width: pending.start_col,
-                    cells: Vec::new(),
-                    wrapped: false,
-                })
-                .collect();
-            page
-        },
-        {
-            let mut page = history_page(pending.start_row, pending.start_col, pending.cols, vec![]);
-            page.rows[0].width = pending.start_col.saturating_add(pending.cols);
-            page.rows[0].cells = vec![history_cell("x", 1); usize::from(pending.cols) + 1];
-            page
-        },
     ] {
         dashboard.handle_server_message(ServerMessage::Response {
             request_id: pending.request_id,
@@ -1578,9 +1776,10 @@ fn history_stale_response_is_ignored() {
     }
     let accepted = dashboard.handle_server_message(ServerMessage::Response {
         request_id: pending.request_id,
-        response: Response::HistoryRows(history_page(
+        response: Response::HistoryRows(history_complete_page(
             pending.start_row,
             pending.start_col,
+            pending.rows,
             pending.start_col,
             vec![],
         )),
@@ -1634,9 +1833,10 @@ fn history_pending_keys_coalesce() {
     };
     let follow_up = dashboard.handle_server_message(ServerMessage::Response {
         request_id: page_request.request_id,
-        response: Response::HistoryRows(history_page(
+        response: Response::HistoryRows(history_complete_page(
             start_row,
             start_col,
+            pending_before.rows,
             20,
             vec![history_cell("tile", 1)],
         )),
@@ -1657,7 +1857,7 @@ fn history_pending_keys_coalesce() {
     let blocked = dashboard.handle_server_message(ServerMessage::Response {
         request_id: retry_id,
         response: Response::Error {
-            code: ErrorCode::NotFound,
+            code: ErrorCode::Internal,
             message: "history tile missing".into(),
         },
     });
@@ -1687,7 +1887,8 @@ fn history_pending_keys_coalesce() {
 
     let latest = dashboard.history.as_ref().unwrap().pending.clone().unwrap();
     let latest_top = dashboard.history.as_ref().unwrap().top;
-    assert_eq!(latest.start_row, (latest_top / 16) * 16);
+    assert!(latest.start_row >= (latest_top / 16) * 16);
+    assert_eq!(latest.start_row % 16, 0);
     assert_eq!(latest.start_col, 0);
 
     let initial_page = dashboard
@@ -1793,6 +1994,386 @@ fn history_pending_keys_coalesce() {
 }
 
 #[test]
+fn copy_history_range_survives_live_eviction() {
+    let (mut live_parser, mut frozen, old_lines) = numbered_history();
+    let opened = frozen.opened().clone();
+    let mut dashboard = dashboard_fixture();
+    assert!(matches!(
+        dashboard.key(KeyCode::PageUp),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    let requests = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::HistoryOpened(opened.clone()),
+    });
+    pump_frozen_history(&mut dashboard, &mut frozen, requests);
+
+    pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Home);
+    for _ in 0..15 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Down);
+    }
+    for _ in 0..126 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Right);
+    }
+    let anchor_action = dashboard.key(KeyCode::Char(' '));
+    assert_eq!(anchor_action, ovrcr::tui::DashboardAction::Redraw);
+    let anchored = dashboard.history.as_ref().unwrap().anchor;
+    assert_eq!(anchored, Some(HistoryCopyPoint { row: 15, col: 126 }));
+
+    for _ in 0..18 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Down);
+    }
+    for _ in 0..3 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Right);
+    }
+    let range = dashboard.history.as_ref().unwrap().copy_range().unwrap();
+    assert_eq!(range.anchor, HistoryCopyPoint { row: 15, col: 126 });
+    assert_eq!(range.cursor, HistoryCopyPoint { row: 33, col: 129 });
+
+    let before_resize = dashboard.history.as_ref().unwrap().copy_range();
+    dashboard.resize_request(TerminalSize { rows: 30, cols: 70 }, 900);
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().copy_range(),
+        before_resize
+    );
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().opened.snapshot,
+        opened.snapshot
+    );
+
+    let live_bytes = (0..600)
+        .map(|row| format!("LIVE_{row:03}\r\n"))
+        .collect::<String>();
+    live_parser.process(live_bytes.as_bytes());
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(1),
+        bytes: live_bytes.into_bytes(),
+    }));
+    assert!(dashboard.history.as_ref().unwrap().new_output);
+    let refreshed = FrozenHistory::capture(
+        SessionId(1),
+        HistorySnapshotId(8),
+        2,
+        live_parser.screen().clone(),
+    )
+    .unwrap();
+    let refreshed_page = {
+        let mut refreshed = refreshed;
+        refreshed.page(15, 1, 0, 128).unwrap()
+    };
+    assert!(
+        !refreshed_page.rows[0]
+            .cells
+            .iter()
+            .any(|cell| cell.text == "OLD_015")
+    );
+
+    for start_row in (0..opened.total_rows).step_by(16) {
+        if let Some(view) = dashboard.history.as_mut() {
+            view.top = start_row;
+            view.cursor_target = None;
+        }
+        if let Some(request) = dashboard.history_request_if_needed() {
+            pump_frozen_history(&mut dashboard, &mut frozen, vec![request]);
+        }
+    }
+    assert_eq!(dashboard.history.as_ref().unwrap().pages.len(), 16);
+    assert!(
+        !dashboard
+            .history
+            .as_ref()
+            .unwrap()
+            .pages
+            .iter()
+            .any(|page| page.start_row == 0)
+    );
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().copy_range(),
+        Some(range)
+    );
+
+    pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Char('y'));
+    let expected = (range.anchor.row..=range.cursor.row)
+        .map(|row| {
+            let line = &old_lines[row as usize];
+            let start = if row == range.anchor.row {
+                usize::from(range.anchor.col)
+            } else {
+                0
+            };
+            let end = if row == range.cursor.row {
+                usize::from(range.cursor.col) + 1
+            } else {
+                line.len()
+            };
+            line[start..end].to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        dashboard.take_pending_history_copy().as_deref(),
+        Some(expected.as_str())
+    );
+
+    let reverse_anchor = dashboard.key(KeyCode::Char(' '));
+    assert_eq!(reverse_anchor, ovrcr::tui::DashboardAction::Redraw);
+    pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Char('g'));
+    for _ in 0..15 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Down);
+    }
+    for _ in 0..126 {
+        pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Right);
+    }
+    let reverse_range = dashboard.history.as_ref().unwrap().copy_range().unwrap();
+    assert_eq!(reverse_range.anchor, HistoryCopyPoint { row: 33, col: 129 });
+    assert_eq!(reverse_range.cursor, HistoryCopyPoint { row: 15, col: 126 });
+    pump_frozen_key(&mut dashboard, &mut frozen, KeyCode::Char('y'));
+    assert_eq!(
+        dashboard.take_pending_history_copy().as_deref(),
+        Some(expected.as_str())
+    );
+}
+
+#[test]
+fn copy_history_extraction_joins_wrap_and_skips_continuations() {
+    let row15 = special_history_row(15);
+    let mut direct = String::new();
+    let mut pending_blanks = 0;
+    let row15_slice = HistoryRow {
+        width: row15.width,
+        cells: row15.cells[125..].to_vec(),
+        wrapped: row15.wrapped,
+    };
+    append_history_selection(
+        &mut direct,
+        &row15_slice,
+        125,
+        126,
+        132,
+        &mut pending_blanks,
+    )
+    .unwrap();
+    assert_eq!(direct, "e\u{301}界  R");
+
+    let opened = history_opened(18);
+    let range = HistoryCopyRange {
+        session: opened.session,
+        snapshot: opened.snapshot,
+        anchor: HistoryCopyPoint { row: 15, col: 126 },
+        cursor: HistoryCopyPoint { row: 17, col: 3 },
+    };
+    let mut dashboard = dashboard_fixture();
+    dashboard.mode = ovrcr::tui::InputMode::History;
+    let mut view = HistoryView::new(opened.clone(), 0);
+    view.anchor = Some(range.anchor);
+    view.cursor_target = Some(ovrcr::tui::HistoryCursorTarget::At(HistoryCopyPoint {
+        row: 15,
+        col: 128,
+    }));
+    dashboard.history = Some(view);
+    let request = dashboard.history_request_if_needed().expect("cursor page");
+    pump_special_history(&mut dashboard, vec![request]);
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().cursor.unwrap().point,
+        HistoryCopyPoint { row: 15, col: 127 }
+    );
+    dashboard.history.as_mut().unwrap().cursor_target =
+        Some(ovrcr::tui::HistoryCursorTarget::At(range.cursor));
+    if let Some(request) = dashboard.history_request_if_needed() {
+        pump_special_history(&mut dashboard, vec![request]);
+    }
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().cursor.unwrap().point,
+        range.cursor
+    );
+
+    dashboard.history.as_mut().unwrap().copy_job = Some(HistoryCopyJob::new(77, range));
+    let request = dashboard.history_request_if_needed().expect("copy page");
+    pump_special_history(&mut dashboard, vec![request]);
+    let copied = dashboard
+        .take_pending_history_copy()
+        .expect("copy completion");
+    assert_eq!(copied, "e\u{301}界  RC   D\nR ST");
+    assert_eq!(copied.matches("界").count(), 1);
+    assert_eq!(copied.matches('\n').count(), 1);
+    assert!(copied.contains("e\u{301}"));
+}
+
+fn dashboard_with_history_copy(range: HistoryCopyRange) -> Dashboard {
+    let mut dashboard = dashboard_fixture();
+    dashboard.mode = ovrcr::tui::InputMode::History;
+    let mut view = HistoryView::new(
+        HistoryOpened {
+            session: range.session,
+            snapshot: range.snapshot,
+            revision: 1,
+            size: TerminalSize { rows: 4, cols: 20 },
+            history_rows: 0,
+            total_rows: 2,
+        },
+        0,
+    );
+    view.anchor = Some(range.anchor);
+    view.cursor = Some(HistoryCursor {
+        point: range.cursor,
+        row_width: 4,
+        cell_width: 1,
+    });
+    view.cursor_target = None;
+    view.copy_job = Some(HistoryCopyJob::new(1, range));
+    dashboard.history = Some(view);
+    dashboard
+}
+
+fn simple_copy_page(start_row: u32, text: &str) -> HistoryRows {
+    HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row,
+        start_col: 0,
+        rows: vec![HistoryRow {
+            width: 4,
+            cells: (0..4)
+                .map(|col| {
+                    if col == 0 {
+                        history_cell(text, 1)
+                    } else {
+                        history_cell("", 1)
+                    }
+                })
+                .collect(),
+            wrapped: false,
+        }],
+    }
+}
+
+#[test]
+fn copy_history_invalid_snapshot_never_emits_partial_text() {
+    let range = HistoryCopyRange {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        anchor: HistoryCopyPoint { row: 0, col: 0 },
+        cursor: HistoryCopyPoint { row: 1, col: 0 },
+    };
+    for code in [ErrorCode::Conflict, ErrorCode::NotFound] {
+        let mut dashboard = dashboard_with_history_copy(range);
+        let request = dashboard.history_request_if_needed().expect("copy page");
+        let release = dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Error {
+                code,
+                message: "snapshot unavailable".into(),
+            },
+        });
+        assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+        assert!(dashboard.history.is_none());
+        assert!(dashboard.take_pending_history_copy().is_none());
+        assert!(matches!(
+            release.as_slice(),
+            [ClientMessage {
+                request: Request::HistoryEnd {
+                    session: SessionId(1),
+                    snapshot: HistorySnapshotId(7),
+                },
+                ..
+            }]
+        ));
+    }
+
+    let mut dashboard = dashboard_with_history_copy(range);
+    let request = dashboard.history_request_if_needed().expect("copy page");
+    let next = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::HistoryRows(simple_copy_page(0, "partial")),
+    });
+    let old_pending = next.first().cloned().expect("next row remains pending");
+    assert!(dashboard.history.as_ref().unwrap().copy_job.is_some());
+    assert!(dashboard.take_pending_history_copy().is_none());
+    let cancelled = dashboard.key(KeyCode::Esc);
+    assert_eq!(cancelled, ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+    assert_eq!(dashboard.copy_notice.as_deref(), Some("Copy cancelled"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: old_pending.request_id,
+        response: Response::HistoryRows(simple_copy_page(1, "late")),
+    });
+    assert!(dashboard.take_pending_history_copy().is_none());
+
+    let mut malformed = dashboard_with_history_copy(range);
+    let request = malformed.history_request_if_needed().expect("copy page");
+    let _ = malformed.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![HistoryRow {
+                width: 4,
+                cells: vec![history_cell("short", 1)],
+                wrapped: false,
+            }],
+        }),
+    });
+    assert!(malformed.history.as_ref().unwrap().copy_job.is_none());
+    assert!(malformed.take_pending_history_copy().is_none());
+
+    let mut replacement = dashboard_with_history_copy(range);
+    replacement.history_begin_request = Some(ovrcr::tui::PendingHistoryBegin {
+        request_id: 90,
+        session: SessionId(1),
+        cancelled: false,
+    });
+    let replacement_opened = HistoryOpened {
+        snapshot: HistorySnapshotId(8),
+        ..history_opened(2)
+    };
+    let replacement_requests = replacement.handle_server_message(ServerMessage::Response {
+        request_id: 90,
+        response: Response::HistoryOpened(replacement_opened.clone()),
+    });
+    assert_eq!(
+        replacement.history.as_ref().unwrap().opened.snapshot,
+        HistorySnapshotId(8)
+    );
+    assert!(replacement.history.as_ref().unwrap().copy_job.is_none());
+    assert!(replacement.take_pending_history_copy().is_none());
+    assert!(replacement_requests.iter().any(|request| matches!(
+        request.request,
+        Request::HistoryEnd {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+        }
+    )));
+
+    let mut oversize = dashboard_with_history_copy(HistoryCopyRange {
+        cursor: HistoryCopyPoint { row: 0, col: 127 },
+        ..range
+    });
+    let request = oversize.history_request_if_needed().expect("copy page");
+    let oversize_page = HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        start_col: 0,
+        rows: vec![HistoryRow {
+            width: 128,
+            cells: (0..128)
+                .map(|_| history_cell(&"x".repeat(600), 1))
+                .collect(),
+            wrapped: false,
+        }],
+    };
+    dashboard = oversize;
+    let _ = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::HistoryRows(oversize_page),
+    });
+    assert!(dashboard.take_pending_history_copy().is_none());
+    assert!(dashboard.history.as_ref().unwrap().copy_job.is_none());
+}
+
+#[test]
 fn history_render_preserves_cells_and_clips() {
     let mut view = ovrcr::tui::HistoryView::new(history_opened(1), 0);
     let mut wide = history_cell("界", 2);
@@ -1873,6 +2454,7 @@ fn history_render_preserves_cells_and_clips() {
         rows: 16,
         start_col: 0,
         cols: 128,
+        purpose: ovrcr::tui::HistoryPagePurpose::Viewport,
     });
     dashboard.history = Some(loading);
     let mut dashboard_terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
