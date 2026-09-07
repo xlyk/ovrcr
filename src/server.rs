@@ -93,6 +93,7 @@ fn user_temp_dir(name: &str) -> PathBuf {
 }
 
 pub struct ServerState {
+    pub tasks: Option<Arc<crate::task_manager::TaskManager>>,
     socket: PathBuf,
     pub registry_path: PathBuf,
     pub registry: Mutex<Registry>,
@@ -338,7 +339,39 @@ impl ServerState {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_tasks_for_test(
+        tasks: Arc<crate::task_manager::TaskManager>,
+        registry_path: PathBuf,
+    ) -> Arc<Self> {
+        let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        Arc::new(Self {
+            tasks: Some(tasks),
+            socket: registry_path.with_extension("sock"),
+            registry_path,
+            registry: Mutex::new(Registry::default()),
+            sessions: Mutex::new(HashMap::new()),
+            selected: Mutex::new(None),
+            dashboard: Mutex::new(None),
+            next_session_id: AtomicU64::new(1),
+            mutation_lock: Mutex::new(()),
+            dispatch,
+            shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
+            events: Mutex::new(Some(events)),
+            dashboard_slot: Mutex::new(None),
+        })
+    }
     pub fn request_shutdown(&self, kill: bool) -> Response {
+        let admission = self.tasks.as_ref().map(|tasks| tasks.admission_guard());
+        if let Some(tasks) = &self.tasks
+            && !kill
+            && tasks.has_active()
+        {
+            return error_response(ErrorCode::SessionsRemain, "task runs remain");
+        }
         let _mutation = self.mutation_lock.lock().unwrap();
         if self.stopping.load(Ordering::Acquire) {
             return error_response(ErrorCode::Conflict, "server is stopping");
@@ -369,6 +402,19 @@ impl ServerState {
             }
         }
         self.stopping.store(true, Ordering::Release);
+        if let Some(tasks) = &self.tasks {
+            tasks.quiesce();
+        }
+        drop(_mutation);
+        drop(admission);
+        if let Some(tasks) = &self.tasks
+            && let Err(error) = tasks.stop()
+        {
+            return error_response(
+                ErrorCode::PartialFailure,
+                format!("task shutdown: {error:#}"),
+            );
+        }
         Response::Ok
     }
 
@@ -402,9 +448,22 @@ impl ServerState {
         Ok(())
     }
 
+    pub(crate) fn task_mutation_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mutation_lock.lock().unwrap()
+    }
     pub fn remove_project(&self, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        if self
+            .tasks
+            .as_ref()
+            .is_some_and(|tasks| tasks.references_project(name))
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "project is referenced by a scheduled task",
+            ));
+        }
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         let project = next
@@ -431,6 +490,26 @@ impl ServerState {
         project: String,
         name: String,
         branch: BranchRequest,
+    ) -> Result<()> {
+        self.create_workspace_inner(project, name, branch, true)
+    }
+
+    pub fn create_task_workspace(
+        &self,
+        project: String,
+        name: String,
+        branch: String,
+        base: String,
+    ) -> Result<()> {
+        self.create_workspace_inner(project, name, BranchRequest::New { branch, base }, false)
+    }
+
+    fn create_workspace_inner(
+        &self,
+        project: String,
+        name: String,
+        branch: BranchRequest,
+        start_shell: bool,
     ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
@@ -473,6 +552,9 @@ impl ServerState {
             }
             *registry = next;
         }
+        if !start_shell {
+            return Ok(());
+        }
         let shell = std::env::var_os("SHELL").ok_or_else(|| {
             lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
@@ -511,6 +593,65 @@ impl ServerState {
     pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        self.remove_workspace_locked(project, name, None)
+    }
+
+    pub(crate) fn remove_task_workspace(
+        &self,
+        snapshot: &crate::tasks::Run,
+        run_dir: &Path,
+    ) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        // Another cleanup may have consumed ownership while this request waited for the lock.
+        let run = if run_dir.join("run.json").exists() {
+            crate::tasks::read_run(run_dir)?
+        } else {
+            snapshot.clone()
+        };
+        if !run.status.is_terminal() {
+            bail!("run is still active");
+        }
+        let Some(cwd) = &run.directory else {
+            return Ok(());
+        };
+        let crate::tasks::TaskTarget::Git { project, .. } = &run.spec.target else {
+            bail!("run does not own a Git workspace");
+        };
+        if !cwd.exists() {
+            if run.workspace.is_some() {
+                let mut cleaned = run;
+                cleaned.workspace = None;
+                crate::tasks::write_run(run_dir, &cleaned)?;
+            }
+            return Ok(());
+        }
+        let name = run
+            .workspace
+            .as_deref()
+            .context("retained worktree is not owned by this run; inspect it before cleanup")?;
+        self.registry
+            .lock()
+            .unwrap()
+            .workspace(project, name)
+            .context("retained worktree is not registered; inspect it before cleanup")?;
+        self.remove_workspace_locked(project, name, Some((&run, run_dir)))
+    }
+
+    fn remove_workspace_locked(
+        &self,
+        project: &str,
+        name: &str,
+        cleanup: Option<(&crate::tasks::Run, &Path)>,
+    ) -> Result<()> {
+        if let Some(tasks) = &self.tasks
+            && tasks.occupies_workspace(project, name)?
+        {
+            return Err(lifecycle_error(
+                ErrorCode::SessionsRemain,
+                format!("task run remains for workspace {project}/{name}"),
+            ));
+        }
         let occupied = self.sessions.lock().unwrap().values().any(|session| {
             let summary = session.summary();
             summary.project == project && summary.workspace == name
@@ -534,6 +675,13 @@ impl ServerState {
                     .clone(),
             )
         };
+        if let Some((run, _)) = cleanup
+            && (name != format!("task-{}-run-{}", run.task_id.0, run.id.0)
+                || run.directory.as_ref() != Some(&workspace.path)
+                || workspace.branch != format!("ovrcr/task-{}/run-{}", run.task_id.0, run.id.0))
+        {
+            bail!("registered worktree does not match this run's ownership");
+        }
         if git::inspect_worktree(&project_record, &workspace)
             .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?
             .dirty
@@ -543,7 +691,23 @@ impl ServerState {
                 "worktree has changes",
             ));
         }
-        git::remove_worktree(&project_record, &workspace)?;
+        if let Some((run, run_dir)) = cleanup {
+            // Release ownership durably before deletion, so a crash or a reused name cannot
+            // let the old run authorize removal of a later workspace at the same path.
+            let mut cleaned = run.clone();
+            cleaned.workspace = None;
+            crate::tasks::write_run(run_dir, &cleaned)?;
+        } else if let Some(tasks) = &self.tasks {
+            // Ordinary workspace removal also consumes any historical run's ownership.
+            tasks.release_workspace_ownership(project, &workspace)?;
+        }
+        git::remove_worktree(&project_record, &workspace).with_context(|| {
+            if cleanup.is_some() {
+                format!("cleanup ownership released; inspect retained worktree {} before manual cleanup", workspace.path.display())
+            } else {
+                format!("remove workspace {project}/{name}")
+            }
+        })?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         next.remove_workspace(project, name)?;
@@ -770,9 +934,11 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     drop(startup_lock);
     let registry = Registry::load(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
+    let task_manager = crate::task_manager::TaskManager::open(&registry_path)?;
     let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
     let state = Arc::new(ServerState {
+        tasks: Some(Arc::clone(&task_manager)),
         socket: paths.socket.clone(),
         registry_path,
         registry: Mutex::new(registry),
@@ -788,6 +954,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         events: Mutex::new(Some(events)),
         dashboard_slot: Mutex::new(None),
     });
+    task_manager.start(Arc::downgrade(&state));
     let bridge_dispatch = dispatch.clone();
     let bridge = thread::Builder::new()
         .name("ovrcr-event-bridge".into())
@@ -796,6 +963,25 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     let dispatcher = thread::Builder::new()
         .name("ovrcr-dispatcher".into())
         .spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver))?;
+    let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT])?;
+    let signal_handle = signals.handle();
+    let signal_state = Arc::downgrade(&state);
+    let signal_thread = thread::spawn(move || {
+        for _signal in signals.forever() {
+            let Some(state) = signal_state.upgrade() else {
+                break;
+            };
+            let response = state.request_shutdown(true);
+            if let Response::Error { message, .. } = &response {
+                eprintln!("signal shutdown: {message}");
+            }
+            if state.stopping.load(Ordering::Acquire) {
+                state.shutdown.store(true, Ordering::Release);
+                wake_accept(&state);
+                break;
+            }
+        }
+    });
     for incoming in listener.incoming() {
         if state.shutdown.load(Ordering::Acquire) {
             break;
@@ -811,6 +997,9 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
             Err(error) => return Err(error).context("accept server client"),
         }
     }
+    signal_handle.close();
+    let _ = signal_thread.join();
+    let task_shutdown = task_manager.stop();
     if let Some(snapshot) = dashboard_snapshot(&state) {
         disconnect_dashboard(&state, snapshot);
     }
@@ -825,7 +1014,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .join()
         .map_err(|_| anyhow::anyhow!("server event bridge panicked"))?;
     let _ = fs::remove_file(&paths.socket);
-    Ok(())
+    task_shutdown
 }
 
 fn bridge_events(events: Receiver<SessionEvent>, dispatch: SyncSender<DispatchMessage>) {
@@ -1071,7 +1260,7 @@ fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
             message.request.clone(),
             message.request_id,
         );
-        let successful_shutdown = shutdown && matches!(&response, Response::Ok);
+        let successful_shutdown = shutdown && state.stopping.load(Ordering::Acquire);
         let (delivered, dashboard_shutdown_attempt) = match role {
             ClientRole::Control => (
                 send_direct(&mut stream, message.request_id, response).is_ok(),
@@ -1144,6 +1333,13 @@ fn handle_request_with_id(
 ) -> Response {
     let dashboard = matches!(role, ClientRole::Dashboard);
     match request {
+        Request::Task(request) => match &state.tasks {
+            Some(tasks) => tasks.handle(state, *request).map_or_else(
+                |error| error_response(ErrorCode::InvalidRequest, format!("{error:#}")),
+                |value| Response::Task(Box::new(value)),
+            ),
+            None => error_response(ErrorCode::Internal, "task manager unavailable"),
+        },
         Request::List => Response::Hierarchy(state.hierarchy()),
         Request::Inspect => {
             let (registry, sessions) = state.inventory();
@@ -1571,6 +1767,18 @@ pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {
     if let Some(stream) = connect_if_running(paths)? {
         return Ok(stream);
     }
+    if crate::service::start_if_installed()? {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(stream) = connect_if_running(paths)? {
+                return Ok(stream);
+            }
+            if Instant::now() >= deadline {
+                bail!("timed out waiting for installed service startup");
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
     let executable = std::env::var_os("OVRCR_SERVER_EXECUTABLE")
         .map(PathBuf::from)
         .map(Ok)
@@ -1661,6 +1869,7 @@ mod tests {
         let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
         let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
         Arc::new(ServerState {
+            tasks: None,
             socket: PathBuf::from("/tmp/ovrcr-test.sock"),
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(Registry::default()),
@@ -2056,6 +2265,7 @@ mod tests {
             }],
         };
         let state = Arc::new(ServerState {
+            tasks: None,
             socket: root.path().join("socket"),
             registry_path: root.path().join("config.toml"),
             registry: Mutex::new(registry),

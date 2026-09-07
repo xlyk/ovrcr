@@ -176,6 +176,15 @@ intend to stop all sessions together, the existing `ovrcr shutdown --kill`
 command does that. The CLI never stops an old server automatically or restores
 its lost PTYs. The project/workspace registry requires no migration.
 
+## Scheduled Pi tasks
+
+OVRCR can run scheduled Pi agents in fresh Git worktrees or scratch directories.
+Task definitions, run history, and transcripts are persistent. The scheduler uses
+three concurrent slots by default and gives each run a one-hour timeout.
+
+See [Schedule agent tasks](docs/scheduled-tasks.md) for CLI commands, background
+service installation, scheduling rules, and retained-work cleanup.
+
 ## Session lifecycle
 
 List sessions, stop a process group, and remove an exited record:

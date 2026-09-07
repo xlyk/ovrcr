@@ -25,6 +25,16 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Server,
+    #[command(visible_alias = "tasks")]
+    Task(Box<ovrcr::task_cli::TaskArgs>),
+    #[command(visible_alias = "runs")]
+    Run(ovrcr::task_cli::RunArgs),
+    Service(ovrcr::service::ServiceArgs),
+    #[command(name = "__task-runner", hide = true)]
+    TaskRunner {
+        run_dir: PathBuf,
+        pi_executable: PathBuf,
+    },
     #[command(visible_alias = "projects")]
     Project {
         #[command(subcommand)]
@@ -200,11 +210,29 @@ fn run(cli: Cli) -> AppResult<()> {
             .map_err(RuntimeError::internal);
     };
     match command {
-        Command::Server => run_server(
-            ServerPaths::resolve().map_err(RuntimeError::internal)?,
-            RegistryPath::resolve().map_err(RuntimeError::internal)?.0,
-        )
-        .map_err(RuntimeError::internal),
+        Command::Task(args) => {
+            ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
+        }
+        Command::Run(args) => {
+            ovrcr::task_cli::run_run(args.command, json_output).map_err(RuntimeError::internal)
+        }
+        Command::Service(args) => {
+            ovrcr::service::run(args.command, json_output).map_err(RuntimeError::internal)
+        }
+        Command::TaskRunner {
+            run_dir,
+            pi_executable,
+        } => {
+            ovrcr::task_runner::supervise(&run_dir, &pi_executable).map_err(RuntimeError::internal)
+        }
+        Command::Server => {
+            ovrcr::service::load_environment_file().map_err(RuntimeError::internal)?;
+            run_server(
+                ServerPaths::resolve().map_err(RuntimeError::internal)?,
+                RegistryPath::resolve().map_err(RuntimeError::internal)?.0,
+            )
+            .map_err(RuntimeError::internal)
+        }
         Command::List => {
             let paths = ServerPaths::resolve().map_err(RuntimeError::internal)?;
             let Some(mut stream) = connect_if_running(&paths).map_err(RuntimeError::internal)?

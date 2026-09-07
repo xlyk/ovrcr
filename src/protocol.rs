@@ -101,6 +101,7 @@ pub enum Request {
     CloseTerminal {
         session: SessionId,
     },
+    Task(Box<crate::task_manager::TaskRequest>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +159,7 @@ pub enum Response {
         size: TerminalSize,
         text: String,
     },
+    Task(Box<crate::task_manager::TaskResponse>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
