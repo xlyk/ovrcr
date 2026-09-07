@@ -495,6 +495,7 @@ fn context_resource_inventory_matches_inspection() {
     let marker = fixture.root.path().join("context-marker");
     let first_gate = fixture.root.path().join("context-first");
     let second_gate = fixture.root.path().join("context-second");
+    let final_gate = fixture.root.path().join("context-final");
     let id = fixture
         .ok(&[
             "terminal",
@@ -516,12 +517,15 @@ printf CONTEXT1 >> "$2"
 while [ ! -e "$4" ]; do sleep 0.01; done
 printf '%s' '{"source":"generic","model":"replacement-model","conversation":"replacement-conversation","used_tokens":40}' | "$1" report context --stdin-json
 printf CONTEXT2 >> "$2"
+printf WAITING >> "$2"
+while [ ! -e "$5" ]; do sleep 0.01; done
 "#,
             "context-inventory",
             bin,
             marker.to_str().unwrap(),
             first_gate.to_str().unwrap(),
             second_gate.to_str().unwrap(),
+            final_gate.to_str().unwrap(),
         ])
         .trim()
         .to_owned();
@@ -613,7 +617,7 @@ printf CONTEXT2 >> "$2"
     while (!marker.exists()
         || !std::fs::read_to_string(&marker)
             .unwrap_or_default()
-            .contains("CONTEXT2"))
+            .contains("CONTEXT2WAITING"))
         && Instant::now() < second_deadline
     {
         std::thread::park_timeout(Duration::from_millis(10));
@@ -621,12 +625,13 @@ printf CONTEXT2 >> "$2"
     assert!(
         std::fs::read_to_string(&marker)
             .unwrap()
-            .contains("CONTEXT2")
+            .contains("CONTEXT2WAITING")
     );
     let replacement: serde_json::Value =
         serde_json::from_str(&fixture.ok(&["session", "context", &id])).unwrap();
     assert_eq!(replacement["context_usage"]["report"]["used_tokens"], 40);
     assert!(replacement["context_usage"]["report"]["capacity_tokens"].is_null());
+    assert_eq!(replacement["stale"], false);
     let replacement_inventory = fixture.json(&["terminal", "list"]);
     let replacement_record = replacement_inventory
         .as_array()
@@ -639,8 +644,10 @@ printf CONTEXT2 >> "$2"
         replacement["context_usage"]
     );
     assert_eq!(replacement_record["context_stale"], replacement["stale"]);
+    assert_eq!(replacement_record["context_stale"], false);
     assert!(replacement_record["context_usage"]["report"]["capacity_tokens"].is_null());
 
+    std::fs::write(&final_gate, b"release").unwrap();
     let exited_deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < exited_deadline
         && !fixture.sessions().into_iter().any(|session| {
