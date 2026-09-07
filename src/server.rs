@@ -1,9 +1,9 @@
-use crate::config::{ProjectRecord, Registry};
+use crate::config::{ProjectRecord, Registry, load_registry, save_registry_atomic};
 use crate::git::{self, BranchSpec};
 use crate::protocol::{
-    AgentReport, BranchRequest, ClientMessage, ClientRole, DispatchMessage, ErrorCode,
-    HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent, ServerMessage,
-    WorkspaceSummary, read_frame, write_frame,
+    AgentReport, BranchRequest, ClientMessage, ClientRole, ErrorCode, HierarchySnapshot,
+    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
+    write_frame,
 };
 use crate::session::{
     HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase,
@@ -23,6 +23,9 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+mod dispatch;
+pub use dispatch::DispatchMessage;
 
 #[derive(Debug)]
 struct LifecycleFailure {
@@ -467,7 +470,7 @@ impl ServerState {
             workspace_root,
             workspaces: Vec::new(),
         })?;
-        next.save_atomic(&self.registry_path)?;
+        save_registry_atomic(&next, &self.registry_path)?;
         *registry = next;
         Ok(())
     }
@@ -491,7 +494,7 @@ impl ServerState {
             ));
         }
         next.remove_project(name)?;
-        next.save_atomic(&self.registry_path)?;
+        save_registry_atomic(&next, &self.registry_path)?;
         *registry = next;
         Ok(())
     }
@@ -531,7 +534,7 @@ impl ServerState {
             let mut registry = self.registry.lock().unwrap();
             let mut next = registry.clone();
             next.add_workspace(&project, workspace.clone())?;
-            if let Err(error) = next.save_atomic(&self.registry_path) {
+            if let Err(error) = save_registry_atomic(&next, &self.registry_path) {
                 return Err(lifecycle_error(
                     ErrorCode::PartialFailure,
                     format!(
@@ -617,7 +620,7 @@ impl ServerState {
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         next.remove_workspace(project, name)?;
-        if let Err(error) = next.save_atomic(&self.registry_path) {
+        if let Err(error) = save_registry_atomic(&next, &self.registry_path) {
             *registry = next;
             return Err(lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
@@ -839,7 +842,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     let listener = UnixListener::bind(&paths.socket)
         .with_context(|| format!("bind server socket {}", paths.socket.display()))?;
     drop(startup_lock);
-    let registry = Registry::load(&registry_path)
+    let registry = load_registry(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
     let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);

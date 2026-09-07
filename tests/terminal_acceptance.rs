@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use ovrcr::config::Registry;
+use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerMessage, read_frame, write_frame,
 };
@@ -30,7 +30,7 @@ impl AcceptanceFixture {
         std::fs::create_dir(&repo)?;
         std::fs::create_dir(&workspace_root)?;
         let config = root.path().join("config.toml");
-        Registry::default().save_atomic(&config)?;
+        save_registry_atomic(&Registry::default(), &config)?;
         let socket = root.path().join("server.sock");
         let executable = PathBuf::from(env!("CARGO_BIN_EXE_ovrcr"));
         let server = Command::new(&executable)

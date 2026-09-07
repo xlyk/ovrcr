@@ -1,8 +1,8 @@
 use crate::context::{ContextUsageSnapshot, validate_context};
 use crate::protocol::{AgentReport, AgentUpdate};
 use anyhow::{Context, Result, bail};
+use ovrcr_terminal::{encode_paste, vt100};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -10,14 +10,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc::SyncSender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SessionId(pub u64);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalSize {
-    pub rows: u16,
-    pub cols: u16,
-}
+pub use ovrcr_protocol::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 
 #[derive(Clone, Debug)]
 pub struct SessionSpec {
@@ -43,25 +36,6 @@ impl std::fmt::Debug for HookEnvironment {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionPhase {
-    Running,
-    Paused,
-    Exited {
-        code: Option<u32>,
-        signal: Option<String>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentActivity {
-    Unknown,
-    Idle,
-    Busy,
-    WaitingInput,
-    Error,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputAdmissionError {
     Paused,
@@ -78,20 +52,6 @@ impl std::fmt::Display for InputAdmissionError {
 }
 
 impl std::error::Error for InputAdmissionError {}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionSummary {
-    pub id: SessionId,
-    pub project: String,
-    pub workspace: String,
-    pub name: String,
-    pub label: String,
-    pub pid: Option<u32>,
-    pub started_unix_ms: u64,
-    pub phase: SessionPhase,
-    pub activity: AgentActivity,
-    pub context_usage: Option<ContextUsageSnapshot>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ReportOrder {
@@ -479,7 +439,7 @@ impl Session {
         self.admit_input().map_err(anyhow::Error::new)?;
         let bytes = {
             let parser = self.parser.lock().unwrap();
-            crate::tui::encode_paste(text, parser.screen().bracketed_paste())
+            encode_paste(text, parser.screen().bracketed_paste())
         };
         let mut writer = self.writer.lock().unwrap();
         writer.write_all(&bytes).context("write text to PTY")?;

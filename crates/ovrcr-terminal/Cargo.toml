@@ -1,0 +1,9 @@
+[package]
+name = "ovrcr-terminal"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+vt100 = { workspace = true }
+
