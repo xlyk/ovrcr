@@ -2645,6 +2645,7 @@ dependencies = [
  "eframe",
  "libc",
  "ovrcr-protocol",
+ "ovrcr-runtime",
  "ovrcr-terminal",
  "portable-pty",
  "ratatui",
@@ -2664,6 +2665,21 @@ dependencies = [
  "bincode",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ovrcr-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "libc",
+ "ovrcr-protocol",
+ "ovrcr-terminal",
+ "portable-pty",
+ "signal-hook",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

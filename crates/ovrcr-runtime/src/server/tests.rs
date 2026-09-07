@@ -1,0 +1,1776 @@
+use super::connections::lifecycle_response_with_partial_hierarchy;
+use super::startup::resolve_bound_socket;
+use super::*;
+use ovrcr_protocol::AgentReport;
+use std::time::Instant;
+
+use crate::session::AgentActivity;
+use ovrcr_protocol::{ServerEvent, ServerMessage};
+use std::io::Read;
+use std::net::Shutdown;
+
+#[test]
+fn raw_event_and_dispatch_queues_reject_the_65th_item() {
+    let (event_sender, _event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
+        event_sender
+            .try_send(SessionEvent::Output {
+                id: SessionId(1),
+                bytes: Vec::new(),
+            })
+            .unwrap();
+    }
+    assert!(matches!(
+        event_sender.try_send(SessionEvent::Output {
+            id: SessionId(1),
+            bytes: Vec::new(),
+        }),
+        Err(mpsc::TrySendError::Full(_))
+    ));
+
+    let (dispatch_sender, _dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
+    }
+    assert!(matches!(
+        dispatch_sender.try_send(DispatchMessage::Stop),
+        Err(mpsc::TrySendError::Full(_))
+    ));
+}
+
+#[test]
+fn agent_report_queue_full_is_a_structured_conflict() {
+    let (state, _receiver) = test_state_with_dispatch(None, None);
+    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+    }
+    let mut role = ClientRole::Control;
+    let response = state.handle_request(
+        &mut role,
+        Request::AgentReport(AgentReport {
+            session: SessionId(999),
+            capability: [0_u8; 32],
+            sequence: None,
+            update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+        }),
+    );
+    assert_eq!(
+        response,
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message: "dispatcher queue is full".into(),
+        }
+    );
+}
+
+#[test]
+fn hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink() {
+    let root = tempfile::tempdir().unwrap();
+    let real_parent = root.path().join("real");
+    std::fs::create_dir(&real_parent).unwrap();
+    let symlink_parent = root.path().join("link");
+    std::os::unix::fs::symlink(&real_parent, &symlink_parent).unwrap();
+    let socket = symlink_parent.join("server.sock");
+    let expected = real_parent.canonicalize().unwrap().join("server.sock");
+    assert_eq!(resolve_bound_socket(&socket).unwrap(), expected);
+
+    let listener = UnixListener::bind(&socket).unwrap();
+    assert_eq!(resolve_bound_socket(&socket).unwrap(), expected);
+    drop(listener);
+    std::fs::remove_file(&socket).unwrap();
+
+    let symlink_leaf = root.path().join("symlink.sock");
+    std::os::unix::fs::symlink(&expected, &symlink_leaf).unwrap();
+    assert!(resolve_bound_socket(&symlink_leaf).is_err());
+}
+
+#[test]
+fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
+    let root = tempfile::tempdir().unwrap();
+    let child_cwd = root.path().join("child");
+    std::fs::create_dir(&child_cwd).unwrap();
+    let socket = PathBuf::from(format!(".ovrcr-task2-relative-{}.sock", std::process::id()));
+    let listener = UnixListener::bind(&socket).unwrap();
+    let expected = std::env::current_dir()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(socket.file_name().unwrap());
+    assert_eq!(validate_bound_socket(&socket).unwrap(), expected);
+
+    let identity = root.path().join("identity");
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "project".into(),
+            repo: root.path().to_path_buf(),
+            workspace_root: root.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                name: "workspace".into(),
+                path: child_cwd.clone(),
+                branch: "main".into(),
+            }],
+        }],
+    };
+    let (state, _dispatch_receiver, event_receiver) =
+        test_state_with_socket(socket.clone(), registry);
+    let summary = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "relative".into(),
+            label: None,
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf '%s' \"$OVRCR_HOOK_SOCKET\" > \"$1\"".into(),
+                "ovrcr-relative".into(),
+                identity.clone().into_os_string(),
+            ],
+        })
+        .unwrap();
+    assert_ne!(child_cwd, std::env::current_dir().unwrap());
+    let session = state
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&summary.id)
+        .cloned()
+        .unwrap();
+    let event_session = Arc::clone(&session);
+    let event_thread = thread::spawn(move || {
+        while let Ok(event) = event_receiver.recv() {
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            event_session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+    });
+    let expected_identity = expected.to_string_lossy().into_owned();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut identity_contents = None;
+    while Instant::now() < deadline {
+        if let Ok(contents) = std::fs::read_to_string(&identity) {
+            if contents == expected_identity {
+                identity_contents = Some(contents);
+                break;
+            }
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert_eq!(
+        identity_contents.as_deref(),
+        Some(expected_identity.as_str())
+    );
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    event_thread.join().unwrap();
+    state.remove_session(summary.id).unwrap();
+
+    drop(listener);
+    std::fs::remove_file(&socket).unwrap();
+    let error = state
+        .create_session(ovrcr_protocol::CreateSessionRequest {
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "missing".into(),
+            label: None,
+            argv: vec!["sh".into()],
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("bound server socket"));
+    assert!(state.sessions.lock().unwrap().is_empty());
+}
+
+#[test]
+fn lifecycle_response_preserves_error_chain_and_code() {
+    let error = lifecycle_error(ErrorCode::NotFound, "missing executable").context("spawn session");
+    let response = error_for_lifecycle(error);
+    assert_eq!(
+        response,
+        Response::Error {
+            code: ErrorCode::NotFound,
+            message: "spawn session: missing executable".into(),
+        }
+    );
+}
+
+fn test_state(
+    dashboard: Option<Arc<DashboardSink>>,
+    stream: Option<(Arc<()>, UnixStream)>,
+) -> Arc<ServerState> {
+    test_state_with_dispatch(dashboard, stream).0
+}
+
+fn test_state_with_dispatch(
+    dashboard: Option<Arc<DashboardSink>>,
+    stream: Option<(Arc<()>, UnixStream)>,
+) -> (Arc<ServerState>, Receiver<DispatchMessage>) {
+    let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    (
+        Arc::new(ServerState {
+            socket: PathBuf::from("/tmp/ovrcr-test.sock"),
+            registry_path: PathBuf::from("config.toml"),
+            registry: Mutex::new(Registry::default()),
+            sessions: Mutex::new(HashMap::new()),
+            selected: Mutex::new(None),
+            dashboard: Mutex::new(dashboard.clone()),
+            next_session_id: AtomicU64::new(1),
+            mutation_lock: Mutex::new(()),
+            dispatch,
+            shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
+            events: Mutex::new(Some(events)),
+            dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
+                sink: dashboard.as_ref().unwrap().clone(),
+                identity,
+                stream,
+            })),
+        }),
+        receiver,
+    )
+}
+
+fn test_state_with_socket(
+    socket: PathBuf,
+    registry: Registry,
+) -> (
+    Arc<ServerState>,
+    Receiver<DispatchMessage>,
+    Receiver<SessionEvent>,
+) {
+    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    (
+        Arc::new(ServerState {
+            socket,
+            registry_path: PathBuf::from("config.toml"),
+            registry: Mutex::new(registry),
+            sessions: Mutex::new(HashMap::new()),
+            selected: Mutex::new(None),
+            dashboard: Mutex::new(None),
+            next_session_id: AtomicU64::new(1),
+            mutation_lock: Mutex::new(()),
+            dispatch,
+            shutdown: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
+            dashboard_size: Mutex::new(None),
+            events: Mutex::new(Some(events)),
+            dashboard_slot: Mutex::new(None),
+        }),
+        dispatch_receiver,
+        event_receiver,
+    )
+}
+
+fn spawn_live_test_session(
+    id: SessionId,
+) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let session = Session::spawn(
+        id,
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "live".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' TERM; while :; do sleep 1; done".into(),
+            ],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+    )
+    .unwrap();
+    (cwd, session, receiver)
+}
+
+struct TestSessionEvents {
+    cancel: Arc<AtomicBool>,
+    finished: Receiver<()>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl TestSessionEvents {
+    fn cancel(&self) {
+        self.cancel.store(true, Ordering::Release);
+    }
+
+    fn finish(mut self, timeout: Duration) -> Result<()> {
+        if self.finished.recv_timeout(timeout).is_err() {
+            self.cancel();
+            if self.finished.recv_timeout(Duration::from_secs(1)).is_err() {
+                bail!("test session event consumer did not stop after cancellation")
+            }
+        }
+        if let Some(handle) = self.handle.take() {
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("test session event consumer panicked"))?;
+        }
+        Ok(())
+    }
+}
+
+fn apply_test_session_events(
+    session: Arc<Session>,
+    receiver: Receiver<SessionEvent>,
+) -> TestSessionEvents {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (finished_sender, finished) = mpsc::sync_channel(1);
+    let consumer_cancel = Arc::clone(&cancel);
+    let handle = thread::spawn(move || {
+        while !consumer_cancel.load(Ordering::Acquire) {
+            match receiver.recv_timeout(Duration::from_millis(10)) {
+                Ok(event) => {
+                    let exited = matches!(event, SessionEvent::Exited { .. });
+                    session.apply_event(event);
+                    if exited {
+                        break;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let _ = finished_sender.send(());
+    });
+    TestSessionEvents {
+        cancel,
+        finished,
+        handle: Some(handle),
+    }
+}
+
+fn saturated_control_state(
+    session: &Arc<Session>,
+    id: SessionId,
+) -> (Arc<ServerState>, Receiver<DispatchMessage>, UnixStream) {
+    let (server_stream, client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let identity = Arc::new(());
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink), Some((identity, server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(session));
+    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+    }
+    (state, dispatch_receiver, client_stream)
+}
+
+fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<()> {
+    let _ = session.set_paused(false);
+    let termination = session.terminate(Duration::from_secs(2));
+    if termination.is_err() {
+        events.cancel();
+    }
+    let events_result = events.finish(Duration::from_secs(1));
+    match (termination, events_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(termination), Ok(())) => Err(termination.context("terminate test session")),
+        (Ok(()), Err(events)) => Err(events.context("finish test session event consumer")),
+        (Err(termination), Err(events)) => Err(anyhow::anyhow!(
+            "terminate test session: {}; finish test session event consumer: {}",
+            error_chain_string(&termination),
+            error_chain_string(&events),
+        )),
+    }
+}
+
+#[test]
+fn dashboard_overflow_closes_affected_connection() {
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    client_stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let sink = DashboardSink::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            },)),
+            completion: None,
+        }));
+    }
+    let identity = Arc::new(());
+    let state = test_state(Some(sink), Some((identity, server_stream)));
+    dashboard_try_send(
+        &state,
+        ServerMessage::Event(ServerEvent::ScreenDirty {
+            session: SessionId(2),
+        }),
+    );
+    let mut byte = [0_u8; 1];
+    assert_eq!(client_stream.read(&mut byte).unwrap(), 0);
+    assert!(state.dashboard.lock().unwrap().is_none());
+}
+
+#[test]
+fn dashboard_overflow_does_not_clear_replacement_slot() {
+    let (old_server, mut old_client) = UnixStream::pair().unwrap();
+    let _old_handler_stream = old_server.try_clone().unwrap();
+    let _old_writer_stream = old_server.try_clone().unwrap();
+    old_client
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .unwrap();
+    let old_sink = DashboardSink::new();
+    let old_identity = Arc::new(());
+    let state = test_state(Some(old_sink), Some((old_identity, old_server)));
+    let old_snapshot = dashboard_snapshot(&state).unwrap();
+
+    let (new_server, _new_client) = UnixStream::pair().unwrap();
+    let new_sink = DashboardSink::new();
+    let new_identity = Arc::new(());
+    *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+        sink: new_sink.clone(),
+        identity: new_identity,
+        stream: new_server,
+    });
+    *state.dashboard.lock().unwrap() = Some(new_sink);
+    disconnect_dashboard(&state, old_snapshot);
+
+    assert!(state.dashboard.lock().unwrap().is_some());
+    assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+}
+
+#[test]
+fn session_refresh_dispatch_failures_disconnect_without_blocking() {
+    let id = SessionId(3);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, dispatch_receiver, mut client_stream) = saturated_control_state(&session, id);
+    let mut dispatch_receiver = Some(dispatch_receiver);
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+
+    let (completion, result) = mpsc::sync_channel(1);
+    let control_state = Arc::clone(&state);
+    let worker = thread::spawn(move || {
+        let outcome = control_state.set_session_paused(id, true);
+        let _ = completion.send(outcome);
+    });
+    let outcome = match result.recv_timeout(Duration::from_millis(250)) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            drop(dispatch_receiver.take());
+            let _ = result.recv_timeout(Duration::from_secs(1));
+            let _ = worker.join();
+            match cleanup_test_session(&session, events) {
+                Ok(()) => {
+                    panic!("pause control must not block on a full dispatch queue: {error}")
+                }
+                Err(cleanup_error) => panic!(
+                    "pause control must not block on a full dispatch queue: {error}; \
+                         cleanup failed: {cleanup_error:#}"
+                ),
+            }
+        }
+    };
+    worker.join().unwrap();
+    let error = outcome.unwrap_err();
+    let partial_failure = error
+        .downcast_ref::<LifecycleFailure>()
+        .is_some_and(|failure| failure.code == ErrorCode::PartialFailure);
+    let error_message = error_chain_string(&error);
+    let pause_preserved = matches!(session.summary().phase, SessionPhase::Paused);
+    let dashboard_closed = matches!(client_stream.read(&mut [0_u8; 1]), Ok(0));
+    drop(dispatch_receiver.take());
+    cleanup_test_session(&session, events).unwrap();
+    assert!(partial_failure);
+    assert!(error_message.contains("dispatcher queue is full"));
+    assert!(pause_preserved);
+    assert!(dashboard_closed);
+
+    let id = SessionId(4);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let sink = DashboardSink::new();
+    let identity = Arc::new(());
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink), Some((identity, server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(&session));
+    drop(dispatch_receiver);
+    let error = state.set_session_paused(id, true).unwrap_err();
+    let pause_preserved = matches!(session.summary().phase, SessionPhase::Paused);
+    let dashboard_closed = matches!(client_stream.read(&mut [0_u8; 1]), Ok(0));
+    cleanup_test_session(&session, events).unwrap();
+    assert!(error.to_string().contains("dispatcher is unavailable"));
+    assert!(pause_preserved);
+    assert!(dashboard_closed);
+}
+
+#[test]
+fn kill_and_close_refresh_failures_keep_exited_records() {
+    for (id, close) in [(SessionId(5), false), (SessionId(6), true)] {
+        let (_cwd, session, receiver) = spawn_live_test_session(id);
+        let events = apply_test_session_events(Arc::clone(&session), receiver);
+        let (state, dispatch_receiver, mut client_stream) = saturated_control_state(&session, id);
+        client_stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let error = if close {
+            state.close_terminal(id, Duration::from_millis(250))
+        } else {
+            state.kill_session(id, Duration::from_millis(250))
+        }
+        .unwrap_err();
+        let lifecycle = error.downcast_ref::<LifecycleFailure>().unwrap();
+        assert_eq!(lifecycle.code, ErrorCode::PartialFailure);
+        assert!(error.to_string().contains("dispatcher queue is full"));
+        assert!(matches!(
+            session.summary().phase,
+            SessionPhase::Exited { .. }
+        ));
+        assert!(state.sessions.lock().unwrap().contains_key(&id));
+        assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
+        drop(dispatch_receiver);
+        state.remove_session(id).unwrap();
+        cleanup_test_session(&session, events).unwrap();
+        assert!(!state.sessions.lock().unwrap().contains_key(&id));
+    }
+}
+
+#[test]
+fn shutdown_refresh_failure_keeps_exited_record_and_server_available() {
+    let id = SessionId(7);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, dispatch_receiver, mut client_stream) = saturated_control_state(&session, id);
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    let response = state.request_shutdown(true);
+    assert!(matches!(
+        response,
+        Response::Error {
+            code: ErrorCode::PartialFailure,
+            ..
+        }
+    ));
+    assert!(!state.stopping.load(Ordering::Acquire));
+    assert!(matches!(
+        session.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    assert!(state.sessions.lock().unwrap().contains_key(&id));
+    assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
+    drop(dispatch_receiver);
+    state.remove_session(id).unwrap();
+    cleanup_test_session(&session, events).unwrap();
+    assert_eq!(state.request_shutdown(false), Response::Ok);
+}
+
+#[test]
+fn control_and_refresh_failures_preserve_both_causes() {
+    let id = SessionId(8);
+    let (_cwd, session, receiver) = {
+        let cwd = tempfile::tempdir().unwrap();
+        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let session = Session::spawn(
+            id,
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "exited".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec!["sh".into(), "-c".into(), "exit 0".into()],
+                hook_env: None,
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+        )
+        .unwrap();
+        (cwd, session, receiver)
+    };
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    cleanup_test_session(&session, events).unwrap();
+    let state = test_state(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(&session));
+    let error = state.set_session_paused(id, true).unwrap_err();
+    let lifecycle = error.downcast_ref::<LifecycleFailure>().unwrap();
+    assert_eq!(lifecycle.code, ErrorCode::Conflict);
+    let message = error_chain_string(&error);
+    assert!(message.contains("session has exited"));
+    assert!(message.contains("dispatcher is unavailable"));
+}
+
+#[test]
+fn dashboard_shutdown_waits_for_stalled_writer_completion() {
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    let send_buffer = 1_i32;
+    let result = unsafe {
+        libc::setsockopt(
+            server_stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&send_buffer as *const i32).cast(),
+            std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+        )
+    };
+    assert_eq!(result, 0);
+    let state = test_state(None, None);
+    state.registry.lock().unwrap().projects = (0..256)
+        .map(|index| crate::config::ProjectRecord {
+            name: format!("project-{index}-{}", "x".repeat(2_000)),
+            repo: PathBuf::from(format!("/repo/{index}")),
+            workspace_root: PathBuf::from(format!("/workspace/{index}")),
+            workspaces: Vec::new(),
+        })
+        .collect();
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 0,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    thread::park_timeout(Duration::from_millis(100));
+    let shutdown_before_drain = state.shutdown.load(Ordering::Acquire);
+
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut client_stream).unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 1,
+            response: Response::Ok,
+        }
+    ));
+    handler.join().unwrap();
+    assert!(
+        !shutdown_before_drain,
+        "shutdown must wait for the writer's actual response attempt"
+    );
+    assert!(state.shutdown.load(Ordering::Acquire));
+}
+
+#[test]
+fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
+    let (dashboard_server, mut dashboard_client) = UnixStream::pair().unwrap();
+    let send_buffer = 1_i32;
+    let result = unsafe {
+        libc::setsockopt(
+            dashboard_server.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&send_buffer as *const i32).cast(),
+            std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+        )
+    };
+    assert_eq!(result, 0);
+    let state = test_state(None, None);
+    state.registry.lock().unwrap().projects = (0..256)
+        .map(|index| crate::config::ProjectRecord {
+            name: format!("project-{index}-{}", "x".repeat(2_000)),
+            repo: PathBuf::from(format!("/repo/{index}")),
+            workspace_root: PathBuf::from(format!("/workspace/{index}")),
+            workspaces: Vec::new(),
+        })
+        .collect();
+    state
+        .registry
+        .lock()
+        .unwrap()
+        .projects
+        .push(crate::config::ProjectRecord {
+            name: "late".into(),
+            repo: PathBuf::from("/repo/late"),
+            workspace_root: PathBuf::from("/workspace/late"),
+            workspaces: Vec::new(),
+        });
+    let dashboard_state = Arc::clone(&state);
+    let dashboard_handler =
+        thread::spawn(move || handle_connection(dashboard_state, dashboard_server));
+    let (control_server, mut control_client) = UnixStream::pair().unwrap();
+    let control_state = Arc::clone(&state);
+    let control_handler = thread::spawn(move || handle_connection(control_state, control_server));
+    write_frame(
+        &mut dashboard_client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    write_frame(
+        &mut dashboard_client,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !state.stopping.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "shutdown did not enter stopping state"
+        );
+        thread::yield_now();
+    }
+    control_client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        &mut control_client,
+        &ClientMessage {
+            request_id: 3,
+            request: Request::RemoveProject {
+                name: "late".into(),
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        read_frame::<ServerMessage>(&mut control_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 3,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                message: "server is stopping".into(),
+            },
+        }
+    );
+    let _ = control_client.shutdown(Shutdown::Both);
+    control_handler.join().unwrap();
+    for (request_id, request) in [
+        (
+            4,
+            Request::PauseSession {
+                session: SessionId(99),
+            },
+        ),
+        (
+            5,
+            Request::ResumeSession {
+                session: SessionId(99),
+            },
+        ),
+    ] {
+        let (control_server, mut control_client) = UnixStream::pair().unwrap();
+        control_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let control_state = Arc::clone(&state);
+        let control_handler =
+            thread::spawn(move || handle_connection(control_state, control_server));
+        write_frame(
+            &mut control_client,
+            &ClientMessage {
+                request_id,
+                request,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut control_client).unwrap(),
+            ServerMessage::Response {
+                request_id,
+                response: Response::Error {
+                    code: ErrorCode::Conflict,
+                    message: "server is stopping".into(),
+                },
+            }
+        );
+        let _ = control_client.shutdown(Shutdown::Both);
+        control_handler.join().unwrap();
+    }
+    dashboard_client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    loop {
+        if matches!(
+            read_frame::<ServerMessage>(&mut dashboard_client).unwrap(),
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            }
+        ) {
+            break;
+        }
+    }
+    dashboard_handler.join().unwrap();
+    assert!(state.shutdown.load(Ordering::Acquire));
+}
+
+#[test]
+fn uncommitted_partial_failure_does_not_publish_hierarchy() {
+    let sink = DashboardSink::new();
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let state = test_state(Some(sink.clone()), Some((Arc::new(()), server_stream)));
+    let response = lifecycle_response_with_partial_hierarchy(
+        &state,
+        lifecycle_error(
+            ErrorCode::PartialFailure,
+            "registry write failed: worktree remains",
+        ),
+    );
+    assert!(matches!(
+        response,
+        Response::Error {
+            code: ErrorCode::PartialFailure,
+            ..
+        }
+    ));
+    assert!(
+        sink.queue.lock().unwrap().messages.is_empty(),
+        "uncommitted partial failure must not publish unchanged hierarchy"
+    );
+}
+
+#[test]
+fn shutdown_termination_failure_is_partial_and_server_remains_available() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let capability = [0x49; 32];
+    let session = Session::spawn(
+        SessionId(7),
+        crate::session::SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "fault".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec!["sh".into()],
+            hook_env: Some(HookEnvironment {
+                socket: PathBuf::from("/private/test/ovrcr.sock"),
+                session: SessionId(7),
+                capability,
+            }),
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+    )
+    .unwrap();
+    let dispatch_session = Arc::clone(&session);
+    let waiter = thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            dispatch_session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+    });
+    let state = test_state(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(SessionId(7), Arc::clone(&session));
+    let response = handle_shutdown(&state, true, |_| {
+        Err(anyhow::anyhow!("controlled ownership failure"))
+    });
+    assert!(matches!(
+        response,
+        Response::Error {
+            code: ErrorCode::PartialFailure,
+            ..
+        }
+    ));
+    assert!(!state.shutdown.load(Ordering::Acquire));
+    assert!(matches!(session.summary().phase, SessionPhase::Running));
+    assert!(
+        session
+            .apply_agent_report(&AgentReport {
+                session: SessionId(7),
+                capability,
+                sequence: None,
+                update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+            })
+            .is_err()
+    );
+    session.terminate(Duration::from_secs(2)).unwrap();
+    waiter.join().unwrap();
+}
+
+#[test]
+fn kill_session_termination_failure_revokes_and_retains_session() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let capability = [0x5a; 32];
+    let refuse_sigcont = Arc::new(AtomicBool::new(true));
+    let refusal = Arc::clone(&refuse_sigcont);
+    let signal_result_hook = Arc::new(move || {
+        if refusal.load(Ordering::Acquire) {
+            Some(anyhow::anyhow!(
+                "signal PTY process group: Operation not permitted (os error 1)"
+            ))
+        } else {
+            None
+        }
+    });
+    let session = Session::spawn_with_test_hooks(
+        SessionId(71),
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "kill-failure".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' TERM; printf READY; while :; do read line; done".into(),
+            ],
+            hook_env: Some(HookEnvironment {
+                socket: PathBuf::from("/private/test/ovrcr.sock"),
+                session: SessionId(71),
+                capability,
+            }),
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+        None,
+        None,
+        Some(signal_result_hook),
+    )
+    .unwrap();
+    let original_pgid = {
+        let pid = session.summary().pid.expect("live session PID");
+        let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
+        assert_eq!(pgid, pid as libc::pid_t);
+        pgid
+    };
+    let event_session = Arc::clone(&session);
+    let waiter = thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            event_session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+    });
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(SessionId(71), Arc::clone(&session));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let mut cleanup = KillFailureCleanup::new(
+        Arc::clone(&session),
+        Arc::clone(&refuse_sigcont),
+        Arc::clone(&state),
+        original_pgid,
+        waiter,
+        dispatcher,
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !String::from_utf8_lossy(&session.current_screen()).contains("READY") {
+        assert!(
+            Instant::now() < deadline,
+            "termination failure session did not start"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    let error = state
+        .kill_session(SessionId(71), Duration::from_millis(50))
+        .unwrap_err();
+    assert!(error.to_string().contains("Operation not permitted"));
+    assert!(state.sessions.lock().unwrap().contains_key(&SessionId(71)));
+    assert!(matches!(session.summary().phase, SessionPhase::Running));
+    assert!(unsafe { libc::kill(-(session.summary().pid.unwrap() as libc::pid_t), 0) } == 0);
+    let mut role = ClientRole::Control;
+    assert!(matches!(
+        state.handle_request(
+            &mut role,
+            Request::AgentReport(AgentReport {
+                session: SessionId(71),
+                capability,
+                sequence: None,
+                update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+            }),
+        ),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    assert!(cleanup.finish());
+    state.remove_session(SessionId(71)).unwrap();
+}
+
+#[test]
+fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let session = Session::spawn_with_test_hooks(
+            SessionId(72),
+            SessionSpec {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "exited-leader".into(),
+                label: "sh".into(),
+                cwd: cwd.path().to_path_buf(),
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "(trap '' HUP; printf DESCENDANT_READY; while :; do sleep 1; done) & printf LEADER_READY; while IFS= read -r line; do case \"$line\" in HOST_OWNERSHIP_ACK) printf HOST_OWNERSHIP_ACKED; IFS= read -r line || break; [ \"$line\" = ALLOW_LEADER_EXIT ] && kill -KILL \"$$\";; esac; done".into(),
+                ],
+                hook_env: None,
+            },
+            TerminalSize { rows: 24, cols: 80 },
+            events,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    // Session::spawn verified that the leader owns its original group. Capture that
+    // immutable identity before any readiness handshake, then install the cleanup owner.
+    let original_pgid = session.summary().pid.expect("live session PID") as libc::pid_t;
+    let event_session = Arc::clone(&session);
+    let waiter = thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            event_session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+    });
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(SessionId(72), Arc::clone(&session));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let refuse_sigcont = Arc::new(AtomicBool::new(false));
+    let mut cleanup = KillFailureCleanup::new(
+        Arc::clone(&session),
+        refuse_sigcont,
+        Arc::clone(&state),
+        original_pgid,
+        waiter,
+        dispatcher,
+    );
+    assert_eq!(
+        unsafe { libc::getpgid(original_pgid) },
+        original_pgid,
+        "leader must remain alive while cleanup ownership is installed"
+    );
+    assert!(
+        wait_test_screen(&session, "DESCENDANT_READY", Duration::from_secs(2)),
+        "descendant did not acknowledge its HUP handler readiness"
+    );
+    session.write(b"HOST_OWNERSHIP_ACK\r").unwrap();
+    assert!(
+        wait_test_screen(&session, "HOST_OWNERSHIP_ACKED", Duration::from_secs(2)),
+        "leader did not acknowledge host cleanup ownership"
+    );
+    session.write(b"ALLOW_LEADER_EXIT\r").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while test_pid_exists(original_pgid) && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(!test_pid_exists(original_pgid));
+    assert!(test_group_exists(original_pgid));
+    // This forced Exited event is a test seam only; production waits for its owned
+    // process group to disappear before publishing Exited.
+    session.apply_event(SessionEvent::Exited {
+        id: SessionId(72),
+        phase: SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        },
+    });
+    assert!(session.summary().pid.is_none());
+    assert!(cleanup.finish());
+    assert!(wait_test_group_absent(
+        original_pgid,
+        Duration::from_secs(2)
+    ));
+    assert!(!test_group_exists(original_pgid));
+}
+
+#[test]
+fn shutdown_without_kill_rejects_paused_session() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let session = Session::spawn(
+        SessionId(8),
+        crate::session::SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "paused".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec!["sh".into()],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+    )
+    .unwrap();
+    let dispatch_session = Arc::clone(&session);
+    let waiter = thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            let exited = matches!(event, SessionEvent::Exited { .. });
+            dispatch_session.apply_event(event);
+            if exited {
+                break;
+            }
+        }
+    });
+    session.set_paused(true).unwrap();
+    let state = test_state(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(SessionId(8), Arc::clone(&session));
+    assert!(matches!(
+        handle_shutdown(&state, false, |_| panic!("paused session was not guarded")),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    session.terminate(Duration::from_secs(2)).unwrap();
+    waiter.join().unwrap();
+}
+
+#[test]
+fn close_failure_retains_record_until_cleanup_can_finish() {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let id = SessionId(17);
+    let session = Session::spawn(
+        id,
+        crate::session::SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "retained".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec!["sh".into()],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+    )
+    .unwrap();
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(id, Arc::clone(&session));
+    *state.selected.lock().unwrap() = Some(id);
+
+    let error = state
+        .close_terminal(id, Duration::from_millis(20))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("timed out waiting for session exit"),
+        "unexpected close failure: {error:#}"
+    );
+    assert!(state.sessions.lock().unwrap().contains_key(&id));
+    assert_eq!(*state.selected.lock().unwrap(), Some(id));
+
+    loop {
+        let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        let exited = matches!(event, SessionEvent::Exited { .. });
+        session.apply_event(event);
+        if exited {
+            break;
+        }
+    }
+    state.close_terminal(id, Duration::from_millis(20)).unwrap();
+    assert!(!state.sessions.lock().unwrap().contains_key(&id));
+    assert_eq!(*state.selected.lock().unwrap(), None);
+}
+
+#[test]
+fn registration_holds_sessions_guard_until_spawn_returns() {
+    let root = tempfile::tempdir().unwrap();
+    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "project".into(),
+            repo: root.path().to_path_buf(),
+            workspace_root: root.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                name: "workspace".into(),
+                path: workspace.clone(),
+                branch: "main".into(),
+            }],
+        }],
+    };
+    let socket_path = root.path().join("socket");
+    let _socket_guard = UnixListener::bind(&socket_path).unwrap();
+    let state = Arc::new(ServerState {
+        socket: socket_path,
+        registry_path: root.path().join("config.toml"),
+        registry: Mutex::new(registry),
+        sessions: Mutex::new(HashMap::new()),
+        selected: Mutex::new(None),
+        dashboard: Mutex::new(None),
+        next_session_id: AtomicU64::new(1),
+        mutation_lock: Mutex::new(()),
+        dispatch: dispatch.clone(),
+        shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        dashboard_size: Mutex::new(None),
+        events: Mutex::new(Some(events)),
+        dashboard_slot: Mutex::new(None),
+    });
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher_finished = Arc::new(AtomicBool::new(false));
+    let dispatcher_done = Arc::clone(&dispatcher_finished);
+    let dispatcher = thread::spawn(move || {
+        run_dispatcher(dispatcher_state, dispatch_receiver);
+        dispatcher_done.store(true, Ordering::Release);
+    });
+    let bridge_dispatch = dispatch.clone();
+    let bridge_finished = Arc::new(AtomicBool::new(false));
+    let bridge_done = Arc::clone(&bridge_finished);
+    let bridge = thread::spawn(move || {
+        bridge_events(event_receiver, bridge_dispatch);
+        bridge_done.store(true, Ordering::Release);
+    });
+    let (gate, entered) = RegistrationGate::new();
+    let identity = root.path().join("held-identity");
+    let ready: Arc<dyn Fn() + Send + Sync> = {
+        let gate = Arc::clone(&gate);
+        Arc::new(move || {
+            gate.wait();
+        })
+    };
+    let creator_state = Arc::clone(&state);
+    let creator_ready = Arc::clone(&ready);
+    let creator_identity = identity.clone();
+    let creator = thread::spawn(move || {
+        creator_state.create_session_with_ready(
+                ovrcr_protocol::CreateSessionRequest {
+                    project: "project".into(),
+                    workspace: "workspace".into(),
+                    name: "fast".into(),
+                    label: None,
+                    argv: vec![
+                        "sh".into(),
+                        "-c".into(),
+                        "printf '%s\\n%s\\n' \"$OVRCR_SESSION_ID\" \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(),
+                        "ovrcr-held".into(),
+                        creator_identity.into_os_string(),
+                    ],
+                },
+                creator_ready,
+            )
+    });
+    let mut cleanup = RegistrationCleanup::new(
+        Arc::clone(&gate),
+        Arc::clone(&state),
+        creator,
+        dispatcher,
+        bridge,
+    );
+    entered.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(
+        state.sessions.try_lock().is_err(),
+        "registration must hold sessions guard while Session::spawn is paused"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut identity_contents = None;
+    while Instant::now() < deadline {
+        if let Ok(contents) = std::fs::read_to_string(&identity) {
+            let mut identity_lines = contents.lines();
+            let complete = match (
+                identity_lines.next(),
+                identity_lines.next(),
+                identity_lines.next(),
+            ) {
+                (Some(session_id), Some(capability), None) => {
+                    session_id.parse::<u64>().is_ok()
+                        && capability.len() == 64
+                        && capability.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }
+                _ => false,
+            };
+            if complete {
+                identity_contents = Some(contents);
+                break;
+            }
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let identity_contents = identity_contents.expect("managed identity contents did not complete");
+    let mut identity_lines = identity_contents.lines();
+    let session_id = identity_lines
+        .next()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap();
+    let capability_text = identity_lines.next().unwrap();
+    let capability = parse_test_capability(capability_text);
+    let (completion, completion_result) = mpsc::sync_channel(1);
+    dispatch
+        .try_send(DispatchMessage::AgentReport {
+            report: AgentReport {
+                session: SessionId(session_id),
+                capability,
+                sequence: None,
+                update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+            },
+            completion,
+        })
+        .unwrap();
+    gate.release();
+    let summary = cleanup.join_creator().unwrap();
+    assert_eq!(summary.name, "fast");
+    assert!(state.sessions.lock().unwrap().contains_key(&summary.id));
+    assert_eq!(
+        completion_result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap(),
+        Response::Ok
+    );
+    let session = state
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&summary.id)
+        .cloned()
+        .unwrap();
+    assert_eq!(session.summary().activity, AgentActivity::Busy);
+    let original_pgid = summary.pid.expect("creator returned live session") as libc::pid_t;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_eq!(session.summary().activity, AgentActivity::Busy);
+        panic!("intentional registration post-join assertion failure");
+    }));
+    assert!(result.is_err());
+    drop(cleanup);
+    assert!(wait_test_group_absent(
+        original_pgid,
+        Duration::from_secs(2)
+    ));
+    assert!(dispatcher_finished.load(Ordering::Acquire));
+    assert!(bridge_finished.load(Ordering::Acquire));
+}
+
+fn parse_test_capability(value: &str) -> [u8; 32] {
+    assert_eq!(value.len(), 64);
+    let mut capability = [0_u8; 32];
+    for (index, byte) in capability.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
+    }
+    capability
+}
+
+struct RegistrationGate {
+    entered: SyncSender<()>,
+    release: SyncSender<()>,
+    released: Mutex<Receiver<()>>,
+    cancelled: AtomicBool,
+}
+
+impl RegistrationGate {
+    fn new() -> (Arc<Self>, Receiver<()>) {
+        let (entered, entered_receiver) = mpsc::sync_channel(1);
+        let (release, released) = mpsc::sync_channel(1);
+        (
+            Arc::new(Self {
+                entered,
+                release,
+                released: Mutex::new(released),
+                cancelled: AtomicBool::new(false),
+            }),
+            entered_receiver,
+        )
+    }
+
+    fn wait(&self) {
+        let _ = self.entered.send(());
+        loop {
+            if self.cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            match self
+                .released
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_millis(25))
+            {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
+    fn release(&self) {
+        let _ = self.release.try_send(());
+    }
+
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.release();
+    }
+}
+
+struct RegistrationCleanup {
+    gate: Arc<RegistrationGate>,
+    state: Arc<ServerState>,
+    creator: Option<JoinHandle<Result<SessionSummary>>>,
+    summary: Option<SessionSummary>,
+    dispatcher: Option<JoinHandle<()>>,
+    bridge: Option<JoinHandle<()>>,
+    complete: bool,
+}
+
+impl RegistrationCleanup {
+    fn new(
+        gate: Arc<RegistrationGate>,
+        state: Arc<ServerState>,
+        creator: JoinHandle<Result<SessionSummary>>,
+        dispatcher: JoinHandle<()>,
+        bridge: JoinHandle<()>,
+    ) -> Self {
+        Self {
+            gate,
+            state,
+            creator: Some(creator),
+            summary: None,
+            dispatcher: Some(dispatcher),
+            bridge: Some(bridge),
+            complete: false,
+        }
+    }
+
+    fn join_creator(&mut self) -> Result<SessionSummary> {
+        let creator = self
+            .creator
+            .as_ref()
+            .context("registration creator missing")?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !creator.is_finished() && Instant::now() < deadline {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        if !creator.is_finished() {
+            bail!("registration creator did not finish before deadline");
+        }
+        let result = self
+            .creator
+            .take()
+            .context("registration creator missing")?
+            .join()
+            .map_err(|_| anyhow::anyhow!("registration creator panicked"))??;
+        self.summary = Some(result.clone());
+        Ok(result)
+    }
+
+    fn cleanup(&mut self) -> bool {
+        if self.complete {
+            return true;
+        }
+        self.gate.cancel();
+        let mut cleaned = self.finish_creator();
+        if let Some(summary) = self.summary.as_ref() {
+            let session = self
+                .state
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&summary.id)
+                .cloned();
+            if let Some(session) = session
+                && session.terminate(Duration::from_secs(2)).is_err()
+            {
+                cleaned = false;
+            }
+        }
+        self.state.events.lock().unwrap().take();
+        if self.dispatcher.is_some() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match self.state.dispatch.try_send(DispatchMessage::Stop) {
+                    Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => break,
+                    Err(mpsc::TrySendError::Full(_)) if Instant::now() < deadline => {
+                        thread::park_timeout(Duration::from_millis(5));
+                    }
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        cleaned = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if !join_test_thread_slot(&mut self.dispatcher, Duration::from_secs(2)) {
+            cleaned = false;
+        }
+        if !join_test_thread_slot(&mut self.bridge, Duration::from_secs(2)) {
+            cleaned = false;
+        }
+        if cleaned {
+            self.summary = None;
+            self.complete = true;
+        }
+        cleaned
+    }
+
+    fn finish_creator(&mut self) -> bool {
+        let Some(creator) = self.creator.take() else {
+            return true;
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !creator.is_finished() && Instant::now() < deadline {
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        if !creator.is_finished() {
+            eprintln!("registration cleanup did not finish creator before deadline");
+            self.creator = Some(creator);
+            return false;
+        }
+        let Ok(result) = creator.join() else {
+            eprintln!("registration cleanup creator panicked");
+            return false;
+        };
+        match result {
+            Ok(summary) => {
+                self.summary = Some(summary);
+                true
+            }
+            Err(_) => true,
+        }
+    }
+}
+
+impl Drop for RegistrationCleanup {
+    fn drop(&mut self) {
+        if !self.complete
+            && (self.creator.is_some()
+                || self.summary.is_some()
+                || self.dispatcher.is_some()
+                || self.bridge.is_some())
+        {
+            if !self.cleanup() {
+                eprintln!("registration cleanup did not complete before its deadlines");
+            }
+        }
+    }
+}
+
+struct KillFailureCleanup {
+    session: Arc<Session>,
+    refuse_sigcont: Arc<AtomicBool>,
+    state: Arc<ServerState>,
+    original_pgid: libc::pid_t,
+    waiter: Option<JoinHandle<()>>,
+    dispatcher: Option<JoinHandle<()>>,
+}
+
+impl KillFailureCleanup {
+    fn new(
+        session: Arc<Session>,
+        refuse_sigcont: Arc<AtomicBool>,
+        state: Arc<ServerState>,
+        original_pgid: libc::pid_t,
+        waiter: JoinHandle<()>,
+        dispatcher: JoinHandle<()>,
+    ) -> Self {
+        Self {
+            session,
+            refuse_sigcont,
+            state,
+            original_pgid,
+            waiter: Some(waiter),
+            dispatcher: Some(dispatcher),
+        }
+    }
+
+    fn finish(&mut self) -> bool {
+        self.cleanup()
+    }
+
+    fn cleanup(&mut self) -> bool {
+        self.refuse_sigcont.store(false, Ordering::Release);
+        let group_present = test_group_exists(self.original_pgid);
+        let exited_with_group =
+            group_present && matches!(self.session.summary().phase, SessionPhase::Exited { .. });
+        let mut cleaned =
+            !exited_with_group && self.session.terminate(Duration::from_secs(2)).is_ok();
+        if !cleaned || test_group_exists(self.original_pgid) {
+            cleaned = self.force_kill_owned_group()
+                && self
+                    .session
+                    .wait_until_exited(Duration::from_secs(2))
+                    .is_ok();
+        }
+
+        if self.dispatcher.is_some() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match self.state.dispatch.try_send(DispatchMessage::Stop) {
+                    Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => break,
+                    Err(mpsc::TrySendError::Full(_)) if Instant::now() < deadline => {
+                        thread::park_timeout(Duration::from_millis(5));
+                    }
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        cleaned = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(dispatcher) = self.dispatcher.take() {
+            if !join_test_thread_bounded(dispatcher, Duration::from_secs(2)) {
+                cleaned = false;
+            }
+        }
+        if let Some(waiter) = self.waiter.take()
+            && !join_test_thread_bounded(waiter, Duration::from_secs(2))
+        {
+            cleaned = false;
+        }
+        cleaned
+    }
+
+    fn force_kill_owned_group(&self) -> bool {
+        let pgid = self.original_pgid;
+        if pgid <= 1 {
+            return false;
+        }
+        let result = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+        if result != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return false;
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(-pgid, 0) };
+            if result != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for KillFailureCleanup {
+    fn drop(&mut self) {
+        if self.waiter.is_some() || self.dispatcher.is_some() {
+            if !self.cleanup() {
+                eprintln!("kill failure cleanup did not complete before its deadlines");
+            }
+        }
+    }
+}
+
+fn join_test_thread_bounded(handle: JoinHandle<()>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    handle.join().is_ok()
+}
+
+fn join_test_thread_slot(handle: &mut Option<JoinHandle<()>>, timeout: Duration) -> bool {
+    let Some(handle_ref) = handle.as_ref() else {
+        return true;
+    };
+    let deadline = Instant::now() + timeout;
+    while !handle_ref.is_finished() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    handle.take().unwrap().join().is_ok()
+}
+
+fn test_group_exists(pgid: libc::pid_t) -> bool {
+    if pgid <= 1 {
+        return false;
+    }
+    let result = unsafe { libc::kill(-pgid, 0) };
+    if result == 0 {
+        return true;
+    }
+    io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+fn test_pid_exists(pid: libc::pid_t) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    let result = unsafe { libc::kill(pid, 0) };
+    result == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn wait_test_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while test_group_exists(pgid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    true
+}
+
+fn wait_test_screen(session: &Session, marker: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if String::from_utf8_lossy(&session.current_screen()).contains(marker) {
+            return true;
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    false
+}
