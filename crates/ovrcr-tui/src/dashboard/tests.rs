@@ -13,8 +13,9 @@ use crate::protocol::{
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
-use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -38,7 +39,13 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     let dashboard = staged_history_copy_dashboard();
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let terminal = Terminal::new(backend).unwrap();
+    let terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     drop(sender);
     let error = next_dashboard_message(&receiver).unwrap_err().to_string();
     assert_eq!(error, "dashboard connection lost");
@@ -133,7 +140,13 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
     let mut ready_polls = 0;
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     let mut mouse_enabled = false;
     let mut processed = 0;
     let boundary = drain_dashboard_input_then_emit_with(
@@ -176,7 +189,13 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
     let mut queued_escape = true;
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     let mut mouse_enabled = false;
     let boundary = drain_dashboard_input_then_emit_with(
         &mut terminal,
@@ -217,7 +236,13 @@ fn dashboard_input_boundary_separates_deferred_input_from_idle_emission() {
     let mut dashboard = staged_history_copy_dashboard();
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     let mut mouse_enabled = false;
     let boundary = drain_dashboard_input_then_emit_with(
         &mut terminal,
@@ -243,7 +268,13 @@ fn completed_history_copy_emits_once_through_the_writer_adapter() {
 
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
     assert!(!emit_pending_history_copy(&mut terminal, &mut dashboard));
     drop(terminal);
@@ -310,7 +341,13 @@ fn failed_history_copy_writer_preserves_selection_for_retry() {
     let mut dashboard = staged_history_copy_dashboard();
     let mut writer = FailingWriter;
     let backend = CrosstermBackend::new(&mut writer);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
     drop(terminal);
     assert_eq!(
@@ -350,7 +387,13 @@ fn failed_history_copy_writer_preserves_selection_for_retry() {
     assert!(follow_up.is_empty());
     let mut bytes = Vec::new();
     let backend = CrosstermBackend::new(&mut bytes);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
     assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
     drop(terminal);
     assert!(

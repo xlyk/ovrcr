@@ -1681,6 +1681,7 @@ impl Dashboard {
             });
             return;
         }
+        self.copy_notice = None;
         let replaced = self.history.take();
         if let Some(view) = replaced {
             let end_request_id = self.next_request_id();

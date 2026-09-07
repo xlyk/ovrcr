@@ -1001,6 +1001,199 @@ fn copy_mode_routes_keys_and_freezes_output() {
         dashboard.event_action(Event::Paste("secret".into())),
         ovrcr::tui::DashboardAction::None
     );
+
+    let mut pending_screen = dashboard_fixture();
+    let pending_session = pending_screen.selected.unwrap();
+    pending_screen.select_request(pending_session, 901);
+    assert_eq!(
+        pending_screen.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('['),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(pending_screen.mode, ovrcr::tui::InputMode::Browse);
+    assert_eq!(
+        pending_screen.error.as_deref(),
+        Some("Waiting for terminal screen")
+    );
+
+    let mut failed_selection = copy_ready_dashboard();
+    failed_selection.select_request(SessionId(5), 902);
+    failed_selection.handle_server_message(ServerMessage::Response {
+        request_id: 902,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "selection failed".into(),
+        },
+    });
+    assert_eq!(
+        failed_selection.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('['),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(failed_selection.mode, ovrcr::tui::InputMode::Browse);
+    assert_eq!(
+        failed_selection.error.as_deref(),
+        Some("Waiting for terminal screen")
+    );
+
+    let mut release = copy_ready_dashboard();
+    assert_eq!(
+        release.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('['),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        )),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(release.mode, ovrcr::tui::InputMode::Browse);
+    assert!(release.copy.is_none());
+
+    let mut repeat_motion = copy_ready_dashboard();
+    assert_eq!(
+        repeat_motion.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('['),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let before = repeat_motion.copy.as_ref().unwrap().cursor;
+    assert_eq!(
+        repeat_motion.key_action(KeyEvent::new_with_kind(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_ne!(repeat_motion.copy.as_ref().unwrap().cursor, before);
+
+    let mut press_only = copy_ready_dashboard();
+    press_only.key(KeyCode::Char('['));
+    press_only.key(KeyCode::Home);
+    assert_eq!(
+        press_only.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        )),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert!(press_only.copy.as_ref().unwrap().anchor.is_none());
+    assert_eq!(
+        press_only.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(press_only.copy.as_ref().unwrap().anchor.is_some());
+    assert_eq!(
+        press_only.key_action(KeyEvent::new_with_kind(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        press_only.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('y'),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        )),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(
+        press_only.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('y'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::CopyText("ab".into())
+    );
+
+    let mut press_exit = copy_ready_dashboard();
+    press_exit.key(KeyCode::Char('['));
+    assert_eq!(
+        press_exit.key_action(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        )),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(press_exit.mode, ovrcr::tui::InputMode::Copy);
+    assert_eq!(
+        press_exit.key_action(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(press_exit.mode, ovrcr::tui::InputMode::Browse);
+}
+
+#[test]
+fn matching_history_open_clears_resize_notice_but_stale_response_does_not() {
+    let mut dashboard = copy_ready_dashboard();
+    dashboard.key(KeyCode::Char('['));
+    dashboard.resize_request(TerminalSize { rows: 20, cols: 40 }, 901);
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("Copy cancelled: terminal resized")
+    );
+
+    let begin = match dashboard.key(KeyCode::PageUp) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected history begin request, got {action:?}"),
+    };
+    let stale = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id + 1,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert!(stale.is_empty());
+    assert!(dashboard.history.is_none());
+    assert_eq!(
+        dashboard.copy_notice.as_deref(),
+        Some("Copy cancelled: terminal resized")
+    );
+
+    let opened = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::HistoryOpened(history_opened(100)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+    assert!(dashboard.history.is_some());
+    assert!(dashboard.copy_notice.is_none());
+    assert!(!opened.is_empty());
+
+    dashboard.copy_notice = Some("stale replacement notice".into());
+    dashboard.history_begin_request = Some(ovrcr::tui::PendingHistoryBegin {
+        request_id: 77,
+        session: SessionId(1),
+        cancelled: false,
+    });
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 77,
+        response: Response::HistoryOpened(HistoryOpened {
+            snapshot: HistorySnapshotId(8),
+            ..history_opened(100)
+        }),
+    });
+    assert!(dashboard.copy_notice.is_none());
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().opened.snapshot,
+        HistorySnapshotId(8)
+    );
 }
 
 #[test]
@@ -4403,6 +4596,16 @@ fn history_render_preserves_cells_and_clips() {
             cursor: HistoryCopyPoint { row: 0, col: 0 },
         },
     ));
+    dashboard.history.as_mut().unwrap().pending = Some(ovrcr::tui::PendingHistoryPage {
+        request_id: 5,
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        rows: 1,
+        start_col: 0,
+        cols: 128,
+        purpose: ovrcr::tui::HistoryPagePurpose::Copy(4),
+    });
     dashboard_terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();

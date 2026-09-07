@@ -293,7 +293,7 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
         }
         row_start = row_start.saturating_add(16);
     }
-    let status = if missing || view.pending.is_some() {
+    let status = if missing {
         "loading"
     } else if has_content {
         "loaded"
