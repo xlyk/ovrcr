@@ -6,7 +6,6 @@ use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use ovrcr_protocol::HistoryColor;
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
-use ratatui::buffer::CellDiffOption;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -97,15 +96,6 @@ pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection)
             if selection.contains(CopyPoint { row, col }) {
                 let cell = &mut frame.buffer_mut()[(area.x + col, area.y + row)];
                 cell.set_bg(TEAL).set_fg(BASE);
-                if selection
-                    .screen
-                    .cell(row, col)
-                    .is_some_and(|vt_cell| vt_cell.is_wide())
-                {
-                    cell.set_diff_option(CellDiffOption::ForcedWidth(
-                        std::num::NonZeroU16::new(1).unwrap(),
-                    ));
-                }
             }
         }
     }

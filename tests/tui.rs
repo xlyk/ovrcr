@@ -770,32 +770,33 @@ fn copy_mode_routes_keys_and_freezes_output() {
 #[test]
 fn copy_render_highlights_unicode_and_preserves_layout() {
     let mut parser = vt100::Parser::new(2, 6, 0);
-    parser.process("A界B".as_bytes());
+    parser.process("\x1b[?25lA界B".as_bytes());
     let mut selection = CopySelection::capture(SessionId(1), parser.screen());
     selection.cursor = CopyPoint { row: 0, col: 1 };
     selection.anchor = Some(selection.cursor);
+    assert!(selection.screen.hide_cursor());
     assert!(selection.contains(CopyPoint { row: 0, col: 1 }));
     assert!(selection.contains(CopyPoint { row: 0, col: 2 }));
 
+    let base = Color::Rgb(30, 30, 46);
+    let teal = Color::Rgb(148, 226, 213);
+    let text = Color::Rgb(205, 214, 244);
     let mut terminal = Terminal::new(TestBackend::new(6, 2)).unwrap();
     terminal
         .draw(|frame| {
             render_copy(frame, Rect::new(0, 0, 6, 2), &selection);
-            assert_eq!(frame.buffer_mut()[(2, 0)].fg, Color::Rgb(30, 30, 46));
+            let buffer = frame.buffer_mut();
+            assert_eq!(buffer[(1, 0)].fg, base);
+            assert_eq!(buffer[(1, 0)].bg, teal);
+            assert_eq!(buffer[(2, 0)].fg, base);
+            assert_eq!(buffer[(2, 0)].bg, teal);
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
-    let base = Color::Rgb(30, 30, 46);
-    let teal = Color::Rgb(148, 226, 213);
-    let text = Color::Rgb(205, 214, 244);
     assert_eq!(buffer[(0, 0)].symbol(), "A");
     assert_eq!(buffer[(0, 0)].fg, text);
     assert_eq!(buffer[(0, 0)].bg, base);
     assert_eq!(buffer[(1, 0)].symbol(), "界");
-    assert_eq!(buffer[(1, 0)].fg, base);
-    assert_eq!(buffer[(1, 0)].bg, teal);
-    assert_eq!(buffer[(2, 0)].fg, base);
-    assert_eq!(buffer[(2, 0)].bg, teal);
     assert_eq!(buffer[(3, 0)].symbol(), "B");
     assert_eq!(buffer[(3, 0)].fg, text);
     assert_eq!(buffer[(3, 0)].bg, base);
@@ -803,6 +804,26 @@ fn copy_render_highlights_unicode_and_preserves_layout() {
         terminal.backend_mut().get_cursor_position().unwrap(),
         Position::new(1, 0)
     );
+
+    let mut output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut output);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+            },
+        )
+        .unwrap();
+        terminal
+            .draw(|frame| render_copy(frame, Rect::new(0, 0, 6, 2), &selection))
+            .unwrap();
+    }
+    let mut rendered = vt100::Parser::new(2, 6, 0);
+    rendered.process(&output);
+    assert_eq!(rendered.screen().cell(0, 1).unwrap().contents(), "界");
+    assert_eq!(rendered.screen().cell(0, 3).unwrap().contents(), "B");
+    assert_eq!(rendered.screen().cell(0, 4).unwrap().contents(), " ");
 }
 
 #[test]
@@ -815,8 +836,41 @@ fn copy_render_tiny_pane_and_footer() {
         .unwrap();
 
     let mut dashboard = copy_ready_dashboard();
-    dashboard.key(KeyCode::Char('['));
+    let sidebar_and_metadata = |buffer: &ratatui::buffer::Buffer| {
+        (1..3)
+            .map(|row| {
+                (0..120)
+                    .map(|col| buffer[(col, row)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let initial_layout = sidebar_and_metadata(terminal.backend().buffer());
+    dashboard.key(KeyCode::Char('['));
+    let id = dashboard.selected.unwrap();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: id,
+        bytes: b"\rLIVE".to_vec(),
+    }));
+    assert_eq!(
+        dashboard.parser.screen().cell(0, 0).unwrap().contents(),
+        "L"
+    );
+    assert_eq!(
+        dashboard
+            .copy
+            .as_ref()
+            .unwrap()
+            .screen
+            .cell(0, 0)
+            .unwrap()
+            .contents(),
+        "a"
+    );
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -824,12 +878,74 @@ fn copy_render_tiny_pane_and_footer() {
     let footer = (0..120)
         .map(|col| buffer[(col, 39)].symbol())
         .collect::<String>();
-    assert!(footer.contains("COPY"));
-    assert!(footer.contains("Space"));
-    assert!(footer.contains('y'));
-    assert!(footer.contains("Esc"));
+    assert_eq!(
+        footer.trim_end(),
+        "COPY  h/j/k/l move  Space anchor  y copy  Esc cancel"
+    );
+    let rendered_layout = sidebar_and_metadata(buffer);
+    assert_eq!(rendered_layout, initial_layout);
+    assert!(initial_layout[0].contains("pid: 111  elapsed: 0m"));
+    assert!(initial_layout[1].contains("─"));
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     assert_eq!(buffer[(39, 10)].symbol(), "│");
+    assert_eq!(buffer[(40, 1)].symbol(), "p");
+    assert_eq!(buffer[(40, 2)].symbol(), "─");
+    assert_eq!(buffer[(40, 3)].symbol(), "a");
+    assert_eq!(buffer[(41, 3)].symbol(), "b");
+    assert_eq!(buffer[(42, 3)].symbol(), "c");
+
+    dashboard.copy_notice = Some("Copy cancelled: terminal resized".into());
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let notice_footer = (0..120)
+        .map(|col| terminal.backend().buffer()[(col, 39)].symbol())
+        .collect::<String>();
+    assert_eq!(notice_footer.trim_end(), "Copy cancelled: terminal resized");
+
+    dashboard.error = Some("server failed".into());
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let error_footer = (0..120)
+        .map(|col| terminal.backend().buffer()[(col, 39)].symbol())
+        .collect::<String>();
+    assert_eq!(error_footer.trim_end(), "ERROR: server failed");
+
+    dashboard.error = None;
+    dashboard.cancel_copy(Some("Copy cancelled: terminal resized"));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let browse_notice_footer = (0..120)
+        .map(|col| terminal.backend().buffer()[(col, 39)].symbol())
+        .collect::<String>();
+    assert_eq!(
+        browse_notice_footer.trim_end(),
+        "Copy cancelled: terminal resized"
+    );
+
+    let mut entry_notice = dashboard_fixture();
+    assert_eq!(
+        entry_notice.key(KeyCode::Char('[')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        entry_notice.error.as_deref(),
+        Some("Waiting for terminal screen")
+    );
+    entry_notice.error = None;
+    entry_notice.copy_notice = Some("Waiting for terminal screen".into());
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &entry_notice, 0))
+        .unwrap();
+    let entry_notice_footer = (0..120)
+        .map(|col| terminal.backend().buffer()[(col, 39)].symbol())
+        .collect::<String>();
+    assert_eq!(
+        entry_notice_footer.trim_end(),
+        "Waiting for terminal screen"
+    );
 }
 
 #[test]
