@@ -1901,6 +1901,7 @@ fn history_empty_rows_only_anchor_after_explicit_anchor() {
         empty_terminal.backend().buffer()[(0, 0)].bg,
         Color::Rgb(30, 30, 46)
     );
+    assert!(!empty_terminal.backend().cursor_visible());
     assert!(matches!(
         dashboard.key(KeyCode::Down),
         ovrcr::tui::DashboardAction::Redraw
@@ -2016,6 +2017,8 @@ fn history_cursor_resolution_reveals_anchored_viewport() {
 
 #[test]
 fn history_cursor_async_continuation_resolution_reveals_predecessor_tile() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.mode = ovrcr::tui::InputMode::History;
     let mut view = HistoryView::new(history_opened(1), 0);
     view.left = 128;
     view.cursor = Some(HistoryCursor {
@@ -2027,43 +2030,73 @@ fn history_cursor_async_continuation_resolution_reveals_predecessor_tile() {
         row: 0,
         col: 128,
     }));
-    view.pages.push_back(history_page(
-        0,
-        128,
-        130,
-        vec![history_cell("", 0), history_cell("tail", 1)],
+    dashboard.history = Some(view);
+    let first = dashboard
+        .history_request_if_needed()
+        .expect("continuation tile request");
+    assert!(matches!(
+        first.request,
+        Request::HistoryPage {
+            start_row: 0,
+            start_col: 128,
+            ..
+        }
     ));
-
-    assert!(
-        !view
-            .resolve_cursor(TerminalSize { rows: 2, cols: 2 })
-            .unwrap()
-    );
+    let predecessor = dashboard
+        .handle_server_message(ServerMessage::Response {
+            request_id: first.request_id,
+            response: Response::HistoryRows(HistoryRows {
+                session: SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                start_row: 0,
+                start_col: 128,
+                rows: vec![HistoryRow {
+                    width: 130,
+                    cells: vec![history_cell("", 0), history_cell("tail", 1)],
+                    wrapped: false,
+                }],
+            }),
+        })
+        .into_iter()
+        .next()
+        .expect("predecessor tile request");
     assert_eq!(
-        view.cursor.unwrap().point,
+        dashboard.history.as_ref().unwrap().cursor.unwrap().point,
         HistoryCopyPoint { row: 0, col: 0 }
     );
-    assert_eq!(
-        view.cursor_target,
-        Some(ovrcr::tui::HistoryCursorTarget::At(HistoryCopyPoint {
-            row: 0,
-            col: 127,
-        }))
-    );
-
+    assert!(matches!(
+        predecessor.request,
+        Request::HistoryPage {
+            start_row: 0,
+            start_col: 0,
+            ..
+        }
+    ));
     let mut leader_cells = vec![history_cell("", 1); 128];
     leader_cells[127] = history_cell("界", 2);
-    view.pages.push_back(history_page(0, 0, 130, leader_cells));
-    assert!(
-        view.resolve_cursor(TerminalSize { rows: 2, cols: 2 })
-            .unwrap()
-    );
+    let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: predecessor.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![HistoryRow {
+                width: 130,
+                cells: leader_cells,
+                wrapped: false,
+            }],
+        }),
+    });
+    assert!(follow_up.is_empty());
+    let view = dashboard.history.as_ref().unwrap();
     assert_eq!(view.left, 127);
     assert_eq!(
         view.cursor.unwrap().point,
         HistoryCopyPoint { row: 0, col: 127 }
     );
     assert_eq!(view.cursor.unwrap().cell_width, 2);
+    assert!(view.cursor_target.is_none());
 }
 
 #[test]
@@ -2313,66 +2346,85 @@ fn history_pending_keys_coalesce() {
 
 #[test]
 fn history_unanchored_retry_keys_reissue_failed_cursor_request() {
-    for retry_key in [KeyCode::Char(' '), KeyCode::Char('v'), KeyCode::Char('y')] {
-        let mut dashboard = dashboard_fixture();
-        assert!(matches!(
-            dashboard.key(KeyCode::PageUp),
-            ovrcr::tui::DashboardAction::Request(_)
-        ));
-        let requests = dashboard.handle_server_message(ServerMessage::Response {
-            request_id: 1,
-            response: Response::HistoryOpened(history_opened(40)),
-        });
-        let failed = requests.first().cloned().expect("cursor page request");
-        let failed_bounds = match failed.request {
-            Request::HistoryPage {
-                start_row,
-                start_col,
-                rows,
-                cols,
-                ..
-            } => (start_row, start_col, rows, cols),
-            request => panic!("unexpected cursor request: {request:?}"),
-        };
-        assert!(
-            dashboard
-                .handle_server_message(ServerMessage::Response {
-                    request_id: failed.request_id,
-                    response: Response::Error {
-                        code: ErrorCode::Internal,
-                        message: "cursor page unavailable".into(),
-                    },
+    for malformed in [false, true] {
+        for retry_key in [KeyCode::Char(' '), KeyCode::Char('v'), KeyCode::Char('y')] {
+            let mut dashboard = dashboard_fixture();
+            assert!(matches!(
+                dashboard.key(KeyCode::PageUp),
+                ovrcr::tui::DashboardAction::Request(_)
+            ));
+            let requests = dashboard.handle_server_message(ServerMessage::Response {
+                request_id: 1,
+                response: Response::HistoryOpened(history_opened(40)),
+            });
+            let failed = requests.first().cloned().expect("cursor page request");
+            let failed_bounds = match failed.request {
+                Request::HistoryPage {
+                    start_row,
+                    start_col,
+                    rows,
+                    cols,
+                    ..
+                } => (start_row, start_col, rows, cols),
+                request => panic!("unexpected cursor request: {request:?}"),
+            };
+            let failure_response = if malformed {
+                Response::HistoryRows(HistoryRows {
+                    session: SessionId(1),
+                    snapshot: HistorySnapshotId(7),
+                    start_row: failed_bounds.0,
+                    start_col: failed_bounds.1,
+                    rows: vec![HistoryRow {
+                        width: 20,
+                        cells: Vec::new(),
+                        wrapped: false,
+                    }],
                 })
-                .is_empty()
-        );
+            } else {
+                Response::Error {
+                    code: ErrorCode::Internal,
+                    message: "cursor page unavailable".into(),
+                }
+            };
+            assert!(
+                dashboard
+                    .handle_server_message(ServerMessage::Response {
+                        request_id: failed.request_id,
+                        response: failure_response,
+                    })
+                    .is_empty()
+            );
 
-        let retry = match dashboard.key_action(KeyEvent::new_with_kind(
-            retry_key,
-            KeyModifiers::NONE,
-            KeyEventKind::Press,
-        )) {
-            ovrcr::tui::DashboardAction::Request(request) => request,
-            action => panic!("expected explicit cursor retry for {retry_key:?}, got {action:?}"),
-        };
-        assert!(matches!(retry.request, Request::HistoryPage { .. }));
-        let follow_up = dashboard.handle_server_message(ServerMessage::Response {
-            request_id: retry.request_id,
-            response: Response::HistoryRows(history_complete_page(
-                failed_bounds.0,
-                failed_bounds.1,
-                failed_bounds.2,
-                20,
-                vec![history_cell("resolved", 1)],
-            )),
-        });
-        assert!(
-            follow_up
-                .iter()
-                .all(|request| matches!(request.request, Request::HistoryPage { .. }))
-        );
-        let view = dashboard.history.as_ref().unwrap();
-        assert!(view.cursor_target.is_none());
-        assert_eq!(view.cursor.unwrap().point.row, failed_bounds.0);
+            let retry = match dashboard.key_action(KeyEvent::new_with_kind(
+                retry_key,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )) {
+                ovrcr::tui::DashboardAction::Request(request) => request,
+                action => {
+                    panic!("expected explicit cursor retry for {retry_key:?}, got {action:?}")
+                }
+            };
+            assert!(matches!(retry.request, Request::HistoryPage { .. }));
+            let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+                request_id: retry.request_id,
+                response: Response::HistoryRows(history_complete_page(
+                    failed_bounds.0,
+                    failed_bounds.1,
+                    failed_bounds.2,
+                    20,
+                    vec![history_cell("resolved", 1)],
+                )),
+            });
+            assert!(
+                follow_up
+                    .iter()
+                    .all(|request| matches!(request.request, Request::HistoryPage { .. }))
+            );
+            let view = dashboard.history.as_ref().unwrap();
+            assert!(view.cursor_target.is_none());
+            assert_eq!(view.cursor.unwrap().point.row, failed_bounds.0);
+        }
     }
 }
 
@@ -2572,11 +2624,27 @@ fn copy_history_extraction_joins_wrap_and_skips_continuations() {
         },
         0,
         0,
-        1,
+        4,
         &mut omitted_pending,
     )
     .unwrap();
     assert_eq!(omitted, "x");
+    assert_eq!(omitted_pending, 3);
+    append_history_selection(
+        &mut omitted,
+        &HistoryRow {
+            width: 1,
+            cells: vec![history_cell("R", 1)],
+            wrapped: false,
+        },
+        0,
+        0,
+        1,
+        &mut omitted_pending,
+    )
+    .unwrap();
+    assert_eq!(omitted, "x   R");
+    assert_eq!(omitted_pending, 0);
 
     let opened = history_opened(18);
     let range = HistoryCopyRange {
@@ -2703,6 +2771,81 @@ fn copy_history_extraction_joins_wrap_and_skips_continuations() {
         &mut edge_output
     ));
     assert_eq!(edge_output, expected_edge_output);
+
+    let deferred_edge_range = HistoryCopyRange {
+        session: opened.session,
+        snapshot: opened.snapshot,
+        anchor: HistoryCopyPoint { row: 0, col: 127 },
+        cursor: HistoryCopyPoint { row: 0, col: 255 },
+    };
+    let mut deferred_edge = dashboard_with_history_copy(deferred_edge_range);
+    let deferred_first = deferred_edge
+        .history_request_if_needed()
+        .expect("requested-edge first tile");
+    let mut deferred_first_cells = vec![history_cell("", 1); 128];
+    deferred_first_cells[127] = history_cell("界", 2);
+    let deferred_second = deferred_edge
+        .handle_server_message(ServerMessage::Response {
+            request_id: deferred_first.request_id,
+            response: Response::HistoryRows(HistoryRows {
+                session: opened.session,
+                snapshot: opened.snapshot,
+                start_row: 0,
+                start_col: 126,
+                rows: vec![HistoryRow {
+                    width: 256,
+                    cells: deferred_first_cells,
+                    wrapped: false,
+                }],
+            }),
+        })
+        .into_iter()
+        .next()
+        .expect("requested-edge overlapping tile");
+    assert!(matches!(
+        deferred_second.request,
+        Request::HistoryPage {
+            start_row: 0,
+            start_col: 252,
+            cols: 128,
+            ..
+        }
+    ));
+    assert!(
+        deferred_edge
+            .history
+            .as_ref()
+            .unwrap()
+            .copy_completion
+            .is_none()
+    );
+    let mut deferred_second_cells = vec![history_cell("", 1); 4];
+    deferred_second_cells[1] = history_cell("界", 2);
+    deferred_second_cells[2] = history_cell("", 0);
+    deferred_second_cells[3] = history_cell("R", 1);
+    deferred_edge.handle_server_message(ServerMessage::Response {
+        request_id: deferred_second.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session: opened.session,
+            snapshot: opened.snapshot,
+            start_row: 0,
+            start_col: 252,
+            rows: vec![HistoryRow {
+                width: 256,
+                cells: deferred_second_cells,
+                wrapped: false,
+            }],
+        }),
+    });
+    let expected_deferred_edge = format!("{}界R", " ".repeat(126));
+    assert_eq!(
+        deferred_edge
+            .history
+            .as_ref()
+            .and_then(|view| view.copy_completion.as_ref())
+            .map(|completion| completion.text.as_str()),
+        Some(expected_deferred_edge.as_str())
+    );
 
     let boundary_range = HistoryCopyRange {
         session: opened.session,
@@ -2834,6 +2977,52 @@ fn copy_history_extraction_joins_wrap_and_skips_continuations() {
         &mut boundary_output
     ));
     assert_eq!(boundary_output, expected_boundary_output);
+
+    let endpoint_range = HistoryCopyRange {
+        session: opened.session,
+        snapshot: opened.snapshot,
+        anchor: HistoryCopyPoint { row: 0, col: 0 },
+        cursor: HistoryCopyPoint { row: 2, col: 0 },
+    };
+    let mut endpoint_dashboard = dashboard_with_history_copy(endpoint_range);
+    let mut endpoint_requests = vec![
+        endpoint_dashboard
+            .history_request_if_needed()
+            .expect("empty endpoint first row"),
+    ];
+    while let Some(request) = endpoint_requests.pop() {
+        let page = match request.request {
+            Request::HistoryPage { start_row, .. } => match start_row {
+                0 => history_page(0, 0, 1, vec![history_cell("A", 1)]),
+                1 => history_page(1, 0, 1, vec![history_cell("B", 1)]),
+                2 => history_page(2, 0, 0, vec![]),
+                row => panic!("unexpected empty-endpoint row {row}"),
+            },
+            request => panic!("unexpected empty-endpoint request {request:?}"),
+        };
+        endpoint_requests.extend(endpoint_dashboard.handle_server_message(
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::HistoryRows(page),
+            },
+        ));
+    }
+    assert_eq!(
+        endpoint_dashboard
+            .history
+            .as_ref()
+            .and_then(|view| view.copy_completion.as_ref())
+            .map(|completion| completion.text.as_str()),
+        Some("A\nB\n")
+    );
+    let mut endpoint_output = Vec::new();
+    let mut expected_endpoint_output = Vec::new();
+    write_clipboard(&mut expected_endpoint_output, "A\nB\n").unwrap();
+    assert!(write_completed_history_copy(
+        &mut endpoint_dashboard,
+        &mut endpoint_output
+    ));
+    assert_eq!(endpoint_output, expected_endpoint_output);
 
     let mut exact = HistoryCopyJob::new(
         88,
@@ -3275,6 +3464,20 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     assert!(conflicting.history.as_ref().unwrap().copy_job.is_none());
     assert!(conflicting.take_pending_history_copy().is_none());
     assert!(conflicting.history_request_if_needed().is_none());
+    assert!(conflicting_output.is_empty());
+    let expected_wrapped_retry = {
+        let mut expected = Vec::new();
+        write_clipboard(&mut expected, &"x".repeat(260)).unwrap();
+        expected
+    };
+    assert_eq!(
+        retry_wide_history_copy(&mut conflicting, &mut conflicting_output),
+        expected_wrapped_retry
+    );
+    assert!(!write_completed_history_copy(
+        &mut conflicting,
+        &mut conflicting_output
+    ));
 
     let mut changed_width = dashboard_with_history_copy(conflicting_range);
     let mut changed_width_output = Vec::new();
@@ -3382,13 +3585,25 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     incomplete.mode = ovrcr::tui::InputMode::History;
     let mut incomplete_view = HistoryView::new(history_opened(2), 0);
     incomplete_view.cursor_target = None;
-    incomplete_view
-        .pages
-        .push_back(history_page(0, 0, 4, vec![history_cell("short", 1)]));
+    incomplete_view.pages.push_back(HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        start_col: 0,
+        rows: vec![
+            HistoryRow {
+                width: 4,
+                cells: vec![history_cell("a", 1); 4],
+                wrapped: false,
+            },
+            HistoryRow {
+                width: 4,
+                cells: vec![history_cell("short", 1)],
+                wrapped: false,
+            },
+        ],
+    });
     incomplete.history = Some(incomplete_view);
-    let incomplete_request = incomplete
-        .history_request_if_needed()
-        .expect("canonical viewport request");
     let mut incomplete_terminal = Terminal::new(TestBackend::new(180, 40)).unwrap();
     incomplete_terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &incomplete, 0))
@@ -3402,6 +3617,9 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(incomplete_text.contains("HISTORY · frozen · loading"));
+    let incomplete_request = incomplete
+        .history_request_if_needed()
+        .expect("canonical viewport request");
     let incomplete_start = match incomplete_request.request {
         Request::HistoryPage { start_row, .. } => start_row,
         request => panic!("unexpected incomplete-cache request: {request:?}"),
@@ -3419,9 +3637,15 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     assert!(incomplete.history_request_if_needed().is_none());
 
     let (mut switched, _) = dashboard_copy_pending_after_first_tile(range);
+    let mut switched_output = Vec::new();
+    assert!(!write_completed_history_copy(
+        &mut switched,
+        &mut switched_output
+    ));
     switched.select_session(SessionId(2));
     assert_eq!(switched.mode, ovrcr::tui::InputMode::Browse);
     assert!(switched.history.is_none());
+    assert!(switched_output.is_empty());
 
     let (mut removed, _) = dashboard_copy_pending_after_first_tile(range);
     let mut removed_hierarchy = removed.hierarchy.clone();
@@ -3446,9 +3670,17 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
             .and_then(|view| view.copy_completion.as_ref())
             .is_some()
     );
+    let mut staged_output = Vec::new();
+    assert!(write_completed_history_copy(
+        &mut staged,
+        &mut staged_output
+    ));
+    assert!(!staged_output.is_empty());
+    let staged_output_before_switch = staged_output.clone();
     staged.select_session(SessionId(2));
     assert!(staged.history.is_none());
     assert!(staged.take_pending_history_copy().is_none());
+    assert_eq!(staged_output, staged_output_before_switch);
 
     let mut dashboard = dashboard_with_history_copy(range);
     let request = dashboard.history_request_if_needed().expect("copy page");
@@ -3628,28 +3860,19 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
         &mut changed_range,
         &mut changed_output
     ));
-    changed_range.history.as_mut().unwrap().cursor = Some(HistoryCursor {
-        point: HistoryCopyPoint { row: 1, col: 1 },
-        row_width: 4,
-        cell_width: 1,
-    });
     assert_eq!(
         changed_range.key(KeyCode::Esc),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(matches!(
+        changed_range.key(KeyCode::Down),
+        ovrcr::tui::DashboardAction::Redraw
+    ));
+    assert!(matches!(
         changed_range.key(KeyCode::Char('y')),
         ovrcr::tui::DashboardAction::Redraw
     ));
-    let changed_job = changed_range
-        .history
-        .as_ref()
-        .unwrap()
-        .copy_job
-        .as_ref()
-        .unwrap();
-    assert_ne!(changed_job.id, changed_old_job_id);
-    assert_ne!(changed_job.range, changed_old_range);
+    assert!(changed_range.history.as_ref().unwrap().copy_job.is_none());
     assert_eq!(
         changed_range.history.as_ref().unwrap().pending.as_ref(),
         Some(&changed_old_pending_page)
@@ -3661,7 +3884,7 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     let changed_first = changed_requests
         .first()
         .cloned()
-        .expect("changed-range replacement request");
+        .expect("changed-range cursor request");
     assert!(matches!(
         changed_first.request,
         Request::HistoryPage {
@@ -3672,19 +3895,79 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     ));
     let changed_next = changed_range.handle_server_message(ServerMessage::Response {
         request_id: changed_first.request_id,
-        response: Response::HistoryRows(simple_copy_page(0, "changed")),
+        response: Response::HistoryRows(HistoryRows {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![
+                HistoryRow {
+                    width: 4,
+                    cells: vec![history_cell("old", 1); 4],
+                    wrapped: false,
+                },
+                HistoryRow {
+                    width: 4,
+                    cells: vec![history_cell("late", 1); 4],
+                    wrapped: false,
+                },
+            ],
+        }),
     });
-    let changed_final = changed_next
-        .first()
-        .cloned()
-        .expect("changed-range final page");
+    assert!(changed_next.is_empty());
+    assert!(
+        changed_range
+            .history
+            .as_ref()
+            .unwrap()
+            .cursor_target
+            .is_none()
+    );
+    assert_eq!(
+        changed_range.key(KeyCode::Char(' ')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let changed_copy_request = match changed_range.key(KeyCode::Char('y')) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected changed-range copy request, got {action:?}"),
+    };
+    let changed_job = changed_range
+        .history
+        .as_ref()
+        .unwrap()
+        .copy_job
+        .as_ref()
+        .unwrap();
+    assert_ne!(changed_job.id, changed_old_job_id);
+    assert_ne!(changed_job.range, changed_old_range);
+    assert!(matches!(
+        changed_copy_request.request,
+        Request::HistoryPage {
+            start_row: 1,
+            start_col: 0,
+            ..
+        }
+    ));
+    let changed_copy_pending = changed_range.history.as_ref().unwrap().pending.clone();
+    assert_eq!(
+        changed_copy_pending.as_ref().unwrap().request_id,
+        changed_copy_request.request_id
+    );
     changed_range.handle_server_message(ServerMessage::Response {
-        request_id: changed_final.request_id,
+        request_id: old_changed_pending.request_id,
+        response: Response::HistoryRows(simple_copy_page(1, "duplicate-old")),
+    });
+    assert_eq!(
+        changed_range.history.as_ref().unwrap().pending.as_ref(),
+        changed_copy_pending.as_ref()
+    );
+    changed_range.handle_server_message(ServerMessage::Response {
+        request_id: changed_copy_request.request_id,
         response: Response::HistoryRows(simple_copy_page(1, "changed")),
     });
     let expected_changed = {
         let mut expected = Vec::new();
-        write_clipboard(&mut expected, "changed\nchanged").unwrap();
+        write_clipboard(&mut expected, "changed").unwrap();
         expected
     };
     assert!(write_completed_history_copy(
@@ -3693,7 +3976,18 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     ));
     assert_eq!(changed_output, expected_changed);
 
-    let mut replacement = dashboard_with_history_copy(range);
+    let (mut replacement, replacement_pending) = dashboard_copy_pending_after_first_tile(range);
+    replacement.handle_server_message(ServerMessage::Response {
+        request_id: replacement_pending.request_id,
+        response: Response::HistoryRows(simple_copy_page(1, "done")),
+    });
+    let mut replacement_output = Vec::new();
+    assert!(write_completed_history_copy(
+        &mut replacement,
+        &mut replacement_output
+    ));
+    assert!(!replacement_output.is_empty());
+    let replacement_output_before_open = replacement_output.clone();
     replacement.history_begin_request = Some(ovrcr::tui::PendingHistoryBegin {
         request_id: 90,
         session: SessionId(1),
@@ -3713,6 +4007,7 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
     );
     assert!(replacement.history.as_ref().unwrap().copy_job.is_none());
     assert!(replacement.take_pending_history_copy().is_none());
+    assert_eq!(replacement_output, replacement_output_before_open);
     assert!(replacement_requests.iter().any(|request| matches!(
         request.request,
         Request::HistoryEnd {
@@ -3720,19 +4015,6 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
             snapshot: HistorySnapshotId(7),
         }
     )));
-
-    let (mut disconnected, _) = dashboard_copy_pending_after_first_tile(range);
-    let mut disconnected_output = Vec::new();
-    assert!(!write_completed_history_copy(
-        &mut disconnected,
-        &mut disconnected_output
-    ));
-    disconnected.select_session(SessionId(2));
-    assert!(!write_completed_history_copy(
-        &mut disconnected,
-        &mut disconnected_output
-    ));
-    assert!(disconnected_output.is_empty());
 
     let oversize_range = HistoryCopyRange {
         cursor: HistoryCopyPoint { row: 511, col: 127 },
@@ -3787,7 +4069,48 @@ fn copy_history_invalid_snapshot_never_emits_partial_text() {
         dashboard.history.as_ref().unwrap().copy_range(),
         Some(oversize_range)
     );
-    assert!(dashboard.history.as_ref().unwrap().pending.is_some());
+    let oversize_pending = dashboard.history.as_ref().unwrap().pending.clone().unwrap();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: oversize_pending.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "oversize retry slot retired".into(),
+        },
+    });
+    assert!(dashboard.history.as_ref().unwrap().pending.is_none());
+    let mut oversize_output = Vec::new();
+    assert!(!write_completed_history_copy(
+        &mut dashboard,
+        &mut oversize_output
+    ));
+    assert!(oversize_output.is_empty());
+    dashboard.history.as_mut().unwrap().cursor = Some(HistoryCursor {
+        point: HistoryCopyPoint { row: 0, col: 3 },
+        row_width: 4,
+        cell_width: 1,
+    });
+    let retry_request = match dashboard.key(KeyCode::Char('y')) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected smaller valid retry, got {action:?}"),
+    };
+    let _ = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry_request.request_id,
+        response: Response::HistoryRows(simple_copy_page(0, "ok")),
+    });
+    let expected_oversize_retry = {
+        let mut expected = Vec::new();
+        write_clipboard(&mut expected, "ok").unwrap();
+        expected
+    };
+    assert!(write_completed_history_copy(
+        &mut dashboard,
+        &mut oversize_output
+    ));
+    assert_eq!(oversize_output, expected_oversize_retry);
+    assert!(!write_completed_history_copy(
+        &mut dashboard,
+        &mut oversize_output
+    ));
 }
 
 #[test]
@@ -3840,12 +4163,12 @@ fn history_render_preserves_cells_and_clips() {
     tiled_view
         .pages
         .push_back(history_page(0, 0, 256, left_cells));
-    tiled_view.pages.push_back(history_page(
-        0,
-        128,
-        256,
-        vec![history_cell("", 0), history_cell("R", 1)],
-    ));
+    let mut right_cells = vec![history_cell("", 1); 128];
+    right_cells[0] = history_cell("", 0);
+    right_cells[1] = history_cell("R", 1);
+    tiled_view
+        .pages
+        .push_back(history_page(0, 128, 256, right_cells));
     let mut tiled_terminal = Terminal::new(TestBackend::new(130, 1)).unwrap();
     tiled_terminal
         .draw(|frame| ovrcr::tui::render_history(frame, Rect::new(0, 0, 130, 1), &tiled_view))
@@ -3873,6 +4196,8 @@ fn history_render_preserves_cells_and_clips() {
         .draw(|frame| {
             ovrcr::tui::render_history(frame, Rect::new(0, 0, 130, 1), &selected_view);
             let buffer = frame.buffer_mut();
+            assert_eq!(buffer[(127, 0)].fg, Color::Rgb(30, 30, 46));
+            assert_eq!(buffer[(128, 0)].fg, Color::Rgb(30, 30, 46));
             assert_eq!(buffer[(127, 0)].bg, Color::Rgb(148, 226, 213));
             assert_eq!(buffer[(128, 0)].bg, Color::Rgb(148, 226, 213));
             assert_eq!(buffer[(129, 0)].symbol(), "R");
@@ -4030,49 +4355,18 @@ fn history_render_preserves_cells_and_clips() {
         .join("\n");
     assert!(dashboard_text.contains("HISTORY · frozen · loaded · cursor loading"));
 
-    let mut selected_row = special_history_row(15);
-    selected_row.cells[129] = history_cell("N", 1);
-    let mut selected_view = ovrcr::tui::HistoryView::new(history_opened(1), 0);
-    selected_view.anchor = Some(HistoryCopyPoint { row: 0, col: 126 });
-    selected_view.cursor = Some(HistoryCursor {
-        point: HistoryCopyPoint { row: 0, col: 129 },
-        row_width: 132,
+    selected_view.left = 0;
+    let mut roundtrip_view = tiled_view.clone();
+    roundtrip_view.left = 0;
+    roundtrip_view.pages[0].rows[0].cells[127] = history_cell("X", 1);
+    roundtrip_view.pages[1].rows[0].cells[0] = history_cell("", 1);
+    roundtrip_view.anchor = Some(HistoryCopyPoint { row: 0, col: 127 });
+    roundtrip_view.cursor = Some(HistoryCursor {
+        point: HistoryCopyPoint { row: 0, col: 128 },
+        row_width: 256,
         cell_width: 1,
     });
-    selected_view.pages.push_back(HistoryRows {
-        session: SessionId(1),
-        snapshot: HistorySnapshotId(7),
-        start_row: 0,
-        start_col: 0,
-        rows: vec![selected_row.clone()],
-    });
-    let mut selected_terminal = Terminal::new(TestBackend::new(132, 1)).unwrap();
-    selected_terminal
-        .draw(|frame| {
-            ovrcr::tui::render_history(frame, Rect::new(0, 0, 132, 1), &selected_view);
-            for col in 126..=129 {
-                assert_eq!(frame.buffer_mut()[(col, 0)].fg, Color::Rgb(30, 30, 46));
-                assert_eq!(frame.buffer_mut()[(col, 0)].bg, Color::Rgb(148, 226, 213));
-            }
-        })
-        .unwrap();
-    for col in [126, 127, 129] {
-        assert_eq!(
-            selected_terminal.backend().buffer()[(col, 0)].fg,
-            Color::Rgb(30, 30, 46)
-        );
-        assert_eq!(
-            selected_terminal.backend().buffer()[(col, 0)].bg,
-            Color::Rgb(148, 226, 213)
-        );
-    }
-    assert_eq!(
-        selected_terminal.backend().buffer()[(127, 0)].symbol(),
-        "界"
-    );
-    assert_eq!(selected_terminal.backend().buffer()[(128, 0)].symbol(), " ");
-    assert_eq!(selected_terminal.backend().buffer()[(129, 0)].symbol(), "N");
-
+    roundtrip_view.cursor_target = None;
     let mut crossterm_bytes = Vec::new();
     {
         crossterm::style::force_color_output(true);
@@ -4086,19 +4380,19 @@ fn history_render_preserves_cells_and_clips() {
         .unwrap();
         terminal
             .draw(|frame| {
-                ovrcr::tui::render_history(frame, Rect::new(0, 0, 132, 1), &selected_view)
+                ovrcr::tui::render_history(frame, Rect::new(0, 0, 130, 1), &roundtrip_view)
             })
             .unwrap();
     }
-    let mut round_trip = vt100::Parser::new(1, 132, 0);
+    let mut round_trip = vt100::Parser::new(1, 130, 0);
     round_trip.process(&crossterm_bytes);
-    for col in [126, 127, 129] {
+    for col in [127, 128] {
         let cell = round_trip.screen().cell(0, col).unwrap();
-        assert_eq!(cell.fgcolor(), vt100::Color::Rgb(30, 30, 46));
+        assert_eq!(cell.fgcolor(), vt100::Color::Rgb(30, 30, 46), "col {col}");
         assert_eq!(cell.bgcolor(), vt100::Color::Rgb(148, 226, 213));
     }
-    assert_eq!(round_trip.screen().cell(0, 127).unwrap().contents(), "界");
-    assert_eq!(round_trip.screen().cell(0, 129).unwrap().contents(), "N");
+    assert_eq!(round_trip.screen().cell(0, 127).unwrap().contents(), "X");
+    assert_eq!(round_trip.screen().cell(0, 129).unwrap().contents(), "R");
     crossterm::style::force_color_output(false);
 
     let mut clipped_terminal = Terminal::new(TestBackend::new(128, 1)).unwrap();
@@ -4107,9 +4401,10 @@ fn history_render_preserves_cells_and_clips() {
         .unwrap();
     assert_eq!(clipped_terminal.backend().buffer()[(127, 0)].symbol(), " ");
     assert_eq!(
-        clipped_terminal.backend().buffer()[(0, 0)].bg,
+        clipped_terminal.backend().buffer()[(127, 0)].bg,
         Color::Rgb(30, 30, 46)
     );
+    assert!(!clipped_terminal.backend().cursor_visible());
     let mut empty_history = ovrcr::tui::HistoryView::new(history_opened(1), 0);
     empty_history.cursor_target = None;
     dashboard.history = Some(empty_history);

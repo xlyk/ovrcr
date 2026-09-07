@@ -8,7 +8,8 @@ use super::{
     HistoryView, InputMode,
 };
 use crate::protocol::{
-    ErrorCode, HistoryOpened, HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
+    ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
+    HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -37,6 +38,19 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     drop(sender);
     let error = next_dashboard_message(&receiver).unwrap_err().to_string();
     assert_eq!(error, "dashboard connection lost");
+
+    let mut dashboard = staged_history_copy_dashboard();
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
+    drop(terminal);
+    drop(dashboard);
+    assert!(
+        bytes
+            .windows(b"\x1b]52;c;YQ==\x1b\\".len())
+            .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
+    );
 }
 
 #[test]
@@ -307,8 +321,41 @@ fn failed_history_copy_writer_preserves_selection_for_retry() {
         assert_eq!(view.anchor, Some(HistoryCopyPoint { row: 0, col: 0 }));
         assert!(view.copy_completion.is_none());
     }
-    let _ = dashboard.key(KeyCode::Char('y'));
-    assert!(dashboard.history.as_ref().unwrap().copy_job.is_some());
+    let retry = match dashboard.key(KeyCode::Char('y')) {
+        super::DashboardAction::Request(request) => request,
+        action => panic!("expected writer retry request, got {action:?}"),
+    };
+    let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![HistoryRow {
+                width: 1,
+                cells: vec![HistoryCell {
+                    text: "a".into(),
+                    width: 1,
+                    fg: HistoryColor::Default,
+                    bg: HistoryColor::Default,
+                    attributes: 0,
+                }],
+                wrapped: false,
+            }],
+        }),
+    });
+    assert!(follow_up.is_empty());
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::new(backend).unwrap();
+    assert!(emit_pending_history_copy(&mut terminal, &mut dashboard));
+    drop(terminal);
+    assert!(
+        bytes
+            .windows(b"\x1b]52;c;YQ==\x1b\\".len())
+            .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
+    );
 }
 
 #[test]
