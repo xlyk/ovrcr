@@ -191,7 +191,7 @@ write_frame(&mut bytes, &message).unwrap();
 assert_eq!(read_frame::<ClientMessage>(&mut bytes.as_slice()).unwrap(), message);
 ```
 
-- [ ] Run the owning unit gates separately: `rtk proxy cargo test -p ovrcr-protocol --lib multi_dashboard_control_frames_round_trip -- --exact --nocapture` (exactly **1 test**) and `rtk proxy cargo test -p ovrcr-runtime --lib server::tests::multi_dashboard_zero_identity_is_not_client_supplied -- --exact --nocapture` (exactly **1 test**). Implement the types and constructor migration; retain the existing malformed/oversize checks.
+- [ ] Run the owning unit gates separately: `rtk proxy cargo test -p ovrcr-protocol --lib multi_dashboard_control_frames_round_trip -- --nocapture` (exactly **1 test**) and `rtk proxy cargo test -p ovrcr-runtime --lib server::tests::multi_dashboard_zero_identity_is_not_client_supplied -- --exact --nocapture` (exactly **1 test**). Implement the types and constructor migration; retain the existing malformed/oversize checks.
 - [ ] Replace role-only dashboard authorization in `handle_request` test callers with an actually registered ID; control callers pass None. Do not create a compatibility path that bypasses registration.
 
 ### Task 2: Give every dashboard independent routing and lifetime

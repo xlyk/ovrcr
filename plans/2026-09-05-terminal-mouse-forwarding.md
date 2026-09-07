@@ -213,7 +213,7 @@ assert!(d.take_mouse_cleanup().is_none());
 
 ## Task 3: Reconcile capture, focus, snapshots, and event-loop cleanup
 
-**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop}.rs`; `tests/tui.rs`.
+**Files:** `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,terminal_guard}.rs`; `tests/tui.rs`.
 
 **Consumes:** Task 2 state/cleanup. **Produces:** mode-responsive capture and an input route safe across snapshot and geometry changes.
 
