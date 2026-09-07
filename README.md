@@ -107,8 +107,9 @@ History starts as a frozen snapshot, so live PTY output does not move the rows
 under review. The footer marks new live output while the snapshot is open.
 Use Up/Down or `k`/`j` for one row, PageUp/PageDown for one viewport, Home/End
 for the oldest or newest captured row, and Left/Right or `h`/`l` to move across
-wide rows. Press Escape, `q`, or Ctrl-g to close history and return to Browse;
-Enter and paste do not send input while reading history.
+wide rows. With no copy request in progress, press Escape, `q`, or Ctrl-g to
+close history and return to Browse. Enter and paste do not send input while
+reading history.
 
 The server keeps at most 512 physical history rows per session. New output
 evicts the oldest rows after that bound; it does not create a second retained
@@ -127,6 +128,33 @@ captured outside the viewport. The history view is capped at 64 rows by 256
 columns inside a larger pane. Alternate-screen applications do not provide a
 history transcript. Retained history lives in memory with the session and is
 lost when the server exits; it is not persisted to disk.
+
+### Keyboard copy
+In Browse mode, press `[` to freeze the selected session's current screen for
+copying. From Terminal mode, press Ctrl-g first. Use arrows or `hjkl` to move,
+Home/`0` and End/`$` for row bounds, and `g`/`G` for screen bounds.
+Press Space or `v` to set an anchor, move to the other end of the range, then
+press `y` or Enter to request a clipboard copy. Both endpoints are included.
+Escape, `q`, or Ctrl-g leaves Copy mode. Live output continues while the
+captured screen stays fixed; resizing the terminal cancels this selection.
+
+To select older output, enter History with PageUp. Scroll to a loaded cursor
+and press Space or `v` to anchor it. Movement then extends the range;
+PageUp/PageDown move by a viewport, Home/End move to row bounds, and
+`g`/`G` move to snapshot bounds. Movement waits when a target cell needs
+loading. Press `y` to load and copy the selected range across history pages.
+Escape cancels an in-progress copy and retains the selection; another Escape
+leaves History. `q` or Ctrl-g leaves immediately. History selections retain
+the snapshot's original row widths when the live terminal is resized.
+
+Clipboard requests use OSC52 and require permission from the host terminal,
+including any intervening multiplexer. The limit is 65,536 UTF-8 bytes.
+The notice `Clipboard request sent; paste to verify` confirms the request
+was written, so verify it by pasting in the destination application.
+Terminals that disable or lack OSC52 can ignore the request silently.
+Selections remain available after clipboard or size errors. Soft-wrapped rows
+join without added newlines; hard line breaks, explicit spaces, and stored
+Unicode text are preserved.
 
 ## Control terminals from scripts
 
