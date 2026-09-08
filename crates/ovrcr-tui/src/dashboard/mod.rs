@@ -93,6 +93,7 @@ pub struct Dashboard {
     history_end_after_selection: Option<ClientMessage>,
     screen_session: Option<SessionId>,
     pending_screen: Option<(SessionId, u64)>,
+    ignored_responses: HashSet<u64>,
 }
 
 thread_local! {

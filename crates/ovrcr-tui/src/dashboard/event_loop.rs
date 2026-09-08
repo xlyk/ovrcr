@@ -65,6 +65,7 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
     dashboard.next_request_id = 4;
 
     let mut guard = TerminalGuard::enter()?;
+    let mut mouse_enabled = guard.mouse;
     let backend = CrosstermBackend::new(guard.writer_mut());
     let mut terminal = Terminal::new(backend).context("create dashboard terminal")?;
     // Initialize crossterm's singleton event source before adding the
@@ -101,9 +102,10 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
         input,
         wake,
         task_request,
+        &mut mouse_enabled,
     );
     drop(terminal);
-    guard.mark_mouse(dashboard.mode != InputMode::Terminal);
+    guard.mark_mouse(mouse_enabled);
     let _ = panic::take_hook();
     if let Some(prior) = prior_hook.lock().ok().and_then(|mut hooks| hooks.take()) {
         panic::set_hook(prior);
@@ -112,6 +114,8 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
     result
 }
 
+// The caller owns the terminal guard and needs the final mouse-capture state.
+#[allow(clippy::too_many_arguments)]
 fn dashboard_loop<W: Write>(
     terminal: &mut Terminal<CrosstermBackend<&mut W>>,
     stream: &mut UnixStream,
@@ -120,8 +124,8 @@ fn dashboard_loop<W: Write>(
     input: File,
     mut wake: DashboardWake,
     task_request: TaskRequestFn,
+    mouse_enabled: &mut bool,
 ) -> Result<()> {
-    let mut mouse_enabled = dashboard.mode == InputMode::Browse;
     let input_fd = input.as_raw_fd();
     let mut next_idle_redraw = Instant::now() + dashboard.redraw_interval();
     let mut next_frame_redraw = Instant::now();
@@ -145,7 +149,7 @@ fn dashboard_loop<W: Write>(
         }
         wake.clear()?;
         pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
-        match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)? {
+        match drain_dashboard_input_then_emit(terminal, stream, dashboard, mouse_enabled)? {
             DashboardBoundary::Detached => break,
             DashboardBoundary::InputPending => {
                 pending_redraw = true;
@@ -157,7 +161,7 @@ fn dashboard_loop<W: Write>(
         pending_redraw |= first_frame;
         first_frame = false;
         if pending_redraw && Instant::now() >= next_frame_redraw {
-            update_mouse_capture(terminal, dashboard, &mut mouse_enabled)?;
+            update_mouse_capture(terminal, dashboard, mouse_enabled)?;
             terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
@@ -202,9 +206,7 @@ fn dashboard_loop<W: Write>(
             } else {
                 false
             };
-            if input_ready
-                && process_dashboard_input(terminal, stream, dashboard, &mut mouse_enabled)?
-            {
+            if input_ready && process_dashboard_input(terminal, stream, dashboard, mouse_enabled)? {
                 break;
             }
             if input_ready {
@@ -227,13 +229,12 @@ fn dashboard_loop<W: Write>(
                     if !event::poll(DASHBOARD_EVENT_PROBE)? {
                         break;
                     }
-                    if process_dashboard_input(terminal, stream, dashboard, &mut mouse_enabled)? {
+                    if process_dashboard_input(terminal, stream, dashboard, mouse_enabled)? {
                         return Ok(());
                     }
                 }
             }
-            match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)?
-            {
+            match drain_dashboard_input_then_emit(terminal, stream, dashboard, mouse_enabled)? {
                 DashboardBoundary::Detached => return Ok(()),
                 DashboardBoundary::InputPending => {
                     pending_redraw = true;
@@ -245,12 +246,7 @@ fn dashboard_loop<W: Write>(
             if wait.server_ready {
                 wake.clear()?;
                 pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
-                match drain_dashboard_input_then_emit(
-                    terminal,
-                    stream,
-                    dashboard,
-                    &mut mouse_enabled,
-                )? {
+                match drain_dashboard_input_then_emit(terminal, stream, dashboard, mouse_enabled)? {
                     DashboardBoundary::Detached => return Ok(()),
                     DashboardBoundary::InputPending => {
                         pending_redraw = true;
@@ -264,15 +260,14 @@ fn dashboard_loop<W: Write>(
                 pending_redraw = true;
             }
         }
-        update_mouse_capture(terminal, dashboard, &mut mouse_enabled)?;
+        update_mouse_capture(terminal, dashboard, mouse_enabled)?;
         if pending_redraw && Instant::now() >= next_frame_redraw {
             // Output may have arrived while the frame wait ignored the server
             // wake. Clear before draining so a producer racing this drain
             // leaves a wake for the next iteration.
             wake.clear()?;
             next_dashboard_messages(messages, dashboard, stream)?;
-            match drain_dashboard_input_then_emit(terminal, stream, dashboard, &mut mouse_enabled)?
-            {
+            match drain_dashboard_input_then_emit(terminal, stream, dashboard, mouse_enabled)? {
                 DashboardBoundary::Detached => break,
                 DashboardBoundary::InputPending => {
                     pending_redraw = true;

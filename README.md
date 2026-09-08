@@ -89,6 +89,12 @@ Pause/resume is a process lifecycle control separate from agent activity. It
 does not declare an agent idle, cancel remote agent work, or replace the
 hook-owned activity state.
 
+Modified keys are forwarded with xterm modifier parameters, and Shift+Enter is
+forwarded as the CSI-u sequence `ESC [ 13 ; 2 u` so agents that support it
+insert a newline instead of submitting. Terminals without the kitty keyboard
+protocol report Shift+Enter as plain Enter, so the dashboard cannot tell them
+apart there.
+
 Dashboard output is delivered through a bounded queue so a detached or slow
 dashboard can reattach and refresh the current screen. Output backlog is
 coalesced into a per-session refresh when necessary; control responses and

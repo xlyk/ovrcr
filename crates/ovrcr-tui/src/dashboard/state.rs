@@ -519,6 +519,7 @@ impl Dashboard {
             history_end_after_selection: None,
             screen_session: None,
             pending_screen: None,
+            ignored_responses: HashSet::new(),
         }
     }
 
@@ -1435,6 +1436,11 @@ impl Dashboard {
     }
 
     pub fn handle_server_message(&mut self, message: ServerMessage) -> Vec<ClientMessage> {
+        if let ServerMessage::Response { request_id, .. } = &message
+            && self.ignored_responses.remove(request_id)
+        {
+            return Vec::new();
+        }
         if let ServerMessage::Response {
             request_id,
             response,
@@ -1568,7 +1574,9 @@ impl Dashboard {
                 ServerEvent::HierarchyChanged(hierarchy) => {
                     outgoing.extend(self.update_hierarchy(hierarchy));
                 }
-                ServerEvent::Output { session, bytes } if self.selected == Some(session) => {
+                // Output belongs to the session whose screen is on the pane;
+                // a newly selected session waits for its screen response.
+                ServerEvent::Output { session, bytes } if self.screen_session == Some(session) => {
                     self.parser.process(&bytes);
                     if let Some(view) = self.history.as_mut()
                         && view.opened.session == session
@@ -1754,6 +1762,8 @@ impl Dashboard {
                 self.cancel_copy(None);
             }
             self.screen_session = None;
+            self.parser = vt100::Parser::new(self.pane_size.rows, self.pane_size.cols, 0);
+            self.parser.process(b"Loading terminal screen...");
         }
         self.selected = Some(id);
         self.pending_screen = Some((id, request_id));

@@ -77,10 +77,10 @@ impl<W: Write> TerminalGuard<W> {
     }
 
     fn restore(&mut self) {
-        if self.mouse {
-            let _ = execute!(self.writer, DisableMouseCapture);
-            self.mouse = false;
-        }
+        // The dashboard loop toggles capture on its own, so do not trust the
+        // flag: disabling capture is idempotent and cheap.
+        let _ = execute!(self.writer, DisableMouseCapture);
+        self.mouse = false;
         if self.bracketed_paste {
             let _ = execute!(self.writer, DisableBracketedPaste);
             self.bracketed_paste = false;
