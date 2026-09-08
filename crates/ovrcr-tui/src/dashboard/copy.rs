@@ -456,7 +456,7 @@ fn invalid_history_data(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-fn cell_at<'a>(row: &'a HistoryRow, slice_start_col: u16, col: u16) -> Option<&'a HistoryCell> {
+fn cell_at(row: &HistoryRow, slice_start_col: u16, col: u16) -> Option<&HistoryCell> {
     col.checked_sub(slice_start_col)
         .and_then(|offset| row.cells.get(usize::from(offset)))
 }
@@ -497,7 +497,7 @@ fn append_nonempty_history_text(
             "Selection exceeds 65536 bytes",
         ));
     }
-    output.extend(std::iter::repeat(' ').take(*pending_blanks));
+    output.extend(std::iter::repeat_n(' ', *pending_blanks));
     *pending_blanks = 0;
     output.push_str(text);
     Ok(())

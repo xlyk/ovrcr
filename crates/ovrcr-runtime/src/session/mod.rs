@@ -174,6 +174,7 @@ impl Session {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_internal(
         id: SessionId,
         spec: SessionSpec,
@@ -419,7 +420,7 @@ impl Session {
             }
             AgentUpdate::Context(context) => {
                 validate_context(context)?;
-                let mut next_order = state.context_order.clone();
+                let mut next_order = state.context_order;
                 next_order.accept(report.sequence)?;
                 let snapshot = ContextUsageSnapshot {
                     report: context.clone(),
@@ -558,10 +559,8 @@ impl Session {
                 Ok(should_kill) => should_kill,
                 Err(error) => return Err(signal_error.unwrap_or(error)),
             };
-            if should_kill {
-                if let Err(error) = signal_group(self.pgid, libc::SIGKILL) {
-                    return Err(signal_error.unwrap_or(error));
-                }
+            if should_kill && let Err(error) = signal_group(self.pgid, libc::SIGKILL) {
+                return Err(signal_error.unwrap_or(error));
             }
             let kill_deadline = Instant::now() + grace.max(Duration::from_secs(2));
             let kill_exited = match wait_for_group_exit(self.pgid, kill_deadline) {

@@ -72,7 +72,7 @@ impl HookIdentity {
             .filter(|value| value.len() == 64)
             .ok_or_else(|| report_error(ErrorCode::InvalidRequest, ReportFailure::Invalid))?;
         let mut capability = [0_u8; 32];
-        for (index, pair) in token.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in token.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             capability[index] = hex_pair(pair)
                 .ok_or_else(|| report_error(ErrorCode::InvalidRequest, ReportFailure::Invalid))?;
         }

@@ -576,12 +576,12 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
     )
     .unwrap();
     let screen = loop {
-        match read_frame::<ServerMessage>(&mut reconnect).unwrap() {
-            ServerMessage::Response {
-                request_id: 21,
-                response: Response::Screen { bytes, .. },
-            } => break bytes,
-            _ => {}
+        if let ServerMessage::Response {
+            request_id: 21,
+            response: Response::Screen { bytes, .. },
+        } = read_frame::<ServerMessage>(&mut reconnect).unwrap()
+        {
+            break bytes;
         }
     };
     let mut parser = vt100::Parser::new(24, 80, 0);
@@ -2091,7 +2091,7 @@ impl Drop for PauseHarness {
                 std::mem::replace(&mut self.fixture._root, tempfile::tempdir().unwrap()).keep();
             eprintln!(
                 "pause/resume fixture cleanup failed; preserved {}",
-                kept.display().to_string()
+                kept.display()
             );
         }
     }
@@ -2512,14 +2512,13 @@ while :; do sleep 1; done
 }
 
 fn current_rss_kib() -> u64 {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        if let Some(value) = status
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status")
+        && let Some(value) = status
             .lines()
             .find_map(|line| line.strip_prefix("VmRSS:")?.split_whitespace().next())
             .and_then(|value| value.parse::<u64>().ok())
-        {
-            return value;
-        }
+    {
+        return value;
     }
     let output = Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
@@ -2563,10 +2562,9 @@ fn wait_memory_marker(
                 max_lines: None,
             },
             Duration::from_millis(250),
-        ) {
-            if text.contains(marker) {
-                return;
-            }
+        ) && text.contains(marker)
+        {
+            return;
         }
         thread::yield_now();
     }
@@ -2809,10 +2807,11 @@ fn expect_term_acks_and_descendant_final(
                     Some(libc::EIO),
                     "unexpected descendant PTY error (raw status {status:?})"
                 );
-                assert!(
-                    cfg!(target_os = "macos"),
-                    "EIO after leader hangup is only accepted on macOS (raw status {status:?})"
-                );
+                if !cfg!(target_os = "macos") {
+                    panic!(
+                        "EIO after leader hangup is only accepted on macOS (raw status {status:?})"
+                    );
+                }
             }
             // A successful write must be retained in the terminal; a flush
             // failure alone does not excuse the final-marker assertion.
@@ -4896,7 +4895,7 @@ impl ControlFixture {
             label: None,
             argv,
         })) {
-            Response::CreatedSession(summary) => summary,
+            Response::CreatedSession(summary) => *summary,
             response => panic!("unexpected response: {response:?}"),
         }
     }
@@ -5033,10 +5032,9 @@ impl ControlFixture {
                     max_lines: None,
                 },
                 Duration::from_millis(250),
-            ) {
-                if text.contains(marker) {
-                    return;
-                }
+            ) && text.contains(marker)
+            {
+                return;
             }
             thread::park_timeout(Duration::from_millis(5));
         }

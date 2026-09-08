@@ -962,7 +962,9 @@ fn agent_hook_summary_updates_drive_animation() {
 
     let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Busy;
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        summary,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 100))
         .unwrap();
@@ -970,7 +972,9 @@ fn agent_hook_summary_updates_drive_animation() {
 
     summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Idle;
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        summary,
+    ))));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
@@ -1030,7 +1034,9 @@ fn context_sidebar_updates_and_expires() {
         },
         received_unix_ms: 1_000,
     });
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        summary,
+    ))));
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -1101,7 +1107,9 @@ fn context_sidebar_unknown_and_over_capacity() {
         },
         received_unix_ms: 10_000,
     });
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(summary)));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        summary,
+    ))));
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -1123,9 +1131,9 @@ fn context_sidebar_unknown_and_over_capacity() {
         },
         received_unix_ms: 10_000,
     });
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         over_capacity,
-    )));
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 10_000))
         .unwrap();
@@ -1988,7 +1996,9 @@ fn pause_resume_input_and_paste_stay_guarded() {
 
     let paused = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
-    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(paused)));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        paused,
+    ))));
     assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
 
     dashboard.mode = ovrcr::tui::InputMode::Terminal;

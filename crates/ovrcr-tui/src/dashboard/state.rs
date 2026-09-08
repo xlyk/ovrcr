@@ -210,7 +210,7 @@ impl HistoryView {
                     .iter()
                     .find_map(|page| row_in_page(page, row).map(|row| row.width));
                 let Some(width) = row_width else {
-                    return Some(canonical_page_bounds(&self.opened, row, 0)?);
+                    return canonical_page_bounds(&self.opened, row, 0);
                 };
                 if width == 0 {
                     return None;
@@ -218,7 +218,7 @@ impl HistoryView {
                 (row, width - 1)
             }
         };
-        Some(canonical_page_bounds(&self.opened, row, col)?)
+        canonical_page_bounds(&self.opened, row, col)
     }
 
     pub fn resolve_cursor(&mut self, viewport: TerminalSize) -> io::Result<bool> {
@@ -460,7 +460,7 @@ pub(super) fn history_page_covers(
 fn is_canonical_page(opened: &HistoryOpened, page: &HistoryRows) -> bool {
     page.session == opened.session
         && page.snapshot == opened.snapshot
-        && page.start_row % 16 == 0
+        && page.start_row.is_multiple_of(16)
         && u32::from(page.start_col) % 128 == 0
 }
 
@@ -1204,10 +1204,10 @@ impl Dashboard {
             let (purpose, bounds) = if let Some(job) = view.copy_job.as_ref() {
                 (HistoryPagePurpose::Copy(job.id), job.page_needed())
             } else {
-                if view.cursor_target.is_some() {
-                    if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
-                        resolve_error = Some(error);
-                    }
+                if view.cursor_target.is_some()
+                    && let Err(error) = view.resolve_cursor(history_view_size(self.pane_size))
+                {
+                    resolve_error = Some(error);
                 }
                 if resolve_error.is_some() {
                     self.history_page_error = true;
@@ -1464,10 +1464,10 @@ impl Dashboard {
                         self.pane_size = size;
                         self.parser = vt100::Parser::new(size.rows, size.cols, 0);
                         self.parser.process(&bytes);
-                        if let Some(view) = self.history.as_mut() {
-                            if view.opened.session == session {
-                                view.new_output = true;
-                            }
+                        if let Some(view) = self.history.as_mut()
+                            && view.opened.session == session
+                        {
+                            view.new_output = true;
                         }
                     }
                 }
@@ -1487,11 +1487,9 @@ impl Dashboard {
                         .and_then(|view| view.pending.as_ref())
                         .filter(|pending| pending.request_id == request_id)
                         .map(|pending| pending.purpose);
-                    let accepted = self.history.as_mut().and_then(|view| {
-                        match view.accept_page(request_id, page) {
-                            Ok(page) => Some(Ok((view.opened.clone(), page))),
-                            Err(error) => Some(Err(error)),
-                        }
+                    let accepted = self.history.as_mut().map(|view| {
+                        view.accept_page(request_id, page)
+                            .map(|page| (view.opened.clone(), page))
                     });
                     match (purpose, accepted) {
                         (Some(purpose), Some(Ok((opened, Some(page))))) => {
@@ -1572,10 +1570,10 @@ impl Dashboard {
                 }
                 ServerEvent::Output { session, bytes } if self.selected == Some(session) => {
                     self.parser.process(&bytes);
-                    if let Some(view) = self.history.as_mut() {
-                        if view.opened.session == session {
-                            view.new_output = true;
-                        }
+                    if let Some(view) = self.history.as_mut()
+                        && view.opened.session == session
+                    {
+                        view.new_output = true;
                     }
                 }
                 ServerEvent::ScreenDirty { session } if self.selected == Some(session) => {
@@ -1594,7 +1592,7 @@ impl Dashboard {
                         .flat_map(|workspace| workspace.sessions.iter_mut())
                     {
                         if session.id == summary.id {
-                            *session = summary;
+                            *session = *summary;
                             break;
                         }
                     }
@@ -1616,11 +1614,11 @@ impl Dashboard {
             HistoryPagePurpose::Viewport | HistoryPagePurpose::Cursor => {
                 if let Some(view) = self.history.as_mut() {
                     view.cache_page(page);
-                    if matches!(purpose, HistoryPagePurpose::Cursor) {
-                        if let Err(error) = view.resolve_cursor(history_view_size(self.pane_size)) {
-                            self.history_page_error = true;
-                            self.error = Some(error.to_string());
-                        }
+                    if matches!(purpose, HistoryPagePurpose::Cursor)
+                        && let Err(error) = view.resolve_cursor(history_view_size(self.pane_size))
+                    {
+                        self.history_page_error = true;
+                        self.error = Some(error.to_string());
                     }
                 }
             }
@@ -1659,12 +1657,8 @@ impl Dashboard {
     }
 
     pub fn take_pending_history_copy(&mut self) -> Option<String> {
-        let Some(view) = self.history.as_mut() else {
-            return None;
-        };
-        let Some(completion) = view.copy_completion.take() else {
-            return None;
-        };
+        let view = self.history.as_mut()?;
+        let completion = view.copy_completion.take()?;
         let valid = self.mode == InputMode::History
             && self.selected == Some(completion.range.session)
             && view.opened.session == completion.range.session

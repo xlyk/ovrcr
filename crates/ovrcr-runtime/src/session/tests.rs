@@ -68,6 +68,7 @@ struct ReapGate {
 
 #[cfg(target_os = "macos")]
 impl ReapGate {
+    #[allow(clippy::type_complexity)]
     fn new() -> (
         Arc<Self>,
         Receiver<()>,

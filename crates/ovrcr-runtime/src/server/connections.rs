@@ -432,7 +432,7 @@ pub(super) fn handle_request_with_id(
                         state,
                         ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
                     );
-                    Response::CreatedSession(summary)
+                    Response::CreatedSession(Box::new(summary))
                 })
         }
         Request::KillSession { session } => state

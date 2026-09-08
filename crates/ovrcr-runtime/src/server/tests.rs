@@ -153,11 +153,11 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut identity_contents = None;
     while Instant::now() < deadline {
-        if let Ok(contents) = std::fs::read_to_string(&identity) {
-            if contents == expected_identity {
-                identity_contents = Some(contents);
-                break;
-            }
+        if let Ok(contents) = std::fs::read_to_string(&identity)
+            && contents == expected_identity
+        {
+            identity_contents = Some(contents);
+            break;
         }
         thread::park_timeout(Duration::from_millis(5));
     }
@@ -2290,10 +2290,9 @@ impl Drop for RegistrationCleanup {
                 || self.summary.is_some()
                 || self.dispatcher.is_some()
                 || self.bridge.is_some())
+            && !self.cleanup()
         {
-            if !self.cleanup() {
-                eprintln!("registration cleanup did not complete before its deadlines");
-            }
+            eprintln!("registration cleanup did not complete before its deadlines");
         }
     }
 }
@@ -2360,10 +2359,10 @@ impl KillFailureCleanup {
                 }
             }
         }
-        if let Some(dispatcher) = self.dispatcher.take() {
-            if !join_test_thread_bounded(dispatcher, Duration::from_secs(2)) {
-                cleaned = false;
-            }
+        if let Some(dispatcher) = self.dispatcher.take()
+            && !join_test_thread_bounded(dispatcher, Duration::from_secs(2))
+        {
+            cleaned = false;
         }
         if let Some(waiter) = self.waiter.take()
             && !join_test_thread_bounded(waiter, Duration::from_secs(2))
@@ -2401,10 +2400,8 @@ impl KillFailureCleanup {
 
 impl Drop for KillFailureCleanup {
     fn drop(&mut self) {
-        if self.waiter.is_some() || self.dispatcher.is_some() {
-            if !self.cleanup() {
-                eprintln!("kill failure cleanup did not complete before its deadlines");
-            }
+        if (self.waiter.is_some() || self.dispatcher.is_some()) && !self.cleanup() {
+            eprintln!("kill failure cleanup did not complete before its deadlines");
         }
     }
 }

@@ -198,6 +198,7 @@ fn dispatch_history_begin(state: &ServerState, owner: &Arc<()>, request_id: u64,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_history_page(
     state: &ServerState,
     owner: &Arc<()>,
@@ -298,7 +299,9 @@ fn dispatch_agent_report(
                 if changed {
                     dashboard_try_send(
                         state,
-                        ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
+                        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                            session.summary(),
+                        ))),
                     );
                 }
                 Response::Ok
@@ -331,7 +334,7 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     } else {
         dashboard_try_send(
             state,
-            ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
+            ServerMessage::Event(ServerEvent::SessionChanged(Box::new(session.summary()))),
         );
         dashboard_try_send(
             state,
@@ -345,7 +348,7 @@ fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
     let Some(session) = session else { return };
     dashboard_try_send(
         state,
-        ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
+        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(session.summary()))),
     );
 }
 
@@ -390,12 +393,11 @@ fn dispatch_select(
         let _ = completion.send(());
         return;
     };
-    if previous != Some(id) {
-        if let Some(current) = state.dashboard_slot.lock().unwrap().as_mut()
-            && Arc::ptr_eq(&current.identity, &snapshot.identity)
-        {
-            current.history.take();
-        }
+    if previous != Some(id)
+        && let Some(current) = state.dashboard_slot.lock().unwrap().as_mut()
+        && Arc::ptr_eq(&current.identity, &snapshot.identity)
+    {
+        current.history.take();
     }
     set_dashboard_geometry(state, &snapshot.identity, size);
     if !snapshot

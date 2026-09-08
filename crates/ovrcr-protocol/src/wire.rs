@@ -233,7 +233,7 @@ pub struct WorkspaceSummary {
 pub enum Response {
     Ok,
     Hierarchy(HierarchySnapshot),
-    CreatedSession(SessionSummary),
+    CreatedSession(Box<SessionSummary>),
     Screen {
         session: SessionId,
         size: TerminalSize,
@@ -262,5 +262,5 @@ pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
     Output { session: SessionId, bytes: Vec<u8> },
     ScreenDirty { session: SessionId },
-    SessionChanged(SessionSummary),
+    SessionChanged(Box<SessionSummary>),
 }

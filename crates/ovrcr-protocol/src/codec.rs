@@ -138,7 +138,7 @@ mod tests {
             context_usage: None,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
-        let message = ServerMessage::Event(ServerEvent::SessionChanged(paused));
+        let message = ServerMessage::Event(ServerEvent::SessionChanged(Box::new(paused)));
         write_frame(&mut left, &message).unwrap();
         assert_eq!(read_frame::<ServerMessage>(&mut right).unwrap(), message);
     }
