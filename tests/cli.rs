@@ -4,6 +4,7 @@ use ovrcr::protocol::{
 use ovrcr::session::{SessionId, SessionPhase};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
@@ -88,6 +89,88 @@ fn version_flag_prints_package_version() {
         )
     );
     assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn mutations_do_not_start_a_server() {
+    let root = tempfile::tempdir().unwrap();
+    let cases: &[&[&str]] = &[
+        &["kill", "99"],
+        &["session", "remove", "99"],
+        &["terminal", "kill", "99"],
+        &["terminal", "remove", "99"],
+        &["project", "remove", "missing"],
+        &[
+            "workspace",
+            "remove",
+            "--project",
+            "missing",
+            "--name",
+            "gone",
+        ],
+    ];
+    for args in cases {
+        let mut command = isolated_command(&root);
+        command.args(*args);
+        let output = run_cli_bounded(command).unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("OVRCR server is not running"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            !root.path().join("server.sock").exists(),
+            "{args:?} must not start a server"
+        );
+    }
+}
+
+#[test]
+fn runtime_errors_include_the_cause_chain() {
+    let root = tempfile::tempdir().unwrap();
+    let locked = root.path().join("locked");
+    std::fs::create_dir_all(locked.join("inner")).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .env("OVRCR_SOCKET", locked.join("inner").join("server.sock"))
+        .args(["terminal", "read", "1"]);
+    let output = run_cli_bounded(command).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("connect server") && stderr.contains("Permission denied"),
+        "the OS error must survive: {stderr}"
+    );
+}
+
+#[test]
+fn requests_time_out_against_a_wedged_server() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let wedged = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = ovrcr::protocol::exchange_preamble(&mut stream);
+        let _ = read_frame::<ClientMessage>(&mut stream);
+        // Never answer; hold the connection open past the client's bound.
+        std::thread::sleep(Duration::from_secs(3));
+    });
+    let started = Instant::now();
+    let mut command = isolated_command(&root);
+    command.env("OVRCR_REQUEST_TIMEOUT_MS", "500").arg("list");
+    let output = run_cli_bounded(command).unwrap();
+    let elapsed = started.elapsed();
+    wedged.join().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("timed out"), "{stderr}");
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "the client must give up at its bound, took {elapsed:?}"
+    );
 }
 
 #[test]

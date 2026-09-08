@@ -63,7 +63,7 @@ pub fn create_worktree(
     branch: BranchSpec,
 ) -> Result<WorkspaceRecord> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
-    validate_workspace_name(name)?;
+    ovrcr_protocol::validate_name(name, "workspace")?;
     let destination = workspace_root.join(name);
     if destination.exists() {
         bail!(
@@ -256,18 +256,6 @@ fn prunable_worktrees(repo: &Path) -> Result<Vec<PathBuf>> {
     Ok(prunable)
 }
 
-fn validate_workspace_name(name: &str) -> Result<()> {
-    if name.is_empty()
-        || name.contains("..")
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        bail!("invalid workspace name: {name:?}");
-    }
-    Ok(())
-}
-
 fn validate_branch(repo: &Path, branch: &str) -> Result<()> {
     if branch.is_empty() {
         bail!("branch cannot be empty");
@@ -299,16 +287,18 @@ fn validate_commitish(repo: &Path, base: &str) -> Result<()> {
 
 fn validate_local_branch(repo: &Path, branch: &str) -> Result<()> {
     let ref_name = format!("refs/heads/{branch}");
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(["show-ref", "--verify", "--quiet"])
-        .arg(&ref_name)
-        .output()
-        .with_context(|| format!("check local branch {branch:?}"))?;
-    if !output.status.success() {
-        bail!("local branch does not exist: {branch}");
+    match run_git(
+        repo,
+        &[
+            OsString::from("show-ref"),
+            OsString::from("--verify"),
+            OsString::from("--quiet"),
+            OsString::from(ref_name),
+        ],
+    ) {
+        Ok(_) => Ok(()),
+        Err(_) => bail!("local branch does not exist: {branch}"),
     }
-    Ok(())
 }
 
 fn canonical_workspace_path(workspace_root: &Path, workspace: &WorkspaceRecord) -> Result<PathBuf> {

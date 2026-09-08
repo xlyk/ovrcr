@@ -529,7 +529,7 @@ impl ServerState {
             })?;
         if !project.workspaces.is_empty() {
             return Err(lifecycle_error(
-                ErrorCode::SessionsRemain,
+                ErrorCode::WorkspacesRemain,
                 format!("cannot remove project {name}: workspaces remain"),
             ));
         }

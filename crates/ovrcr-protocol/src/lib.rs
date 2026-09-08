@@ -9,7 +9,7 @@ pub use codec::{
     MAX_FRAME_BYTES, PROTOCOL_VERSION, connect_server, exchange_preamble, read_frame,
     read_preamble, write_frame, write_preamble,
 };
-pub use registry::{ProjectRecord, Registry, WorkspaceRecord};
+pub use registry::{ProjectRecord, Registry, WorkspaceRecord, validate_name};
 pub use session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 pub use task::{
     Run, RunId, RunStatus, RunTrigger, Schedule, Task, TaskId, TaskRequest, TaskResponse, TaskSpec,

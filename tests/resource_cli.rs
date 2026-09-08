@@ -682,3 +682,20 @@ while [ ! -e "$5" ]; do sleep 0.01; done
         "managed process group {original_pgid} remained"
     );
 }
+
+#[test]
+fn remove_project_reports_workspaces_remain() {
+    let mut fixture = Fixture::new();
+    fixture.capture();
+    let output = fixture.run(&["--json", "project", "remove", "fixture"]);
+    assert_eq!(output.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "WorkspacesRemain");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("workspaces remain")
+    );
+    drop(fixture);
+}

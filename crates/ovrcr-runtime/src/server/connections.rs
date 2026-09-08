@@ -648,14 +648,9 @@ where
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    if !kill
-        && sessions.iter().any(|session| {
-            matches!(
-                session.summary().phase,
-                SessionPhase::Running | SessionPhase::Paused
-            )
-        })
-    {
+    // Match request_shutdown: any session record, including an exited one
+    // awaiting removal, blocks a non-kill shutdown.
+    if !kill && !sessions.is_empty() {
         return error_response(ErrorCode::SessionsRemain, "sessions remain");
     }
     if kill {

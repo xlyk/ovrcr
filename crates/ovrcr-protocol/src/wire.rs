@@ -208,6 +208,7 @@ pub enum ErrorCode {
     SessionsRemain,
     PartialFailure,
     Internal,
+    WorkspacesRemain,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

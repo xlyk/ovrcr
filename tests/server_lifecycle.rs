@@ -1552,6 +1552,38 @@ fn workspace_remove_succeeds_after_directory_deleted() {
 }
 
 #[test]
+fn shutdown_without_kill_rejects_exited_record() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/exited-record");
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    let exited = fixture.create_session("exits", vec!["sh".into(), "-c".into(), "exit 0".into()]);
+    fixture.wait_exited(exited);
+    // An exited record still awaiting removal keeps the final screen; a
+    // non-kill shutdown must refuse just as it does for a live session.
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: exited }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
 fn shutdown_kill_terminates_sessions_concurrently() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();

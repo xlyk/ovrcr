@@ -69,8 +69,9 @@ selected PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
 collapse sidebar rows while browsing. The dashboard shows one selected
 terminal and the current `ctx —` field. Sidebar sessions use three lines: the
 session name, its label, and elapsed runtime with context usage. Context usage
-remains unknown in the MVP. The selected session is highlighted across all three
-lines; clicking any of those lines selects it.
+shows `-` until a provider reports it (see Context usage reporting below). The
+selected session is highlighted across all three lines; clicking any of those
+lines selects it.
 Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
 their status slot blank; busy sessions animate the braille spinner, waiting
 sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
@@ -214,7 +215,14 @@ not infer a target from the current directory.
 
 Read commands do not start a server. When the server is absent, project and
 workspace queries read the persisted registry and terminal lists are empty.
-Reading or controlling a missing terminal returns an error.
+Reading or controlling a missing terminal returns an error. Removal and kill
+commands (`project remove`, `workspace remove`, `terminal kill`, `terminal
+remove`, `kill`, `session remove`) also never start a server: with no server
+running they fail with "OVRCR server is not running", because there is nothing
+to remove. Only `new`, `terminal create`, `project add`, `workspace create`,
+and the dashboard start one on demand. Every request is bounded: an ordinary
+request fails after 30 seconds without a response, and kill, close, and
+shutdown after 60 seconds.
 
 ### Launch, send, read, and close
 
@@ -546,6 +554,22 @@ managed process group and then stops the server.
 
 ## Troubleshooting
 
+### Test hooks and advanced variables
+
+These variables are read by the binary but exist for the integration suite
+and unusual deployments; ordinary use needs none of them.
+
+- `OVRCR_SERVER_EXECUTABLE`: the binary a command runs as `server` when it
+  starts one on demand (default: the running executable).
+- `OVRCR_KILL_GRACE_MS`: the server's grace period before SIGKILL for kill,
+  close, and `shutdown --kill` (default 5000).
+- `OVRCR_REQUEST_TIMEOUT_MS`: the client's bound on one request round trip
+  (default 30000, or 60000 for kill, close, and shutdown).
+- `OVRCR_ENV_FILE`: an environment file the server loads before starting;
+  the installed service points it at the file given to `service install`.
+- `OVRCR_PI_EXECUTABLE`: the Pi binary used by scheduled tasks (see
+  `docs/scheduled-tasks.md`).
+
 A server that a command started automatically writes its output to
 `server.log` beside the socket, so with the default paths that is
 `$XDG_RUNTIME_DIR/ovrcr/server.log` on Linux and `$TMPDIR/ovrcr-UID/ovrcr/server.log`
@@ -671,10 +695,10 @@ Future additions, with priorities and release dates still to be decided:
 
 - [ ] Split panes to view multiple sessions side by side.
 - [x] Historical scrollback to revisit output beyond the current screen.
-- [ ] Copy mode to select and copy terminal output with the keyboard.
+- [x] Copy mode to select and copy terminal output with the keyboard.
 - [x] Pause and resume controls for sessions.
-- [ ] Agent hooks to report agent-specific activity and status.
-- [ ] Context usage accounting for agent sessions.
+- [x] Agent hooks to report agent-specific activity and status.
+- [x] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
 - [ ] Multiple dashboards connected to the same server. **Deferred.**
 - [ ] Session restore after a server crash or reboot, including saved session
