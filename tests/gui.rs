@@ -151,6 +151,87 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    eprintln!("fixture={} session_pgids={pgids:?}", root.display());
+    let mut terminal = demo.dashboard(40, 160, Default::default())?;
+    let result = (|| -> Result<()> {
+        wait_screen(&terminal, "implement lifecycle cleanup")?;
+        for (index, name, ready) in [
+            (
+                0,
+                "implement lifecycle cleanup",
+                "fixture: lifecycle cleanup",
+            ),
+            (1, "local", "Terminal mode"),
+        ] {
+            select_sidebar_session(&mut terminal, name)?;
+            enter_selected_session(&mut terminal, ready)?;
+            let env_file = root.join(format!("child-env-{index}"));
+            let list_file = root.join(format!("child-list-{index}.json"));
+            // Refuse the CLI call if either path is wrong: a broken fixture must
+            // never query the user's default socket, even in the red test.
+            let script = format!(
+                "printf '%s\\n' \"$OVRCR_CONFIG\" \"$OVRCR_SOCKET\" > '{}'; if [ \"$OVRCR_CONFIG\" = '{}/config.toml' ] && [ \"$OVRCR_SOCKET\" = '{}/server.sock' ]; then '{}' terminal list --json > '{}'; fi; printf 'ENV_{index}_%s\\n' DONE",
+                env_file.display(),
+                root.display(),
+                root.display(),
+                env!("CARGO_BIN_EXE_ovrcr"),
+                list_file.display(),
+            );
+            // Use the GUI's paste path, rather than flooding the dispatcher with
+            // hundreds of separate keystrokes for this long shell command.
+            let paste = encode_event(
+                &Event::Paste(script),
+                &terminal.screen(),
+                egui::Rect::NOTHING,
+                egui::vec2(8.0, 16.0),
+            );
+            terminal.send(&paste)?;
+            terminal.send(b"\r")?;
+            wait_screen(&terminal, &format!("ENV_{index}_DONE"))?;
+            anyhow::ensure!(
+                std::fs::read_to_string(env_file)?
+                    == format!(
+                        "{}/config.toml\n{}/server.sock\n",
+                        root.display(),
+                        root.display()
+                    ),
+                "fixture shell did not inherit both paths"
+            );
+            let records: serde_json::Value = serde_json::from_slice(&std::fs::read(list_file)?)?;
+            let records = records.as_array().unwrap();
+            anyhow::ensure!(records.len() == 10, "CLI did not return the demo sessions");
+            let mut child_pgids: Vec<_> = records
+                .iter()
+                .map(|record| unsafe { libc::getpgid(record["pid"].as_i64().unwrap() as i32) })
+                .collect();
+            child_pgids.sort_unstable();
+            let mut expected = pgids.clone();
+            expected.sort_unstable();
+            anyhow::ensure!(child_pgids == expected, "CLI reached a different server");
+            terminal.send(b"\x07")?;
+            wait_screen(&terminal, "BROWSE")?;
+        }
+        Ok(())
+    })();
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    eprintln!("fixture cleanup verified: {}", root.display());
+    result
+}
+
 fn select_sidebar_session(terminal: &mut Terminal, name: &str) -> Result<()> {
     let screen = terminal.screen();
     let (_, cols) = screen.size();

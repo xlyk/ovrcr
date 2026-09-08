@@ -4,6 +4,10 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+#[path = "ovrcr-gui/native_glyph.rs"]
+mod native_glyph;
+
 const TERMINAL_FONT_SIZE: f32 = 11.0;
 const JETBRAINS_REGULAR: &str = "ovrcr-jetbrains-regular";
 const JETBRAINS_BOLD: &str = "ovrcr-jetbrains-bold";
@@ -19,6 +23,8 @@ struct TerminalFonts {
     native_bold: bool,
     native_italic: bool,
     native_bold_italic: bool,
+    #[cfg(target_os = "macos")]
+    fallback: std::cell::RefCell<native_glyph::NativeGlyphs>,
 }
 
 impl TerminalFonts {
@@ -32,6 +38,8 @@ impl TerminalFonts {
             native_bold: false,
             native_italic: false,
             native_bold_italic: false,
+            #[cfg(target_os = "macos")]
+            fallback: Default::default(),
         }
     }
 
@@ -137,6 +145,8 @@ fn install_terminal_fonts(context: &egui::Context) -> TerminalFonts {
         native_bold,
         native_italic,
         native_bold_italic,
+        #[cfg(target_os = "macos")]
+        fallback: Default::default(),
     }
 }
 
@@ -173,6 +183,80 @@ fn terminal_fonts_render_mockup_glyphs_or_default_symbols() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn terminal_paints_missing_unicode_as_native_images() {
+    assert_native_unicode_paint(true);
+    assert_native_unicode_paint(false);
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn assert_native_unicode_paint(installed_fonts: bool) {
+    let context = egui::Context::default();
+    let fonts = if installed_fonts {
+        install_terminal_fonts(&context)
+    } else {
+        TerminalFonts::current_monospace()
+    };
+    let mut parser = vt100::Parser::new(1, 12, 0);
+    parser.process("\x1b[31mRED 界🙂 END\x1b[0m".as_bytes());
+    assert_eq!(parser.screen().contents(), "RED 界🙂 END");
+    assert!(parser.screen().cell(0, 4).unwrap().is_wide());
+    assert!(parser.screen().cell(0, 6).unwrap().is_wide());
+    let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+        paint_terminal(
+            ui,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(120.0, 20.0)),
+            egui::vec2(10.0, 20.0),
+            &fonts,
+            parser.screen(),
+        );
+    });
+    let images: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Mesh(mesh) => Some((shape.clip_rect, mesh)),
+            _ => None,
+        })
+        .collect();
+    let textures = output.textures_delta.set.clone();
+    output.textures_delta.clear();
+    assert_eq!(
+        images.len(),
+        2,
+        "missing glyphs need native artwork, not replacement galleys"
+    );
+    for ((clip, mesh), column) in images.iter().zip([4.0, 6.0]) {
+        let bounds = mesh.calc_bounds();
+        assert!(bounds.width() > 0.0 && bounds.height() > 0.0);
+        assert!(bounds.left() >= column * 10.0 - 1.0);
+        assert!(bounds.right() <= (column + 2.0) * 10.0);
+        assert!(clip.right() <= 120.0);
+        let deltas = textures.get(&mesh.texture_id).unwrap();
+        let egui::ImageData::Color(image) = &deltas[0].image;
+        assert!(
+            image.pixels.iter().any(|pixel| pixel.a() > 0),
+            "native glyph must have visible pixels"
+        );
+        if column == 4.0 {
+            assert!(
+                image
+                    .pixels
+                    .iter()
+                    .any(|p| p.r() > 0 && p.g() == 0 && p.b() == 0),
+                "CJK fallback must retain the terminal foreground color"
+            );
+        } else {
+            assert!(
+                image.pixels.iter().any(|p| p.r() > p.g() && p.g() > p.b()),
+                "emoji must contain its native color artwork, not a monochrome replacement box"
+            );
+        }
+    }
+    output.textures_delta.clear();
+}
+
+#[test]
 fn terminal_paints_reserved_icon_cell_before_foreground_glyph() {
     let context = egui::Context::default();
     let fonts = TerminalFonts::current_monospace();
@@ -191,7 +275,7 @@ fn terminal_paints_reserved_icon_cell_before_foreground_glyph() {
     let text = output
         .shapes
         .iter()
-        .position(|shape| matches!(shape.shape, egui::Shape::Text(_)))
+        .position(|shape| matches!(shape.shape, egui::Shape::Text(_) | egui::Shape::Mesh(_)))
         .expect("icon must produce a foreground glyph");
     let backgrounds = output
         .shapes
@@ -501,21 +585,39 @@ fn paint_terminal(
             let contents = cell.contents();
             if !contents.is_empty() {
                 let (font, synthetic_italic) = fonts.for_cell(cell.bold(), cell.italic());
-                let mut job = egui::text::LayoutJob::default();
-                job.append(
-                    contents,
-                    0.0,
-                    egui::TextFormat {
-                        font_id: font.clone(),
-                        color: fg,
-                        italics: synthetic_italic,
-                        ..Default::default()
-                    },
+                #[cfg(target_os = "macos")]
+                // egui 0.36's has_glyphs rejects every glyph in the face that
+                // also supplies the replacement character. Query real coverage.
+                let native = !ui.fonts_mut(|view| {
+                    let mut family = view.fonts.font(&font.family);
+                    let characters = family.characters();
+                    contents.chars().all(|ch| characters.contains_key(&ch))
+                }) && fonts.fallback.borrow_mut().paint(
+                    ui,
+                    cell_rect.intersect(rect),
+                    font,
+                    cell,
+                    fg,
                 );
-                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                painter.galley(origin, galley.clone(), fg);
-                if cell.bold() && !fonts.native_bold {
-                    painter.galley(origin + egui::vec2(0.5, 0.0), galley, fg);
+                #[cfg(not(target_os = "macos"))]
+                let native = false;
+                if !native {
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(
+                        contents,
+                        0.0,
+                        egui::TextFormat {
+                            font_id: font.clone(),
+                            color: fg,
+                            italics: synthetic_italic,
+                            ..Default::default()
+                        },
+                    );
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                    painter.galley(origin, galley.clone(), fg);
+                    if cell.bold() && !fonts.native_bold {
+                        painter.galley(origin + egui::vec2(0.5, 0.0), galley, fg);
+                    }
                 }
             }
             if cell.underline() {

@@ -4139,8 +4139,41 @@ fn dashboard_slot_is_released_when_registration_panics() {
 
     let (server, mut client) = UnixStream::pair().unwrap();
     let handler_state = Arc::clone(&state);
-    connections::PANIC_AFTER_DASHBOARD_REGISTRATION.store(true, Ordering::Release);
-    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    let (armed, armed_rx) = mpsc::channel();
+    let (proceed, proceed_rx) = mpsc::channel();
+    let handler = thread::spawn(move || {
+        connections::PANIC_AFTER_DASHBOARD_REGISTRATION.with(|armed| armed.set(true));
+        armed.send(()).unwrap();
+        proceed_rx.recv().unwrap();
+        handle_connection(handler_state, server);
+    });
+    armed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    // Force an unrelated server to register while the intended handler's panic
+    // is armed. Parallel tests must not consume one another's injection.
+    let other_state = test_state(None, None);
+    let (other_server, mut other_client) = UnixStream::pair().unwrap();
+    other_client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let other_handler = thread::spawn(move || handle_connection(other_state, other_server));
+    exchange_preamble(&mut other_client).unwrap();
+    write_frame(
+        &mut other_client,
+        &ClientMessage {
+            request_id: 99,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    let other_response = read_frame::<ServerMessage>(&mut other_client);
+    drop(other_client);
+    let other_result = other_handler.join();
+
+    proceed.send(()).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     exchange_preamble(&mut client).unwrap();
     write_frame(
         &mut client,
@@ -4150,8 +4183,23 @@ fn dashboard_slot_is_released_when_registration_panics() {
         },
     )
     .unwrap();
+    // Close even if the injection was stolen, so a red test cannot hang on join.
+    let _ = read_frame::<ServerMessage>(&mut client);
+    drop(client);
+    let handler_result = handler.join();
     assert!(
-        handler.join().is_err(),
+        other_result.is_ok(),
+        "another handler consumed the panic injection"
+    );
+    assert!(matches!(
+        other_response,
+        Ok(ServerMessage::Response {
+            request_id: 99,
+            response: Response::Hierarchy(_),
+        })
+    ));
+    assert!(
+        handler_result.is_err(),
         "the injected panic must unwind the handler"
     );
     assert!(
@@ -4159,7 +4207,6 @@ fn dashboard_slot_is_released_when_registration_panics() {
         "unwinding must release the dashboard slot"
     );
     assert!(state.dashboard.lock().unwrap().is_none());
-    drop(client);
 
     let (server, mut client) = UnixStream::pair().unwrap();
     client

@@ -5474,23 +5474,32 @@ impl ControlFixture {
     }
 
     fn wait_terminal_contains(&self, id: SessionId, marker: &str) {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        self.wait_terminal_contains_until(id, marker, Instant::now() + Duration::from_secs(2));
+    }
+
+    fn wait_terminal_contains_until(&self, id: SessionId, marker: &str, deadline: Instant) {
+        let mut last_response = None;
         while Instant::now() < deadline {
-            if let Some(Response::TerminalText { text, .. }) = request_with_timeout(
+            last_response = request_with_timeout(
                 &self.socket,
                 401,
                 Request::ReadTerminal {
                     session: id,
                     max_lines: None,
                 },
-                Duration::from_millis(250),
-            ) && text.contains(marker)
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(250)),
+            );
+            if matches!(&last_response, Some(Response::TerminalText { text, .. }) if text.contains(marker))
             {
                 return;
             }
             thread::park_timeout(Duration::from_millis(5));
         }
-        panic!("session {id:?} did not produce terminal marker");
+        panic!(
+            "session {id:?} did not produce terminal marker {marker:?}; last response: {last_response:?}"
+        );
     }
 
     fn wait_identity_marker(&self, marker: &str, expected: &str) {
@@ -5853,6 +5862,13 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
         ],
     );
     wait_for_file_contents(&connected_path, "17 61");
+    // A local drop is not a server-side detach acknowledgement. Half-close and
+    // drain to EOF: this handler drops its ownership/geometry before its socket.
+    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    std::io::copy(&mut dashboard, &mut std::io::sink()).unwrap();
     drop(dashboard);
     let detached_path = fixture._root.path().join("detached-size");
     let detached = fixture.create_session(
@@ -6292,7 +6308,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
             "sh".into(),
             "-c".into(),
             format!(
-                r#"SIDE={side}; printf '%s_READY\n' "$SIDE"; while IFS= read -r line; do case "$line" in SIZE) printf '%s_SIZE_%s\n' "$SIDE" "$(stty size)";; BURST) i=0; while [ "$i" -lt 200000 ]; do printf '%s_%06d\n' "$SIDE" "$i"; i=$((i+1)); done; printf '%s_FINAL\n' "$SIDE";; *) printf '%s_ACK_%s\n' "$SIDE" "$line";; esac; done"#,
+                r#"SIDE={side}; printf '%s_READY\n' "$SIDE"; while IFS= read -r line; do case "$line" in SIZE) printf '%s_SIZE_%s\n' "$SIDE" "$(stty size)";; BURST) awk -v side="$SIDE" 'BEGIN {{ for (i = 0; i < 200000; i++) printf "%s_%06d\n", side, i; printf "%s_FINAL\n", side }}';; *) printf '%s_ACK_%s\n' "$SIDE" "$line";; esac; done"#,
                 side = side,
             )
             .into(),
@@ -6464,6 +6480,9 @@ fn split_server_two_streams_resize_resync_and_detach() {
     };
     assert_eq!(set_buffer, 0, "failed to bound dashboard receive buffer");
 
+    // Bulk production and recovery share one deadline. The short control
+    // deadlines below still prove that PTY output does not block requests.
+    let burst_deadline = Instant::now() + Duration::from_secs(30);
     assert_eq!(
         request_with_timeout(
             &fixture.socket,
@@ -6510,12 +6529,11 @@ fn split_server_two_streams_resize_resync_and_detach() {
         ));
         control_polls += 1;
     }
-    fixture.wait_terminal_contains(left.id, "LEFT_FINAL");
-    fixture.wait_terminal_contains(right.id, "RIGHT_FINAL");
+    fixture.wait_terminal_contains_until(left.id, "LEFT_FINAL", burst_deadline);
+    fixture.wait_terminal_contains_until(right.id, "RIGHT_FINAL", burst_deadline);
 
     let mut dirty = HashSet::new();
     let mut burst_frames = HistoryFrameReader::new();
-    let burst_deadline = Instant::now() + Duration::from_secs(30);
     while dirty.len() < 2 {
         let message = split_next_message(
             &mut dashboard,

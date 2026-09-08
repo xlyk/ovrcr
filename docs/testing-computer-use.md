@@ -34,13 +34,29 @@ rtk proxy printf 'CUA_%s\n' INPUT_OK
 
 Confirm a separate output line containing `CUA_INPUT_OK`; the echoed command alone is insufficient. Inspect both the screenshot and accessibility text for readable rows, correct selection, and overlapping or clipped content. Resize the window and check the layout again. `Ctrl-g` returns to browse mode; `j`/`k` select sessions and Return resumes terminal input.
 
+Check Unicode in the same shell:
+
+```sh
+rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
+```
+
+Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
+
 ## 3. Exercise CLI controls through the GUI
 
-In that same shell, replace the binary path below with this checkout's absolute path. The shell already has the disposable `OVRCR_CONFIG` and `OVRCR_SOCKET` values. Paste and execute each line, inspecting its result before continuing. At each terminal list, save the PIDs and use host process inspection to record their process-group IDs while they are running:
+First inspect each inherited path separately; macOS `printenv` accepts one name:
+
+```sh
+rtk proxy printenv OVRCR_CONFIG
+rtk proxy printenv OVRCR_SOCKET
+```
+
+Confirm both paths belong to this launch's disposable directory, ending in `config.toml` and `server.sock`. Stop if either is missing or points elsewhere. Do not try a config-only CLI command: config selection does not select the server socket.
+
+In that same shell, replace the binary path below with this checkout's absolute path. Paste and execute each line, inspecting its result before continuing. At each terminal list, save the PIDs and use host process inspection to record their process-group IDs while they are running:
 
 ```sh
 c=/absolute/checkout/target/debug/ovrcr
-rtk proxy printenv OVRCR_CONFIG OVRCR_SOCKET
 rtk proxy "$c" project get consigint --json
 rtk proxy "$c" workspace get --project consigint --name auth-handoff --json
 rtk proxy "$c" terminal list --json
@@ -65,6 +81,8 @@ Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell c
 ## 4. Verify cleanup and report evidence
 
 Use the demo paths and process-group IDs recorded above. Close the native window through computer use and wait for the launch command to exit successfully; cleanup can take about a minute.
+
+After closing, use process/filesystem inventory. Do not query the closed app through app-specific CUA state methods: they can relaunch it and create another fixture. If that happens, record the new owned processes and paths, close that fixture too, and report its cleanup separately.
 
 Verify the demo directory and socket are gone. For each recorded process group, `os.kill(-pgid, 0)` must raise `ProcessLookupError`; a permission error does not prove cleanup. Keep the fixture and report its path if cleanup fails.
 
