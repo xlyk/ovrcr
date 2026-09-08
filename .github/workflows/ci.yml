@@ -1,19 +1,23 @@
 name: CI
 
-# Pushes to a PR branch run once, through the pull_request trigger; main
-# keeps its own builds.
 on:
   push:
     branches: [main]
   pull_request:
 
+# Superseded PR commits should not occupy runners. Keep main's runs intact.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  verify:
-    name: verify (${{ matrix.os }})
+  checks:
+    name: lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -24,21 +28,56 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # The Git lifecycle tests commit inside temporary repositories.
+        with:
+          # Reuse the original verify job's dependency cache across lanes.
+          shared-key: verify
+          cache-on-failure: true
+      - name: Format
+        run: cargo fmt --all -- --check
+      # Clippy covers compilation too; a preceding cargo check duplicates work.
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  tests:
+    name: tests (${{ matrix.os }}, ${{ matrix.suite }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        suite: [core, lifecycle, tasks]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: verify
+          cache-on-failure: true
       - name: Configure git identity
         run: |
           git config --global user.name "OVRCR CI"
           git config --global user.email "ci@ovrcr.invalid"
-      # Same gates as `just verify`, without the rtk wrapper.
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Check
-        run: cargo check --all-targets
-      - name: Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace
-      # The GUI helper is a macOS app bundle; its tests need that platform.
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: bash scripts/ci-tests.sh "$SUITE"
+
+  gui:
+    name: GUI (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: verify
+          cache-on-failure: true
+      - name: Configure git identity
+        run: |
+          git config --global user.name "OVRCR CI"
+          git config --global user.email "ci@ovrcr.invalid"
+      # Include binary unit tests (native glyphs), not only PTY integration tests.
       - name: GUI helper tests
-        if: runner.os == 'macOS'
-        run: cargo test --features gui --test gui
+        run: cargo test -p ovrcr --features gui --bin ovrcr-gui --test gui
