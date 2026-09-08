@@ -25,11 +25,12 @@
 
 | Task | Delivers | Why this order |
 | --- | --- | --- |
-| 1 | Detected agents, `n` hotkey, auto-attach, footer hints | TUI-only, changes the most common action |
-| 2 | Pick lists and defaults for workspaces, `w` hotkey | TUI-only, reuses Task 1's pick-list widget |
-| 3 | Path picker for project registration, `a` hotkey | TUI-only, reuses the same widget |
-| 4 | Root workspace per project | Touches registry, server, removal guards; needs its own safety tests |
-| 5 | Docs and GUI smoke-check update | Last, describes the finished flow |
+| 1 | Detected agents, `n` hotkey, auto-attach | TUI-only, changes the most common action |
+| 2 | Which-key popup with per-key descriptions, start screen | Teaches every hotkey the later tasks add; one hint table feeds popup, palette, and footer |
+| 3 | Pick lists and defaults for workspaces, `w` hotkey | TUI-only, reuses Task 1's pick-list widget |
+| 4 | Path picker for project registration, `a` hotkey | TUI-only, reuses the same widget |
+| 5 | Root workspace per project | Touches registry, server, removal guards; needs its own safety tests |
+| 6 | Docs and GUI smoke-check update | Last, describes the finished flow |
 
 ---
 
@@ -49,19 +50,19 @@
 **Design:**
 - `agents.rs`: `pub fn detect_agents(path: &OsStr, shell: Option<&OsStr>) -> Vec<AgentEntry>` walks the `PATH` entries once for the known names, in this order: `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `goose`, `amp`, `cursor-agent`. Each hit becomes `AgentEntry { name, argv: vec![full path], source: Detected }`. `$SHELL` is always appended as `AgentEntry { name: "shell", argv: [shell], source: Shell }` and a final `Custom` entry opens a free command field that runs through `/bin/sh -lc` as today. No `--version` probing.
 - `settings.rs`: `DashboardSettings { agents: Vec<AgentOverride>, picker_roots: Vec<PathBuf>, branch_prefix: String }` loaded from `dashboard.toml` beside the registry (`OVRCR_DASHBOARD_CONFIG` overrides the path, mirroring `OVRCR_CONFIG`). A missing file yields defaults. An `AgentOverride { name, argv }` with a name matching a detected entry replaces its argv; a new name is appended before `shell`. Parse errors show in the footer and fall back to defaults; they never stop the dashboard.
-- `picker.rs`: a reusable `PickList { items: Vec<PickItem>, query: String, selected: usize }` rendered under a form field, with fuzzy subsequence filtering on the label, arrow selection, Tab or Enter to accept, and typing to filter. Tasks 2 and 3 reuse it.
+- `picker.rs`: a reusable `PickList { items: Vec<PickItem>, query: String, selected: usize }` rendered under a form field, with fuzzy subsequence filtering on the label, arrow selection, Tab or Enter to accept, and typing to filter. Tasks 3 and 4 reuse it.
 - `Field` gains `kind: FieldKind` where `FieldKind::Text` is today's behavior and `FieldKind::Pick(PickList)` renders the list and stores the accepted value.
 - The new-terminal form becomes: Agent (pick, detected list), Workspace (pick, all `project / workspace` pairs, defaulting to the selected session's), Name (text, default `<agent>-<n>` where `n` is the next unused number in that workspace, or `local` when the agent is `shell` and the workspace has no `local` session), Command (text, shown only when Agent is `Custom`). Label defaults to the agent name.
 - `n` in browse mode opens that form directly with the pick lists prefilled. `:` still works; the palette entry reads "Create terminal (n)".
 - On `Response::CreatedSession`, `palette_response` already selects the session; extend it to enter `InputMode::Terminal` so typing goes to the agent at once.
-- The browse-mode footer, drawn in `render.rs`, lists `n new terminal · w new workspace · a add project · : palette` when no error is showing.
+- Discoverability is Task 2's job; Task 1 only registers `n` in the hint table introduced there, or adds a one-line footer hint if Task 2 has not landed yet.
 
 - [ ] **Step 1: RED tests**
   1. `agents.rs` unit: a temp dir with executable stubs `claude` and `codex` on a synthetic `PATH` yields those two, then `shell`, then `Custom`; a non-executable file named `gemini` is skipped; an override for `claude` replaces its argv.
   2. `settings.rs` unit: a `dashboard.toml` with `[[agents]] name="claude" argv=["claude","--verbose"]` and `picker_roots=["~/Code"]` parses and expands `~`; an invalid file yields defaults plus an error string.
   3. `tests/tui.rs`: `n_opens_terminal_form_prefilled_for_selected_workspace`: with a session selected, press `n`, assert the form's Workspace field holds that session's `project / workspace` and the Agent list's first item is the first detected agent.
   4. `tests/tui.rs`: `created_session_enters_terminal_mode`: feed `Response::CreatedSession` for the pending request and assert `mode == InputMode::Terminal` and the selection.
-  5. `tests/tui.rs`: `browse_footer_lists_creation_hotkeys` on a `TestBackend` render.
+  5. `tests/tui.rs`: `n_is_listed_in_the_hint_table` once Task 2 exists, otherwise a footer render check.
 
 - [ ] **Step 2: Implement** the modules and the form changes above. Detection runs when the form opens, so a newly installed agent appears without restarting the dashboard.
 
@@ -71,7 +72,44 @@
 
 ---
 
-### Task 2: Workspace creation with pick lists and defaults
+### Task 2: Which-key popup with descriptions, and a start screen
+
+**Files:**
+- Create: `crates/ovrcr-tui/src/dashboard/hints.rs`
+- Create: `crates/ovrcr-tui/src/dashboard/whichkey.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/state.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/render.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/palette.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/mod.rs`
+- Test: `crates/ovrcr-tui/src/dashboard/tests.rs`, `tests/tui.rs`
+
+**Design:**
+- `hints.rs`: one function, `pub fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup>`, builds the whole table from current state. `HintGroup { title, hints: Vec<KeyHint> }` and `KeyHint { key: &'static str, name: &'static str, description: String, enabled: bool, action: HintAction }`. This table is the single source of truth: the popup renders it, the palette shows each entry's key and description as secondary text, and the footer prints a compressed line of the enabled keys.
+- **Description rules**, which are the acceptance criteria:
+  1. Name the target. The description substitutes the selected session, workspace, or project name, so `w` reads "Create a worktree and branch under consigint and start its local shell" and `x` reads "Stop agent (#12) in auth-handoff and remove its record. Asks for confirmation."
+  2. State the consequence. Destructive or side-effecting keys say what happens and whether a confirmation follows. Detach says "the server and every session keep running".
+  3. Disabled keys stay listed, dimmed, with the reason in place of the description: "Resume: not paused", "Close: no session selected".
+- **Groups from browse mode:** Create (`n`, `w`, `a`), Session (`Enter`, `p`, `r`, `x`, `[`, `PageUp`), View (`t`, `:`, `o` once the operator exists, `?`), Dashboard (`q`). Copy and history modes get their own tables listing `hjkl`, `0`, `$`, `g`, `G`, `v`, `y`, and the exits. Terminal mode has no popup; `Ctrl-g` is its only chord and the footer already names it.
+- **Leader and help keys.** Space in browse, copy, or history mode opens the popup; the next key runs that entry and closes it, so `Space n` and bare `n` are the same action. `?` opens the same popup in a browsing state where arrows move and Enter runs the highlighted entry, which also makes it usable from the GUI helper by mouse. Escape closes. `whichkey.rs` holds the popup state (`pending_leader: bool`, `browsing: Option<usize>`) and its key handling; `key_action` in `state.rs` consults it first while it is open.
+- **Rendering.** A centered popup, borrowing the palette's `Clear` and block layout, with one column per group when the width allows, otherwise stacked. Each row is key, name, description. On a pane narrower than 100 columns the rows show key and name only, and the highlighted row's description moves to a detail line at the bottom, so nothing is truncated silently. `x` is a new browse key that opens the existing close confirmation for the selected session; it exists so the Session group has a close entry.
+- **Start screen.** When the hierarchy has no projects, the terminal pane shows a short list instead of an empty screen: `a` register project, `:` palette, `?` help, and the config and socket paths. When a workspace with no sessions is selected by mouse, the pane shows "press n to start a terminal here". Both are drawn from the same hint table so their wording matches the popup.
+
+- [ ] **Step 1: RED tests**
+  1. `hints` unit: with a running session selected in `consigint / auth-handoff`, the Create group's `w` description contains `consigint`, the Session group's `x` description contains the session name and id and the word "confirmation", `r` is disabled with reason "not paused"; with nothing selected the Session group's entries are disabled with "no session selected".
+  2. `tests/tui.rs`: `space_then_n_opens_the_terminal_form`: press Space, assert the popup is drawn with the Create group, press `n`, assert the popup is gone and the terminal form is open.
+  3. `tests/tui.rs`: `question_mark_popup_is_browsable`: press `?`, Down twice, Enter, assert the third enabled entry's action ran.
+  4. `tests/tui.rs`: `narrow_popup_moves_description_to_detail_line` on an 80-column `TestBackend`: descriptions are absent from the rows and the highlighted one appears on the last popup line.
+  5. `tests/tui.rs`: `empty_hierarchy_shows_start_screen` and `palette_entries_show_keys_and_descriptions`.
+
+- [ ] **Step 2: Implement** `hints.rs`, `whichkey.rs`, the `x` key, the palette's secondary text, the compressed footer line, and the start screen.
+
+- [ ] **Step 3: Verify** `rtk proxy cargo test -p ovrcr-tui` and `rtk proxy cargo test --test tui --test terminal_acceptance`.
+
+**Gate:** new tests pass; existing browse-mode key tests pass unchanged, since bare hotkeys keep working without the leader.
+
+---
+
+### Task 3: Workspace creation with pick lists and defaults
 
 **Files:**
 - Modify: `crates/ovrcr-tui/src/dashboard/palette.rs`
@@ -98,7 +136,7 @@
 
 ---
 
-### Task 3: Path picker for project registration
+### Task 4: Path picker for project registration
 
 **Files:**
 - Modify: `crates/ovrcr-tui/src/dashboard/picker.rs`
@@ -111,7 +149,7 @@
 - When the field is empty, the list shows `picker_roots` from `dashboard.toml` (default `~/Code`, `~/src`, `~` when they exist) so the common case is two Tabs.
 - The form becomes: Repository (path picker), Name (text, prefilled with the repository's basename once the repository is chosen, editable), Workspace root (path picker, prefilled with `<config dir>/workspaces/<name>` and updated while Name changes until edited). The server already canonicalizes and validates both paths; the dashboard only makes them easier to type.
 - `a` in browse mode opens the form. The palette entry reads "Register project (a)".
-- After registration, Task 4 gives the project a root `local` shell; until then, select the project's first session if any.
+- After registration, Task 5 gives the project a root `local` shell; until then, select the project's first session if any.
 
 - [ ] **Step 1: RED tests**
   1. `picker` unit against a temp tree: typing `~/Co` lists `Code`; Tab yields `~/Code/`; a child with `.git` is marked and sorted first; a hidden directory appears only when the segment starts with `.`.
@@ -125,7 +163,7 @@
 
 ---
 
-### Task 4: A root workspace for every project
+### Task 5: A root workspace for every project
 
 **Files:**
 - Modify: `crates/ovrcr-protocol/src/registry.rs`
@@ -159,13 +197,13 @@
 
 ---
 
-### Task 5: Documentation and the computer-use smoke check
+### Task 6: Documentation and the computer-use smoke check
 
 **Files:**
 - Modify: `README.md`
 - Modify: `docs/testing-computer-use.md`
 
-- [ ] **Step 1:** Rewrite the "Command palette" section around the hotkeys: `n`, `w`, `a`, then `:` for everything else. Document detected agents, `dashboard.toml` with its three keys and an example, the path picker keys, the derived defaults, and the root workspace rules including what `project remove` does to its shell.
+- [ ] **Step 1:** Rewrite the "Command palette" section around the hotkeys: `n`, `w`, `a`, Space or `?` for the help popup, then `:` for everything else. Document detected agents, `dashboard.toml` with its three keys and an example, the path picker keys, the derived defaults, and the root workspace rules including what `project remove` does to its shell.
 - [ ] **Step 2:** Add a step to the smoke check: press `a`, pick the demo repository through the picker, confirm the new project shows a `root / local` row, press `n`, pick `shell`, and confirm typing reaches it.
 
 **Gate:** the README transcript in "Disposable repository transcript" still runs as written.
