@@ -17,6 +17,12 @@ mod process;
 use io::{read_pty, wait_for_child};
 use process::*;
 
+/// How long `terminate` waits after SIGTERM before hanging up a process
+/// group that is still present. Interactive shells ignore SIGTERM, so this
+/// bounds the cost of closing a `local` shell without denying programs that
+/// handle SIGTERM a chance to exit cleanly first.
+const HANGUP_DELAY: Duration = Duration::from_millis(500);
+
 #[cfg(test)]
 mod tests;
 
@@ -120,6 +126,9 @@ pub struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     pgid: libc::pid_t,
+    /// Short controlling-terminal name (`ttys003`, `pts/3`) used to find
+    /// job-control subgroups that share the session's PTY.
+    tty: Option<String>,
     #[cfg(test)]
     signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
@@ -232,6 +241,10 @@ impl Session {
             bail!("PTY process-group leader does not own the child process");
         }
         verify_group_identity(pgid, false)?;
+        let tty = pair
+            .master
+            .tty_name()
+            .and_then(|path| short_tty_name(&path));
 
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
@@ -270,6 +283,7 @@ impl Session {
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             pgid,
+            tty,
             terminate_lock: Mutex::new(()),
             reader_done: Mutex::new(false),
             reader_changed: Condvar::new(),
@@ -325,6 +339,15 @@ impl Session {
         summary
     }
 
+    /// Process groups attached to this session's terminal other than the
+    /// leader's own group: jobs an interactive shell started with `&`.
+    fn attached_subgroups(&self) -> std::collections::BTreeSet<libc::pid_t> {
+        self.tty
+            .as_deref()
+            .map(|tty| attached_groups(tty, self.pgid))
+            .unwrap_or_default()
+    }
+
     pub fn set_paused(&self, paused: bool) -> Result<bool> {
         let _control = self.terminate_lock.lock().unwrap();
         let mut state = self.state.lock().unwrap();
@@ -336,6 +359,7 @@ impl Session {
         if !signal_group(self.pgid, signal)? {
             bail!("PTY process group no longer exists");
         }
+        signal_attached_groups(&self.attached_subgroups(), signal);
         let next = if paused {
             SessionPhase::Paused
         } else {
@@ -511,6 +535,14 @@ impl Session {
             return Ok(());
         }
 
+        // Ownership is the controlling terminal, so every attached group is
+        // signalled, including job-control subgroups an interactive shell
+        // created. SIGTERM goes first so handlers can run; SIGCONT lets
+        // stopped groups receive it. Groups still present after
+        // `HANGUP_DELAY` get SIGHUP, which is what a closed terminal delivers
+        // and the only signal interactive shells honour, so `local` shells
+        // exit without waiting out the grace period.
+        let subgroups = self.attached_subgroups();
         let mut signal_error = None;
         if should_signal_group(self)? {
             signal_group(self.pgid, libc::SIGTERM)?;
@@ -542,7 +574,30 @@ impl Session {
                 }
             }
         }
+        for signal in [libc::SIGTERM, libc::SIGCONT] {
+            signal_attached_groups(&subgroups, signal);
+        }
         let deadline = Instant::now() + grace;
+        let hangup_at = deadline.min(Instant::now() + HANGUP_DELAY);
+        match wait_for_group_exit(self.pgid, hangup_at) {
+            Ok(true) => {}
+            Ok(false) => match should_signal_group(self) {
+                Ok(true) => {
+                    if let Err(error) = signal_group(self.pgid, libc::SIGHUP) {
+                        return Err(signal_error.unwrap_or(error));
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => return Err(signal_error.unwrap_or(error)),
+            },
+            Err(error) => return Err(signal_error.unwrap_or(error)),
+        }
+        for pgid in &subgroups {
+            if !wait_for_group_exit(*pgid, hangup_at)? && verify_group_identity(*pgid, true).is_ok()
+            {
+                let _ = signal_group(*pgid, libc::SIGHUP);
+            }
+        }
         let group_exited = match wait_for_group_exit(self.pgid, deadline) {
             Ok(exited) => exited,
             Err(error) => return Err(signal_error.unwrap_or(error)),
@@ -570,6 +625,21 @@ impl Session {
             if !kill_exited {
                 return Err(signal_error.unwrap_or_else(|| {
                     anyhow::anyhow!("PTY process group did not exit after SIGKILL")
+                }));
+            }
+        }
+
+        for pgid in &subgroups {
+            if wait_for_group_exit(*pgid, deadline)? {
+                continue;
+            }
+            if verify_group_identity(*pgid, true).is_ok() {
+                let _ = signal_group(*pgid, libc::SIGKILL);
+            }
+            let kill_deadline = Instant::now() + grace.max(Duration::from_secs(2));
+            if !wait_for_group_exit(*pgid, kill_deadline)? {
+                return Err(signal_error.unwrap_or_else(|| {
+                    anyhow::anyhow!("attached process group {pgid} did not exit after SIGKILL")
                 }));
             }
         }

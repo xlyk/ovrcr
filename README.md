@@ -478,16 +478,25 @@ ovrcr kill SESSION_ID
 ovrcr session remove SESSION_ID
 ```
 
-`pause ID` sends SIGSTOP to the original process group owned by that session;
-`resume ID` sends SIGCONT to the same group. Both commands require a live,
+`pause ID` sends SIGSTOP to the process group owned by that session and to any
+job-control subgroup attached to its terminal; `resume ID` sends SIGCONT to
+the same groups. Both commands require a live,
 managed session and leave the session record in place. While paused, the server
 rejects input admission until `resume ID` succeeds.
 
-`kill` sends SIGTERM to the whole managed process group and uses SIGKILL after
-the five-second grace period when members remain. A stopped group is resumed
-with SIGCONT during cleanup so its TERM handlers and waiters can run; OVRCR
-then waits for the final PTY output, reader and child-waiter completion, and
-group disappearance before reporting successful cleanup. A session stays in
+`kill` signals every process group attached to the session's terminal: the
+managed process group and any job-control subgroup an interactive shell
+started. It sends SIGTERM and SIGCONT first so handlers can run, sends SIGHUP
+to any group still present half a second later, and uses SIGKILL after the
+five-second grace period when members remain. SIGHUP is what a closed
+terminal window delivers and is the only signal interactive shells honour, so
+`local` shells exit within about half a second instead of waiting out the
+grace period; a program that needs longer than that to finish its SIGTERM
+handling must also handle SIGHUP. Processes that detach from the terminal
+with `setsid` are outside the session and are not signalled. A stopped group
+is resumed with SIGCONT during cleanup so its handlers and waiters can run;
+OVRCR then waits for the final PTY output, reader and child-waiter completion,
+and group disappearance before reporting successful cleanup. A session stays in
 the hierarchy after exit until `session remove` is requested, so its final
 screen remains available.
 

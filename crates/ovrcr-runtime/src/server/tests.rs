@@ -287,7 +287,7 @@ fn spawn_live_test_session(
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' TERM; while :; do sleep 1; done".into(),
+                "trap '' HUP TERM; while :; do sleep 1; done".into(),
             ],
             hook_env: None,
         },
@@ -1648,7 +1648,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' TERM; printf READY; while :; do read line; done".into(),
+                "trap '' HUP TERM; printf READY; while :; do read line; done".into(),
             ],
             hook_env: Some(HookEnvironment {
                 socket: PathBuf::from("/private/test/ovrcr.sock"),

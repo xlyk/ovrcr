@@ -1,6 +1,8 @@
 use super::*;
 use anyhow::{Context, Result, bail};
+use std::collections::BTreeSet;
 use std::io as std_io;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -94,5 +96,52 @@ pub(super) fn wait_for_group_exit(pgid: libc::pid_t, deadline: Instant) -> Resul
             return Ok(false);
         }
         thread::park_timeout(Duration::from_millis(5));
+    }
+}
+
+/// Normalize a terminal device path to the short form `ps` prints in its
+/// `tty` column (`ttys003` on macOS, `pts/3` on Linux).
+pub(super) fn short_tty_name(path: &std::path::Path) -> Option<String> {
+    let text = path.to_str()?;
+    Some(text.strip_prefix("/dev/").unwrap_or(text).to_owned())
+}
+
+/// Process groups other than `leader` whose controlling terminal is `tty`.
+///
+/// Interactive shells put each job in its own process group, so signalling
+/// only the leader's group leaves background jobs behind. Ownership is
+/// defined by the controlling terminal: anything still attached to the
+/// session's PTY belongs to the session; anything that called `setsid` does
+/// not. `ps -t` filters in the kernel, so this costs well under a
+/// millisecond. A failure to run `ps` yields an empty set so termination can
+/// still proceed against the leader's group.
+pub(super) fn attached_groups(tty: &str, leader: libc::pid_t) -> BTreeSet<libc::pid_t> {
+    let mut groups = BTreeSet::new();
+    let Ok(output) = Command::new("ps").args(["-t", tty, "-o", "pgid="]).output() else {
+        return groups;
+    };
+    if !output.status.success() {
+        return groups;
+    }
+    let own_group = unsafe { libc::getpgrp() };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(pgid) = line.trim().parse::<libc::pid_t>() else {
+            continue;
+        };
+        if pgid <= 1 || pgid == leader || pgid == own_group {
+            continue;
+        }
+        groups.insert(pgid);
+    }
+    groups
+}
+
+/// Deliver `signal` to every group in `groups`, tolerating groups that have
+/// already disappeared and refusing groups that are no longer owned.
+pub(super) fn signal_attached_groups(groups: &BTreeSet<libc::pid_t>, signal: libc::c_int) {
+    for pgid in groups {
+        if verify_group_identity(*pgid, true).is_ok() {
+            let _ = signal_group(*pgid, signal);
+        }
     }
 }
