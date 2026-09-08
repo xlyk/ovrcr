@@ -5123,16 +5123,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
-    let mut reattached = connect_server(&fixture.socket).unwrap();
-    write_frame(
-        &mut reattached,
-        &ClientMessage {
-            request_id: 100,
-            request: Request::DashboardHello,
-        },
-    )
-    .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut reattached).unwrap();
+    let mut reattached = connect_dashboard(&fixture.socket, 100);
     reattached
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -6274,17 +6265,39 @@ fn wait_for_socket(socket: &Path) {
     assert!(socket.exists(), "server socket did not appear");
 }
 
+/// Connect as the dashboard, replacing one that was just dropped.
+///
+/// The server releases the dashboard slot when it notices the previous
+/// connection closed, which can trail the drop by a few milliseconds; a
+/// refused hello is retried rather than treated as a failure.
+fn connect_dashboard(socket: &Path, request_id: u64) -> UnixStream {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut stream = connect_server(socket).unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        match read_frame::<ServerMessage>(&mut stream).unwrap() {
+            ServerMessage::Response {
+                response: Response::Error { .. },
+                ..
+            } => {
+                drop(stream);
+                assert!(Instant::now() < deadline, "dashboard slot was not released");
+                thread::park_timeout(Duration::from_millis(10));
+            }
+            _ => return stream,
+        }
+    }
+}
+
 fn dashboard_screen(socket: &Path, session: SessionId) -> String {
-    let mut stream = connect_server(socket).unwrap();
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::DashboardHello,
-        },
-    )
-    .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut stream).unwrap();
+    let mut stream = connect_dashboard(socket, 1);
     write_frame(
         &mut stream,
         &ClientMessage {

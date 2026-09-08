@@ -930,8 +930,12 @@ while IFS= read -r line; do :; done
     };
     let original_pgid = unsafe { libc::getpgid(original_pid) };
     cleanup.capture_live_process_groups(&socket);
+    // The shell creates the marker before it writes to it, so wait for the
+    // content rather than the file.
     let marker_deadline = Instant::now() + Duration::from_secs(3);
-    while !marker.exists() && Instant::now() < marker_deadline {
+    while std::fs::read_to_string(&marker).unwrap_or_default() != "READY"
+        && Instant::now() < marker_deadline
+    {
         std::thread::park_timeout(Duration::from_millis(10));
     }
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "READY");
