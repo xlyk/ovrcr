@@ -412,7 +412,9 @@ fn palette_active_field_remains_visible_in_a_small_window() {
     assert!(text.contains("visible-command"), "{text}");
 }
 
-fn copy_ready_dashboard() -> Dashboard {
+/// The fixture after the selected session's screen has arrived, so live
+/// output is applied to the pane.
+fn screen_ready_dashboard(bytes: &[u8]) -> Dashboard {
     let mut dashboard = dashboard_fixture();
     let id = dashboard.selected.unwrap();
     let size = dashboard.pane_size;
@@ -422,10 +424,14 @@ fn copy_ready_dashboard() -> Dashboard {
         response: Response::Screen {
             session: id,
             size,
-            bytes: b"abc".to_vec(),
+            bytes: bytes.to_vec(),
         },
     });
     dashboard
+}
+
+fn copy_ready_dashboard() -> Dashboard {
+    screen_ready_dashboard(b"abc")
 }
 
 fn history_opened(total_rows: u32) -> HistoryOpened {
@@ -2205,7 +2211,7 @@ fn history_release_precedes_hierarchy_fallback_selection() {
 
 #[test]
 fn history_live_output_preserves_anchor() {
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = screen_ready_dashboard(b"");
     assert!(matches!(
         dashboard.key(KeyCode::PageUp),
         ovrcr::tui::DashboardAction::Request(_)
@@ -3056,7 +3062,7 @@ fn history_unanchored_retry_keys_reissue_failed_cursor_request() {
 fn copy_history_range_survives_live_eviction() {
     let (mut live_parser, mut frozen, old_lines) = numbered_history();
     let opened = frozen.opened().clone();
-    let mut dashboard = dashboard_fixture();
+    let mut dashboard = screen_ready_dashboard(b"");
     assert!(matches!(
         dashboard.key(KeyCode::PageUp),
         ovrcr::tui::DashboardAction::Request(_)
@@ -5741,4 +5747,105 @@ fn dashboard_reader_channel_applies_bounded_backpressure() {
         Err(TrySendError::Full(_))
     ));
     drop(receiver);
+}
+
+#[test]
+fn output_for_newly_selected_session_waits_for_screen() {
+    let mut dashboard = copy_ready_dashboard();
+    assert!(dashboard.parser.screen().contents().contains("abc"));
+    dashboard.select_request(SessionId(5), 901);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(5),
+        bytes: b"EARLY OUTPUT".to_vec(),
+    }));
+    let contents = dashboard.parser.screen().contents();
+    assert!(
+        !contents.contains("EARLY OUTPUT"),
+        "output applied before the screen arrived: {contents}"
+    );
+    assert!(!contents.contains("abc"), "stale pane kept: {contents}");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 901,
+        response: Response::Screen {
+            session: SessionId(5),
+            size: dashboard.pane_size,
+            bytes: b"FIVE SCREEN".to_vec(),
+        },
+    });
+    assert!(dashboard.parser.screen().contents().contains("FIVE SCREEN"));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(5),
+        bytes: b" LIVE".to_vec(),
+    }));
+    assert!(
+        dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("FIVE SCREEN LIVE")
+    );
+}
+
+#[test]
+fn control_punctuation_and_modified_keys_encode() {
+    let bytes = |code: KeyCode, modifiers: KeyModifiers| match encode_key(
+        KeyEvent::new(code, modifiers),
+        false,
+    ) {
+        KeyEncoding::Bytes(bytes) => bytes,
+        other => panic!("{code:?} with {modifiers:?} encoded as {other:?}"),
+    };
+    for (code, expected) in [
+        (KeyCode::Char(' '), 0x00),
+        (KeyCode::Char('@'), 0x00),
+        (KeyCode::Char('\\'), 0x1c),
+        (KeyCode::Char('4'), 0x1c),
+        (KeyCode::Char(']'), 0x1d),
+        (KeyCode::Char('5'), 0x1d),
+        (KeyCode::Char('^'), 0x1e),
+        (KeyCode::Char('6'), 0x1e),
+        (KeyCode::Char('_'), 0x1f),
+        (KeyCode::Char('7'), 0x1f),
+    ] {
+        assert_eq!(
+            bytes(code, KeyModifiers::CONTROL),
+            vec![expected],
+            "{code:?}"
+        );
+    }
+    assert_eq!(bytes(KeyCode::Up, KeyModifiers::SHIFT), b"\x1b[1;2A");
+    assert_eq!(bytes(KeyCode::Right, KeyModifiers::CONTROL), b"\x1b[1;5C");
+    assert_eq!(bytes(KeyCode::Backspace, KeyModifiers::ALT), b"\x1b\x7f");
+    assert_eq!(bytes(KeyCode::Enter, KeyModifiers::SHIFT), b"\x1b[13;2u");
+    assert_eq!(bytes(KeyCode::PageUp, KeyModifiers::SHIFT), b"\x1b[5;2~");
+    assert_eq!(bytes(KeyCode::Enter, KeyModifiers::NONE), b"\r");
+    assert_eq!(bytes(KeyCode::Backspace, KeyModifiers::NONE), b"\x7f");
+}
+
+#[test]
+fn palette_escape_cancels_pending_request() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "register project");
+    dashboard.key(KeyCode::Enter);
+    let mut submitted = None;
+    for value in ["late-project", "/tmp/late-repo", "/tmp/late-root"] {
+        dashboard.event_action(Event::Paste(value.into()));
+        if let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+            submitted = Some(message);
+        }
+    }
+    let message = submitted.expect("form did not submit");
+    assert!(palette_text(&dashboard).contains("Working…"));
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+    assert!(!palette_text(&dashboard).contains("Command palette"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "late failure".into(),
+        },
+    });
+    assert!(!palette_text(&dashboard).contains("Command palette"));
+    assert_eq!(dashboard.error, None);
 }

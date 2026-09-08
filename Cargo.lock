@@ -2846,6 +2846,7 @@ dependencies = [
  "ratatui",
  "serde_json",
  "signal-hook",
+ "unicode-width",
 ]
 
 [[package]]
