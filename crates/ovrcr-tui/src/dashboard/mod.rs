@@ -1,6 +1,7 @@
 mod agents;
 mod copy;
 mod event_loop;
+mod git_hints;
 mod input;
 mod palette;
 mod picker;

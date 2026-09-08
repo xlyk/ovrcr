@@ -12,7 +12,20 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use std::collections::HashMap;
 use std::ffi::OsString;
+use std::path::PathBuf;
+
+#[derive(Default)]
+struct Suggestions {
+    inspect: Option<u64>,
+    repos: HashMap<String, PathBuf>,
+    cache: HashMap<String, Result<super::git_hints::Hints, String>>,
+    worker: Option<super::git_hints::Worker>,
+    in_flight: Option<String>,
+    project: Option<String>,
+    note: Option<String>,
+}
 
 #[derive(Clone)]
 enum Command {
@@ -32,6 +45,7 @@ struct Entry {
 
 enum FieldKind {
     Text,
+    Toggle,
     Pick(PickList),
 }
 
@@ -40,6 +54,7 @@ struct Field {
     value: String,
     required: bool,
     hidden: bool,
+    edited: bool,
     kind: FieldKind,
 }
 
@@ -64,6 +79,9 @@ pub(super) struct Palette {
     page: Page,
     pending: Option<u64>,
     error: Option<String>,
+    workspace_acknowledged: bool,
+    suggestions: Suggestions,
+    submit_when_ready: bool,
 }
 
 impl Palette {
@@ -75,11 +93,14 @@ impl Palette {
             },
             pending: None,
             error: None,
+            workspace_acknowledged: false,
+            suggestions: Suggestions::default(),
+            submit_when_ready: false,
         }
     }
 
     fn insert(&mut self, text: &str) {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.submit_when_ready {
             return;
         }
         let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
@@ -100,9 +121,11 @@ impl Palette {
                 if fields[*active].label == "Name" {
                     *name_edited = true;
                 }
+                fields[*active].edited = true;
                 match &mut fields[*active].kind {
                     FieldKind::Pick(list) => list.on_insert(&text),
                     FieldKind::Text => fields[*active].value.push_str(&text),
+                    FieldKind::Toggle => {}
                 }
             }
             Page::Confirm { .. } => return,
@@ -151,11 +174,18 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
-        if self.palette.is_none() {
-            self.palette = Some(Palette::new());
-        }
         self.mode = InputMode::Browse;
-        DashboardAction::Redraw
+        if self.palette.is_some() {
+            return DashboardAction::Redraw;
+        }
+        let request_id = self.next_request_id();
+        let mut palette = Palette::new();
+        palette.suggestions.inspect = Some(request_id);
+        self.palette = Some(palette);
+        DashboardAction::Request(ClientMessage {
+            request_id,
+            request: Request::Inspect,
+        })
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
@@ -166,13 +196,151 @@ impl Dashboard {
             page: self.palette_form(Command::CreateTerminal),
             pending: None,
             error: None,
+            workspace_acknowledged: false,
+            suggestions: Suggestions::default(),
+            submit_when_ready: false,
         });
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_create_workspace(&mut self) -> DashboardAction {
+        let action = self.open_palette();
+        let page = self.palette_form(Command::CreateWorkspace);
+        self.palette.as_mut().unwrap().page = page;
+        action
+    }
+
+    fn refresh_workspace_form(&self, palette: &mut Palette) {
+        let hints = &mut palette.suggestions;
+        if let Some((project, result)) = hints.worker.as_ref().and_then(|worker| worker.poll()) {
+            hints.cache.insert(project, result);
+            hints.in_flight = None;
+        }
+        let Page::Form {
+            command: Command::CreateWorkspace,
+            fields,
+            ..
+        } = &mut palette.page
+        else {
+            return;
+        };
+        let project = fields[0].value.clone();
+        let existing = fields[2].value == "existing";
+        fields[4].hidden = existing;
+        fields[4].required = !existing;
+        if hints.project.as_ref() != Some(&project) {
+            hints.project = Some(project.clone());
+            fields[3].kind = FieldKind::Text;
+            if existing {
+                fields[3].value.clear();
+            }
+        }
+        if !existing && !fields[3].edited {
+            fields[3].value = format!("{}{}", self.settings.branch_prefix, fields[1].value);
+        }
+        if hints.inspect.is_none()
+            && !hints.cache.contains_key(&project)
+            && hints.in_flight.is_none()
+        {
+            if let Some(repo) = hints.repos.get(&project) {
+                if hints.worker.is_none() {
+                    hints.worker = super::git_hints::Worker::start().ok();
+                }
+                if hints
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| worker.request(project.clone(), repo.clone()))
+                {
+                    hints.in_flight = Some(project.clone());
+                } else {
+                    hints
+                        .cache
+                        .insert(project.clone(), Err("Could not start Git lookup".into()));
+                }
+            } else {
+                hints
+                    .cache
+                    .insert(project.clone(), Err("Repository path unavailable".into()));
+            }
+        }
+        hints.note = None;
+        match hints.cache.get(&project) {
+            Some(Ok(result)) => {
+                if !fields[4].edited {
+                    fields[4].value.clone_from(&result.base);
+                }
+                if existing && !matches!(fields[3].kind, FieldKind::Pick(_)) {
+                    let mut list = PickList::new(
+                        result
+                            .branches
+                            .iter()
+                            .map(|branch| PickItem {
+                                label: branch.clone(),
+                                value: branch.clone(),
+                            })
+                            .collect(),
+                    );
+                    if fields[3].value.is_empty() {
+                        fields[3].value = result.branches.first().cloned().unwrap_or_default();
+                    }
+                    list.select_value(&fields[3].value);
+                    if !result.branches.is_empty() {
+                        fields[3].kind = FieldKind::Pick(list);
+                    }
+                }
+            }
+            Some(Err(error)) => {
+                hints.note = Some(format!("{error}; enter branch/base manually"));
+                if !fields[4].edited {
+                    fields[4].value = "main".into();
+                }
+            }
+            None => {
+                hints.note = Some("Loading Git suggestions…".into());
+                if !fields[4].edited {
+                    fields[4].value = "main".into();
+                }
+            }
+        }
+    }
+
+    // Called by the real client loop, even when there is no keyboard/server input.
+    pub(super) fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
+        let Some(mut palette) = self.palette.take() else {
+            return (false, None);
+        };
+        let was_loading = palette.suggestions.in_flight.is_some();
+        self.refresh_workspace_form(&mut palette);
+        let ready = match &palette.page {
+            Page::Form {
+                command: Command::CreateWorkspace,
+                fields,
+                ..
+            } => palette.suggestions.cache.contains_key(&fields[0].value),
+            _ => false,
+        };
+        let submit = palette.submit_when_ready && ready;
+        if submit {
+            palette.submit_when_ready = false;
+        }
+        self.palette = Some(palette);
+        let request = if submit {
+            match self.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+                DashboardAction::Request(request) => Some(request),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        (was_loading || submit, request)
+    }
+
     pub(super) fn palette_paste(&mut self, text: &str) -> DashboardAction {
-        self.palette.as_mut().unwrap().insert(text);
+        let mut palette = self.palette.take().unwrap();
+        palette.insert(text);
+        self.refresh_workspace_form(&mut palette);
+        self.palette = Some(palette);
         DashboardAction::Redraw
     }
 
@@ -183,7 +351,7 @@ impl Dashboard {
                 command: Command::CreateTerminal,
             },
             Entry {
-                label: "Create workspace".into(),
+                label: "Create workspace (w)".into(),
                 command: Command::CreateWorkspace,
             },
             Entry {
@@ -235,16 +403,22 @@ impl Dashboard {
         if key.code == KeyCode::Esc || is_browse_key(key) {
             // Escape closes even while a request runs; its late response is
             // dropped so it cannot surface after the user has moved on.
-            if let Some(request_id) = palette.pending {
+            if !palette.workspace_acknowledged
+                && let Some(request_id) = palette.pending
+            {
+                self.ignored_responses.insert(request_id);
+            }
+            if let Some(request_id) = palette.suggestions.inspect {
                 self.ignored_responses.insert(request_id);
             }
             return DashboardAction::Redraw;
         }
         // Other keys wait for the running request so a submit cannot repeat.
-        if palette.pending.is_some() {
+        if palette.pending.is_some() || palette.submit_when_ready {
             self.palette = Some(palette);
             return DashboardAction::Redraw;
         }
+        self.refresh_workspace_form(&mut palette);
         let mut action = DashboardAction::Redraw;
         match key.code {
             KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -262,6 +436,11 @@ impl Dashboard {
                         if fields[*active].label == "Name" {
                             *name_edited = true;
                         }
+                        if matches!(fields[*active].kind, FieldKind::Toggle) {
+                            self.palette = Some(palette);
+                            return action;
+                        }
+                        fields[*active].edited = true;
                         fields[*active].value.clear();
                         if let FieldKind::Pick(list) = &mut fields[*active].kind {
                             list.query.clear();
@@ -271,6 +450,19 @@ impl Dashboard {
                     _ => {}
                 }
                 palette.error = None;
+            }
+            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(fields[*active].kind, FieldKind::Toggle)) => {
+                if let Page::Form { fields, .. } = &mut palette.page {
+                    fields[2].value = if fields[2].value == "new" {
+                        "existing"
+                    } else {
+                        "new"
+                    }
+                    .into();
+                    fields[3].kind = FieldKind::Text;
+                    fields[3].value.clear();
+                    fields[3].edited = false;
+                }
             }
             KeyCode::Char(ch)
                 if !key.modifiers.intersects(
@@ -294,7 +486,9 @@ impl Dashboard {
                         if fields[*active].label == "Name" {
                             *name_edited = true;
                         }
+                        fields[*active].edited = true;
                         match &mut fields[*active].kind {
+                            FieldKind::Toggle => {}
                             FieldKind::Pick(list) => list.on_backspace(),
                             FieldKind::Text => {
                                 fields[*active].value.pop();
@@ -356,6 +550,9 @@ impl Dashboard {
                     if let Some(entry) = self.palette_entries(query).get(*selected) {
                         match entry.command.clone() {
                             Command::Switch(id) => {
+                                if let Some(request_id) = palette.suggestions.inspect {
+                                    self.ignored_responses.insert(request_id);
+                                }
                                 self.select_session(id);
                                 return self.request_selected();
                             }
@@ -386,7 +583,8 @@ impl Dashboard {
                     }
                     self.refresh_terminal_form(fields, *name_edited);
                     let visible = visible_indices(fields);
-                    let last = visible.last().copied() == Some(*active);
+                    let last = visible.last().copied() == Some(*active)
+                        || (matches!(command, Command::CreateWorkspace) && *active == 1);
                     if !last {
                         move_form_field(fields, active, false);
                     } else if let Some(index) = fields
@@ -396,6 +594,13 @@ impl Dashboard {
                         *active = index;
                         palette.error = Some(format!("{} is required", fields[index].label));
                     } else {
+                        if matches!(command, Command::CreateWorkspace)
+                            && !palette.suggestions.cache.contains_key(&fields[0].value)
+                        {
+                            palette.submit_when_ready = true;
+                            self.palette = Some(palette);
+                            return action;
+                        }
                         let values: Vec<_> =
                             fields.iter().map(|f| f.value.trim().to_string()).collect();
                         let request = match command {
@@ -403,14 +608,14 @@ impl Dashboard {
                             Command::CreateWorkspace => Request::CreateWorkspace {
                                 project: values[0].clone(),
                                 name: values[1].clone(),
-                                branch: if values[3].is_empty() {
+                                branch: if values[2] == "existing" {
                                     BranchRequest::Existing {
-                                        branch: values[2].clone(),
+                                        branch: values[3].clone(),
                                     }
                                 } else {
                                     BranchRequest::New {
-                                        branch: values[2].clone(),
-                                        base: values[3].clone(),
+                                        branch: values[3].clone(),
+                                        base: values[4].clone(),
                                     }
                                 },
                             },
@@ -452,6 +657,7 @@ impl Dashboard {
             },
             _ => {}
         }
+        self.refresh_workspace_form(&mut palette);
         self.palette = Some(palette);
         action
     }
@@ -554,6 +760,7 @@ impl Dashboard {
             value,
             required,
             hidden: false,
+            edited: false,
             kind: FieldKind::Text,
         };
         let fields = match command {
@@ -600,6 +807,7 @@ impl Dashboard {
                         value: agent_value,
                         required: true,
                         hidden: false,
+                        edited: false,
                         kind: FieldKind::Pick(agent_list),
                     },
                     Field {
@@ -607,6 +815,7 @@ impl Dashboard {
                         value: workspace_value,
                         required: true,
                         hidden: false,
+                        edited: false,
                         kind: FieldKind::Pick(workspace_list),
                     },
                     text("Name", name, true),
@@ -615,16 +824,43 @@ impl Dashboard {
                         value: String::new(),
                         required: false,
                         hidden: true,
+                        edited: false,
                         kind: FieldKind::Text,
                     },
                 ]
             }
-            Command::CreateWorkspace => vec![
-                text("Project", project, true),
-                text("Name", String::new(), true),
-                text("Branch", String::new(), true),
-                text("Base (blank = existing branch)", "main".into(), false),
-            ],
+            Command::CreateWorkspace => {
+                let items = self
+                    .hierarchy
+                    .projects
+                    .iter()
+                    .map(|project| PickItem {
+                        label: project.name.clone(),
+                        value: project.name.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let project = if project.is_empty() {
+                    items
+                        .first()
+                        .map(|item| item.value.clone())
+                        .unwrap_or_default()
+                } else {
+                    project
+                };
+                let mut list = PickList::new(items);
+                list.select_value(&project);
+                let mut project = text("Project", project, true);
+                project.kind = FieldKind::Pick(list);
+                let mut mode = text("Branch mode", "new".into(), true);
+                mode.kind = FieldKind::Toggle;
+                vec![
+                    project,
+                    text("Name", String::new(), true),
+                    mode,
+                    text("Branch", self.settings.branch_prefix.clone(), true),
+                    text("Base", "main".into(), true),
+                ]
+            }
             Command::RegisterProject => vec![
                 text("Name", String::new(), true),
                 text("Repository (absolute path)", String::new(), true),
@@ -637,10 +873,15 @@ impl Dashboard {
             Command::RemoveProject => vec![text("Project", project, true)],
             _ => unreachable!(),
         };
+        let active = if matches!(command, Command::CreateWorkspace) {
+            1
+        } else {
+            0
+        };
         Page::Form {
             command,
             fields,
-            active: 0,
+            active,
             name_edited: false,
         }
     }
@@ -651,6 +892,20 @@ impl Dashboard {
         response: &Response,
     ) -> Option<Vec<ClientMessage>> {
         let palette = self.palette.as_mut()?;
+        if palette.suggestions.inspect == Some(request_id) {
+            palette.suggestions.inspect = None;
+            if let Response::Inventory { registry, .. } = response {
+                palette.suggestions.repos = registry
+                    .projects
+                    .iter()
+                    .map(|project| (project.name.clone(), project.repo.clone()))
+                    .collect();
+            }
+            let mut palette = self.palette.take().unwrap();
+            self.refresh_workspace_form(&mut palette);
+            self.palette = Some(palette);
+            return Some(Vec::new());
+        }
         if palette.pending != Some(request_id) {
             return None;
         }
@@ -659,7 +914,22 @@ impl Dashboard {
                 palette.pending = None;
                 palette.error = Some(format!("{code:?}: {message}"));
             }
+            Response::Ok
+                if matches!(
+                    palette.page,
+                    Page::Form {
+                        command: Command::CreateWorkspace,
+                        ..
+                    }
+                ) =>
+            {
+                palette.workspace_acknowledged = true;
+                return Some(self.attach_created_workspace());
+            }
             _ => {
+                if let Some(request_id) = palette.suggestions.inspect {
+                    self.ignored_responses.insert(request_id);
+                }
                 self.palette = None;
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
@@ -674,6 +944,53 @@ impl Dashboard {
             }
         }
         Some(Vec::new())
+    }
+
+    pub(super) fn attach_created_workspace(&mut self) -> Vec<ClientMessage> {
+        let Some(palette) = &self.palette else {
+            return Vec::new();
+        };
+        if !palette.workspace_acknowledged {
+            return Vec::new();
+        }
+        let Page::Form {
+            command: Command::CreateWorkspace,
+            fields,
+            ..
+        } = &palette.page
+        else {
+            return Vec::new();
+        };
+        let session = self
+            .hierarchy
+            .projects
+            .iter()
+            .find(|project| project.name == fields[0].value.trim())
+            .and_then(|project| {
+                project
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.name == fields[1].value.trim())
+            })
+            .and_then(|workspace| {
+                workspace.sessions.iter().find(|session| {
+                    session.name == "local"
+                        && session.phase == crate::session::SessionPhase::Running
+                })
+            })
+            .map(|session| session.id);
+        let Some(session) = session else {
+            return Vec::new();
+        };
+        self.palette = None;
+        self.error = None;
+        let request_id = self.next_request_id();
+        let outgoing = self
+            .select_request(session, request_id)
+            .into_iter()
+            .collect();
+        self.mode = InputMode::Terminal;
+        outgoing
     }
 
     pub(super) fn draw_palette(&self, frame: &mut Frame<'_>) {
@@ -783,6 +1100,9 @@ impl Dashboard {
                         let start = list.selected.saturating_sub(count.saturating_sub(1));
                         for (offset, item) in filtered.iter().enumerate().skip(start).take(count) {
                             let chosen = offset == list.selected;
+                            if chosen {
+                                focus_line = lines.len();
+                            }
                             lines.push(Line::styled(
                                 format!("  {} {}", if chosen { "›" } else { " " }, item.label),
                                 if chosen {
@@ -816,9 +1136,17 @@ impl Dashboard {
             "Working…"
         } else if let Some(error) = &palette.error {
             error
+        } else if palette.submit_when_ready {
+            "Waiting for Git suggestions before creating… · Esc cancel"
+        } else if let Some(note) = &palette.suggestions.note {
+            note
         } else {
             match palette.page {
                 Page::Search { .. } => "↑/↓ select · Enter continue · Esc cancel",
+                Page::Form {
+                    command: Command::CreateWorkspace,
+                    ..
+                } => "Enter on Name submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel",
                 Page::Form { .. } => {
                     "Tab accept/next · Enter next/submit · ↑/↓ pick · Ctrl-u clear · Esc cancel"
                 }
