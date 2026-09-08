@@ -3,8 +3,21 @@ use ovrcr::session::AgentActivity;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+/// `ovrcr --version` output: the package version plus the wire protocol
+/// version, so a client and a long-running server can be compared.
+fn version_string() -> &'static str {
+    Box::leak(
+        format!(
+            "{} (protocol {})",
+            env!("CARGO_PKG_VERSION"),
+            ovrcr::protocol::PROTOCOL_VERSION
+        )
+        .into_boxed_str(),
+    )
+}
+
 #[derive(Parser)]
-#[command(name = "ovrcr", version)]
+#[command(name = "ovrcr", version = version_string())]
 pub(super) struct Cli {
     #[arg(long, global = true)]
     pub(super) json: bool,

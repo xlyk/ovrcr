@@ -7,8 +7,9 @@ use crate::session::{
 use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
-    BranchRequest, ClientMessage, ClientRole, ErrorCode, HierarchySnapshot, ProjectSummary,
-    Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame, write_frame,
+    BranchRequest, ClientMessage, ClientRole, ErrorCode, HierarchySnapshot, PROTOCOL_VERSION,
+    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
+    read_preamble, write_frame, write_preamble,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File, OpenOptions};

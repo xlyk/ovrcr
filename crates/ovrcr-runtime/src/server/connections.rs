@@ -1,6 +1,15 @@
 use super::*;
 
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
+    // Complete the version handshake before any frame. Probes that connect
+    // and drop, and clients built from other sources, are simply closed.
+    if write_preamble(&mut stream).is_err() {
+        return;
+    }
+    match read_preamble(&mut stream) {
+        Ok(version) if version == PROTOCOL_VERSION => {}
+        _ => return,
+    }
     let mut role = ClientRole::Control;
     let mut dashboard_identity = None;
     let dashboard_sink = DashboardSink::new();

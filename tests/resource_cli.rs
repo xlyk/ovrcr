@@ -1,6 +1,7 @@
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    ClientMessage, Request, Response, ServerMessage, connect_server, read_frame, write_frame,
+};
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
-use std::os::unix::net::UnixStream;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
@@ -89,7 +90,7 @@ impl Fixture {
     }
 
     fn sessions(&self) -> Vec<SessionSummary> {
-        let mut stream = UnixStream::connect(self.root.path().join("server.sock")).unwrap();
+        let mut stream = connect_server(self.root.path().join("server.sock")).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();

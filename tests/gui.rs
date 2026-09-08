@@ -165,7 +165,7 @@ fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {
     use ovrcr::protocol::{
         ClientMessage, Request, Response, ServerMessage, read_frame, write_frame,
     };
-    let mut stream = std::os::unix::net::UnixStream::connect(root.join("server.sock"))?;
+    let mut stream = ovrcr::protocol::connect_server(root.join("server.sock"))?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     write_frame(
         &mut stream,

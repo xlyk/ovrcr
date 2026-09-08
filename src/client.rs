@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use ovrcr_protocol::exchange_preamble;
 use ovrcr_runtime::server::{ServerPaths, prepare_socket_directory};
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -10,7 +11,11 @@ use std::time::{Duration, Instant};
 
 pub fn connect_if_running(paths: &ServerPaths) -> Result<Option<UnixStream>> {
     match UnixStream::connect(&paths.socket) {
-        Ok(stream) => Ok(Some(stream)),
+        Ok(mut stream) => {
+            exchange_preamble(&mut stream)
+                .with_context(|| format!("handshake with server {}", paths.socket.display()))?;
+            Ok(Some(stream))
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => Ok(None),
         Err(error) => {

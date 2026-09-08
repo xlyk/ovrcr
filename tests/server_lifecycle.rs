@@ -3,7 +3,8 @@ use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
     HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES,
-    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
+    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, connect_server,
+    read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -64,7 +65,7 @@ fn hook_child_report_helper() {
     )
     .expect("write private hook identity");
 
-    let mut stream = UnixStream::connect(&socket).expect("connect hook socket");
+    let mut stream = connect_server(&socket).expect("connect hook socket");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set hook read deadline");
@@ -106,7 +107,7 @@ fn hook_child_report_helper() {
     let mut stdin = std::io::stdin();
     let mut byte = [0_u8; 1];
     if stdin.read(&mut byte).is_ok() && byte[0] == b'w' {
-        let mut stream = UnixStream::connect(&socket).expect("reconnect hook socket");
+        let mut stream = connect_server(&socket).expect("reconnect hook socket");
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("set reconnect hook read deadline");
@@ -190,7 +191,7 @@ impl ServerFixture {
     }
 
     fn request(&self, request: Request) -> ServerMessage {
-        let mut stream = UnixStream::connect(&self.paths.socket).unwrap();
+        let mut stream = connect_server(&self.paths.socket).unwrap();
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -492,7 +493,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
         ovrcr::session::AgentActivity::Busy
     );
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -533,7 +534,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
     );
     fixture.wait_identity_marker("agent-hook-reconnect", "WAITING_REPORTED");
 
-    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reconnect = connect_server(&fixture.socket).unwrap();
     reconnect
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -915,7 +916,7 @@ fn context_snapshot_survives_dashboard_reattach() {
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-reconnect", "context-reconnect");
     let pgid = fixture.original_pgid(identity.session);
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -991,7 +992,7 @@ fn context_snapshot_survives_dashboard_reattach() {
     assert!(retained.received_unix_ms > first_retained.received_unix_ms);
     drop(dashboard);
 
-    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reconnect = connect_server(&fixture.socket).unwrap();
     reconnect
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -1256,6 +1257,77 @@ fn startup_failure_reports_server_log() {
 }
 
 #[test]
+fn client_with_wrong_protocol_version_is_refused() {
+    use ovrcr::protocol::{PROTOCOL_VERSION, read_preamble};
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+
+    // A newer client: the server answers with its own preamble, then closes
+    // the connection without serving a frame.
+    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut preamble = Vec::from(*b"OVRC");
+    preamble.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
+    stream.write_all(&preamble).unwrap();
+    assert_eq!(read_preamble(&mut stream).unwrap(), PROTOCOL_VERSION);
+    // The server closes the connection, so either the frame write or the
+    // response read fails; neither may succeed.
+    let served = write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .and_then(|()| read_frame::<ServerMessage>(&mut stream));
+    assert!(
+        served.is_err(),
+        "server must not serve a client speaking another protocol version"
+    );
+    drop(stream);
+
+    // A newer server: the client reports both versions and advises restarting.
+    let peer = fixture.root.path().join("newer.sock");
+    let listener = UnixListener::bind(&peer).unwrap();
+    let fake_server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut answer = Vec::from(*b"OVRC");
+        answer.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
+        stream.write_all(&answer).unwrap();
+        let _ = read_preamble(&mut stream);
+    });
+    let error = connect_if_running(&ServerPaths { socket: peer })
+        .expect_err("version mismatch must be an error");
+    let message = format!("{error:#}");
+    assert!(message.contains("protocol version mismatch"), "{message}");
+    assert!(
+        message.contains(&format!("version {}", PROTOCOL_VERSION + 1))
+            && message.contains("shutdown --kill"),
+        "{message}"
+    );
+    fake_server.join().unwrap();
+
+    // An older server that never sends a preamble closes on the client's.
+    let peer = fixture.root.path().join("older.sock");
+    let listener = UnixListener::bind(&peer).unwrap();
+    let old_server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        drop(stream);
+    });
+    let error = connect_if_running(&ServerPaths { socket: peer })
+        .expect_err("closed handshake must be an error");
+    assert!(
+        format!("{error:#}").contains("older OVRCR build"),
+        "{error:#}"
+    );
+    old_server.join().unwrap();
+
+    fixture.stop();
+}
+
+#[test]
 fn startup_read_only_commands_do_not_start_a_missing_server() {
     let fixture = ServerFixture::new();
     assert!(connect_if_running(&fixture.paths).unwrap().is_none());
@@ -1319,7 +1391,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         exited, 1,
         "exactly one detached server owner must survive startup"
     );
-    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -1367,7 +1439,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
 fn shutdown_disconnected_requester_still_wakes_accept() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut stream = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -1468,7 +1540,7 @@ fn kill_does_not_block_dashboard_geometry() {
     let stubborn = fixture.create_session("stubborn", stubborn_session_argv());
 
     // A dashboard registers before the kill starts.
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1492,7 +1564,7 @@ fn kill_does_not_block_dashboard_geometry() {
     let socket = fixture.socket.clone();
     let killer = thread::spawn(move || {
         with_kill_grace_ms("2000", || {
-            let mut stream = UnixStream::connect(&socket).unwrap();
+            let mut stream = connect_server(&socket).unwrap();
             write_frame(
                 &mut stream,
                 &ClientMessage {
@@ -1597,7 +1669,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
             "stty raw -echo; printf READY; exec sleep 30".into(),
         ],
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1670,7 +1742,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         "input response unexpectedly completed while PTY stdin was backpressured"
     );
 
-    let mut blocked_send = UnixStream::connect(&fixture.socket).unwrap();
+    let mut blocked_send = connect_server(&fixture.socket).unwrap();
     blocked_send
         .set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
@@ -1691,7 +1763,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         "SendTerminal unexpectedly completed while PTY stdin was backpressured"
     );
 
-    let mut inspect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut inspect = connect_server(&fixture.socket).unwrap();
     inspect
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1712,7 +1784,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     ));
     drop(inspect);
 
-    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    let mut control = connect_server(&fixture.socket).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1732,7 +1804,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         }
     ));
     drop(control);
-    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    let mut control = connect_server(&fixture.socket).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1993,7 +2065,7 @@ fn pause_resume_server_refuses_removal_and_late_mutation() {
         Response::Ok
     );
     let session = fixture.create_session("pause-resume", vec!["sh".into()]);
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -2402,7 +2474,7 @@ fn request_with_timeout(
     request: Request,
     timeout: Duration,
 ) -> Option<Response> {
-    let mut stream = UnixStream::connect(socket).ok()?;
+    let mut stream = connect_server(socket).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     write_frame(
@@ -2420,7 +2492,7 @@ fn request_with_timeout(
 }
 
 fn dashboard_for_session(socket: &Path, session: SessionId) -> (UnixStream, Vec<u8>) {
-    let mut dashboard = UnixStream::connect(socket).unwrap();
+    let mut dashboard = connect_server(socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -2595,7 +2667,7 @@ struct HistoryConnection {
 impl HistoryConnection {
     fn connect(socket: &Path) -> Self {
         Self {
-            stream: UnixStream::connect(socket).unwrap(),
+            stream: connect_server(socket).unwrap(),
             frames: HistoryFrameReader::new(),
             parser: HistoryDashboardParser::new(),
         }
@@ -3435,7 +3507,7 @@ fn pause_resume_control_races_body() {
     ];
     let streams = operations
         .iter()
-        .map(|_| UnixStream::connect(&harness.fixture.socket).unwrap())
+        .map(|_| connect_server(&harness.fixture.socket).unwrap())
         .collect::<Vec<_>>();
     let workers = operations
         .into_iter()
@@ -3584,7 +3656,7 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
     );
     harness.record_created_pgid(&summary);
     let session = summary.id;
-    let mut dashboard = UnixStream::connect(&harness.fixture.socket).unwrap();
+    let mut dashboard = connect_server(&harness.fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -3621,7 +3693,7 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
         .unwrap();
     assert!(read_frame::<ServerMessage>(&mut dashboard).is_err());
 
-    let mut blocked_send = UnixStream::connect(&harness.fixture.socket).unwrap();
+    let mut blocked_send = connect_server(&harness.fixture.socket).unwrap();
     blocked_send
         .set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
@@ -4398,7 +4470,7 @@ fn slow_dashboard_recovers_after_output_burst() {
         ],
     );
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -4575,7 +4647,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         let socket = fixture.socket.clone();
         let barrier = std::sync::Arc::clone(&barrier);
         thread::spawn(move || {
-            let mut stream = UnixStream::connect(socket).unwrap();
+            let mut stream = connect_server(socket).unwrap();
             barrier.wait();
             write_frame(
                 &mut stream,
@@ -4723,7 +4795,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
         }
     ));
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -4920,7 +4992,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         })
         .collect::<Vec<_>>();
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -4966,7 +5038,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
-    let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reattached = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut reattached,
         &ClientMessage {
@@ -5138,7 +5210,7 @@ impl ControlFixture {
         panic!("control server did not start");
     }
     fn request(&self, request: Request) -> Response {
-        let mut stream = UnixStream::connect(&self.socket).unwrap();
+        let mut stream = connect_server(&self.socket).unwrap();
         if let Some(timeout) = self.request_timeout {
             stream.set_read_timeout(Some(timeout)).unwrap();
             stream.set_write_timeout(Some(timeout)).unwrap();
@@ -5500,7 +5572,7 @@ fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
 fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -5510,7 +5582,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut first).unwrap();
-    let mut second = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut second = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut second,
         &ClientMessage {
@@ -5540,7 +5612,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
 fn duplicate_dashboard_hello_uses_the_sole_writer() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5584,7 +5656,7 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
 fn dashboard_request_id_zero_does_not_block_followup_response() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5637,7 +5709,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
         }),
         Response::Ok
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5697,7 +5769,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
 fn dashboard_receives_concrete_ordinary_request_errors() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5766,7 +5838,7 @@ fn selection_snapshot_precedes_later_quiet_tail_output() {
             "printf READY; read line; printf QUIET_TAIL; exec sleep 30".into(),
         ],
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -5892,7 +5964,7 @@ fn select_screen_containing(
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -6118,7 +6190,7 @@ fn wait_for_socket(socket: &Path) {
 }
 
 fn dashboard_screen(socket: &Path, session: SessionId) -> String {
-    let mut stream = UnixStream::connect(socket).unwrap();
+    let mut stream = connect_server(socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -6156,7 +6228,7 @@ fn dashboard_screen(socket: &Path, session: SessionId) -> String {
 }
 
 fn session_process_groups(socket: &Path) -> Vec<libc::pid_t> {
-    let mut stream = UnixStream::connect(socket).unwrap();
+    let mut stream = connect_server(socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {

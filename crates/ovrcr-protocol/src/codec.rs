@@ -5,6 +5,85 @@ use std::io::{Read, Write};
 
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
 
+/// Version of the framed protocol exchanged over the server socket.
+///
+/// bincode encodes enum variants by declaration index, so any change to a
+/// serialized type in this crate (adding, removing, or reordering a variant
+/// or field of `Request`, `Response`, `ServerEvent`, `TaskRequest`,
+/// `TaskResponse`, `SessionSummary`, and the types they contain) must bump
+/// this number and regenerate the wire snapshot test in `wire.rs`. Peers
+/// exchange it in an 8-byte preamble before the first frame so a client and
+/// a long-running server built from different sources fail with a clear
+/// message instead of decoding one request as another.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
+
+/// Write the 8-byte preamble: the magic `OVRC` followed by the big-endian
+/// protocol version.
+pub fn write_preamble<W: Write>(writer: &mut W) -> Result<()> {
+    let mut preamble = [0_u8; 8];
+    preamble[..4].copy_from_slice(&PREAMBLE_MAGIC);
+    preamble[4..].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+    writer
+        .write_all(&preamble)
+        .context("write protocol preamble")?;
+    writer.flush().context("flush protocol preamble")?;
+    Ok(())
+}
+
+/// Read the peer's preamble and return the protocol version it speaks.
+///
+/// A peer that closes the connection or sends something other than the
+/// magic is reported as such; an older OVRCR server rejects the preamble as
+/// an oversized frame and closes, which surfaces here as an unexpected EOF.
+pub fn read_preamble<R: Read>(reader: &mut R) -> Result<u32> {
+    let mut preamble = [0_u8; 8];
+    reader.read_exact(&mut preamble).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            anyhow::anyhow!(
+                "peer closed the connection before completing the protocol handshake; it may be an older OVRCR build"
+            )
+        } else {
+            anyhow::Error::new(error).context("read protocol preamble")
+        }
+    })?;
+    if preamble[..4] != PREAMBLE_MAGIC {
+        bail!("peer is not an OVRCR protocol endpoint (bad preamble magic)");
+    }
+    Ok(u32::from_be_bytes([
+        preamble[4],
+        preamble[5],
+        preamble[6],
+        preamble[7],
+    ]))
+}
+
+/// Send our preamble, read the peer's, and fail unless the versions match.
+///
+/// Both sides write before they read, so the exchange cannot deadlock.
+pub fn exchange_preamble<S: Read + Write>(stream: &mut S) -> Result<()> {
+    write_preamble(stream)?;
+    let peer = read_preamble(stream)?;
+    if peer != PROTOCOL_VERSION {
+        bail!(
+            "protocol version mismatch: the server speaks version {peer} but this client speaks version {PROTOCOL_VERSION}; stop the old server with `ovrcr shutdown --kill` (or restart the installed service) and retry"
+        );
+    }
+    Ok(())
+}
+
+/// Connect to a server socket and complete the protocol handshake.
+pub fn connect_server(
+    path: impl AsRef<std::path::Path>,
+) -> std::io::Result<std::os::unix::net::UnixStream> {
+    let mut stream = std::os::unix::net::UnixStream::connect(path)?;
+    exchange_preamble(&mut stream).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{error:#}"))
+    })?;
+    Ok(stream)
+}
+
 pub fn write_frame<T: Serialize, W: Write>(writer: &mut W, value: &T) -> Result<()> {
     let bytes = bincode::serde::encode_to_vec(value, bincode::config::standard())
         .context("serialize protocol frame")?;
@@ -63,6 +142,40 @@ mod tests {
         };
         write_frame(&mut left, &message).unwrap();
         assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), message);
+    }
+
+    #[test]
+    fn preamble_round_trip() {
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        write_preamble(&mut left).unwrap();
+        assert_eq!(read_preamble(&mut right).unwrap(), PROTOCOL_VERSION);
+        let server = std::thread::spawn(move || exchange_preamble(&mut right));
+        exchange_preamble(&mut left).unwrap();
+        server.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn preamble_rejects_wrong_magic_and_version() {
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        left.write_all(b"NOPE\0\0\0\x01").unwrap();
+        let error = read_preamble(&mut right).unwrap_err().to_string();
+        assert!(error.contains("bad preamble magic"), "{error}");
+
+        let (mut left, mut right) = UnixStream::pair().unwrap();
+        let mut newer = Vec::from(*b"OVRC");
+        newer.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
+        left.write_all(&newer).unwrap();
+        let error = exchange_preamble(&mut right).unwrap_err().to_string();
+        assert!(error.contains("protocol version mismatch"), "{error}");
+        assert!(
+            error.contains(&format!("version {}", PROTOCOL_VERSION + 1)),
+            "{error}"
+        );
+
+        let (left, mut right) = UnixStream::pair().unwrap();
+        drop(left);
+        let error = read_preamble(&mut right).unwrap_err().to_string();
+        assert!(error.contains("older OVRCR build"), "{error}");
     }
 
     #[test]
