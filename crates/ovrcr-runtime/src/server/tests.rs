@@ -2,6 +2,7 @@ use super::connections::lifecycle_response_with_partial_hierarchy;
 use super::startup::resolve_bound_socket;
 use super::*;
 use ovrcr_protocol::AgentReport;
+use ovrcr_protocol::exchange_preamble;
 use std::time::Instant;
 
 use crate::session::AgentActivity;
@@ -671,6 +672,7 @@ fn history_owner_and_token_isolation() {
             let (server, mut client) = UnixStream::pair().unwrap();
             let handler_state = Arc::clone(&state);
             let handler = thread::spawn(move || handle_connection(handler_state, server));
+            exchange_preamble(&mut client).unwrap();
             write_frame(
                 &mut client,
                 &ClientMessage {
@@ -716,6 +718,7 @@ fn history_owner_and_token_isolation() {
     let replacement_handler_state = Arc::clone(&replacement_state);
     let replacement_handler =
         thread::spawn(move || handle_connection(replacement_handler_state, replacement_server));
+    exchange_preamble(&mut replacement_client).unwrap();
     write_frame(
         &mut replacement_client,
         &ClientMessage {
@@ -1343,6 +1346,7 @@ fn dashboard_shutdown_waits_for_stalled_writer_completion() {
         .collect();
     let handler_state = Arc::clone(&state);
     let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    exchange_preamble(&mut client_stream).unwrap();
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -1418,9 +1422,11 @@ fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
     let dashboard_state = Arc::clone(&state);
     let dashboard_handler =
         thread::spawn(move || handle_connection(dashboard_state, dashboard_server));
+    exchange_preamble(&mut dashboard_client).unwrap();
     let (control_server, mut control_client) = UnixStream::pair().unwrap();
     let control_state = Arc::clone(&state);
     let control_handler = thread::spawn(move || handle_connection(control_state, control_server));
+    exchange_preamble(&mut control_client).unwrap();
     write_frame(
         &mut dashboard_client,
         &ClientMessage {
@@ -1491,6 +1497,7 @@ fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
         let control_state = Arc::clone(&state);
         let control_handler =
             thread::spawn(move || handle_connection(control_state, control_server));
+        exchange_preamble(&mut control_client).unwrap();
         write_frame(
             &mut control_client,
             &ClientMessage {

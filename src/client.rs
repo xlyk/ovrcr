@@ -9,19 +9,58 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub fn connect_if_running(paths: &ServerPaths) -> Result<Option<UnixStream>> {
+/// How long a peer may take to answer the protocol handshake. A live server
+/// answers immediately; this bounds the wait on a listener that is not one.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Connect to the server socket without performing the protocol handshake.
+///
+/// Use this only when something must be checked on the raw connection first,
+/// such as the peer's credentials; call [`handshake`] before sending frames.
+pub fn connect_raw_if_running(paths: &ServerPaths) -> Result<Option<UnixStream>> {
     match UnixStream::connect(&paths.socket) {
-        Ok(mut stream) => {
-            exchange_preamble(&mut stream)
-                .with_context(|| format!("handshake with server {}", paths.socket.display()))?;
-            Ok(Some(stream))
-        }
+        Ok(stream) => Ok(Some(stream)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => Ok(None),
         Err(error) => {
             Err(error).with_context(|| format!("connect server {}", paths.socket.display()))
         }
     }
+}
+
+/// Complete the protocol handshake on a freshly connected stream, bounded by
+/// [`HANDSHAKE_TIMEOUT`], and leave the stream blocking afterwards.
+pub fn handshake(stream: &mut UnixStream, socket: &Path) -> Result<()> {
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .context("bound protocol handshake")?;
+    let result = exchange_preamble(stream).map_err(|error| {
+        let timed_out = error.chain().any(|cause| {
+            cause
+                .downcast_ref::<io::Error>()
+                .is_some_and(|io| matches!(io.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut))
+        });
+        if timed_out {
+            anyhow::anyhow!(
+                "no protocol handshake from {} within {:?}; the listener is not an OVRCR server or is not responding",
+                socket.display(),
+                HANDSHAKE_TIMEOUT
+            )
+        } else {
+            error
+        }
+    });
+    let _ = stream.set_read_timeout(None);
+    result.with_context(|| format!("handshake with server {}", socket.display()))
+}
+
+/// Connect to the server socket and complete the protocol handshake.
+pub fn connect_if_running(paths: &ServerPaths) -> Result<Option<UnixStream>> {
+    let Some(mut stream) = connect_raw_if_running(paths)? else {
+        return Ok(None);
+    };
+    handshake(&mut stream, &paths.socket)?;
+    Ok(Some(stream))
 }
 
 pub fn connect_or_start(paths: &ServerPaths) -> Result<UnixStream> {

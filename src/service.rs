@@ -2,7 +2,7 @@ use crate::config::RegistryPath;
 use crate::protocol::{
     ClientMessage, ErrorCode, Request, Response, ServerMessage, read_frame, write_frame,
 };
-use crate::server::{ServerPaths, connect_if_running};
+use crate::server::{ServerPaths, connect_if_running, connect_raw_if_running, handshake};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use directories::BaseDirs;
@@ -555,13 +555,16 @@ fn validate_installed_socket(config: &ServiceConfig) -> Result<()> {
 }
 
 fn managed_connection(config: &ServiceConfig, loaded: bool) -> Result<Option<UnixStream>> {
-    let connection = connect_if_running(&config.server_paths)?;
-    if let Some(stream) = &connection
-        && (!loaded || manager_pid(config)? != Some(peer_pid(stream)?))
-    {
+    // Identify the peer before the protocol handshake: an unmanaged listener
+    // may never answer it, and its identity is what decides the refusal.
+    let Some(mut stream) = connect_raw_if_running(&config.server_paths)? else {
+        return Ok(None);
+    };
+    if !loaded || manager_pid(config)? != Some(peer_pid(&stream)?) {
         bail!("refusing to take over unmanaged OVRCR server");
     }
-    Ok(connection)
+    handshake(&mut stream, &config.server_paths.socket)?;
+    Ok(Some(stream))
 }
 
 fn peer_pid(stream: &UnixStream) -> Result<u32> {

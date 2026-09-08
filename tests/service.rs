@@ -282,6 +282,9 @@ fn stop_requests_graceful_server_shutdown_before_stopping_the_manager() {
         let server = thread::spawn(move || {
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
+                if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                    continue;
+                }
                 let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
                     continue;
                 };
@@ -322,6 +325,9 @@ fn service_install_refuses_when_sessions_exist() {
         let mut received = Vec::new();
         loop {
             let (mut stream, _) = listener.accept().unwrap();
+            if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                break;
+            }
             let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
                 break;
             };
@@ -394,6 +400,9 @@ fn failed_graceful_shutdown_does_not_stop_the_manager() {
     let server = thread::spawn(move || {
         loop {
             let (mut stream, _) = listener.accept().unwrap();
+            if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                continue;
+            }
             let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
                 continue;
             };
@@ -498,6 +507,9 @@ fn loaded_service_does_not_send_shutdown_to_a_foreign_listener() {
                     let (mut stream, _) = listener.accept().unwrap();
                     if server_finished.load(Ordering::Acquire) {
                         break;
+                    }
+                    if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                        continue;
                     }
                     if let Ok(message) = read_frame::<ClientMessage>(&mut stream) {
                         received.push(message.request);
