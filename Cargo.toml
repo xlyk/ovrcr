@@ -8,6 +8,7 @@ version = "0.1.0"
 edition = "2024"
 # Edition 2024 with let-chains needs 1.88; the GUI helper's eframe needs 1.95.
 rust-version = "1.95"
+license = "MIT"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -42,6 +43,7 @@ name = "ovrcr"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish = false
 default-run = "ovrcr"
 
