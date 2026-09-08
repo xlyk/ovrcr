@@ -63,6 +63,50 @@ pub struct ClientMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneTarget {
+    pub session: SessionId,
+    pub size: TerminalSize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DashboardView {
+    pub revision: u64,
+    pub panes: Vec<PaneTarget>,
+    pub focused: Option<SessionId>,
+}
+
+impl DashboardView {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.revision == 0 {
+            return Err("view revision must be greater than zero".into());
+        }
+        if self.panes.len() > 2 {
+            return Err("view cannot contain more than two panes".into());
+        }
+        for (index, pane) in self.panes.iter().enumerate() {
+            if pane.size.rows == 0 || pane.size.cols == 0 {
+                return Err("pane dimensions must be greater than zero".into());
+            }
+            if self.panes[index + 1..]
+                .iter()
+                .any(|other| other.session == pane.session)
+            {
+                return Err("view cannot contain duplicate sessions".into());
+            }
+        }
+        match (self.panes.is_empty(), self.focused) {
+            (true, None) => Ok(()),
+            (true, Some(_)) => Err("an empty view cannot have focus".into()),
+            (false, None) => Err("a nonempty view must have focus".into()),
+            (false, Some(session)) if self.panes.iter().any(|pane| pane.session == session) => {
+                Ok(())
+            }
+            (false, Some(_)) => Err("focused session must be in the pane list".into()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentUpdate {
     Activity(AgentActivity),
     Context(ContextUsageReport),
@@ -195,6 +239,9 @@ pub enum Request {
         session: SessionId,
         snapshot: HistorySnapshotId,
     },
+    SetView {
+        view: DashboardView,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +284,7 @@ pub enum Response {
     CreatedSession(Box<SessionSummary>),
     Screen {
         session: SessionId,
+        revision: u64,
         size: TerminalSize,
         bytes: Vec<u8>,
     },
@@ -261,8 +309,15 @@ pub enum Response {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
-    Output { session: SessionId, bytes: Vec<u8> },
-    ScreenDirty { session: SessionId },
+    Output {
+        session: SessionId,
+        revision: u64,
+        bytes: Vec<u8>,
+    },
+    ScreenDirty {
+        session: SessionId,
+        revision: u64,
+    },
     SessionChanged(Box<SessionSummary>),
 }
 
@@ -457,6 +512,19 @@ mod wire_snapshot {
                     snapshot: HistorySnapshotId(2),
                 },
             ),
+            (
+                "SetView",
+                Request::SetView {
+                    view: DashboardView {
+                        revision: 3,
+                        panes: vec![PaneTarget {
+                            session: SessionId(1),
+                            size: size(),
+                        }],
+                        focused: Some(SessionId(1)),
+                    },
+                },
+            ),
         ]
     }
 
@@ -477,6 +545,7 @@ mod wire_snapshot {
                 "Screen",
                 Response::Screen {
                     session: SessionId(1),
+                    revision: 3,
                     size: size(),
                     bytes: vec![7],
                 },
@@ -553,6 +622,7 @@ mod wire_snapshot {
                 "Output",
                 ServerEvent::Output {
                     session: SessionId(1),
+                    revision: 3,
                     bytes: vec![7],
                 },
             ),
@@ -560,6 +630,7 @@ mod wire_snapshot {
                 "ScreenDirty",
                 ServerEvent::ScreenDirty {
                     session: SessionId(1),
+                    revision: 3,
                 },
             ),
             (
@@ -640,13 +711,14 @@ mod wire_snapshot {
         ("Request::HistoryBegin", "1601"),
         ("Request::HistoryPage", "17010203040506"),
         ("Request::HistoryEnd", "180102"),
+        ("Request::SetView", "1903010101020101"),
         ("Response::Ok", "00"),
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
             "020101700177016e016c0102030000010000000104010506",
         ),
-        ("Response::Screen", "030101020107"),
+        ("Response::Screen", "03010301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
@@ -660,8 +732,8 @@ mod wire_snapshot {
             "090102030401010101780100020102030000",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
-        ("ServerEvent::Output", "01010107"),
-        ("ServerEvent::ScreenDirty", "0201"),
+        ("ServerEvent::Output", "0101030107"),
+        ("ServerEvent::ScreenDirty", "020103"),
         (
             "ServerEvent::SessionChanged",
             "030101700177016e016c0102030000010000000104010506",

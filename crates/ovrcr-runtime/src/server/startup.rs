@@ -144,7 +144,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         registry_path,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
-        selected: Mutex::new(None),
+        view: Mutex::new(None),
         dashboard: Mutex::new(None),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
@@ -153,6 +153,10 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        #[cfg(test)]
+        before_view_publish_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
     });
     task_manager.start(Arc::downgrade(&state));

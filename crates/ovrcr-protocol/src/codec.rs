@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -129,8 +129,9 @@ pub fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
 mod tests {
     use super::*;
     use crate::{
-        AgentActivity, AgentReport, AgentUpdate, ClientMessage, Request, Response, ServerEvent,
-        ServerMessage, SessionId, SessionPhase, SessionSummary,
+        AgentActivity, AgentReport, AgentUpdate, ClientMessage, DashboardView, PaneTarget, Request,
+        Response, ServerEvent, ServerMessage, SessionId, SessionPhase, SessionSummary,
+        TerminalSize,
     };
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -189,6 +190,81 @@ mod tests {
         drop(left);
         let error = read_preamble(&mut right).unwrap_err().to_string();
         assert!(error.contains("older OVRCR build"), "{error}");
+    }
+
+    #[test]
+    fn split_view_validation_rejects_ambiguous_targets() {
+        let target = PaneTarget {
+            session: SessionId(1),
+            size: TerminalSize { rows: 36, cols: 39 },
+        };
+        let mut view = DashboardView {
+            revision: 1,
+            panes: vec![target.clone()],
+            focused: Some(SessionId(1)),
+        };
+        assert!(view.validate().is_ok());
+        view.panes.push(target);
+        assert!(view.validate().is_err());
+        view.panes.pop();
+        view.focused = Some(SessionId(2));
+        assert!(view.validate().is_err());
+
+        view.panes = vec![
+            PaneTarget {
+                session: SessionId(1),
+                size: TerminalSize { rows: 36, cols: 39 },
+            },
+            PaneTarget {
+                session: SessionId(2),
+                size: TerminalSize { rows: 18, cols: 39 },
+            },
+            PaneTarget {
+                session: SessionId(3),
+                size: TerminalSize { rows: 18, cols: 39 },
+            },
+        ];
+        view.focused = Some(SessionId(1));
+        assert!(view.validate().is_err());
+
+        view.panes.truncate(1);
+        view.revision = 0;
+        assert!(view.validate().is_err());
+        view.revision = 1;
+        view.panes[0].size.rows = 0;
+        assert!(view.validate().is_err());
+        view.panes[0].size.rows = 36;
+        view.panes[0].size.cols = 0;
+        assert!(view.validate().is_err());
+        view.panes[0].size.cols = 39;
+        view.focused = None;
+        assert!(view.validate().is_err());
+        view.panes.clear();
+        assert!(view.validate().is_ok());
+        view.focused = Some(SessionId(1));
+        assert!(view.validate().is_err());
+    }
+
+    #[test]
+    fn split_view_frames_round_trip() {
+        let view = DashboardView {
+            revision: 3,
+            panes: vec![PaneTarget {
+                session: SessionId(1),
+                size: TerminalSize { rows: 36, cols: 39 },
+            }],
+            focused: Some(SessionId(1)),
+        };
+        let message = ClientMessage {
+            request_id: 2,
+            request: Request::SetView { view },
+        };
+        let mut wire = Vec::new();
+        write_frame(&mut wire, &message).unwrap();
+        assert_eq!(
+            read_frame::<ClientMessage>(&mut wire.as_slice()).unwrap(),
+            message
+        );
     }
 
     #[test]

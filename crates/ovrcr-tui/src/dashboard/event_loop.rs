@@ -12,6 +12,8 @@ use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use crossterm::{execute, terminal as crossterm_terminal};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -56,10 +58,16 @@ pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Res
             TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
         });
     if let Some(id) = first_session {
-        write_client(&mut stream, 3, dashboard.select_request(id, 3).request)?;
-        if let Ok(message) = read_server(&mut stream) {
-            dashboard.handle_server_message(message);
-        }
+        dashboard.select_session(id);
+        let view = dashboard
+            .view_request(Rect::new(0, 0, size.cols, size.rows), 3)?
+            .context("create initial dashboard view")?;
+        let expected_screens = dashboard
+            .pending_view
+            .as_ref()
+            .map_or(0, |pending| pending.view.targets.len());
+        write_frame(&mut stream, &view)?;
+        read_initial_selection(&mut stream, &mut dashboard, 3, expected_screens)?;
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
@@ -136,14 +144,11 @@ fn dashboard_loop<W: Write>(
     loop {
         pending_redraw |= task_worker.poll(dashboard.tasks.as_mut());
         let outer = terminal.size()?;
-        let next_size = pane_size(TerminalSize {
-            rows: outer.height,
-            cols: outer.width,
-        });
-        let request_id = dashboard.next_request_id();
-        if let Some(request) = dashboard.resize_request(next_size, request_id) {
-            write_frame(stream, &request)?;
-        }
+        emit_view_request(
+            stream,
+            dashboard,
+            Rect::new(0, 0, outer.width, outer.height),
+        )?;
         if let Some(request) = dashboard.history_request_if_needed() {
             write_frame(stream, &request)?;
         }
@@ -181,14 +186,11 @@ fn dashboard_loop<W: Write>(
             // A terminal resize and keyboard input can become ready together.
             // Send the new PTY geometry before forwarding that input.
             let outer = terminal.size()?;
-            let next_size = pane_size(TerminalSize {
-                rows: outer.height,
-                cols: outer.width,
-            });
-            let request_id = dashboard.next_request_id();
-            if let Some(request) = dashboard.resize_request(next_size, request_id) {
-                write_frame(stream, &request)?;
-            }
+            emit_view_request(
+                stream,
+                dashboard,
+                Rect::new(0, 0, outer.width, outer.height),
+            )?;
             if let Some(request) = dashboard.history_request_if_needed() {
                 write_frame(stream, &request)?;
             }
@@ -211,14 +213,11 @@ fn dashboard_loop<W: Write>(
             }
             if input_ready {
                 let outer = terminal.size()?;
-                let next_size = pane_size(TerminalSize {
-                    rows: outer.height,
-                    cols: outer.width,
-                });
-                let request_id = dashboard.next_request_id();
-                if let Some(request) = dashboard.resize_request(next_size, request_id) {
-                    write_frame(stream, &request)?;
-                }
+                emit_view_request(
+                    stream,
+                    dashboard,
+                    Rect::new(0, 0, outer.width, outer.height),
+                )?;
                 if let Some(request) = dashboard.history_request_if_needed() {
                     write_frame(stream, &request)?;
                 }
@@ -323,7 +322,7 @@ pub(super) fn next_dashboard_message(
     }
 }
 
-fn next_dashboard_messages(
+pub(super) fn next_dashboard_messages(
     messages: &mpsc::Receiver<ServerMessage>,
     dashboard: &mut Dashboard,
     stream: &mut UnixStream,
@@ -339,6 +338,14 @@ fn next_dashboard_messages(
         }
     }
     Ok(redraw)
+}
+
+fn emit_view_request(stream: &mut UnixStream, dashboard: &mut Dashboard, area: Rect) -> Result<()> {
+    let request_id = dashboard.next_request_id();
+    if let Some(request) = dashboard.view_request(area, request_id)? {
+        write_frame(stream, &request)?;
+    }
+    Ok(())
 }
 
 pub(super) fn emit_pending_history_copy<W: Write>(
@@ -638,6 +645,63 @@ fn read_messages(
 
 fn read_server(stream: &mut UnixStream) -> Result<ServerMessage> {
     crate::protocol::read_frame(stream)
+}
+
+pub(super) fn read_initial_selection(
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    request_id: u64,
+    expected_screens: usize,
+) -> Result<()> {
+    let expected_targets = dashboard
+        .pending_view
+        .as_ref()
+        .filter(|pending| pending.request_id == request_id)
+        .map(|pending| {
+            (
+                pending.view.revision,
+                pending
+                    .view
+                    .targets
+                    .iter()
+                    .map(|(session, _)| *session)
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    let mut screens_seen = HashSet::new();
+    loop {
+        let message = read_server(stream)?;
+        let done = match &message {
+            ServerMessage::Response {
+                request_id: response_id,
+                response:
+                    Response::Screen {
+                        session, revision, ..
+                    },
+            } if *response_id == request_id => {
+                if *revision == expected_targets.0 && expected_targets.1.contains(session) {
+                    screens_seen.insert(*session);
+                }
+                false
+            }
+            ServerMessage::Response {
+                request_id: response_id,
+                response: Response::Ok,
+            } if *response_id == request_id => screens_seen.len() >= expected_screens,
+            ServerMessage::Response {
+                request_id: response_id,
+                response: Response::Error { .. },
+            } if *response_id == request_id => true,
+            _ => false,
+        };
+        for request in dashboard.handle_server_message(message) {
+            write_frame(stream, &request)?;
+        }
+        if done {
+            return Ok(());
+        }
+    }
 }
 
 fn write_client(stream: &mut UnixStream, request_id: u64, request: Request) -> Result<()> {

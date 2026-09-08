@@ -7,11 +7,11 @@ use crate::session::{
 use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
-    BranchRequest, ClientMessage, ClientRole, ErrorCode, HierarchySnapshot, PROTOCOL_VERSION,
-    ProjectSummary, Request, Response, ServerEvent, ServerMessage, WorkspaceSummary, read_frame,
-    read_preamble, write_frame, write_preamble,
+    BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
+    PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage,
+    WorkspaceSummary, read_frame, read_preamble, write_frame, write_preamble,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::os::fd::AsRawFd;
@@ -34,11 +34,14 @@ use connections::{
     handle_connection, handle_request_with_id, input_error_code, requested_kill_grace,
     response_message,
 };
-pub use dispatch::{DispatchMessage, HistoryRequest, run_dispatcher};
-use dispatch::{bridge_events, clear_dashboard_geometry, set_dashboard_geometry};
+pub use dispatch::{DispatchCompletion, DispatchMessage, HistoryRequest, run_dispatcher};
+use dispatch::{
+    bridge_events, clear_dashboard_geometry, clear_view_subscription, set_dashboard_geometry,
+};
 use outbound::{
     DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
-    dashboard_send_owner, dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
+    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_snapshot, dashboard_try_send,
+    disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
 pub use startup::{ServerPaths, prepare_socket_directory, run_server};
@@ -82,13 +85,16 @@ pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
 pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
+#[cfg(test)]
+type ResizeHook = Arc<dyn Fn(&Session, TerminalSize) -> Result<()> + Send + Sync>;
+
 pub struct ServerState {
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
     pub registry_path: PathBuf,
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
-    pub selected: Mutex<Option<SessionId>>,
+    pub view: Mutex<Option<DashboardView>>,
     pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
@@ -97,6 +103,10 @@ pub struct ServerState {
     pub stopping: AtomicBool,
     pub dashboard_size: Mutex<Option<DashboardGeometry>>,
     pub events: Mutex<Option<SyncSender<SessionEvent>>>,
+    #[cfg(test)]
+    pub(super) resize_hook: Mutex<Option<ResizeHook>>,
+    #[cfg(test)]
+    pub(super) before_view_publish_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
 }
 
@@ -343,9 +353,15 @@ impl ServerState {
         {
             slot.history.take();
         }
-        let mut selected = self.selected.lock().unwrap();
-        if selected.as_ref() == Some(&id) {
-            *selected = None;
+        let mut view = self.view.lock().unwrap();
+        if view
+            .as_ref()
+            .is_some_and(|current| current.focused == Some(id))
+        {
+            drop(view);
+            clear_view_subscription(self, None);
+        } else if let Some(current) = view.as_mut() {
+            current.panes.retain(|pane| pane.session != id);
         }
         Ok(())
     }
@@ -363,7 +379,7 @@ impl ServerState {
             registry_path,
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
-            selected: Mutex::new(None),
+            view: Mutex::new(None),
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
@@ -372,6 +388,8 @@ impl ServerState {
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
+            resize_hook: Mutex::new(None),
+            before_view_publish_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         })
     }

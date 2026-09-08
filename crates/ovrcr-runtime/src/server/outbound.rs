@@ -14,18 +14,22 @@ enum DirtyState {
 
 pub(super) struct DashboardQueue {
     pub(super) messages: VecDeque<DashboardOutbound>,
-    dirty: HashMap<SessionId, DirtyState>,
+    terminal: Option<DashboardOutbound>,
+    dirty: HashMap<(u64, SessionId), DirtyState>,
     closed: bool,
+    closing: bool,
 }
 
 impl DashboardQueue {
     /// Replace every queued output frame with a pending dirty marker for
-    /// its session, so the dashboard re-reads the screen instead.
+    /// its revision and session, so the dashboard re-reads the screen instead.
     fn coalesce_output(&mut self) {
         let mut sessions = Vec::new();
         self.messages.retain(|queued| match queued.message {
-            ServerMessage::Event(ServerEvent::Output { session, .. }) => {
-                sessions.push(session);
+            ServerMessage::Event(ServerEvent::Output {
+                session, revision, ..
+            }) => {
+                sessions.push((revision, session));
                 false
             }
             _ => true,
@@ -43,7 +47,8 @@ pub struct DashboardSink {
 
 pub(super) enum DashboardDelivery {
     Message(DashboardOutbound),
-    Dirty(SessionId),
+    Terminal(DashboardOutbound),
+    Dirty { revision: u64, session: SessionId },
 }
 
 impl DashboardSink {
@@ -51,8 +56,10 @@ impl DashboardSink {
         Arc::new(Self {
             queue: Mutex::new(DashboardQueue {
                 messages: VecDeque::with_capacity(DASHBOARD_QUEUE),
+                terminal: None,
                 dirty: HashMap::new(),
                 closed: false,
+                closing: false,
             }),
             wake: Condvar::new(),
         })
@@ -60,11 +67,15 @@ impl DashboardSink {
 
     pub(super) fn enqueue(&self, outbound: DashboardOutbound) -> bool {
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed {
+        if queue.closed || queue.closing {
             return false;
         }
-        if let ServerMessage::Event(ServerEvent::Output { session, .. }) = &outbound.message {
-            if queue.dirty.contains_key(session) {
+        if let ServerMessage::Event(ServerEvent::Output {
+            session, revision, ..
+        }) = &outbound.message
+        {
+            let key = (*revision, *session);
+            if queue.dirty.contains_key(&key) {
                 return true;
             }
             if queue.messages.len() == DASHBOARD_QUEUE {
@@ -73,11 +84,12 @@ impl DashboardSink {
                         queued.message,
                         ServerMessage::Event(ServerEvent::Output {
                             session: queued_session,
+                            revision: queued_revision,
                             ..
-                        }) if queued_session == *session
+                        }) if queued_session == *session && queued_revision == *revision
                     )
                 });
-                queue.dirty.insert(*session, DirtyState::Pending);
+                queue.dirty.insert(key, DirtyState::Pending);
                 self.wake.notify_one();
                 return true;
             }
@@ -98,47 +110,90 @@ impl DashboardSink {
         true
     }
 
-    pub(super) fn replace_selection(
+    pub(super) fn replace_view(
         &self,
-        previous: Option<SessionId>,
-        session: SessionId,
+        view: &DashboardView,
         request_id: u64,
-        size: TerminalSize,
-        bytes: Vec<u8>,
+        screens: Vec<Vec<u8>>,
     ) -> bool {
-        let mut queue = self.queue.lock().unwrap();
-        if queue.closed {
+        if screens.len() != view.panes.len() {
             return false;
         }
-        let discard = previous
-            .into_iter()
-            .chain(std::iter::once(session))
-            .collect::<HashSet<_>>();
-        queue.messages.retain(|queued| {
-            !matches!(
-                queued.message,
-                ServerMessage::Event(ServerEvent::Output { session, .. }) if discard.contains(&session)
-            )
-        });
-        for id in discard {
-            queue.dirty.remove(&id);
+        let mut messages = Vec::with_capacity(screens.len() + 1);
+        for (pane, bytes) in view.panes.iter().zip(screens) {
+            messages.push(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id,
+                    response: Response::Screen {
+                        session: pane.session,
+                        revision: view.revision,
+                        size: pane.size,
+                        bytes,
+                    },
+                },
+                completion: None,
+            });
         }
-        if queue.messages.len() == DASHBOARD_QUEUE {
+        messages.push(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id,
+                response: Response::Ok,
+            },
+            completion: None,
+        });
+        if messages.iter().any(|message| {
+            bincode::serde::encode_to_vec(&message.message, bincode::config::standard())
+                .map_or(true, |bytes| bytes.len() > ovrcr_protocol::MAX_FRAME_BYTES)
+        }) {
+            let mut queue = self.queue.lock().unwrap();
             queue.closed = true;
             self.wake.notify_all();
             return false;
         }
-        queue.messages.push_back(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id,
-                response: Response::Screen {
-                    session,
-                    size,
-                    bytes,
-                },
-            },
-            completion: None,
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed || queue.closing {
+            return false;
+        }
+        queue.messages.retain(|queued| {
+            !matches!(
+                queued.message,
+                ServerMessage::Event(ServerEvent::Output { .. })
+            )
         });
+        queue.dirty.clear();
+        if queue.messages.len() + messages.len() > DASHBOARD_QUEUE {
+            queue.closed = true;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.messages.extend(messages);
+        self.wake.notify_one();
+        true
+    }
+
+    pub(super) fn enqueue_terminal(&self, outbound: DashboardOutbound) -> bool {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.closed || queue.closing {
+            return false;
+        }
+        queue.closing = true;
+        let too_large =
+            bincode::serde::encode_to_vec(&outbound.message, bincode::config::standard())
+                .map_or(true, |bytes| bytes.len() > ovrcr_protocol::MAX_FRAME_BYTES);
+        queue.messages.retain(|queued| {
+            !matches!(
+                queued.message,
+                ServerMessage::Event(ServerEvent::Output { .. })
+            )
+        });
+        queue.dirty.clear();
+        if too_large || queue.messages.len() == DASHBOARD_QUEUE {
+            queue.closed = true;
+            queue.terminal = None;
+            self.wake.notify_all();
+            return false;
+        }
+        queue.terminal = Some(outbound);
         self.wake.notify_one();
         true
     }
@@ -152,22 +207,28 @@ impl DashboardSink {
             if let Some(message) = queue.messages.pop_front() {
                 return Some(DashboardDelivery::Message(message));
             }
-            if let Some((session, state)) = queue
+            if let Some(message) = queue.terminal.take() {
+                return Some(DashboardDelivery::Terminal(message));
+            }
+            if let Some(((revision, session), state)) = queue
                 .dirty
                 .iter_mut()
                 .find(|(_, state)| **state == DirtyState::Pending)
             {
                 *state = DirtyState::Sending;
-                return Some(DashboardDelivery::Dirty(*session));
+                return Some(DashboardDelivery::Dirty {
+                    revision: *revision,
+                    session: *session,
+                });
             }
             queue = self.wake.wait(queue).unwrap();
         }
     }
 
-    pub(super) fn dirty_sent(&self, session: SessionId) {
+    pub(super) fn dirty_sent(&self, revision: u64, session: SessionId) {
         let mut queue = self.queue.lock().unwrap();
-        if queue.dirty.get(&session) == Some(&DirtyState::Sending) {
-            queue.dirty.insert(session, DirtyState::Sent);
+        if queue.dirty.get(&(revision, session)) == Some(&DirtyState::Sending) {
+            queue.dirty.insert((revision, session), DirtyState::Sent);
         }
     }
 
@@ -175,6 +236,16 @@ impl DashboardSink {
         let mut queue = self.queue.lock().unwrap();
         queue.closed = true;
         self.wake.notify_all();
+    }
+
+    pub(super) fn is_closing(&self) -> bool {
+        let queue = self.queue.lock().unwrap();
+        queue.closed || queue.closing
+    }
+
+    #[cfg(test)]
+    pub(super) fn dirty_keys(&self) -> Vec<(u64, SessionId)> {
+        self.queue.lock().unwrap().dirty.keys().copied().collect()
     }
 }
 
@@ -230,7 +301,7 @@ pub(super) fn dashboard_owner_matches(state: &ServerState, owner: &Arc<()>) -> b
         .lock()
         .unwrap()
         .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing())
 }
 
 pub(super) fn dashboard_send_owner(
@@ -254,6 +325,28 @@ pub(super) fn dashboard_send_owner(
     }
 }
 
+pub(super) fn dashboard_send_owner_terminal(
+    state: &ServerState,
+    owner: &Arc<()>,
+    message: ServerMessage,
+    completion: Option<SyncSender<Result<(), String>>>,
+) -> bool {
+    let Some(snapshot) =
+        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
+    else {
+        return false;
+    };
+    if snapshot.sink.enqueue_terminal(DashboardOutbound {
+        message,
+        completion,
+    }) {
+        true
+    } else {
+        disconnect_dashboard(state, snapshot);
+        false
+    }
+}
+
 pub(super) fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {
     let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
     snapshot.sink.close();
@@ -264,7 +357,7 @@ pub(super) fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnaps
     {
         let _ = slot.take();
         *state.dashboard.lock().unwrap() = None;
-        *state.selected.lock().unwrap() = None;
+        *state.view.lock().unwrap() = None;
         clear_dashboard_geometry(state, &snapshot.identity);
     }
 }
