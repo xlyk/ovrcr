@@ -1,7 +1,10 @@
 name: CI
 
+# Pushes to a PR branch run once, through the pull_request trigger; main
+# keeps its own builds.
 on:
   push:
+    branches: [main]
   pull_request:
 
 env:
