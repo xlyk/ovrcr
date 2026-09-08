@@ -642,7 +642,7 @@ Future additions, with priorities and release dates still to be decided:
 - [ ] Agent hooks to report agent-specific activity and status.
 - [ ] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
-- [ ] Multiple dashboards connected to the same server.
+- [ ] Multiple dashboards connected to the same server. **Deferred.**
 - [ ] Session restore after a server crash or reboot, including saved session
   metadata, new PTYs, and agent conversation resumption where supported.
 
