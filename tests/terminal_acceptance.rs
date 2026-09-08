@@ -433,6 +433,10 @@ impl OuterDashboard {
         let mut command = CommandBuilder::new(&fixture.executable);
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", &fixture.config);
+        command.env(
+            "OVRCR_DASHBOARD_CONFIG",
+            fixture.config.with_file_name("dashboard.toml"),
+        );
         let child = pair.slave.spawn_command(command)?;
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
@@ -730,6 +734,114 @@ fn join_reader(reader: JoinHandle<()>, timeout: Duration) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("outer reader did not stop after {timeout:?}"))?;
     let _ = waiter.join();
     result.map_err(|_| anyhow::anyhow!("outer reader panicked"))
+}
+
+#[test]
+fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    eprintln!(
+        "workspace fixture: config={} socket={} server_pid={:?}",
+        fixture.config.display(),
+        fixture.socket.display(),
+        fixture.server.as_ref().map(Child::id)
+    );
+    git(&fixture.repo, &["switch", "-c", "trunk"])?;
+    git(
+        &fixture.repo,
+        &["commit", "--allow-empty", "-m", "remote default tip"],
+    )?;
+    git(&fixture.repo, &["switch", "main"])?;
+    git(
+        &fixture.repo,
+        &["update-ref", "refs/remotes/origin/trunk", "trunk"],
+    )?;
+    git(
+        &fixture.repo,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/trunk",
+        ],
+    )?;
+    git(&fixture.repo, &["branch", "-D", "trunk"])?;
+    std::fs::write(
+        fixture.config.with_file_name("dashboard.toml"),
+        "branch_prefix = \"task/\"\n",
+    )?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    // One input burst also exercises submission while Inspect/Git are pending.
+    dashboard.send(b"\x07wwizard\r")?;
+    dashboard.wait_until(
+        |screen| {
+            screen.contains("wizard")
+                && screen.contains("Terminal mode")
+                && !screen.contains("Command palette")
+        },
+        Duration::from_secs(5),
+    )?;
+    fixture.managed_pgids = fixture.session_pgids()?;
+    eprintln!("workspace fixture owned PGIDs: {:?}", fixture.managed_pgids);
+    let hierarchy = fixture.list()?;
+    let workspace = hierarchy
+        .projects
+        .iter()
+        .find(|project| project.name == "fixture")
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == "wizard")
+        })
+        .context("new workspace missing")?;
+    let local = workspace
+        .sessions
+        .iter()
+        .find(|session| session.name == "local")
+        .context("local shell missing")?;
+    let branch = Command::new("git")
+        .arg("-C")
+        .arg(&workspace.path)
+        .args(["branch", "--show-current"])
+        .output()?;
+    assert!(branch.status.success());
+    assert_eq!(String::from_utf8(branch.stdout)?.trim(), "task/wizard");
+    let tip = Command::new("git")
+        .arg("-C")
+        .arg(&workspace.path)
+        .args(["rev-parse", "HEAD", "refs/remotes/origin/trunk"])
+        .output()?;
+    assert!(tip.status.success());
+    let tips = String::from_utf8(tip.stdout)?;
+    let tips: Vec<_> = tips.lines().collect();
+    assert_eq!(tips.len(), 2);
+    assert_eq!(
+        tips[0], tips[1],
+        "workspace must start from the remote default, not main"
+    );
+    // The output marker is not present literally in the command echo.
+    dashboard.send(b"printf 'WORKSPACE_%s\\n' SHELL_OK\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("WORKSPACE_SHELL_OK"),
+        Duration::from_secs(3),
+    )?;
+    assert!(
+        fixture
+            .read_terminal(local.id)?
+            .contains("WORKSPACE_SHELL_OK")
+    );
+    dashboard.detach()?;
+    fixture.shutdown()?;
+    eprintln!("workspace fixture cleanup: owned process groups and socket absent");
+    Ok(())
 }
 
 fn read_outer(mut reader: Box<dyn Read + Send>, sender: Sender<Vec<u8>>) {

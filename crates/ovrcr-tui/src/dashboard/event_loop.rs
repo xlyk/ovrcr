@@ -156,6 +156,11 @@ fn dashboard_loop<W: Write>(
     let mut task_worker =
         crate::task_tui::TaskWorker::start(task_request).context("start task control worker")?;
     loop {
+        let (palette_redraw, palette_request) = dashboard.poll_palette();
+        pending_redraw |= palette_redraw;
+        if let Some(request) = palette_request {
+            write_frame(stream, &request)?;
+        }
         pending_redraw |= task_worker.poll(dashboard.tasks.as_mut());
         let outer = terminal.size()?;
         emit_view_request(

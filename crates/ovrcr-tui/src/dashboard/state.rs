@@ -1039,6 +1039,7 @@ impl Dashboard {
                 match key.code {
                     KeyCode::Char(':') => self.open_palette(),
                     KeyCode::Char('n') => self.open_create_terminal(),
+                    KeyCode::Char('w') => self.open_create_workspace(),
                     KeyCode::Char('a') => self.open_register_project(),
                     KeyCode::Esc if self.history_begin_request.is_some() => {
                         if let Some(begin) = self.history_begin_request.as_mut() {
@@ -2559,6 +2560,7 @@ impl Dashboard {
             }
         }
         self.update_mode_for_selected_phase();
+        outgoing.extend(self.attach_created_workspace());
         outgoing
     }
 
