@@ -6450,6 +6450,13 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         },
     });
     assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 120, 40), 401)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(dashboard.view_revision, view.revision);
+    assert!(
         dashboard.panes.iter().all(|pane| !pane
             .parser
             .screen()
@@ -6469,6 +6476,13 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         },
     });
     assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 120, 40), 402)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(dashboard.view_revision, view.revision);
+    assert!(
         dashboard.panes.iter().all(|pane| !pane
             .parser
             .screen()
@@ -6486,6 +6500,13 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
             bytes: b"wrong session".to_vec(),
         },
     });
+    assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 120, 40), 403)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(dashboard.view_revision, view.revision);
     assert!(
         dashboard.panes.iter().all(|pane| !pane
             .parser
@@ -6606,6 +6627,20 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 46).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
+    let early_outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: narrow.request_id,
+        response: Response::Ok,
+    });
+    assert!(early_outgoing.is_empty());
+    assert_eq!(dashboard.view_revision, narrow_revision);
+    deliver_all_view_screens(
+        &mut dashboard,
+        narrow.request_id,
+        match &narrow.request {
+            Request::SetView { view } => view,
+            _ => panic!("expected SetView"),
+        },
+    );
     let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
         request_id: narrow.request_id,
         response: Response::Ok,
@@ -6813,6 +6848,109 @@ fn split_review_pending_a_b_a_preserves_received_parser_before_ok() {
         dashboard.key(KeyCode::Up),
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1bOA".to_vec())
     );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("fresh".into())),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[200~fresh\x1b[201~".to_vec())
+    );
+}
+
+#[test]
+fn split_review_discarded_pending_view_waits_for_all_receipts_before_replacement() {
+    let mut dashboard = dashboard_fixture();
+    let initial = dashboard
+        .select_request(SessionId(3), 106)
+        .expect("initial A selection should request a view");
+    let Request::SetView { ref view } = initial.request else {
+        panic!("expected SetView");
+    };
+    let initial_revision = view.revision;
+    let initial_target = view.panes[0].clone();
+
+    assert!(dashboard.select_request(SessionId(4), 107).is_none());
+    assert!(dashboard.select_request(SessionId(3), 108).is_none());
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+    assert_eq!(dashboard.view_revision, initial_revision);
+
+    let early_outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        early_outgoing.is_empty(),
+        "early Ok must not emit a replacement before the expected Screen"
+    );
+    assert_eq!(dashboard.view_revision, initial_revision);
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 109).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 88, 38), 110)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(dashboard.view_revision, initial_revision);
+
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Screen {
+            session: initial_target.session,
+            revision: initial_revision,
+            size: initial_target.size,
+            bytes: b"ORIGINAL_A".to_vec(),
+        },
+    });
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "complete discarded request must emit exactly one replacement"
+    );
+    let replacement = outgoing.pop().expect("replacement SetView");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected replacement SetView");
+    };
+    assert_eq!(view.panes.len(), 1);
+    assert_eq!(view.panes[0].session, SessionId(3));
+    assert_eq!(dashboard.view_revision, initial_revision + 1);
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 111).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+
+    let replacement_target = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Screen {
+            session: replacement_target.session,
+            revision: view.revision,
+            size: replacement_target.size,
+            bytes: b"FRESH_A\x1b[?1h\x1b[?2004h".to_vec(),
+        },
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert_eq!(
+        dashboard.panes[dashboard.focused_pane]
+            .parser
+            .screen()
+            .contents(),
+        "FRESH_A"
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.event_action(Event::Paste("fresh".into())),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[200~fresh\x1b[201~".to_vec())
+    );
+    assert!(dashboard.input_request(vec![b'x'], 112).is_some());
 }
 
 #[test]

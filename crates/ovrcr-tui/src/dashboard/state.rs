@@ -1821,7 +1821,9 @@ impl Dashboard {
                         .targets
                         .iter()
                         .all(|(session, _)| self.pending_snapshot_sessions.contains(session));
-                    if complete && desired_matches && !pending.parser_discarded {
+                    if !complete {
+                        self.pending_view = Some(pending);
+                    } else if desired_matches && !pending.parser_discarded {
                         for (session, _) in &pending.view.targets {
                             if let Some(pane) = self
                                 .panes
