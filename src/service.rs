@@ -1,5 +1,7 @@
 use crate::config::RegistryPath;
-use crate::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use crate::protocol::{
+    ClientMessage, ErrorCode, Request, Response, ServerMessage, read_frame, write_frame,
+};
 use crate::server::{ServerPaths, connect_if_running};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
@@ -30,6 +32,9 @@ pub enum ServiceCommand {
     Install {
         #[arg(long)]
         environment_file: Option<PathBuf>,
+        /// Terminate live sessions and task runs on a managed server before replacing it.
+        #[arg(long)]
+        kill_sessions: bool,
     },
     Start,
     Stop,
@@ -146,7 +151,10 @@ pub fn run_with(config: &ServiceConfig, command: ServiceCommand, json: bool) -> 
     config.validate()?;
     validate_installed_socket(config)?;
     match command {
-        ServiceCommand::Install { environment_file } => {
+        ServiceCommand::Install {
+            environment_file,
+            kill_sessions,
+        } => {
             let environment_file = environment_file
                 .map(absolute)
                 .transpose()?
@@ -157,7 +165,7 @@ pub fn run_with(config: &ServiceConfig, command: ServiceCommand, json: bool) -> 
                     Ok(path)
                 })
                 .transpose()?;
-            install(config, environment_file.as_deref())?;
+            install(config, environment_file.as_deref(), kill_sessions)?;
             print_action("installed", json)
         }
         ServiceCommand::Start => {
@@ -261,7 +269,11 @@ fn valid_environment_key(key: &str) -> bool {
         && bytes.all(|byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_'))
 }
 
-fn install(config: &ServiceConfig, environment_file: Option<&Path>) -> Result<()> {
+fn install(
+    config: &ServiceConfig,
+    environment_file: Option<&Path>,
+    kill_sessions: bool,
+) -> Result<()> {
     let loaded = manager_loaded(config)?;
     let connection = managed_connection(config, loaded)?;
     if let Some(parent) = config.registry_path.parent() {
@@ -269,7 +281,21 @@ fn install(config: &ServiceConfig, environment_file: Option<&Path>) -> Result<()
             .with_context(|| format!("create OVRCR data directory {}", parent.display()))?;
     }
     if let Some(mut stream) = connection {
-        graceful_shutdown(&mut stream)?;
+        match request_shutdown(&mut stream, kill_sessions)? {
+            Response::Ok => {}
+            Response::Error {
+                code: ErrorCode::SessionsRemain,
+                message,
+            } => {
+                let sessions = count_sessions(config)?;
+                bail!(
+                    "OVRCR server refused shutdown ({message}): {sessions} session(s) open; \
+                     close them or rerun install with --kill-sessions"
+                );
+            }
+            Response::Error { message, .. } => bail!("OVRCR refused shutdown: {message}"),
+            response => bail!("unexpected OVRCR shutdown response: {response:?}"),
+        }
     }
     let definition = match config.platform {
         ServicePlatform::Launchd => launchd_definition(config, environment_file)?,
@@ -454,27 +480,49 @@ fn status(config: &ServiceConfig, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn graceful_shutdown(mut stream: &mut UnixStream) -> Result<()> {
+fn graceful_shutdown(stream: &mut UnixStream) -> Result<()> {
+    match request_shutdown(stream, true)? {
+        Response::Ok => Ok(()),
+        Response::Error { message, .. } => bail!("OVRCR refused shutdown: {message}"),
+        response => bail!("unexpected OVRCR shutdown response: {response:?}"),
+    }
+}
+
+fn request_shutdown(mut stream: &mut UnixStream, kill: bool) -> Result<Response> {
     write_frame(
         &mut stream,
         &ClientMessage {
             request_id: 1,
-            request: Request::Shutdown { kill: true },
+            request: Request::Shutdown { kill },
         },
     )
     .context("request graceful OVRCR shutdown")?;
     match read_frame::<ServerMessage>(&mut stream).context("read OVRCR shutdown response")? {
         ServerMessage::Response {
             request_id: 1,
-            response: Response::Ok,
-        } => Ok(()),
-        ServerMessage::Response {
-            response: Response::Error { message, .. },
-            ..
-        } => {
-            bail!("OVRCR refused shutdown: {message}")
-        }
+            response,
+        } => Ok(response),
         message => bail!("unexpected OVRCR shutdown response: {message:?}"),
+    }
+}
+
+fn count_sessions(config: &ServiceConfig) -> Result<usize> {
+    let mut stream = connect_if_running(&config.server_paths)?
+        .context("OVRCR server stopped while refusing shutdown")?;
+    write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .context("request OVRCR session list")?;
+    match read_frame::<ServerMessage>(&mut stream).context("read OVRCR session list")? {
+        ServerMessage::Response {
+            response: Response::Inventory { sessions, .. },
+            ..
+        } => Ok(sessions.len()),
+        message => bail!("unexpected OVRCR session list response: {message:?}"),
     }
 }
 

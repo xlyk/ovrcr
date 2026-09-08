@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,10 @@ pub struct TaskStore {
 const fn first_id() -> u64 {
     1
 }
+/// Runs kept per task regardless of age.
+pub const RETAINED_RUNS_PER_TASK: usize = 200;
+/// Runs younger than this are kept regardless of count.
+pub const RUN_RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 impl Default for TaskStore {
@@ -84,7 +88,8 @@ impl TaskStore {
     }
 
     pub fn save_atomic(&self, path: &Path) -> Result<()> {
-        self.validate().context("validate task store")?;
+        // Terminal run specs are frozen history validated at load; skip them on every save.
+        self.check(false).context("validate task store")?;
         let contents = toml::to_string_pretty(self).context("serialize task store")?;
         write_atomic(path, contents.as_bytes(), "task store")
     }
@@ -302,7 +307,41 @@ impl TaskStore {
         Ok(id)
     }
 
+    /// Drop terminal runs that are both older than the retention window and outside the
+    /// newest `RETAINED_RUNS_PER_TASK` of their task. Returns the dropped run IDs.
+    pub fn prune(&mut self, now: i64) -> Vec<RunId> {
+        let mut by_task: HashMap<TaskId, Vec<(i64, RunId)>> = HashMap::new();
+        for run in &self.runs {
+            by_task
+                .entry(run.task_id)
+                .or_default()
+                .push((run.finished_at.unwrap_or(run.created_at), run.id));
+        }
+        let mut expired = HashSet::new();
+        for runs in by_task.values_mut() {
+            runs.sort_unstable_by(|a, b| b.cmp(a));
+            for (finished_at, id) in runs.iter().skip(RETAINED_RUNS_PER_TASK) {
+                if now.saturating_sub(*finished_at) > RUN_RETENTION_SECONDS {
+                    expired.insert(*id);
+                }
+            }
+        }
+        let mut pruned = Vec::new();
+        self.runs.retain(|run| {
+            let prune = run.status.is_terminal() && expired.contains(&run.id);
+            if prune {
+                pruned.push(run.id);
+            }
+            !prune
+        });
+        pruned
+    }
+
     fn validate(&self) -> Result<()> {
+        self.check(true)
+    }
+
+    fn check(&self, every_run_spec: bool) -> Result<()> {
         if self.max_concurrent == 0 {
             bail!("maximum concurrency must be greater than zero");
         }
@@ -319,7 +358,9 @@ impl TaskStore {
             if !run_ids.insert(run.id) {
                 bail!("duplicate run ID: {}", run.id.0);
             }
-            run.spec.validate()?;
+            if every_run_spec || !run.status.is_terminal() {
+                run.spec.validate()?;
+            }
             if run.status == RunStatus::Queued && !queued_tasks.insert(run.task_id) {
                 bail!("multiple queued runs for task {}", run.task_id.0);
             }
@@ -353,7 +394,14 @@ pub fn run_dir(tasks_dir: &Path, id: RunId) -> PathBuf {
     tasks_dir.join("runs").join(id.0.to_string())
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static READ_RUN_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn read_run(run_dir: &Path) -> Result<Run> {
+    #[cfg(test)]
+    READ_RUN_CALLS.with(|calls| calls.set(calls.get() + 1));
     let path = run_dir.join("run.json");
     let contents =
         fs::read(&path).with_context(|| format!("read run metadata {}", path.display()))?;
@@ -424,4 +472,44 @@ fn write_atomic(path: &Path, contents: &[u8], label: &str) -> Result<()> {
         .sync_all()
         .with_context(|| format!("sync {label} directory {}", parent.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_keeps_recent_runs_and_the_newest_per_task() {
+        let mut store = TaskStore::default();
+        let task = store
+            .create(
+                TaskSpec {
+                    name: "history".into(),
+                    prompt: "test".into(),
+                    target: TaskTarget::Scratch,
+                    schedule: Schedule::Interval { seconds: 60 },
+                    model: "fixture/model".into(),
+                    thinking: "off".into(),
+                    timeout_seconds: 60,
+                },
+                0,
+            )
+            .unwrap();
+        let old = RUN_RETENTION_SECONDS + 1;
+        for index in 0..(RETAINED_RUNS_PER_TASK as i64 + 3) {
+            let mut run = store.enqueue(task.id, RunTrigger::Manual, index).unwrap();
+            run.status = RunStatus::Succeeded;
+            run.finished_at = Some(index);
+            let id = run.id;
+            *store.runs.iter_mut().find(|r| r.id == id).unwrap() = run;
+        }
+        // The oldest three fall outside the newest 200; expiry follows the clock and an
+        // active run is never pruned.
+        store.runs[1].status = RunStatus::Running;
+        assert_eq!(store.prune(old + 1), vec![RunId(1)]);
+        assert_eq!(store.prune(old + 2), vec![RunId(3)]);
+        assert_eq!(store.prune(old + 3), vec![]);
+        assert_eq!(store.runs.len(), RETAINED_RUNS_PER_TASK + 1);
+        assert!(store.runs.iter().any(|run| run.id == RunId(2)));
+    }
 }

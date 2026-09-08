@@ -1,19 +1,26 @@
 //! Blocking Pi RPC supervisor. The lifetime lock covers both execution and cleanup.
 use crate::tasks::{self, Run, RunStatus};
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
     os::{fd::AsRawFd, unix::process::CommandExt},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 const LOG_CHUNK: usize = 64 * 1024;
+const SCAN_INTERVAL: Duration = Duration::from_millis(250);
+const SCAN_FAILURE_TOLERANCE: u32 = 3;
 
 pub fn read_log(run_dir: &Path, offset: u64, max_bytes: usize) -> Result<(Vec<u8>, u64)> {
     let mut file = match File::open(run_dir.join("events.jsonl")) {
@@ -119,6 +126,11 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
     let mut output = child.stdout.take().context("Pi stdout missing")?;
     let mut groups = BTreeSet::new();
     let mut descendants = BTreeMap::new();
+    let mut scanner = Scanner::new(run_dir);
+    // The manager escalates to SIGTERM when cancellation stalls; run the same cleanup then.
+    let terminated = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(libc::SIGTERM, Arc::clone(&terminated))
+        .context("install supervisor termination handler")?;
     let mut pending = Vec::new();
     let mut control = Vec::new();
     let mut final_reason: Option<String> = None;
@@ -144,10 +156,10 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
         run.session_file = Some(session_file.to_string_lossy().into_owned());
         tasks::write_run(run_dir, run)?;
         nonblocking(input.as_ref().context("Pi stdin missing")?.as_raw_fd())?;
-        let mut last_scan = Instant::now() - Duration::from_secs(1);
+        let mut last_scan = Instant::now() - SCAN_INTERVAL;
         loop {
-            if last_scan.elapsed() >= Duration::from_millis(100) {
-                discover(&mut descendants, &mut groups)?;
+            if last_scan.elapsed() >= SCAN_INTERVAL {
+                scanner.scan(&mut descendants, &mut groups)?;
                 last_scan = Instant::now();
             }
             let mut bytes = [0; 16 * 1024];
@@ -169,6 +181,11 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => (),
                 Err(e) => return Err(e.into()),
+            }
+            if terminated.load(Ordering::Acquire) {
+                run.status = RunStatus::Interrupted;
+                run.error = Some("supervisor terminated by signal".into());
+                break;
             }
             if started.elapsed() >= timeout {
                 run.status = RunStatus::TimedOut;
@@ -265,7 +282,7 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
         Ok(())
     })();
     // Snapshot detached descendants before Pi can exit and orphan them.
-    let discovery = discover(&mut descendants, &mut groups);
+    let discovery = scanner.scan(&mut descendants, &mut groups);
     // Never append commands in the middle of an incomplete prompt JSON line.
     if sent == request.len() {
         let _ = send(&mut input, json!({"type":"clear_queue","id":"clear"}));
@@ -274,6 +291,7 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
     drop(input);
     let cleanup = cleanup(
         &mut child,
+        &mut scanner,
         &mut descendants,
         &mut groups,
         &mut output,
@@ -327,7 +345,7 @@ fn read_fd(fd: i32, buffer: &mut [u8]) -> io::Result<usize> {
 }
 // Birth identity prevents a PID retained across a long run from claiming a
 // later, unrelated process (or that process's children and process group).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Process {
     pid: i32,
     parent: i32,
@@ -424,6 +442,79 @@ fn retain_owned(
         }
     }
 }
+/// Everything the supervisor owns, recorded so the manager can finish cleanup if the
+/// supervisor itself has to be killed.
+#[derive(Default, Serialize, Deserialize)]
+struct Recorded {
+    owned: Vec<Process>,
+    groups: Vec<i32>,
+}
+const PROCESS_RECORD: &str = "processes.json";
+
+/// Signal every process the supervisor last recorded, verifying birth identity first.
+pub fn kill_recorded_processes(run_dir: &Path) -> Result<()> {
+    let contents = match fs::read(run_dir.join(PROCESS_RECORD)) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("read recorded processes"),
+    };
+    let recorded: Recorded =
+        serde_json::from_slice(&contents).context("parse recorded processes")?;
+    let owned = recorded
+        .owned
+        .into_iter()
+        .map(|process| (process.pid, process))
+        .collect();
+    let groups = recorded.groups.into_iter().collect();
+    signal_owned(&owned, &groups, libc::SIGKILL)
+}
+
+/// Descendant discovery that tolerates a few consecutive `ps` failures and records
+/// the current ownership snapshot after every successful scan.
+struct Scanner {
+    failures: u32,
+    record: PathBuf,
+}
+impl Scanner {
+    fn new(run_dir: &Path) -> Self {
+        Self {
+            failures: 0,
+            record: run_dir.join(PROCESS_RECORD),
+        }
+    }
+    fn scan(
+        &mut self,
+        owned: &mut BTreeMap<i32, Process>,
+        groups: &mut BTreeSet<i32>,
+    ) -> Result<()> {
+        match discover(owned, groups) {
+            Ok(()) => {
+                self.failures = 0;
+                self.record(owned, groups)
+            }
+            Err(error) if self.failures < SCAN_FAILURE_TOLERANCE => {
+                self.failures += 1;
+                eprintln!(
+                    "descendant scan failed ({} of {SCAN_FAILURE_TOLERANCE} tolerated): {error:#}",
+                    self.failures
+                );
+                Ok(())
+            }
+            Err(error) => Err(error.context("descendant discovery failed repeatedly")),
+        }
+    }
+    fn record(&self, owned: &BTreeMap<i32, Process>, groups: &BTreeSet<i32>) -> Result<()> {
+        let recorded = Recorded {
+            owned: owned.values().copied().collect(),
+            groups: groups.iter().copied().collect(),
+        };
+        // Rename keeps readers from seeing a torn file; durability is irrelevant here.
+        let temporary = self.record.with_extension("json.tmp");
+        fs::write(&temporary, serde_json::to_vec_pretty(&recorded)?)
+            .context("write recorded processes")?;
+        fs::rename(&temporary, &self.record).context("publish recorded processes")
+    }
+}
 fn discover(owned: &mut BTreeMap<i32, Process>, groups: &mut BTreeSet<i32>) -> Result<()> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,ppid=,pgid="])
@@ -494,6 +585,7 @@ fn signal_owned(owned: &BTreeMap<i32, Process>, groups: &BTreeSet<i32>, signal: 
 }
 fn cleanup(
     child: &mut Child,
+    scanner: &mut Scanner,
     descendants: &mut BTreeMap<i32, Process>,
     groups: &mut BTreeSet<i32>,
     output: &mut impl Read,
@@ -512,7 +604,7 @@ fn cleanup(
                 Err(e) => return Err(e.into()),
             }
         }
-        discover(descendants, groups)?;
+        scanner.scan(descendants, groups)?;
         let reaped = child.try_wait()?.is_some();
         if reaped && descendants.is_empty() {
             return Ok(());

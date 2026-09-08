@@ -43,7 +43,11 @@ while True:
    emit({'type':'response','id':id,'command':kind,'success':True})
    emit({'type':'agent_start'})
    emit({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'streamed fixture text\u2028ok'}})
-   if c['message']=='HOLD':active=True
+   if c['message']=='HOLD-BACKGROUND':
+    import subprocess
+    p=subprocess.Popen(['sleep','300'],start_new_session=True)
+    pathlib.Path('background.tmp').write_text(str(p.pid));pathlib.Path('background.tmp').replace('background')
+   if c['message'] in ('HOLD','HOLD-BACKGROUND'):active=True
    else:settle('error' if c['message']=='FAIL' else 'stop')
   elif kind=='abort':
    if active:settle('aborted');active=False
@@ -97,7 +101,10 @@ while True:
             .to_string()
     }
     fn wait(&self, id: &str, status: &str) -> Value {
-        let end = Instant::now() + Duration::from_secs(15);
+        self.wait_for(id, status, Duration::from_secs(15))
+    }
+    fn wait_for(&self, id: &str, status: &str, limit: Duration) -> Value {
+        let end = Instant::now() + limit;
         loop {
             let run = self.call(&["run", "get", id]);
             if run["status"] == status
@@ -112,6 +119,31 @@ while True:
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+impl Fixture {
+    fn run_dir(&self, id: &str) -> std::path::PathBuf {
+        self.root.path().join("config.tasks/runs").join(id)
+    }
+    /// The supervisor records its PID in run.lock once it owns the run.
+    fn supervisor_pid(&self, id: &str) -> i32 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(pid) = fs::read_to_string(self.run_dir(id).join("run.lock"))
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "supervisor never claimed the run"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+fn alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -162,6 +194,84 @@ fn three_runs_stream_independently_and_cancel_admits_the_fourth() {
         f.call(&["run", "cancel", run]);
         f.wait(run, "Cancelled");
     }
+}
+
+#[test]
+fn cancel_marks_run_cancelling_immediately() {
+    let f = Fixture::new();
+    let task = f.task("cancelling", "HOLD");
+    let id = f.start(&task);
+    f.wait(&id, "Running");
+    // A stopped supervisor cannot acknowledge, so the status must come from the server.
+    let supervisor = f.supervisor_pid(&id);
+    assert_eq!(unsafe { libc::kill(supervisor, libc::SIGSTOP) }, 0);
+    f.call(&["run", "cancel", &id]);
+    let observed = f.call(&["run", "get", &id])["status"].clone();
+    assert_eq!(unsafe { libc::kill(supervisor, libc::SIGCONT) }, 0);
+    assert_eq!(observed, "Cancelling");
+    f.wait(&id, "Cancelled");
+}
+
+#[test]
+fn forced_cancel_kills_pi_process_group() {
+    let f = Fixture::new();
+    let task = f.task("forced", "HOLD-BACKGROUND");
+    let id = f.start(&task);
+    let run = f.wait(&id, "Running");
+    let cwd = std::path::Path::new(run["directory"].as_str().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !cwd.join("background").exists() {
+        assert!(Instant::now() < deadline, "fixture never detached a child");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pi: i32 = fs::read_to_string(cwd.join("started"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let background: i32 = fs::read_to_string(cwd.join("background"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    // Wait until the supervisor has recorded the detached child before freezing it.
+    let processes = f.run_dir(&id).join("processes.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fs::read_to_string(&processes)
+        .unwrap_or_default()
+        .contains(&format!("\"pid\": {background}"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "supervisor never recorded {background}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let supervisor = f.supervisor_pid(&id);
+    assert_eq!(unsafe { libc::kill(supervisor, libc::SIGSTOP) }, 0);
+    f.call(&["run", "cancel", &id]);
+    let run = f.wait_for(&id, "CleanupFailed", Duration::from_secs(40));
+    assert!(
+        !alive(supervisor),
+        "supervisor survived forced cancellation"
+    );
+    let survivors: Vec<i32> = [pi, background]
+        .into_iter()
+        .filter(|pid| alive(*pid))
+        .collect();
+    for pid in &survivors {
+        unsafe {
+            libc::kill(*pid, libc::SIGKILL);
+        }
+    }
+    assert!(
+        survivors.is_empty(),
+        "processes survived forced cancellation: {survivors:?}"
+    );
+    assert_eq!(
+        unsafe { libc::kill(-pi, 0) },
+        -1,
+        "Pi process group survived"
+    );
+    assert!(run["error"].as_str().unwrap().contains("deadline"));
 }
 
 #[test]
