@@ -9,7 +9,8 @@ use super::{
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
-    HistorySnapshotId, Response, ServerEvent, ServerMessage, SessionId, TerminalSize, write_frame,
+    HistorySnapshotId, Request, Response, ServerEvent, ServerMessage, SessionId, TerminalSize,
+    write_frame,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -19,6 +20,7 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -86,6 +88,128 @@ fn initial_selection_completes_zero_target_view_on_ok() {
     });
     super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 0).unwrap();
     assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+}
+
+#[test]
+fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 1;
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 9)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    let revision = view.revision;
+    let targets = view.panes.clone();
+    let (sender, receiver) = mpsc::channel();
+    for _ in 0..62 {
+        sender
+            .send(ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision,
+                bytes: b"ignored while unready".to_vec(),
+            }))
+            .unwrap();
+    }
+    for (index, target) in targets.iter().enumerate() {
+        sender
+            .send(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: target.session,
+                    revision,
+                    size: target.size,
+                    bytes: format!("SCREEN_{index}").into_bytes(),
+                },
+            })
+            .unwrap();
+    }
+    sender
+        .send(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Ok,
+        })
+        .unwrap();
+    sender
+        .send(ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(1),
+            revision,
+            bytes: b"TAIL_A".to_vec(),
+        }))
+        .unwrap();
+    sender
+        .send(ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(2),
+            revision,
+            bytes: b"TAIL_B".to_vec(),
+        }))
+        .unwrap();
+    let (_peer, mut stream) = UnixStream::pair().unwrap();
+
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
+            .unwrap()
+    );
+    assert!(dashboard.pending_view.is_some());
+    assert!(dashboard.panes.iter().any(|pane| !pane.ready));
+    assert!(
+        dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("SCREEN_0")
+    );
+    assert!(
+        dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("SCREEN_1")
+    );
+    assert!(
+        !dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_A")
+    );
+    assert!(
+        !dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_B")
+    );
+
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
+            .unwrap()
+    );
+    assert!(dashboard.pending_view.is_none());
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_A")
+    );
+    assert!(
+        dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_B")
+    );
 }
 
 #[test]

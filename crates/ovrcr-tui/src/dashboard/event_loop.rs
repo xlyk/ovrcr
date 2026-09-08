@@ -327,7 +327,7 @@ pub(super) fn next_dashboard_message(
     }
 }
 
-fn next_dashboard_messages(
+pub(super) fn next_dashboard_messages(
     messages: &mpsc::Receiver<ServerMessage>,
     dashboard: &mut Dashboard,
     stream: &mut UnixStream,

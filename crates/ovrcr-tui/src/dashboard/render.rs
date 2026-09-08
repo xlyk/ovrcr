@@ -97,6 +97,12 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
     }
 }
 
+fn pane_is_running(dashboard: &Dashboard, pane: &PaneState) -> bool {
+    pane.session
+        .and_then(|session| find_session(dashboard, session))
+        .is_some_and(|session| matches!(session.phase, SessionPhase::Running))
+}
+
 pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection) {
     render_terminal(frame, area, &selection.screen, false);
     for row in 0..selection.screen.size().0.min(area.height) {
@@ -514,7 +520,8 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 pane.parser.screen(),
                 rect.pane_index == dashboard.focused_pane
                     && dashboard.mode == InputMode::Terminal
-                    && pane.ready,
+                    && pane.ready
+                    && pane_is_running(dashboard, pane),
             );
         }
     } else if let Some(rect) = rects.first().copied() {
@@ -589,7 +596,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 frame,
                 rect.terminal,
                 pane.parser.screen(),
-                dashboard.mode == InputMode::Terminal && pane.ready,
+                dashboard.mode == InputMode::Terminal
+                    && pane.ready
+                    && pane_is_running(dashboard, pane),
             );
         }
     }
@@ -616,9 +625,21 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let footer = dashboard.error.as_deref().map_or_else(
         || {
             if let Some(notice) = dashboard.copy_notice.as_deref() {
+                if split_hidden {
+                    return Line::from(Span::styled(
+                        format!("{notice}  split hidden: terminal too small"),
+                        Style::default().fg(TEXT),
+                    ));
+                }
                 return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
             }
             if dashboard.mode == InputMode::Copy {
+                if split_hidden {
+                    return Line::from(Span::styled(
+                        "COPY  split hidden: terminal too small  Esc cancel",
+                        Style::default().fg(TEXT),
+                    ));
+                }
                 return Line::from(vec![
                     Span::styled("COPY  ", Style::default().fg(TEAL)),
                     Span::styled("h/j/k/l", Style::default().fg(Color::Rgb(249, 226, 175))),
@@ -631,8 +652,26 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" cancel", Style::default().fg(MUTED)),
                 ]);
             }
+            if dashboard.mode == InputMode::History && split_hidden {
+                return Line::from(Span::styled(
+                    "HISTORY  split hidden: terminal too small  Esc/q exit",
+                    Style::default().fg(TEXT),
+                ));
+            }
+            if dashboard.mode == InputMode::Browse && split_hidden {
+                return Line::from(Span::styled(
+                    "BROWSE  split hidden: terminal too small  v split  Tab/Shift-Tab  x close",
+                    Style::default().fg(TEXT),
+                ));
+            }
             let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
             let narrow = layout.footer.width < 60;
+            if dashboard.mode == InputMode::Browse && !(paused && narrow) {
+                return Line::from(Span::styled(
+                    "BROWSE  j/k/↑/↓  Enter  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach",
+                    Style::default().fg(TEXT),
+                ));
+            }
             let mut footer = if dashboard.mode == InputMode::Terminal {
                 vec![
                     Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
@@ -671,8 +710,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" tasks  ", Style::default().fg(MUTED)),
                 ]);
             }
-            if dashboard.mode == InputMode::Browse {
+            if dashboard.mode == InputMode::Browse && !(paused && narrow) {
+                footer.insert(
+                    0,
+                    Span::styled("BROWSE  ", Style::default().fg(TEAL)),
+                );
                 footer.extend([
+                    Span::styled("v", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" split  ", Style::default().fg(MUTED)),
+                    Span::styled("Tab/Shift-Tab", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" panes  ", Style::default().fg(MUTED)),
+                    Span::styled("x", Style::default().fg(Color::Rgb(249, 226, 175))),
+                    Span::styled(" close  ", Style::default().fg(MUTED)),
                     Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" detach", Style::default().fg(MUTED)),
                     Span::styled("  : commands", Style::default().fg(MAUVE)),

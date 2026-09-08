@@ -6171,6 +6171,8 @@ fn split_layout_geometry_and_narrow_fallback() {
 fn split_layout_renders_independent_cells_and_cursor() {
     let mut dashboard = dashboard_fixture();
     assert!(dashboard.split_pane());
+    let left_session = dashboard.panes[0].session.expect("left split session");
+    let right_session = dashboard.panes[1].session.expect("right split session");
     let split = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 100)
         .unwrap()
@@ -6220,10 +6222,28 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(buffer[(80, 3 + 35)].fg, Color::Indexed(2));
     assert_eq!(buffer[(40 + 37, 3 + 35)].symbol(), "界");
     assert_eq!(buffer[(40 + 38, 3 + 35)].symbol(), " ");
+    assert_eq!(buffer[(80 + 38, 3 + 35)].symbol(), "界");
+    assert_eq!(buffer[(80 + 39, 3 + 35)].symbol(), " ");
     for row in 1..39 {
         assert_eq!(buffer[(79, row)].symbol(), "│", "separator row {row}");
     }
     assert_eq!(terminal.backend().cursor_position(), (84, 4).into());
+
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let browse_footer = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 39)].symbol())
+        .collect::<String>();
+    assert!(browse_footer.contains("BROWSE"));
+    assert!(browse_footer.contains("v split"));
+    assert!(browse_footer.contains("Tab"));
+    assert!(browse_footer.contains("Shift-Tab"));
+    assert!(browse_footer.contains("x close"));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
 
     let mut output = Vec::new();
     {
@@ -6250,12 +6270,55 @@ fn split_layout_renders_independent_cells_and_cursor() {
             .is_wide_continuation()
     );
     assert_eq!(emitted.screen().cell(38, 79).unwrap().contents(), "│");
+    assert_eq!(emitted.screen().cell(38, 118).unwrap().contents(), "界");
+    assert!(
+        emitted
+            .screen()
+            .cell(38, 119)
+            .unwrap()
+            .is_wide_continuation()
+    );
+
+    let mut edge_parser = vt100::Parser::new(36, 41, 0);
+    edge_parser.process(b"\x1b[36;40H\xE7\x95\x8C");
+    dashboard.panes[1].parser = edge_parser;
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(119, 38)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(79, 38)].symbol(), "│");
+    let mut edge_output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut edge_output);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 40)),
+            },
+        )
+        .unwrap();
+        terminal
+            .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+    }
+    let mut emitted = vt100::Parser::new(40, 120, 0);
+    emitted.process(&edge_output);
+    assert_eq!(emitted.screen().cell(38, 119).unwrap().contents(), " ");
+    assert_eq!(emitted.screen().cell(38, 79).unwrap().contents(), "│");
 
     assert!(dashboard.focus_pane(0));
     let focused_left = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 101)
         .unwrap()
         .expect("focus change should request replacement view");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
     acknowledge_all_view_targets(&mut dashboard, focused_left);
     dashboard.panes[0].parser.process(b"\x1b[2;4H");
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
@@ -6274,8 +6337,16 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .unwrap();
     assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
 
+    dashboard.panes[0].parser.process(b"\x1b[?25h\x1b[2;4H");
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
+
+    let backend = TestBackend::new(1, 1);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -6287,6 +6358,25 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .view_request(Rect::new(0, 0, 80, 24), 102)
         .unwrap()
         .expect("narrow view should request the focused pane");
+    let narrow_view = match &narrow.request {
+        Request::SetView { view } => view,
+        other => panic!("expected SetView, got {other:?}"),
+    };
+    assert_eq!(narrow_view.focused, Some(left_session));
+    assert_eq!(narrow_view.panes.len(), 1);
+    assert_eq!(narrow_view.panes[0].session, left_session);
+    assert_eq!(
+        narrow_view.panes[0].size,
+        TerminalSize { rows: 20, cols: 40 }
+    );
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        vec![Some(left_session), Some(right_session)]
+    );
     assert_eq!(pane_rects(Rect::new(0, 0, 80, 24), 2, 0).len(), 1);
     acknowledge_all_view_targets(&mut dashboard, narrow);
     dashboard.panes[0].parser.process(b"L\x1b[2;4H");
@@ -6302,10 +6392,66 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .collect::<String>();
     assert!(footer.contains("split hidden: terminal too small"));
 
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let browse_footer = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>();
+    assert!(browse_footer.contains("BROWSE"));
+    assert!(browse_footer.contains("split hidden: terminal too small"));
+
+    dashboard.key(KeyCode::Char('['));
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let copy_footer = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>();
+    assert!(copy_footer.contains("COPY"));
+    assert!(copy_footer.contains("split hidden: terminal too small"));
+    dashboard.mode = ovrcr::tui::InputMode::History;
+    dashboard.history = Some(HistoryView::new(history_opened(1), 0));
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let history_footer = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>();
+    assert!(history_footer.contains("HISTORY"));
+    assert!(history_footer.contains("split hidden: terminal too small"));
+    dashboard.history = None;
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+
     let wide = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 103)
         .unwrap()
         .expect("wide view should restore both panes");
+    let wide_view = match &wide.request {
+        Request::SetView { view } => view,
+        other => panic!("expected SetView, got {other:?}"),
+    };
+    assert_eq!(wide_view.focused, Some(left_session));
+    assert_eq!(wide_view.panes.len(), 2);
+    assert_eq!(wide_view.panes[0].session, left_session);
+    assert_eq!(wide_view.panes[0].size, TerminalSize { rows: 36, cols: 39 });
+    assert_eq!(wide_view.panes[1].session, right_session);
+    assert_eq!(wide_view.panes[1].size, TerminalSize { rows: 36, cols: 40 });
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        vec![Some(left_session), Some(right_session)]
+    );
     acknowledge_all_view_targets(&mut dashboard, wide);
     dashboard.panes[0].parser.process(b"L");
     dashboard.panes[1].parser.process(b"R");
@@ -6317,12 +6463,100 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "L");
     assert_eq!(terminal.backend().buffer()[(80, 3)].symbol(), "R");
 
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    assert!(matches!(
+        dashboard.key(KeyCode::Char('[')),
+        ovrcr::tui::DashboardAction::Redraw
+    ));
+    dashboard.panes[1].parser.process(b"\x1b[1;1HOTHER");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "L");
+    assert_eq!(terminal.backend().buffer()[(80, 3)].symbol(), "O");
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let mut exited_split = dashboard_fixture();
+    assert!(exited_split.split_pane());
+    let split_request = exited_split
+        .view_request(Rect::new(0, 0, 120, 40), 200)
+        .unwrap()
+        .expect("split view should request both panes");
+    acknowledge_all_view_targets(&mut exited_split, split_request);
+    assert!(exited_split.focus_pane(0));
+    let focused_request = exited_split
+        .view_request(Rect::new(0, 0, 120, 40), 201)
+        .unwrap()
+        .expect("focus change should request the left pane");
+    acknowledge_all_view_targets(&mut exited_split, focused_request);
+    exited_split.mode = ovrcr::tui::InputMode::Terminal;
+    exited_split.panes[0].parser.process(b"FINAL\x1b[2;4H");
+    let mut exited_summary = exited_split
+        .hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .find(|session| session.id == SessionId(1))
+        .cloned()
+        .expect("fixture review session");
+    exited_summary.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    exited_summary.pid = None;
+    exited_split.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+        exited_summary,
+    )));
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &exited_split, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "F");
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
+
+    let mut exited_single = dashboard_fixture();
+    exited_single.mode = ovrcr::tui::InputMode::Terminal;
+    exited_single.panes[0].parser.process(b"FINAL\x1b[2;4H");
+    let mut exited_summary = exited_single
+        .hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .find(|session| session.id == SessionId(1))
+        .cloned()
+        .expect("fixture review session");
+    exited_summary.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    exited_summary.pid = None;
+    exited_single.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+        exited_summary,
+    )));
+    let backend = TestBackend::new(89, 38);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &exited_single, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "F");
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
+
     let click = |column, row| MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column,
         row,
         modifiers: KeyModifiers::NONE,
     };
+    let mouse_sessions = dashboard
+        .panes
+        .iter()
+        .map(|pane| pane.session)
+        .collect::<Vec<_>>();
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     assert_eq!(
         dashboard.mouse_action(click(40, 3), Rect::new(0, 0, 120, 40)),
@@ -6330,20 +6564,52 @@ fn split_layout_renders_independent_cells_and_cursor() {
     );
     assert_eq!(dashboard.focused_pane, 0);
     assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        mouse_sessions
+    );
+    assert_eq!(
         dashboard.mouse_action(click(79, 20), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::None
     );
     assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        mouse_sessions
+    );
     assert_eq!(
         dashboard.mouse_action(click(80, 1), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::None
     );
     assert_eq!(dashboard.focused_pane, 0);
     assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        mouse_sessions
+    );
+    assert_eq!(
         dashboard.mouse_action(click(80, 3), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        mouse_sessions
+    );
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.mouse_action(click(40, 3), Rect::new(0, 0, 120, 40)),
