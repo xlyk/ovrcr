@@ -83,16 +83,16 @@ fn home_dir() -> PathBuf {
 }
 
 #[cfg(test)]
+pub(crate) static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn loads_overrides_and_expands_picker_roots() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = HOME_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         std::fs::create_dir(&home).unwrap();
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn invalid_file_yields_defaults_and_error() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = HOME_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         std::fs::create_dir(&home).unwrap();

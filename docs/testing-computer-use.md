@@ -64,6 +64,8 @@ Confirm a separate `CUA_W_SHELL_OK` output line. Record this shell's PID and
 process group with the other fixture processes before cleanup. Return to
 `consigint / auth-handoff / local` for the checks below.
 
+Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
+
 ## 3. Mouse forwarding and wheel history
 
 Stay on `consigint / auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.

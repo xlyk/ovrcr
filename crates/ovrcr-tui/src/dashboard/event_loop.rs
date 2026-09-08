@@ -50,6 +50,9 @@ pub fn run_dashboard(
     let mut dashboard = Dashboard::new(pane_size);
     let (settings, settings_error) = load_dashboard_settings(&settings_path);
     dashboard.settings = settings;
+    if let Some(parent) = settings_path.parent() {
+        dashboard.config_dir = parent.to_path_buf();
+    }
     if let Some(error) = settings_error {
         dashboard.error = Some(error);
     }

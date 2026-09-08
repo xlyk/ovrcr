@@ -563,6 +563,7 @@ impl Dashboard {
             history_end_after_selection: None,
             ignored_responses: HashSet::new(),
             settings: DashboardSettings::default(),
+            config_dir: std::path::PathBuf::new(),
             last_view_request_id: None,
             pending_view: None,
             requested_view: None,
@@ -1039,6 +1040,7 @@ impl Dashboard {
                     KeyCode::Char(':') => self.open_palette(),
                     KeyCode::Char('n') => self.open_create_terminal(),
                     KeyCode::Char('w') => self.open_create_workspace(),
+                    KeyCode::Char('a') => self.open_register_project(),
                     KeyCode::Esc if self.history_begin_request.is_some() => {
                         if let Some(begin) = self.history_begin_request.as_mut() {
                             begin.cancelled = true;

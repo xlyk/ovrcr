@@ -152,15 +152,26 @@ Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
 command palette. `Cmd-K` opens the popup anywhere in the GUI window and moves
 keyboard focus into it. If the dashboard has detached, it reconnects first.
 Type to filter actions or search a terminal by its project, workspace, and
-name. The Create terminal entry is labeled `Create terminal (n)`. Use the
-arrow keys to select a result, Enter to continue, and Escape to cancel.
+name. The Create terminal entry is labeled `Create terminal (n)`. Register
+project is `Register project (a)`. Use the arrow keys to select a result,
+Enter to continue, and Escape to cancel.
 
-The palette can also switch terminals, create workspaces, register projects,
-close terminals, and remove workspaces or projects. Forms prefill from the
-selected terminal where that applies. On a pick list, Up/Down move the
-highlight and Tab or Enter accepts. On a text field, Tab or the arrow keys
-move between fields; Enter advances and submits at the last field. Ctrl-u
-clears a field; Backspace deletes its last character.
+Press `a` in browse mode to register a project. Repository and Workspace root
+are path pickers: the list is one directory of children, directories only,
+filtered by fuzzy subsequence on the last path segment. Hidden names stay
+hidden unless that segment starts with `.`. Git checkouts sort first and are
+marked `git`. Tab accepts the highlight and appends `/`. Enter keeps the typed
+text and moves on. An empty field lists `picker_roots` from `dashboard.toml`
+(default `~/Code`, `~/src`, and `~` when those exist). Name is the repository
+basename once a path is chosen. Workspace root is `<config dir>/workspaces/<name>`
+until you edit it.
+
+The palette can also switch terminals, create workspaces, close terminals, and
+remove workspaces or projects. Forms prefill from the selected terminal where
+that applies. On a pick list, Up/Down move the highlight and Tab or Enter
+accepts. On a text field, Tab or the arrow keys move between fields; Enter
+advances and submits at the last field. Ctrl-u clears a field; Backspace
+deletes its last character.
 
 Press `w` in browse mode, type a workspace name, and press Enter to create
 and select its `local` shell. The palette also lists `Create workspace (w)`.
@@ -187,6 +198,7 @@ name is inserted before `shell`:
 
 ```toml
 branch_prefix = "feature/" # Prefix for new workspace branches
+picker_roots = ["~/Code", "~/src", "~"]
 
 [[agents]]
 name = "claude"
