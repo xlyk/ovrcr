@@ -5,6 +5,7 @@ use eframe::egui::{self, Event, Key, Modifiers};
 use ovrcr::gui::input::encode_event;
 use ovrcr::gui::{Demo, Terminal};
 use std::path::Path;
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn wait_screen(terminal: &Terminal, needle: &str) -> Result<()> {
@@ -124,8 +125,7 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_screen(&terminal, "implement lifecycle cleanup")?;
     select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
-    terminal.send(b"\r")?;
-    wait_screen(&terminal, "fixture: lifecycle cleanup")?;
+    enter_selected_session(&mut terminal, "fixture: lifecycle cleanup")?;
     terminal.send(b"printf 'GUI_%s\\n' CHECKPOINT\r")?;
     wait_screen(&terminal, "GUI_CHECKPOINT")?;
     terminal.send(b"\x07q")?;
@@ -133,7 +133,7 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_screen(&terminal, "implement lifecycle cleanup")?;
     select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
-    wait_screen(&terminal, "GUI_CHECKPOINT")?;
+    enter_selected_session(&mut terminal, "GUI_CHECKPOINT")?;
     terminal.stop()?;
     demo.shutdown()?;
     assert!(!root.exists(), "successful cleanup must remove the demo");
@@ -159,6 +159,27 @@ fn select_sidebar_session(terminal: &mut Terminal, name: &str) -> Result<()> {
     };
     let click = format!("\x1b[<0;5;{}M", row + 1);
     terminal.send(click.as_bytes())
+}
+
+fn enter_selected_session(terminal: &mut Terminal, needle: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        terminal.send(b"\r")?;
+        let poll_deadline = Instant::now() + Duration::from_millis(250);
+        while Instant::now() < poll_deadline {
+            let text = terminal.screen().contents();
+            if text.contains(needle) && text.contains("Terminal mode") {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "selected session never reached terminal mode with {needle:?}:\n{}",
+                terminal.screen().contents()
+            );
+        }
+    }
 }
 
 fn demo_session_groups(root: &Path) -> Result<Vec<i32>> {

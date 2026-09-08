@@ -93,10 +93,20 @@ pub fn event_to_request(
     }
     match event {
         Event::Paste(text) => dashboard.input_request(
-            encode_paste(&text, dashboard.parser.screen().bracketed_paste()),
+            encode_paste(
+                &text,
+                dashboard
+                    .focused_pane()
+                    .is_some_and(|pane| pane.parser.screen().bracketed_paste()),
+            ),
             request_id,
         ),
-        Event::Key(key) => match encode_key(key, dashboard.parser.screen().application_cursor()) {
+        Event::Key(key) => match encode_key(
+            key,
+            dashboard
+                .focused_pane()
+                .is_some_and(|pane| pane.parser.screen().application_cursor()),
+        ) {
             KeyEncoding::Browse => {
                 dashboard.mode = InputMode::Browse;
                 None

@@ -1,12 +1,14 @@
 use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
-    AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
-    HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES,
-    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
+    AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, DashboardView,
+    ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES,
+    PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PaneTarget, Request, Response, ServerEvent, ServerMessage,
+    read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{Cursor, Read, Write};
 use std::net::Shutdown;
@@ -1364,9 +1366,11 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
                 response: Response::Screen { bytes, .. },
                 ..
             }
-            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output { bytes, session: _ })
-                if String::from_utf8_lossy(&bytes).contains("READY") =>
-            {
+            | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output {
+                bytes,
+                session: _,
+                revision: _,
+            }) if String::from_utf8_lossy(&bytes).contains("READY") => {
                 ready = true;
                 break;
             }
@@ -2179,12 +2183,21 @@ fn dashboard_select(stream: &mut UnixStream, request_id: u64, session: SessionId
         },
     )
     .unwrap();
+    let mut screen = None;
     loop {
         match read_frame::<ServerMessage>(stream).unwrap() {
             ServerMessage::Response {
                 request_id: id,
                 response: Response::Screen { bytes, .. },
-            } if id == request_id => return bytes,
+            } if id == request_id => screen = Some(bytes),
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Ok,
+            } if id == request_id => return screen.expect("select screen before acknowledgement"),
+            ServerMessage::Response {
+                request_id: id,
+                response: Response::Error { message, .. },
+            } if id == request_id => panic!("select failed: {message}"),
             _ => {}
         }
     }
@@ -2345,7 +2358,12 @@ impl HistoryDashboardParser {
     }
 
     fn forward(&mut self, message: &ServerMessage) {
-        if let ServerMessage::Event(ServerEvent::Output { session, bytes }) = message {
+        if let ServerMessage::Event(ServerEvent::Output {
+            session,
+            bytes,
+            revision: _,
+        }) = message
+        {
             self.screens
                 .entry(*session)
                 .or_insert_with(|| vt100::Parser::new(24, 80, HISTORY_ROWS))
@@ -2355,6 +2373,7 @@ impl HistoryDashboardParser {
 }
 
 fn history_request(connection: &mut HistoryConnection, id: u64, request: Request) -> Response {
+    let waits_for_screen = matches!(&request, Request::Select { .. });
     write_frame(
         &mut connection.stream,
         &ClientMessage {
@@ -2364,6 +2383,7 @@ fn history_request(connection: &mut HistoryConnection, id: u64, request: Request
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut screen = None;
     loop {
         assert!(
             Instant::now() < deadline,
@@ -2376,7 +2396,20 @@ fn history_request(connection: &mut HistoryConnection, id: u64, request: Request
             Some(ServerMessage::Response {
                 request_id,
                 response,
-            }) if request_id == id => return response,
+            }) if request_id == id => {
+                if waits_for_screen {
+                    match response {
+                        response @ Response::Screen { .. } => screen = Some(response),
+                        Response::Ok => {
+                            return screen.expect("select screen before acknowledgement");
+                        }
+                        response @ Response::Error { .. } => return response,
+                        response => panic!("select returned {response:?} before screen"),
+                    }
+                } else {
+                    return response;
+                }
+            }
             Some(_) => {}
         }
     }
@@ -4045,6 +4078,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
         match dashboard.next(Instant::now() + Duration::from_millis(50)) {
             Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
                 session: dirty_session,
+                revision: _,
             }))) if dirty_session == session => dirty = true,
             Ok(Some(_)) => {}
             Ok(None) => {
@@ -4176,11 +4210,10 @@ fn slow_dashboard_recovers_after_output_burst() {
     let mut saw_dirty = false;
     while !saw_dirty {
         match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
-            ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session })
-                if session == burst =>
-            {
-                saw_dirty = true
-            }
+            ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                session,
+                revision: _,
+            }) if session == burst => saw_dirty = true,
             _ => {}
         }
     }
@@ -4213,11 +4246,10 @@ fn slow_dashboard_recovers_after_output_burst() {
     let quiet_deadline = Instant::now() + Duration::from_millis(250);
     while Instant::now() < quiet_deadline {
         match read_frame::<ServerMessage>(&mut dashboard) {
-            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty { session }))
-                if session == burst =>
-            {
-                dirty_count += 1
-            }
+            Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                session,
+                revision: _,
+            })) if session == burst => dirty_count += 1,
             Ok(_) => {}
             Err(error)
                 if matches!(
@@ -5559,6 +5591,628 @@ fn selection_snapshot_precedes_later_quiet_tail_output() {
         Response::Ok
     ));
     fixture.join();
+}
+
+fn split_next_message(
+    stream: &mut UnixStream,
+    frames: &mut HistoryFrameReader,
+    deadline: Instant,
+    label: &str,
+) -> ServerMessage {
+    assert!(
+        Instant::now() < deadline,
+        "{label} exceeded its absolute deadline"
+    );
+    let two_second_deadline = Instant::now() + Duration::from_secs(2);
+    let read_deadline = deadline.min(two_second_deadline);
+    let timeout_label = if deadline <= two_second_deadline {
+        "outer"
+    } else {
+        "two-second read"
+    };
+    frames
+        .next(stream, read_deadline)
+        .unwrap_or_else(|error| panic!("{label} read failed before deadline: {error}"))
+        .unwrap_or_else(|| panic!("{label} exceeded its {timeout_label} deadline"))
+}
+
+fn split_view_messages(
+    stream: &mut UnixStream,
+    request_id: u64,
+    view: &DashboardView,
+) -> Vec<ServerMessage> {
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    write_frame(
+        stream,
+        &ClientMessage {
+            request_id,
+            request: Request::SetView { view: view.clone() },
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut frames = HistoryFrameReader::new();
+    let mut screens = HashSet::new();
+    let mut acknowledged = false;
+    let mut messages = Vec::new();
+    while !acknowledged || screens.len() < view.panes.len() {
+        let message = split_next_message(stream, &mut frames, deadline, "split view request");
+        if let ServerMessage::Response {
+            request_id: response_id,
+            response,
+        } = &message
+            && *response_id == request_id
+        {
+            match response {
+                Response::Screen { session, .. } => {
+                    assert!(
+                        view.panes.iter().any(|pane| pane.session == *session),
+                        "split view returned snapshot for unexpected session {session:?}"
+                    );
+                    assert!(
+                        screens.insert(*session),
+                        "split view returned duplicate snapshot for {session:?}"
+                    );
+                }
+                Response::Ok => {
+                    assert_eq!(
+                        screens,
+                        view.panes.iter().map(|pane| pane.session).collect(),
+                        "split view acknowledged before all expected snapshots"
+                    );
+                    acknowledged = true;
+                }
+                Response::Error { message, .. } => {
+                    panic!("split view request failed: {message}")
+                }
+                response => panic!("split view returned unexpected response: {response:?}"),
+            }
+        }
+        messages.push(message);
+    }
+    assert_eq!(
+        screens,
+        view.panes.iter().map(|pane| pane.session).collect(),
+        "split view must return exactly one snapshot per pane"
+    );
+    assert!(
+        acknowledged,
+        "split view did not acknowledge after snapshots"
+    );
+    messages
+}
+
+fn split_view_parsers(
+    messages: &[ServerMessage],
+    view: &DashboardView,
+) -> HashMap<SessionId, vt100::Parser> {
+    let mut parsers = view
+        .panes
+        .iter()
+        .map(|pane| {
+            (
+                pane.session,
+                vt100::Parser::new(pane.size.rows, pane.size.cols, 0),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut screens = HashSet::new();
+    for message in messages {
+        match message {
+            ServerMessage::Response {
+                response:
+                    Response::Screen {
+                        session,
+                        revision,
+                        size,
+                        bytes,
+                    },
+                ..
+            } if view.panes.iter().any(|pane| pane.session == *session) => {
+                let expected = view
+                    .panes
+                    .iter()
+                    .find(|pane| pane.session == *session)
+                    .unwrap();
+                assert_eq!(*revision, view.revision);
+                assert_eq!(*size, expected.size);
+                parsers.get_mut(session).unwrap().process(bytes);
+                screens.insert(*session);
+            }
+            ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision,
+                bytes,
+            }) if view.panes.iter().any(|pane| pane.session == *session) => {
+                if *revision == view.revision {
+                    parsers.get_mut(session).unwrap().process(bytes);
+                }
+            }
+            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
+                if view.panes.iter().any(|pane| pane.session == *session) =>
+            {
+                if screens.contains(session) {
+                    assert_eq!(
+                        *revision, view.revision,
+                        "old-revision dirty notification arrived after replacement"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(screens.len(), view.panes.len());
+    parsers
+}
+
+fn split_input_marker(
+    stream: &mut UnixStream,
+    request_id: u64,
+    session: SessionId,
+    revision: u64,
+    parser: &mut vt100::Parser,
+    marker: &str,
+) {
+    write_frame(
+        stream,
+        &ClientMessage {
+            request_id,
+            request: Request::Input {
+                session,
+                bytes: b"SIZE\n".to_vec(),
+            },
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut frames = HistoryFrameReader::new();
+    let mut acknowledged = false;
+    let mut raw = Vec::new();
+    while !acknowledged
+        || !raw
+            .windows(marker.len())
+            .any(|window| window == marker.as_bytes())
+    {
+        let message = split_next_message(stream, &mut frames, deadline, "split input marker");
+        match message {
+            ServerMessage::Response {
+                request_id: response_id,
+                response,
+            } if response_id == request_id => match response {
+                Response::Ok => acknowledged = true,
+                Response::Error { message, .. } => {
+                    panic!("split input request failed: {message}")
+                }
+                response => panic!("split input returned unexpected response: {response:?}"),
+            },
+            ServerMessage::Event(ServerEvent::Output {
+                session: output_session,
+                revision: output_revision,
+                bytes,
+            }) if output_session == session => {
+                assert_eq!(
+                    output_revision, revision,
+                    "old-revision output arrived after a pane replacement"
+                );
+                raw.extend_from_slice(&bytes);
+                parser.process(&bytes);
+            }
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                session: dirty_session,
+                revision: dirty_revision,
+            }) if dirty_session == session => {
+                assert_eq!(
+                    dirty_revision, revision,
+                    "old-revision dirty notification arrived after a pane replacement"
+                );
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        parser.screen().contents().contains(marker),
+        "child emitted {marker:?}, but parser screen did not reconstruct it"
+    );
+}
+
+fn split_terminal_marker(
+    fixture: &ControlFixture,
+    session: SessionId,
+    marker: &str,
+) -> (ovrcr::session::TerminalSize, String) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let timeout = deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_secs(2));
+        if let Some(Response::TerminalText { size, text, .. }) = request_with_timeout(
+            &fixture.socket,
+            400,
+            Request::ReadTerminal {
+                session,
+                max_lines: None,
+            },
+            timeout,
+        ) && text.contains(marker)
+        {
+            return (size, text);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "session {session:?} did not produce terminal marker {marker:?}"
+        );
+    }
+}
+
+#[test]
+fn split_server_two_streams_resize_resync_and_detach() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new_bounded();
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: "feature/split-server-acceptance".into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+
+    let command = |side: &str| {
+        vec![
+            "sh".into(),
+            "-c".into(),
+            format!(
+                r#"SIDE={side}; printf '%s_READY\n' "$SIDE"; while IFS= read -r line; do case "$line" in SIZE) printf '%s_SIZE_%s\n' "$SIDE" "$(stty size)";; BURST) i=0; while [ "$i" -lt 200000 ]; do printf '%s_%06d\n' "$SIDE" "$i"; i=$((i+1)); done; printf '%s_FINAL\n' "$SIDE";; *) printf '%s_ACK_%s\n' "$SIDE" "$line";; esac; done"#,
+                side = side,
+            )
+            .into(),
+        ]
+    };
+    let left = fixture.create_session_summary("left", command("LEFT"));
+    fixture.record_process_group(&left);
+    let right = fixture.create_session_summary("right", command("RIGHT"));
+    fixture.record_process_group(&right);
+    let hidden = fixture.create_session_summary(
+        "hidden",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"printf HIDDEN_READY\n; while IFS= read -r line; do case "$line" in SIZE_BEFORE) printf 'HIDDEN_SIZE_BEFORE_%s\n' "$(stty size)";; SIZE_AFTER) printf 'HIDDEN_SIZE_AFTER_%s\n' "$(stty size)";; *) printf 'HIDDEN_ACK_%s\n' "$line";; esac; done"#.into(),
+        ],
+    );
+    fixture.record_process_group(&hidden);
+    let left_pgid = fixture.original_pgid(left.id);
+    let right_pgid = fixture.original_pgid(right.id);
+    let hidden_pgid = fixture.original_pgid(hidden.id);
+    fixture.wait_terminal_contains(left.id, "LEFT_READY");
+    fixture.wait_terminal_contains(right.id, "RIGHT_READY");
+    fixture.wait_terminal_contains(hidden.id, "HIDDEN_READY");
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: hidden.id,
+            text: "SIZE_BEFORE".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    let (hidden_size_before, hidden_text_before) =
+        split_terminal_marker(&fixture, hidden.id, "HIDDEN_SIZE_BEFORE_40 120");
+    assert_eq!(
+        hidden_size_before,
+        ovrcr::session::TerminalSize {
+            rows: 40,
+            cols: 120,
+        }
+    );
+    assert!(hidden_text_before.contains("HIDDEN_SIZE_BEFORE_40 120"));
+
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    dashboard
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(matches!(
+        dashboard_request(&mut dashboard, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+
+    let first_view = DashboardView {
+        revision: 1,
+        panes: vec![
+            PaneTarget {
+                session: left.id,
+                size: ovrcr::session::TerminalSize { rows: 36, cols: 39 },
+            },
+            PaneTarget {
+                session: right.id,
+                size: ovrcr::session::TerminalSize { rows: 36, cols: 40 },
+            },
+        ],
+        focused: Some(left.id),
+    };
+    let first_messages = split_view_messages(&mut dashboard, 2, &first_view);
+    let mut parsers = split_view_parsers(&first_messages, &first_view);
+    assert!(parsers[&left.id].screen().contents().contains("LEFT_READY"));
+    assert!(
+        parsers[&right.id]
+            .screen()
+            .contents()
+            .contains("RIGHT_READY")
+    );
+    split_input_marker(
+        &mut dashboard,
+        3,
+        left.id,
+        first_view.revision,
+        parsers.get_mut(&left.id).unwrap(),
+        "LEFT_SIZE_36 39",
+    );
+
+    let focus_right_view = DashboardView {
+        revision: 2,
+        focused: Some(right.id),
+        ..first_view.clone()
+    };
+    let focus_right_messages = split_view_messages(&mut dashboard, 4, &focus_right_view);
+    let mut parsers = split_view_parsers(&focus_right_messages, &focus_right_view);
+    split_input_marker(
+        &mut dashboard,
+        5,
+        right.id,
+        focus_right_view.revision,
+        parsers.get_mut(&right.id).unwrap(),
+        "RIGHT_SIZE_36 40",
+    );
+
+    let resized_view = DashboardView {
+        revision: 3,
+        panes: vec![
+            PaneTarget {
+                session: left.id,
+                size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
+            },
+            PaneTarget {
+                session: right.id,
+                size: ovrcr::session::TerminalSize { rows: 26, cols: 30 },
+            },
+        ],
+        focused: Some(left.id),
+    };
+    let resized_messages = split_view_messages(&mut dashboard, 6, &resized_view);
+    let mut parsers = split_view_parsers(&resized_messages, &resized_view);
+    split_input_marker(
+        &mut dashboard,
+        7,
+        left.id,
+        resized_view.revision,
+        parsers.get_mut(&left.id).unwrap(),
+        "LEFT_SIZE_26 29",
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: hidden.id,
+            text: "SIZE_AFTER".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    let (hidden_size_after, hidden_text_after) =
+        split_terminal_marker(&fixture, hidden.id, "HIDDEN_SIZE_AFTER_40 120");
+    assert_eq!(hidden_size_after, hidden_size_before);
+    assert!(hidden_text_after.contains("HIDDEN_SIZE_BEFORE_40 120"));
+    assert!(hidden_text_after.contains("HIDDEN_SIZE_AFTER_40 120"));
+
+    let resized_focus_right_view = DashboardView {
+        revision: 4,
+        focused: Some(right.id),
+        ..resized_view.clone()
+    };
+    let resized_focus_right_messages =
+        split_view_messages(&mut dashboard, 8, &resized_focus_right_view);
+    let mut parsers = split_view_parsers(&resized_focus_right_messages, &resized_focus_right_view);
+    split_input_marker(
+        &mut dashboard,
+        9,
+        right.id,
+        resized_focus_right_view.revision,
+        parsers.get_mut(&right.id).unwrap(),
+        "RIGHT_SIZE_26 30",
+    );
+
+    let receive_buffer: libc::c_int = 1024;
+    let set_buffer = unsafe {
+        libc::setsockopt(
+            dashboard.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            (&receive_buffer as *const libc::c_int).cast(),
+            std::mem::size_of_val(&receive_buffer) as libc::socklen_t,
+        )
+    };
+    assert_eq!(set_buffer, 0, "failed to bound dashboard receive buffer");
+
+    assert_eq!(
+        request_with_timeout(
+            &fixture.socket,
+            10,
+            Request::SendTerminal {
+                session: left.id,
+                text: "BURST".into(),
+                submit: true,
+            },
+            Duration::from_secs(2),
+        ),
+        Some(Response::Ok)
+    );
+    assert_eq!(
+        request_with_timeout(
+            &fixture.socket,
+            11,
+            Request::SendTerminal {
+                session: right.id,
+                text: "BURST".into(),
+                submit: true,
+            },
+            Duration::from_secs(2),
+        ),
+        Some(Response::Ok)
+    );
+    let control_deadline = Instant::now() + Duration::from_secs(2);
+    let mut control_polls = 0;
+    while control_polls < 3 {
+        assert!(
+            Instant::now() < control_deadline,
+            "control hierarchy polling exceeded its absolute deadline"
+        );
+        assert!(matches!(
+            request_with_timeout(
+                &fixture.socket,
+                20 + control_polls,
+                Request::List,
+                control_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_secs(2)),
+            ),
+            Some(Response::Hierarchy(_))
+        ));
+        control_polls += 1;
+    }
+    fixture.wait_terminal_contains(left.id, "LEFT_FINAL");
+    fixture.wait_terminal_contains(right.id, "RIGHT_FINAL");
+
+    let mut dirty = HashSet::new();
+    let mut burst_frames = HistoryFrameReader::new();
+    let burst_deadline = Instant::now() + Duration::from_secs(30);
+    while dirty.len() < 2 {
+        let message = split_next_message(
+            &mut dashboard,
+            &mut burst_frames,
+            burst_deadline,
+            "split burst recovery",
+        );
+        match message {
+            ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision,
+                bytes,
+            }) if session == left.id || session == right.id => {
+                assert_eq!(
+                    revision, resized_focus_right_view.revision,
+                    "old-revision burst output arrived after replacement"
+                );
+                let _ = bytes;
+            }
+            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
+                if session == left.id || session == right.id =>
+            {
+                assert_eq!(
+                    revision, resized_focus_right_view.revision,
+                    "old-revision burst dirty notification arrived after replacement"
+                );
+                dirty.insert(session);
+            }
+            _ => {}
+        }
+    }
+    let recovered_view = DashboardView {
+        revision: 5,
+        ..resized_focus_right_view.clone()
+    };
+    let recovered_messages = split_view_messages(&mut dashboard, 12, &recovered_view);
+    let recovered_parsers = split_view_parsers(&recovered_messages, &recovered_view);
+    assert!(
+        recovered_parsers[&left.id]
+            .screen()
+            .contents()
+            .contains("LEFT_FINAL")
+    );
+    assert!(
+        recovered_parsers[&right.id]
+            .screen()
+            .contents()
+            .contains("RIGHT_FINAL")
+    );
+
+    drop(dashboard);
+    assert!(group_exists(left_pgid), "left process group died on detach");
+    assert!(
+        group_exists(right_pgid),
+        "right process group died on detach"
+    );
+    assert!(
+        group_exists(hidden_pgid),
+        "hidden process group died on detach"
+    );
+
+    let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
+    reattached
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    reattached
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(matches!(
+        dashboard_request(&mut reattached, 1, Request::DashboardHello),
+        Response::Hierarchy(_)
+    ));
+    let singleton_view = DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: left.id,
+            size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
+        }],
+        focused: Some(left.id),
+    };
+    let singleton_messages = split_view_messages(&mut reattached, 2, &singleton_view);
+    let singleton_parsers = split_view_parsers(&singleton_messages, &singleton_view);
+    assert!(
+        singleton_parsers[&left.id]
+            .screen()
+            .contents()
+            .contains("LEFT_FINAL")
+    );
+
+    let rebuilt_view = DashboardView {
+        revision: 2,
+        panes: resized_view.panes.clone(),
+        focused: Some(right.id),
+    };
+    let rebuilt_messages = split_view_messages(&mut reattached, 3, &rebuilt_view);
+    let rebuilt_parsers = split_view_parsers(&rebuilt_messages, &rebuilt_view);
+    assert!(
+        rebuilt_parsers[&left.id]
+            .screen()
+            .contents()
+            .contains("LEFT_FINAL")
+    );
+    assert!(
+        rebuilt_parsers[&right.id]
+            .screen()
+            .contents()
+            .contains("RIGHT_FINAL")
+    );
+    drop(reattached);
+
+    fixture.shutdown_kill();
+    for pgid in [left_pgid, right_pgid, hidden_pgid] {
+        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    }
 }
 
 fn wait_for_file_contents(path: &Path, expected: &str) {

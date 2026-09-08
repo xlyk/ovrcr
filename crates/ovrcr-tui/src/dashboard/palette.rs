@@ -116,7 +116,10 @@ impl Dashboard {
                 command: Command::RegisterProject,
             },
         ];
-        if let Some(id) = self.selected.filter(|id| find_session(self, *id).is_some()) {
+        if let Some(id) = self
+            .focused_session()
+            .filter(|id| find_session(self, *id).is_some())
+        {
             entries.push(Entry {
                 label: "Close terminal".into(),
                 command: Command::CloseTerminal(id),
@@ -342,7 +345,7 @@ impl Dashboard {
     }
 
     fn palette_form(&self, command: Command) -> Page {
-        let selected = self.selected.and_then(|id| find_session(self, id));
+        let selected = self.focused_session().and_then(|id| find_session(self, id));
         let project = selected.map(|s| s.project.clone()).unwrap_or_default();
         let workspace = selected.map(|s| s.workspace.clone()).unwrap_or_default();
         let field = |label, value, required| Field {
@@ -401,7 +404,11 @@ impl Dashboard {
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
                     let request_id = self.next_request_id();
-                    return Some(vec![self.select_request(session.id, request_id)]);
+                    return Some(
+                        self.select_request(session.id, request_id)
+                            .into_iter()
+                            .collect(),
+                    );
                 }
             }
         }

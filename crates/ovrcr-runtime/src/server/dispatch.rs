@@ -1,6 +1,9 @@
 use super::*;
 use crate::session::{SessionEvent, SessionId, TerminalSize};
-use ovrcr_protocol::{AgentReport, ErrorCode, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, Response};
+use ovrcr_protocol::{
+    AgentReport, DashboardView, ErrorCode, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, PaneTarget,
+    Response,
+};
 
 pub enum DispatchMessage {
     Session(SessionEvent),
@@ -15,7 +18,13 @@ pub enum DispatchMessage {
         request_id: u64,
         session: SessionId,
         size: TerminalSize,
-        completion: std::sync::mpsc::SyncSender<()>,
+        completion: std::sync::mpsc::SyncSender<DispatchCompletion>,
+    },
+    SetView {
+        owner: Arc<()>,
+        request_id: u64,
+        view: DashboardView,
+        completion: std::sync::mpsc::SyncSender<DispatchCompletion>,
     },
     History {
         owner: Arc<()>,
@@ -24,6 +33,11 @@ pub enum DispatchMessage {
         completion: std::sync::mpsc::SyncSender<()>,
     },
     Stop,
+}
+
+pub enum DispatchCompletion {
+    Complete,
+    Terminal(Receiver<Result<(), String>>),
 }
 
 pub enum HistoryRequest {
@@ -67,6 +81,12 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
                 size,
                 completion,
             } => dispatch_select(&state, request_id, session, size, completion),
+            DispatchMessage::SetView {
+                owner,
+                request_id,
+                view,
+                completion,
+            } => dispatch_set_view(&state, &owner, request_id, view, completion),
             DispatchMessage::History {
                 owner,
                 request_id,
@@ -322,10 +342,21 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     };
     session.apply_event(event);
     if let Some(bytes) = output {
-        if state.selected.lock().unwrap().as_ref() == Some(&id) {
+        let revision = state
+            .view
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|view| view.panes.iter().any(|pane| pane.session == id))
+            .map(|view| view.revision);
+        if let Some(revision) = revision {
             dashboard_try_send(
                 state,
-                ServerMessage::Event(ServerEvent::Output { session: id, bytes }),
+                ServerMessage::Event(ServerEvent::Output {
+                    session: id,
+                    revision,
+                    bytes,
+                }),
             );
         }
     } else {
@@ -354,60 +385,288 @@ fn dispatch_select(
     request_id: u64,
     id: SessionId,
     size: TerminalSize,
-    completion: SyncSender<()>,
+    completion: SyncSender<DispatchCompletion>,
 ) {
-    let session = state.sessions.lock().unwrap().get(&id).cloned();
-    let Some(session) = session else {
-        dashboard_try_send(
-            state,
-            response_message(
-                request_id,
-                Response::Error {
-                    code: ErrorCode::NotFound,
-                    message: format!("session {} not found", id.0),
-                },
-            ),
-        );
-        let _ = completion.send(());
+    let Some(snapshot) = dashboard_snapshot(state) else {
+        let _ = completion.send(DispatchCompletion::Complete);
         return;
     };
-    if let Err(error) = session.resize(size) {
-        dashboard_try_send(
+    let revision = state
+        .view
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(1, |view| view.revision.saturating_add(1));
+    dispatch_set_view(
+        state,
+        &snapshot.identity,
+        request_id,
+        DashboardView {
+            revision,
+            panes: vec![PaneTarget { session: id, size }],
+            focused: Some(id),
+        },
+        completion,
+    );
+}
+
+fn view_error(
+    state: &ServerState,
+    owner: &Arc<()>,
+    request_id: u64,
+    code: ErrorCode,
+    message: impl Into<String>,
+) {
+    let _ = dashboard_send_owner(
+        state,
+        owner,
+        response_message(
+            request_id,
+            Response::Error {
+                code,
+                message: message.into(),
+            },
+        ),
+    );
+}
+
+fn dispatch_set_view(
+    state: &ServerState,
+    owner: &Arc<()>,
+    request_id: u64,
+    view: DashboardView,
+    completion: SyncSender<DispatchCompletion>,
+) {
+    #[cfg(test)]
+    if let Some(resize) = state.resize_hook.lock().unwrap().clone() {
+        dispatch_set_view_with_resize(
             state,
-            response_message(
-                request_id,
-                Response::Error {
-                    code: ErrorCode::Internal,
-                    message: error.to_string(),
-                },
-            ),
+            owner,
+            request_id,
+            view,
+            completion,
+            move |session, size| resize(session, size),
         );
-        let _ = completion.send(());
         return;
     }
-    let previous = *state.selected.lock().unwrap();
-    let Some(snapshot) = dashboard_snapshot(state) else {
-        let _ = completion.send(());
+    dispatch_set_view_with_resize(
+        state,
+        owner,
+        request_id,
+        view,
+        completion,
+        |session, size| session.resize(size),
+    );
+}
+
+fn dispatch_set_view_with_resize(
+    state: &ServerState,
+    owner: &Arc<()>,
+    request_id: u64,
+    view: DashboardView,
+    completion: SyncSender<DispatchCompletion>,
+    mut resize: impl FnMut(&Session, TerminalSize) -> anyhow::Result<()>,
+) {
+    if !dashboard_owner_matches(state, owner) {
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    }
+    if let Err(error) = view.validate() {
+        view_error(state, owner, request_id, ErrorCode::InvalidRequest, error);
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    }
+    let previous = state.view.lock().unwrap().clone();
+    if previous
+        .as_ref()
+        .is_some_and(|current| view.revision <= current.revision)
+    {
+        view_error(
+            state,
+            owner,
+            request_id,
+            ErrorCode::InvalidRequest,
+            "view revision must increase",
+        );
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    }
+    let sessions = {
+        let sessions = state.sessions.lock().unwrap();
+        let mut resolved = Vec::with_capacity(view.panes.len());
+        for pane in &view.panes {
+            let Some(session) = sessions.get(&pane.session).cloned() else {
+                view_error(
+                    state,
+                    owner,
+                    request_id,
+                    ErrorCode::NotFound,
+                    format!("session {} not found", pane.session.0),
+                );
+                let _ = completion.send(DispatchCompletion::Complete);
+                return;
+            };
+            resolved.push((session, pane.size));
+        }
+        resolved
+    };
+    let targets = sessions
+        .iter()
+        .filter(|(session, size)| {
+            previous
+                .as_ref()
+                .and_then(|current| {
+                    current
+                        .panes
+                        .iter()
+                        .find(|pane| pane.session == session.summary().id)
+                })
+                .is_none_or(|pane| pane.size != *size)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut resized = 0;
+    let resize_result = resize_view_targets(&targets, |session, size| {
+        let result = resize(session, size);
+        if result.is_ok() {
+            resized += 1;
+        }
+        result
+    });
+    if let Err(error) = resize_result {
+        if resized > 0 {
+            clear_view_subscription_for_owner(
+                state,
+                owner,
+                previous.as_ref().map(|view| view.revision),
+            );
+            let (terminal_sender, terminal_receiver) = mpsc::sync_channel(1);
+            let queued = dashboard_send_owner_terminal(
+                state,
+                owner,
+                response_message(
+                    request_id,
+                    Response::Error {
+                        code: ErrorCode::PartialFailure,
+                        message: error.to_string(),
+                    },
+                ),
+                Some(terminal_sender),
+            );
+            if queued {
+                let _ = completion.send(DispatchCompletion::Terminal(terminal_receiver));
+            } else {
+                let _ = completion.send(DispatchCompletion::Complete);
+            }
+        } else {
+            view_error(
+                state,
+                owner,
+                request_id,
+                ErrorCode::Internal,
+                error.to_string(),
+            );
+            let _ = completion.send(DispatchCompletion::Complete);
+        }
+        return;
+    }
+    let Some(snapshot) =
+        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
+    else {
+        let _ = completion.send(DispatchCompletion::Complete);
         return;
     };
-    if previous != Some(id) {
-        if let Some(current) = state.dashboard_slot.lock().unwrap().as_mut()
-            && Arc::ptr_eq(&current.identity, &snapshot.identity)
-        {
-            current.history.take();
+    let screens = sessions
+        .iter()
+        .map(|(session, _)| session.current_screen())
+        .collect::<Vec<_>>();
+    if !snapshot.sink.replace_view(&view, request_id, screens) {
+        disconnect_dashboard(state, snapshot);
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    }
+    let focus_changed = previous.as_ref().and_then(|old| old.focused) != view.focused;
+    let mut slot = state.dashboard_slot.lock().unwrap();
+    let Some(current) = slot
+        .as_mut()
+        .filter(|current| Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing())
+    else {
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    };
+    #[cfg(test)]
+    if let Some(hook) = state.before_view_publish_hook.lock().unwrap().clone() {
+        hook();
+    }
+    if focus_changed {
+        current.history.take();
+    }
+    *state.view.lock().unwrap() = Some(view.clone());
+    if let Some(focused) = view.focused
+        && let Some(pane) = view.panes.iter().find(|pane| pane.session == focused)
+    {
+        set_dashboard_geometry(state, owner, pane.size);
+    }
+    let _ = completion.send(DispatchCompletion::Complete);
+}
+
+pub(super) fn clear_view_subscription(state: &ServerState, fallback_revision: Option<u64>) {
+    let mut view = state.view.lock().unwrap();
+    match view.as_mut() {
+        Some(current) => {
+            current.panes.clear();
+            current.focused = None;
+        }
+        None => {
+            if let Some(revision) = fallback_revision {
+                *view = Some(DashboardView {
+                    revision,
+                    panes: Vec::new(),
+                    focused: None,
+                });
+            }
         }
     }
-    set_dashboard_geometry(state, &snapshot.identity, size);
-    if !snapshot
-        .sink
-        .replace_selection(previous, id, request_id, size, session.current_screen())
+}
+
+fn clear_view_subscription_for_owner(
+    state: &ServerState,
+    owner: &Arc<()>,
+    fallback_revision: Option<u64>,
+) {
+    let slot = state.dashboard_slot.lock().unwrap();
+    if !slot
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
     {
-        disconnect_dashboard(state, snapshot);
-        let _ = completion.send(());
         return;
     }
-    *state.selected.lock().unwrap() = Some(id);
-    let _ = completion.send(());
+    let mut view = state.view.lock().unwrap();
+    match view.as_mut() {
+        Some(current) => {
+            current.panes.clear();
+            current.focused = None;
+        }
+        None => {
+            if let Some(revision) = fallback_revision {
+                *view = Some(DashboardView {
+                    revision,
+                    panes: Vec::new(),
+                    focused: None,
+                });
+            }
+        }
+    }
+}
+
+pub(super) fn resize_view_targets(
+    targets: &[(Arc<Session>, TerminalSize)],
+    mut resize: impl FnMut(&Session, TerminalSize) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    for (session, size) in targets {
+        resize(session, *size)?;
+    }
+    Ok(())
 }
 
 pub(super) fn set_dashboard_geometry(state: &ServerState, owner: &Arc<()>, size: TerminalSize) {

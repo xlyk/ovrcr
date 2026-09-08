@@ -1,6 +1,8 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, history_page_covers};
-use super::{Dashboard, HistoryView, InputMode, TreeRow, history_view_size};
+use super::{
+    Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size, pane_rects,
+};
 use crate::context::format_context;
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
@@ -19,7 +21,6 @@ struct DashboardLayout {
     footer: Rect,
     sidebar: Rect,
     sidebar_content: Rect,
-    metadata: Rect,
     terminal: Rect,
 }
 
@@ -61,7 +62,13 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
                 color(vt_cell.bgcolor(), BASE),
             );
             let contents = vt_cell.contents();
-            let symbol = if contents.is_empty() { " " } else { contents };
+            let symbol = if vt_cell.is_wide() && col.saturating_add(1) >= cols {
+                " "
+            } else if contents.is_empty() {
+                " "
+            } else {
+                contents
+            };
             cell.set_symbol(symbol).set_fg(fg).set_bg(bg);
             let mut modifier = Modifier::empty();
             if vt_cell.bold() {
@@ -88,6 +95,12 @@ pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen
             frame.set_cursor_position((area.x + col, area.y + row));
         }
     }
+}
+
+fn pane_is_running(dashboard: &Dashboard, pane: &PaneState) -> bool {
+    pane.session
+        .and_then(|session| find_session(dashboard, session))
+        .is_some_and(|session| matches!(session.phase, SessionPhase::Running))
 }
 
 pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection) {
@@ -356,6 +369,28 @@ fn history_footer(dashboard: &Dashboard) -> Line<'static> {
     Line::from(Span::styled(text, Style::default().fg(TEXT)))
 }
 
+fn compact_history_footer(dashboard: &Dashboard) -> Line<'static> {
+    let status =
+        dashboard
+            .history
+            .as_ref()
+            .map_or("HISTORY  scroll  Space/v anchor".to_owned(), |view| {
+                if view.copy_job.is_some() || view.copy_completion.is_some() {
+                    "HISTORY COPY  Copying selection".to_owned()
+                } else if view.cursor_target.is_some() {
+                    "HISTORY  Waiting for cell".to_owned()
+                } else if view.anchor.is_some() {
+                    "HISTORY SELECT  h/j/k/l Space/v y".to_owned()
+                } else {
+                    "HISTORY  scroll  Space/v anchor".to_owned()
+                }
+            });
+    Line::from(Span::styled(
+        format!("{status}  split hidden: terminal too small  Esc/q"),
+        Style::default().fg(TEXT),
+    ))
+}
+
 fn history_color(value: HistoryColor, default: Color) -> Color {
     match value {
         HistoryColor::Default => default,
@@ -452,14 +487,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 },
             )],
             TreeRow::Workspace { .. } => &[(2, MAUVE)],
-            TreeRow::Session { id } if row_line == 0 && dashboard.selected != Some(*id) => &[(
-                2,
-                if dashboard.session_is_busy(*id) {
-                    GREEN
-                } else {
-                    MUTED
-                },
-            )],
+            TreeRow::Session { id }
+                if row_line == 0 && dashboard.focused_session() != Some(*id) =>
+            {
+                &[(
+                    2,
+                    if dashboard.session_is_busy(*id) {
+                        GREEN
+                    } else {
+                        MUTED
+                    },
+                )]
+            }
             _ => &[],
         };
         for &(column, color) in accents {
@@ -469,101 +508,160 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         }
     }
 
-    let selected = dashboard
-        .selected
-        .and_then(|id| find_session(dashboard, id));
-    let metadata = selected.map_or_else(
-        || {
-            Line::from(Span::styled(
-                "no session selected",
-                Style::default().fg(MUTED),
-            ))
-        },
-        |session| {
-            let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
-                "closed".to_string()
-            } else {
-                session
-                    .pid
-                    .map_or_else(|| "—".to_string(), |pid| pid.to_string())
+    let rects = pane_rects(frame.area(), dashboard.panes.len(), dashboard.focused_pane);
+    let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
+    let split_separator = dashboard.panes.len() == 2 && rects.len() == 2;
+    if split_separator {
+        let separator_x = rects[0].terminal.right();
+        for row in 0..layout.sidebar.height {
+            let cell = frame
+                .buffer_mut()
+                .cell_mut((separator_x, layout.sidebar.y + row))
+                .expect("split separator is in frame");
+            cell.reset();
+            cell.set_symbol("│").set_fg(MUTED).set_bg(BASE);
+        }
+    }
+
+    if dashboard.panes.len() == 2 {
+        for rect in &rects {
+            let Some(pane) = dashboard.panes.get(rect.pane_index) else {
+                continue;
             };
-            let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
-                Span::raw("")
-            } else {
-                let label = match session.activity {
-                    AgentActivity::Unknown => "agent unknown",
-                    AgentActivity::Idle => "agent idle",
-                    AgentActivity::Busy => "agent busy",
-                    AgentActivity::WaitingInput => "agent waiting input",
-                    AgentActivity::Error => "agent error",
-                };
-                Span::styled(format!("  {label}"), Style::default().fg(TEAL))
-            };
-            Line::from(vec![
-                Span::styled("pid: ", Style::default().fg(MUTED)),
-                Span::styled(pid, Style::default().fg(TEAL)),
-                Span::styled("  elapsed: ", Style::default().fg(MUTED)),
-                Span::styled(
-                    format_elapsed_at(session.started_unix_ms, now_unix_ms),
-                    Style::default().fg(TEAL),
-                ),
-                activity,
-                if matches!(session.phase, SessionPhase::Paused) {
-                    Span::styled("  paused", Style::default().fg(PEACH))
+            render_split_metadata(
+                frame,
+                *rect,
+                pane,
+                dashboard,
+                rect.pane_index == dashboard.focused_pane,
+                now_unix_ms,
+            );
+            render_terminal(
+                frame,
+                rect.terminal,
+                pane.parser.screen(),
+                rect.pane_index == dashboard.focused_pane
+                    && dashboard.mode == InputMode::Terminal
+                    && pane.ready
+                    && pane_is_running(dashboard, pane),
+            );
+        }
+    } else if let Some(rect) = rects.first().copied() {
+        let selected = dashboard
+            .focused_session()
+            .and_then(|id| find_session(dashboard, id));
+        let metadata = selected.map_or_else(
+            || {
+                Line::from(Span::styled(
+                    "no session selected",
+                    Style::default().fg(MUTED),
+                ))
+            },
+            |session| {
+                let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                    "closed".to_string()
                 } else {
+                    session
+                        .pid
+                        .map_or_else(|| "—".to_string(), |pid| pid.to_string())
+                };
+                let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
                     Span::raw("")
-                },
-            ])
-        },
-    );
-    if !layout.metadata.is_empty() {
+                } else {
+                    let label = match session.activity {
+                        AgentActivity::Unknown => "agent unknown",
+                        AgentActivity::Idle => "agent idle",
+                        AgentActivity::Busy => "agent busy",
+                        AgentActivity::WaitingInput => "agent waiting input",
+                        AgentActivity::Error => "agent error",
+                    };
+                    Span::styled(format!("  {label}"), Style::default().fg(TEAL))
+                };
+                Line::from(vec![
+                    Span::styled("pid: ", Style::default().fg(MUTED)),
+                    Span::styled(pid, Style::default().fg(TEAL)),
+                    Span::styled("  elapsed: ", Style::default().fg(MUTED)),
+                    Span::styled(
+                        format_elapsed_at(session.started_unix_ms, now_unix_ms),
+                        Style::default().fg(TEAL),
+                    ),
+                    activity,
+                    if matches!(session.phase, SessionPhase::Paused) {
+                        Span::styled("  paused", Style::default().fg(PEACH))
+                    } else {
+                        Span::raw("")
+                    },
+                ])
+            },
+        );
         frame.render_widget(
             Paragraph::new(metadata).style(Style::default().bg(BASE)),
-            Rect::new(
-                layout.metadata.x,
-                layout.metadata.y,
-                layout.metadata.width,
-                1,
-            ),
+            Rect::new(rect.metadata.x, rect.metadata.y, rect.metadata.width, 1),
         );
+        if rect.metadata.height > 1 {
+            let metadata_hint = dashboard.history.as_ref().map_or_else(
+                || "─".repeat(usize::from(rect.metadata.width)),
+                |view| history_hint(view, dashboard.focused_size()),
+            );
+            frame.render_widget(
+                Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),
+                Rect::new(
+                    rect.metadata.x,
+                    rect.metadata.y.saturating_add(1),
+                    rect.metadata.width,
+                    1,
+                ),
+            );
+        }
+        if let Some(pane) = dashboard.focused_pane() {
+            render_terminal(
+                frame,
+                rect.terminal,
+                pane.parser.screen(),
+                dashboard.mode == InputMode::Terminal
+                    && pane.ready
+                    && pane_is_running(dashboard, pane),
+            );
+        }
     }
-    if layout.metadata.height > 1 {
-        let metadata_hint = dashboard.history.as_ref().map_or_else(
-            || "─".repeat(usize::from(layout.metadata.width)),
-            |view| history_hint(view, dashboard.pane_size),
-        );
-        frame.render_widget(
-            Paragraph::new(metadata_hint).style(Style::default().fg(MUTED).bg(BASE)),
-            Rect::new(
-                layout.metadata.x,
-                layout.metadata.y.saturating_add(1),
-                layout.metadata.width,
-                1,
-            ),
-        );
-    }
+
     if let Some(copy) = dashboard.copy.as_ref() {
-        render_copy(frame, layout.terminal, copy);
+        if let Some(rect) = rects
+            .iter()
+            .find(|rect| rect.pane_index == dashboard.focused_pane)
+        {
+            render_copy(frame, rect.terminal, copy);
+        }
     } else if let Some(view) = dashboard
         .history
         .as_ref()
         .filter(|_| dashboard.mode == InputMode::History)
     {
-        render_history(frame, layout.terminal, view);
-    } else {
-        render_terminal(
-            frame,
-            layout.terminal,
-            dashboard.parser.screen(),
-            dashboard.mode == InputMode::Terminal,
-        );
+        if let Some(rect) = rects
+            .iter()
+            .find(|rect| rect.pane_index == dashboard.focused_pane)
+        {
+            render_history(frame, rect.terminal, view);
+        }
     }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
             if let Some(notice) = dashboard.copy_notice.as_deref() {
+                if split_hidden {
+                    return Line::from(Span::styled(
+                        format!("{notice}  split hidden: terminal too small"),
+                        Style::default().fg(TEXT),
+                    ));
+                }
                 return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
             }
             if dashboard.mode == InputMode::Copy {
+                if split_hidden {
+                    return Line::from(Span::styled(
+                        "COPY  split hidden: terminal too small  h/j/k/l  Space anchor  y copy  Esc",
+                        Style::default().fg(TEXT),
+                    ));
+                }
                 return Line::from(vec![
                     Span::styled("COPY  ", Style::default().fg(TEAL)),
                     Span::styled("h/j/k/l", Style::default().fg(Color::Rgb(249, 226, 175))),
@@ -576,8 +674,28 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" cancel", Style::default().fg(MUTED)),
                 ]);
             }
+            if dashboard.mode == InputMode::History && split_hidden {
+                return compact_history_footer(dashboard);
+            }
+            if dashboard.mode == InputMode::Browse && split_hidden {
+                return Line::from(Span::styled(
+                    "BROWSE  split hidden: terminal too small  v split  Tab/Shift-Tab  x close",
+                    Style::default().fg(TEXT),
+                ));
+            }
             let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
             let narrow = layout.footer.width < 60;
+            if dashboard.mode == InputMode::Browse && !(paused && narrow) {
+                let footer = if layout.footer.width < 100 {
+                    "BROWSE  v split  Tab/Shift-Tab panes  x close  q detach"
+                } else {
+                    "BROWSE  j/k/↑/↓  Enter  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach"
+                };
+                return Line::from(Span::styled(
+                    footer,
+                    Style::default().fg(TEXT),
+                ));
+            }
             let mut footer = if dashboard.mode == InputMode::Terminal {
                 vec![
                     Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
@@ -616,12 +734,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" tasks  ", Style::default().fg(MUTED)),
                 ]);
             }
-            if dashboard.mode == InputMode::Browse {
-                footer.extend([
-                    Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" detach", Style::default().fg(MUTED)),
-                    Span::styled("  : commands", Style::default().fg(MAUVE)),
-                ]);
+            if split_hidden {
+                footer.extend([Span::styled(
+                    "  split hidden: terminal too small",
+                    Style::default().fg(PEACH),
+                )]);
             }
             Line::from(footer)
         },
@@ -639,6 +756,78 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     dashboard.draw_palette(frame);
 }
 
+fn render_split_metadata(
+    frame: &mut Frame<'_>,
+    rect: PaneRects,
+    pane: &PaneState,
+    dashboard: &Dashboard,
+    focused: bool,
+    now_unix_ms: u64,
+) {
+    if rect.metadata.is_empty() {
+        return;
+    }
+    let session = pane.session.and_then(|id| find_session(dashboard, id));
+    let name = session.map_or("no session", |session| session.name.as_str());
+    let prefix = if focused { "> " } else { "  " };
+    let mut text = if pane.ready {
+        format!(
+            "{prefix}{name} {}x{}",
+            rect.terminal.width, rect.terminal.height
+        )
+    } else {
+        format!("{prefix}loading {name}")
+    };
+    if pane.ready {
+        if let Some(session) = session {
+            let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                "closed".to_string()
+            } else {
+                session
+                    .pid
+                    .map_or_else(|| "—".to_string(), |pid| pid.to_string())
+            };
+            append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+            append_metadata_field(
+                &mut text,
+                &format!(
+                    "elapsed: {}",
+                    format_elapsed_at(session.started_unix_ms, now_unix_ms)
+                ),
+                rect.metadata.width,
+            );
+        }
+    }
+    let style = if focused {
+        Style::default().fg(CRUST).bg(MAUVE)
+    } else {
+        Style::default().fg(TEXT).bg(BASE)
+    };
+    frame.render_widget(
+        Paragraph::new(clip_text(&text, usize::from(rect.metadata.width))).style(style),
+        Rect::new(rect.metadata.x, rect.metadata.y, rect.metadata.width, 1),
+    );
+    if rect.metadata.height > 1 {
+        frame.render_widget(
+            Paragraph::new("─".repeat(usize::from(rect.metadata.width)))
+                .style(Style::default().fg(MUTED).bg(BASE)),
+            Rect::new(
+                rect.metadata.x,
+                rect.metadata.y.saturating_add(1),
+                rect.metadata.width,
+                1,
+            ),
+        );
+    }
+}
+
+fn append_metadata_field(text: &mut String, field: &str, width: u16) {
+    let candidate = format!("{text}  {field}");
+    if Line::raw(&candidate).width() <= usize::from(width) {
+        *text = candidate;
+    }
+}
+
 fn dashboard_layout(area: Rect) -> DashboardLayout {
     let [title, body, footer] = Layout::default()
         .direction(Direction::Vertical)
@@ -654,7 +843,7 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
         .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
         .areas(body);
     let metadata_height = right.height.min(METADATA_HEIGHT);
-    let [metadata, terminal] = Layout::default()
+    let [_metadata, terminal] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(metadata_height), Constraint::Min(0)])
         .areas(right);
@@ -668,7 +857,6 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
             sidebar.width.saturating_sub(1),
             sidebar.height,
         ),
-        metadata,
         terminal,
     }
 }
@@ -760,7 +948,7 @@ fn tree_line_text(
                     base_style,
                 );
             };
-            let selected = dashboard.selected == Some(*id);
+            let selected = dashboard.focused_session() == Some(*id);
             let label = if session.name == "local" {
                 "terminal"
             } else {

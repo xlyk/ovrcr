@@ -9,7 +9,8 @@ use super::{
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
-    HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize,
+    HistorySnapshotId, Request, Response, ServerEvent, ServerMessage, SessionId, TerminalSize,
+    write_frame,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -19,6 +20,7 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -60,6 +62,273 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     drop(dashboard);
     drop(terminal);
     assert!(bytes.is_empty());
+}
+
+#[test]
+fn initial_selection_completes_zero_target_view_on_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 1, 1), 3)
+        .unwrap()
+        .expect("zero-target SetView should still be emitted");
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    thread::spawn(move || {
+        write_frame(
+            &mut sender,
+            &ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        )
+        .unwrap();
+    });
+    super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 0).unwrap();
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+}
+
+#[test]
+fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 1;
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 9)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    let revision = view.revision;
+    let targets = view.panes.clone();
+    let (sender, receiver) = mpsc::channel();
+    for _ in 0..62 {
+        sender
+            .send(ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision,
+                bytes: b"ignored while unready".to_vec(),
+            }))
+            .unwrap();
+    }
+    for (index, target) in targets.iter().enumerate() {
+        sender
+            .send(ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: target.session,
+                    revision,
+                    size: target.size,
+                    bytes: format!("SCREEN_{index}").into_bytes(),
+                },
+            })
+            .unwrap();
+    }
+    sender
+        .send(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Ok,
+        })
+        .unwrap();
+    sender
+        .send(ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(1),
+            revision,
+            bytes: b"TAIL_A".to_vec(),
+        }))
+        .unwrap();
+    sender
+        .send(ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(2),
+            revision,
+            bytes: b"TAIL_B".to_vec(),
+        }))
+        .unwrap();
+    let (_peer, mut stream) = UnixStream::pair().unwrap();
+
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
+            .unwrap()
+    );
+    assert!(dashboard.pending_view.is_some());
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(
+        dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("SCREEN_0")
+    );
+    assert!(
+        dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("SCREEN_1")
+    );
+    assert!(
+        !dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_A")
+    );
+    assert!(
+        !dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_B")
+    );
+
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
+            .unwrap()
+    );
+    assert!(dashboard.pending_view.is_none());
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_A")
+    );
+    assert!(
+        dashboard.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("TAIL_B")
+    );
+}
+
+#[test]
+fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 40, 8), 4)
+        .unwrap()
+        .expect("view should request a snapshot");
+    let revision = dashboard.view_revision;
+    let size = dashboard.panes[0].desired_size;
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    thread::spawn(move || {
+        for message in [
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(2),
+                    revision,
+                    size,
+                    bytes: b"wrong".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        ] {
+            write_frame(&mut sender, &message).unwrap();
+        }
+    });
+    let result = super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 4, 1);
+    assert!(
+        result.is_err(),
+        "wrong Screen followed by Ok must not complete startup"
+    );
+    assert!(!dashboard.panes[0].ready);
+}
+
+#[test]
+fn initial_selection_ignores_wrong_screen_before_matching_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 40, 8), 3)
+        .unwrap()
+        .expect("view should request a snapshot");
+    let revision = dashboard.view_revision;
+    let size = dashboard.panes[0].desired_size;
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    receiver
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    thread::spawn(move || {
+        for message in [
+            ServerMessage::Response {
+                request_id: request.request_id.saturating_add(1),
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision,
+                    size,
+                    bytes: b"wrong request".to_vec(),
+                },
+            },
+            ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision,
+                bytes: b"intervening".to_vec(),
+            }),
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(2),
+                    revision,
+                    size,
+                    bytes: b"wrong".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision: revision.saturating_sub(1),
+                    size,
+                    bytes: b"wrong revision".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision,
+                    size,
+                    bytes: b"right".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        ] {
+            write_frame(&mut sender, &message).unwrap();
+        }
+    });
+    super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 1).unwrap();
+    assert!(dashboard.requested_view.is_some());
+    assert!(dashboard.panes[0].ready);
+    assert!(
+        !dashboard.panes[0]
+            .parser
+            .screen()
+            .contents()
+            .contains("wrong")
+    );
 }
 
 #[test]
@@ -303,8 +572,10 @@ impl Write for FailingWriter {
 
 fn staged_history_copy_dashboard() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
+    dashboard.select_session(SessionId(1));
     dashboard.mode = InputMode::History;
-    dashboard.selected = Some(SessionId(1));
+    dashboard.panes[dashboard.focused_pane].snapshot_installed = true;
+    dashboard.panes[dashboard.focused_pane].ready = true;
     let opened = HistoryOpened {
         session: SessionId(1),
         snapshot: HistorySnapshotId(7),

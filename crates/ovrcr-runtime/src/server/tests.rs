@@ -1,4 +1,5 @@
 use super::connections::lifecycle_response_with_partial_hierarchy;
+use super::dispatch::resize_view_targets;
 use super::startup::resolve_bound_socket;
 use super::*;
 use ovrcr_protocol::AgentReport;
@@ -6,7 +7,8 @@ use std::time::Instant;
 
 use crate::session::AgentActivity;
 use ovrcr_protocol::{
-    HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, Response, ServerEvent, ServerMessage,
+    DashboardView, HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, PaneTarget, Response,
+    ServerEvent, ServerMessage,
 };
 use ovrcr_terminal::history::FrozenHistory;
 use std::io::Read;
@@ -39,6 +41,1458 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
         dispatch_sender.try_send(DispatchMessage::Stop),
         Err(mpsc::TrySendError::Full(_))
     ));
+}
+
+#[test]
+fn split_delivery_snapshots_precede_increments() {
+    let sink = DashboardSink::new();
+    let left = SessionId(1);
+    let right = SessionId(2);
+    for session in [left, right] {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision: 1,
+                bytes: b"old".to_vec(),
+            }),
+            completion: None,
+        }));
+    }
+    let view = DashboardView {
+        revision: 2,
+        panes: vec![
+            PaneTarget {
+                session: left,
+                size: TerminalSize { rows: 36, cols: 39 },
+            },
+            PaneTarget {
+                session: right,
+                size: TerminalSize { rows: 36, cols: 40 },
+            },
+        ],
+        focused: Some(right),
+    };
+    assert!(sink.replace_view(&view, 10, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: right,
+            revision: 2,
+            bytes: b"new".to_vec(),
+        }),
+        completion: None,
+    }));
+    for (session, bytes) in [(left, b"LEFT".as_slice()), (right, b"RIGHT".as_slice())] {
+        assert!(matches!(
+            sink.next(),
+            Some(DashboardDelivery::Message(DashboardOutbound {
+                message: ServerMessage::Response {
+                    response: Response::Screen { revision: 2, session: actual, bytes: actual_bytes, .. },
+                    ..
+                },
+                ..
+            })) if actual == session && actual_bytes == bytes
+        ));
+    }
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 10,
+                response: Response::Ok,
+            },
+            ..
+        }))
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision: 2,
+                bytes,
+            }),
+            ..
+        })) if session == right && bytes == b"new"
+    ));
+
+    let sink = DashboardSink::new();
+    for _ in 0..62 {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+            completion: None,
+        }));
+    }
+    assert!(!sink.replace_view(&view, 11, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
+    assert!(sink.next().is_none());
+}
+
+#[test]
+fn split_delivery_dirty_revisions_are_isolated() {
+    let sink = DashboardSink::new();
+    let first = SessionId(1);
+    let second = SessionId(2);
+    for _ in 0..(DASHBOARD_QUEUE - 3) {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+            completion: None,
+        }));
+    }
+    for (session, bytes) in [
+        (first, b"first".as_slice()),
+        (second, b"second".as_slice()),
+        (SessionId(3), b"interleaved".as_slice()),
+    ] {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision: 1,
+                bytes: bytes.to_vec(),
+            }),
+            completion: None,
+        }));
+    }
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: first,
+            revision: 1,
+            bytes: b"first-replaced".to_vec(),
+        }),
+        completion: None,
+    }));
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: second,
+            revision: 1,
+            bytes: b"second-replaced".to_vec(),
+        }),
+        completion: None,
+    }));
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: second,
+            revision: 1,
+            bytes: b"second-dirty".to_vec(),
+        }),
+        completion: None,
+    }));
+    for _ in 0..2 {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 3,
+                response: Response::Ok,
+            },
+            completion: None,
+        }));
+    }
+    let view = DashboardView {
+        revision: 2,
+        panes: vec![
+            PaneTarget {
+                session: first,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            PaneTarget {
+                session: second,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+        ],
+        focused: Some(first),
+    };
+    let mut initial_messages = Vec::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        let Some(DashboardDelivery::Message(outbound)) = sink.next() else {
+            panic!("expected protected and interleaved messages");
+        };
+        initial_messages.push(outbound.message);
+    }
+    assert!(
+        initial_messages[..DASHBOARD_QUEUE - 3]
+            .iter()
+            .all(|message| {
+                matches!(
+                    message,
+                    ServerMessage::Response {
+                        request_id: 1,
+                        response: Response::Ok,
+                    }
+                )
+            })
+    );
+    assert!(matches!(
+        initial_messages[DASHBOARD_QUEUE - 3],
+        ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(3),
+            revision: 1,
+            ref bytes,
+        }) if bytes == b"interleaved"
+    ));
+    assert!(
+        initial_messages[DASHBOARD_QUEUE - 2..]
+            .iter()
+            .all(|message| {
+                matches!(
+                    message,
+                    ServerMessage::Response {
+                        request_id: 3,
+                        response: Response::Ok,
+                    }
+                )
+            })
+    );
+    let mut old_dirty = Vec::new();
+    for _ in 0..2 {
+        let Some(DashboardDelivery::Dirty { revision, session }) = sink.next() else {
+            panic!("expected old dirty delivery");
+        };
+        old_dirty.push((revision, session));
+    }
+    old_dirty.sort_unstable_by_key(|(_, session)| session.0);
+    assert_eq!(old_dirty, vec![(1, first), (1, second)]);
+    assert!(sink.replace_view(
+        &view,
+        12,
+        vec![b"first-screen".to_vec(), b"second-screen".to_vec()],
+    ));
+    for (revision, session) in old_dirty {
+        sink.dirty_sent(revision, session);
+    }
+    for _ in 0..(DASHBOARD_QUEUE - 3) {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            },
+            completion: None,
+        }));
+    }
+    for session in [first, second] {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session,
+                revision: 2,
+                bytes: b"new".to_vec(),
+            }),
+            completion: None,
+        }));
+    }
+    assert!(
+        sink.dirty_keys()
+            .into_iter()
+            .all(|(revision, session)| revision == 2 && [first, second].contains(&session))
+    );
+    assert_eq!(sink.dirty_keys().len(), 2);
+    let mut refreshed_messages = Vec::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        let Some(DashboardDelivery::Message(outbound)) = sink.next() else {
+            panic!("expected refreshed snapshot and protected messages");
+        };
+        refreshed_messages.push(outbound.message);
+    }
+    assert!(matches!(
+        refreshed_messages[0],
+        ServerMessage::Response {
+            request_id: 12,
+            response: Response::Screen {
+                session,
+                revision: 2,
+                ref bytes,
+                ..
+            },
+        } if session == first && bytes == b"first-screen"
+    ));
+    assert!(matches!(
+        refreshed_messages[1],
+        ServerMessage::Response {
+            request_id: 12,
+            response: Response::Screen {
+                session,
+                revision: 2,
+                ref bytes,
+                ..
+            },
+        } if session == second && bytes == b"second-screen"
+    ));
+    assert!(matches!(
+        refreshed_messages[2],
+        ServerMessage::Response {
+            request_id: 12,
+            response: Response::Ok,
+        }
+    ));
+    assert!(refreshed_messages[3..].iter().all(|message| {
+        matches!(
+            message,
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            }
+        )
+    }));
+    let mut refreshed_dirty = Vec::new();
+    for _ in 0..2 {
+        let Some(DashboardDelivery::Dirty { revision, session }) = sink.next() else {
+            panic!("expected refreshed dirty delivery");
+        };
+        refreshed_dirty.push((revision, session));
+    }
+    refreshed_dirty.sort_unstable_by_key(|(_, session)| session.0);
+    assert_eq!(refreshed_dirty, vec![(2, first), (2, second)]);
+}
+
+#[test]
+fn split_delivery_rejects_stale_owner_and_input() {
+    let id = SessionId(21);
+    let (_cwd, session, events_receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), events_receiver);
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let old_sink = DashboardSink::new();
+    let old_owner = Arc::new(());
+    let (state, dispatch_receiver) = test_state_with_dispatch(
+        Some(old_sink.clone()),
+        Some((old_owner.clone(), server_stream)),
+    );
+    state.sessions.lock().unwrap().insert(id, session.clone());
+    let (new_server, _new_client) = UnixStream::pair().unwrap();
+    let new_sink = DashboardSink::new();
+    let new_owner = Arc::new(());
+    *state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+        sink: new_sink.clone(),
+        identity: new_owner,
+        stream: new_server,
+        history: None,
+        next_history_id: 1,
+    });
+    *state.dashboard.lock().unwrap() = Some(new_sink);
+    let view = DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: id,
+            size: TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(id),
+    };
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: old_owner.clone(),
+            request_id: 20,
+            view,
+            completion,
+        })
+        .unwrap();
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    result.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(state.view.lock().unwrap().is_none());
+    assert!(old_sink.queue.lock().unwrap().messages.is_empty());
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                session: id,
+                bytes: b"stale".to_vec(),
+            },
+            21,
+            Some(&old_owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    let (_second_cwd, second_session, second_events_receiver) =
+        spawn_live_test_session(SessionId(22));
+    let second_events =
+        apply_test_session_events(Arc::clone(&second_session), second_events_receiver);
+    let mut resize_calls = 0;
+    let resize_error = resize_view_targets(
+        &[
+            (Arc::clone(&session), TerminalSize { rows: 24, cols: 80 }),
+            (
+                Arc::clone(&second_session),
+                TerminalSize { rows: 24, cols: 80 },
+            ),
+        ],
+        |_, _| {
+            resize_calls += 1;
+            if resize_calls == 2 {
+                Err(anyhow::anyhow!("second resize failed"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert_eq!(resize_calls, 2);
+    assert_eq!(resize_error.to_string(), "second resize failed");
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&second_session, second_events).unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
+fn current_owner_rejects_hidden_input_and_unknown_view_session() {
+    let focused_id = SessionId(23);
+    let hidden_id = SessionId(24);
+    let (_focused_cwd, focused, focused_events) = spawn_live_test_session(focused_id);
+    let focused_events = apply_test_session_events(Arc::clone(&focused), focused_events);
+    let (_hidden_cwd, hidden, hidden_events) = spawn_live_test_session(hidden_id);
+    let hidden_events = apply_test_session_events(Arc::clone(&hidden), hidden_events);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(focused_id, focused.clone()), (hidden_id, hidden.clone())]);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 7,
+        panes: vec![
+            PaneTarget {
+                session: focused_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            PaneTarget {
+                session: hidden_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+        ],
+        focused: Some(focused_id),
+    });
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                session: hidden_id,
+                bytes: b"hidden".to_vec(),
+            },
+            70,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                session: SessionId(999),
+                bytes: b"unknown".to_vec(),
+            },
+            71,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    let mut control_role = ClientRole::Control;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut control_role,
+            Request::Input {
+                session: focused_id,
+                bytes: b"control".to_vec(),
+            },
+            72,
+            None,
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 73,
+            view: DashboardView {
+                revision: 8,
+                panes: vec![PaneTarget {
+                    session: SessionId(999),
+                    size: TerminalSize { rows: 24, cols: 80 },
+                }],
+                focused: Some(SessionId(999)),
+            },
+            completion,
+        })
+        .unwrap();
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 73,
+                response: Response::Error {
+                    code: ErrorCode::NotFound,
+                    ..
+                },
+            },
+            ..
+        }))
+    ));
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&hidden, hidden_events).unwrap();
+    cleanup_test_session(&focused, focused_events).unwrap();
+}
+
+#[test]
+fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
+    let first_id = SessionId(26);
+    let second_id = SessionId(27);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    let first_size = TerminalSize { rows: 30, cols: 90 };
+    let second_size = TerminalSize { rows: 31, cols: 91 };
+    let committed = DashboardView {
+        revision: 4,
+        panes: vec![
+            PaneTarget {
+                session: first_id,
+                size: first_size,
+            },
+            PaneTarget {
+                session: second_id,
+                size: second_size,
+            },
+        ],
+        focused: Some(first_id),
+    };
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 80,
+            view: committed.clone(),
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    for _ in 0..3 {
+        assert!(matches!(sink.next(), Some(DashboardDelivery::Message(_))));
+    }
+    assert_eq!(state.view.lock().unwrap().clone(), Some(committed.clone()));
+    assert_eq!(first.terminal_text().0, first_size);
+    assert_eq!(second.terminal_text().0, second_size);
+    let initial_pty_sizes = (first.master_size().unwrap(), second.master_size().unwrap());
+    assert_eq!(initial_pty_sizes, (first_size, second_size));
+
+    let mixed = DashboardView {
+        revision: 5,
+        panes: vec![
+            PaneTarget {
+                session: first_id,
+                size: TerminalSize { rows: 32, cols: 92 },
+            },
+            PaneTarget {
+                session: SessionId(999),
+                size: TerminalSize { rows: 33, cols: 93 },
+            },
+        ],
+        focused: Some(first_id),
+    };
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 81,
+            view: mixed,
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 81,
+                response: Response::Error {
+                    code: ErrorCode::NotFound,
+                    ..
+                },
+            },
+            ..
+        }))
+    ));
+    assert_eq!(state.view.lock().unwrap().clone(), Some(committed.clone()));
+    assert_eq!(first.terminal_text().0, first_size);
+    assert_eq!(second.terminal_text().0, second_size);
+    assert_eq!(
+        (first.master_size().unwrap(), second.master_size().unwrap()),
+        initial_pty_sizes
+    );
+
+    let stale = DashboardView {
+        revision: 3,
+        panes: vec![
+            PaneTarget {
+                session: first_id,
+                size: TerminalSize { rows: 34, cols: 94 },
+            },
+            PaneTarget {
+                session: second_id,
+                size: TerminalSize { rows: 35, cols: 95 },
+            },
+        ],
+        focused: Some(second_id),
+    };
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner,
+            request_id: 82,
+            view: stale,
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 82,
+                response: Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    ..
+                },
+            },
+            ..
+        }))
+    ));
+    assert_eq!(state.view.lock().unwrap().clone(), Some(committed));
+    assert_eq!(first.terminal_text().0, first_size);
+    assert_eq!(second.terminal_text().0, second_size);
+    assert_eq!(
+        (first.master_size().unwrap(), second.master_size().unwrap()),
+        initial_pty_sizes
+    );
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
+fn view_publication_aborts_when_owner_disconnects_during_resize() {
+    let id = SessionId(25);
+    let (_cwd, session, event_receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), event_receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink), Some((owner.clone(), server_stream)));
+    state.sessions.lock().unwrap().insert(id, session.clone());
+    let snapshot = dashboard_snapshot(&state).expect("owner snapshot before dispatch");
+    let delayed_snapshot =
+        dashboard_snapshot(&state).expect("second owner snapshot before dispatch");
+    let (start_cleanup, start_cleanup_result) = mpsc::sync_channel(1);
+    let (cleanup_started, cleanup_started_result) = mpsc::sync_channel(1);
+    let (cleanup_done, cleanup_done_result) = mpsc::sync_channel(1);
+    let cleanup_state = Arc::clone(&state);
+    let replacement_owner = Arc::new(());
+    let replacement_sink = DashboardSink::new();
+    let (replacement_stream, _replacement_client) = UnixStream::pair().unwrap();
+    let replacement_view = DashboardView {
+        revision: 9,
+        panes: vec![PaneTarget {
+            session: id,
+            size: TerminalSize { rows: 27, cols: 83 },
+        }],
+        focused: Some(id),
+    };
+    let cleanup_owner = Arc::clone(&replacement_owner);
+    let cleanup_geometry_owner = Arc::clone(&replacement_owner);
+    let cleanup_sink = Arc::clone(&replacement_sink);
+    let cleanup_view = replacement_view.clone();
+    let cleanup_thread = thread::spawn(move || {
+        start_cleanup_result.recv().unwrap();
+        cleanup_started.send(()).unwrap();
+        disconnect_dashboard(&cleanup_state, snapshot);
+        *cleanup_state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+            sink: cleanup_sink.clone(),
+            identity: cleanup_owner,
+            stream: replacement_stream,
+            history: None,
+            next_history_id: 1,
+        });
+        *cleanup_state.dashboard.lock().unwrap() = Some(cleanup_sink);
+        *cleanup_state.view.lock().unwrap() = Some(cleanup_view);
+        set_dashboard_geometry(
+            &cleanup_state,
+            &cleanup_geometry_owner,
+            TerminalSize { rows: 27, cols: 83 },
+        );
+        cleanup_done.send(()).unwrap();
+    });
+    let cleanup_started_result = Arc::new(Mutex::new(cleanup_started_result));
+    let cleanup_waiter = Arc::clone(&cleanup_started_result);
+    let slot_blocked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let slot_blocked_probe = Arc::clone(&slot_blocked);
+    let state_weak = Arc::downgrade(&state);
+    *state.before_view_publish_hook.lock().unwrap() = Some(Arc::new(move || {
+        let state = state_weak.upgrade().unwrap();
+        slot_blocked_probe.store(
+            matches!(
+                state.dashboard_slot.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ),
+            std::sync::atomic::Ordering::Release,
+        );
+        start_cleanup.send(()).unwrap();
+        cleanup_waiter.lock().unwrap().recv().unwrap();
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 74,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![PaneTarget {
+                    session: id,
+                    size: TerminalSize { rows: 25, cols: 81 },
+                }],
+                focused: Some(id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    cleanup_done_result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("cleanup completed after publication released the slot lock");
+    cleanup_thread.join().unwrap();
+    disconnect_dashboard(&state, delayed_snapshot);
+    let replacement_slot = state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|slot| Arc::ptr_eq(&slot.identity, &replacement_owner));
+    let final_view = state.view.lock().unwrap().clone();
+    let final_geometry = state
+        .dashboard_size
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|geometry| geometry.size);
+    assert!(replacement_slot);
+    assert_eq!(final_view, Some(replacement_view));
+    assert_eq!(final_geometry, Some(TerminalSize { rows: 27, cols: 83 }));
+    assert!(slot_blocked.load(std::sync::atomic::Ordering::Acquire));
+    if let Some(snapshot) = dashboard_snapshot(&state) {
+        disconnect_dashboard(&state, snapshot);
+    }
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
+fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
+    let sink = DashboardSink::new();
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Response {
+            request_id: 1,
+            response: Response::Ok,
+        },
+        completion: None,
+    }));
+    let (completion, result) = mpsc::sync_channel(1);
+    assert!(sink.enqueue_terminal(DashboardOutbound {
+        message: ServerMessage::Response {
+            request_id: 2,
+            response: Response::Error {
+                code: ErrorCode::PartialFailure,
+                message: "resize failed".into(),
+            },
+        },
+        completion: Some(completion),
+    }));
+    assert!(sink.is_closing());
+    assert!(!sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Response {
+            request_id: 3,
+            response: Response::Ok,
+        },
+        completion: None,
+    }));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+            ..
+        }))
+    ));
+    let DashboardDelivery::Terminal(outbound) = sink.next().unwrap() else {
+        panic!("terminal delivery was not the final queued entry");
+    };
+    assert!(matches!(
+        outbound.message,
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Error {
+                code: ErrorCode::PartialFailure,
+                ..
+            },
+        }
+    ));
+    outbound.completion.unwrap().send(Ok(())).unwrap();
+    assert!(result.recv_timeout(Duration::from_secs(1)).unwrap().is_ok());
+    assert!(!sink.replace_view(
+        &DashboardView {
+            revision: 1,
+            panes: Vec::new(),
+            focused: None,
+        },
+        4,
+        Vec::new(),
+    ));
+}
+
+#[test]
+fn view_revision_floor_survives_exit_and_removal() {
+    let exited_id = SessionId(41);
+    let survivor_id = SessionId(42);
+    let (_exited_cwd, exited, exited_receiver) = spawn_exiting_test_session(exited_id);
+    let (_survivor_cwd, survivor, survivor_receiver) = spawn_live_test_session(survivor_id);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(exited_id, exited.clone()), (survivor_id, survivor.clone())]);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 10,
+        panes: vec![
+            PaneTarget {
+                session: exited_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            PaneTarget {
+                session: survivor_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+        ],
+        focused: Some(exited_id),
+    });
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let exited_dispatch = state.dispatch.clone();
+    let exited_thread = thread::spawn(move || {
+        while let Ok(event) = exited_receiver.recv() {
+            let did_exit = matches!(event, SessionEvent::Exited { .. });
+            exited_dispatch
+                .send(DispatchMessage::Session(event))
+                .unwrap();
+            if did_exit {
+                break;
+            }
+        }
+    });
+    let survivor_dispatch = state.dispatch.clone();
+    let survivor_thread = thread::spawn(move || {
+        while let Ok(event) = survivor_receiver.recv() {
+            let did_exit = matches!(event, SessionEvent::Exited { .. });
+            survivor_dispatch
+                .send(DispatchMessage::Session(event))
+                .unwrap();
+            if did_exit {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(exited.summary().phase, SessionPhase::Exited { .. })
+    {
+        thread::yield_now();
+    }
+    assert!(matches!(
+        exited.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !sink.queue.lock().unwrap().messages.iter().any(|outbound| {
+            matches!(
+                &outbound.message,
+                ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                    if summary.id == exited_id
+                        && matches!(summary.phase, SessionPhase::Exited { .. })
+            )
+        })
+    {
+        thread::yield_now();
+    }
+    let queued = sink.queue.lock().unwrap();
+    let exited_output = queued.messages.iter().position(|outbound| {
+        matches!(
+            &outbound.message,
+            ServerMessage::Event(ServerEvent::Output { session, bytes, .. })
+                if *session == exited_id && bytes == b"FINAL"
+        )
+    });
+    let exited_lifecycle = queued.messages.iter().position(|outbound| {
+        matches!(
+            &outbound.message,
+            ServerMessage::Event(ServerEvent::SessionChanged(summary))
+                if summary.id == exited_id
+                    && matches!(summary.phase, SessionPhase::Exited { .. })
+        )
+    });
+    assert!(
+        exited_output
+            .is_some_and(|output| { exited_lifecycle.is_some_and(|lifecycle| output < lifecycle) })
+    );
+    drop(queued);
+    assert_eq!(
+        state.view.lock().unwrap().clone(),
+        Some(DashboardView {
+            revision: 10,
+            panes: vec![
+                PaneTarget {
+                    session: exited_id,
+                    size: TerminalSize { rows: 24, cols: 80 },
+                },
+                PaneTarget {
+                    session: survivor_id,
+                    size: TerminalSize { rows: 24, cols: 80 },
+                },
+            ],
+            focused: Some(exited_id),
+        })
+    );
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                session: exited_id,
+                bytes: b"stale".to_vec(),
+            },
+            41,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::Conflict,
+            ..
+        }
+    ));
+
+    state
+        .dispatch
+        .send(DispatchMessage::Session(SessionEvent::Output {
+            id: survivor_id,
+            bytes: b"SURVIVOR".to_vec(),
+        }))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !sink.queue.lock().unwrap().messages.iter().any(|outbound| {
+            matches!(
+                &outbound.message,
+                ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+                    if *session == survivor_id && *revision == 10 && bytes == b"SURVIVOR"
+            )
+        })
+    {
+        thread::yield_now();
+    }
+    assert!(sink.queue.lock().unwrap().messages.iter().any(|outbound| {
+        matches!(
+            &outbound.message,
+            ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+                if *session == survivor_id && *revision == 10 && bytes == b"SURVIVOR"
+        )
+    }));
+
+    survivor.terminate(Duration::from_secs(2)).unwrap();
+    survivor_thread.join().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(survivor.summary().phase, SessionPhase::Exited { .. })
+    {
+        thread::yield_now();
+    }
+    assert_eq!(
+        state
+            .view
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|view| view.revision),
+        Some(10)
+    );
+    state.remove_session(exited_id).unwrap();
+    let after_removal = state.view.lock().unwrap().clone().unwrap();
+    assert_eq!(after_removal.revision, 10);
+    assert!(after_removal.panes.is_empty());
+    assert_eq!(after_removal.focused, None);
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 42,
+            view: DashboardView {
+                revision: 9,
+                panes: Vec::new(),
+                focused: None,
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    let queued = sink.queue.lock().unwrap();
+    assert!(queued.messages.iter().any(|outbound| {
+        matches!(
+            &outbound.message,
+            ServerMessage::Response {
+                request_id: 42,
+                response: Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    ..
+                },
+            }
+        )
+    }));
+    drop(queued);
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    exited_thread.join().unwrap();
+    exited.terminate(Duration::from_secs(2)).unwrap();
+}
+
+#[test]
+fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
+    let first_id = SessionId(55);
+    let second_id = SessionId(56);
+    let (_first_cwd, first, first_receiver) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_receiver);
+    let (_second_cwd, second, second_receiver) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_receiver);
+    let (old_server, _old_client) = UnixStream::pair().unwrap();
+    let old_sink = DashboardSink::new();
+    let old_owner = Arc::new(());
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(old_sink), Some((old_owner.clone(), old_server)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 10,
+        panes: vec![
+            PaneTarget {
+                session: first_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            PaneTarget {
+                session: second_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+        ],
+        focused: Some(second_id),
+    });
+
+    let replacement_owner = Arc::new(());
+    let replacement_sink = DashboardSink::new();
+    let (replacement_server, _replacement_client) = UnixStream::pair().unwrap();
+    let resize_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resize_calls_for_hook = Arc::clone(&resize_calls);
+    let hook_state = Arc::clone(&state);
+    let hook_owner = Arc::clone(&replacement_owner);
+    let hook_sink = Arc::clone(&replacement_sink);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        let call = resize_calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if call == 0 {
+            session.resize(size)?;
+            let snapshot = dashboard_snapshot(&hook_state).expect("old owner snapshot");
+            disconnect_dashboard(&hook_state, snapshot);
+            *hook_state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+                sink: hook_sink.clone(),
+                identity: hook_owner.clone(),
+                stream: replacement_server.try_clone()?,
+                history: None,
+                next_history_id: 1,
+            });
+            *hook_state.dashboard.lock().unwrap() = Some(hook_sink.clone());
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("second resize failed"))
+        }
+    }));
+
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: old_owner,
+            request_id: 56,
+            view: DashboardView {
+                revision: 11,
+                panes: vec![
+                    PaneTarget {
+                        session: first_id,
+                        size: TerminalSize { rows: 25, cols: 81 },
+                    },
+                    PaneTarget {
+                        session: second_id,
+                        size: TerminalSize { rows: 26, cols: 82 },
+                    },
+                ],
+                focused: Some(second_id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert_eq!(resize_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(state.view.lock().unwrap().is_none());
+    assert!(
+        state
+            .dashboard_slot
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|slot| Arc::ptr_eq(&slot.identity, &replacement_owner))
+    );
+
+    *state.resize_hook.lock().unwrap() = None;
+    let (replacement_completion, replacement_result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: replacement_owner.clone(),
+            request_id: 57,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![PaneTarget {
+                    session: first_id,
+                    size: TerminalSize { rows: 25, cols: 81 },
+                }],
+                focused: Some(first_id),
+            },
+            completion: replacement_completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        replacement_result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert_eq!(
+        state
+            .view
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|view| view.revision),
+        Some(1)
+    );
+    assert_eq!(state.view.lock().unwrap().as_ref().unwrap().panes.len(), 1);
+
+    if let Some(snapshot) = dashboard_snapshot(&state) {
+        disconnect_dashboard(&state, snapshot);
+    }
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
+fn partial_resize_connection_delivers_error_before_owner_close() {
+    let first_id = SessionId(51);
+    let second_id = SessionId(52);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    let first_size = TerminalSize { rows: 25, cols: 81 };
+    let second_size = TerminalSize { rows: 26, cols: 82 };
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_for_hook = Arc::clone(&calls);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            session.resize(size)
+        } else {
+            Err(anyhow::anyhow!("second resize failed"))
+        }
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 51,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 51,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 53,
+            request: Request::SetView {
+                view: DashboardView {
+                    revision: 1,
+                    panes: vec![
+                        PaneTarget {
+                            session: first_id,
+                            size: first_size,
+                        },
+                        PaneTarget {
+                            session: second_id,
+                            size: second_size,
+                        },
+                    ],
+                    focused: Some(second_id),
+                },
+            },
+        },
+    )
+    .unwrap();
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let message = read_frame::<ServerMessage>(&mut client_stream).unwrap();
+    assert!(matches!(
+        message,
+        ServerMessage::Response {
+            request_id: 53,
+            response: Response::Error {
+                code: ErrorCode::PartialFailure,
+                ..
+            },
+        }
+    ));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(matches!(first.summary().phase, SessionPhase::Running));
+    assert!(matches!(second.summary().phase, SessionPhase::Running));
+    assert_eq!(first.terminal_text().0, first_size);
+    assert_ne!(second.terminal_text().0, second_size);
+    let mut eof_probe = [0_u8; 1];
+    assert_eq!(client_stream.read(&mut eof_probe).unwrap(), 0);
+    handler.join().unwrap();
+    assert!(state.dashboard_slot.lock().unwrap().is_none());
+    assert!(state.view.lock().unwrap().is_none());
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
+fn partial_resize_blocked_writer_times_out_and_closes_owner() {
+    let first_id = SessionId(53);
+    let second_id = SessionId(54);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_for_hook = Arc::clone(&calls);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            session.resize(size)
+        } else {
+            Err(anyhow::anyhow!("second resize failed"))
+        }
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    let send_buffer = 1_i32;
+    let result = unsafe {
+        libc::setsockopt(
+            server_stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&send_buffer as *const i32).cast(),
+            std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+        )
+    };
+    assert_eq!(result, 0);
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 61,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 61,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let sink = state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .sink
+        .clone();
+    for revision in 1..=4 {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: first_id,
+                revision,
+                bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
+            }),
+            completion: None,
+        }));
+    }
+    for _ in 0..256 {
+        thread::yield_now();
+    }
+    let started = Instant::now();
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 63,
+            request: Request::SetView {
+                view: DashboardView {
+                    revision: 1,
+                    panes: vec![
+                        PaneTarget {
+                            session: first_id,
+                            size: TerminalSize { rows: 25, cols: 81 },
+                        },
+                        PaneTarget {
+                            session: second_id,
+                            size: TerminalSize { rows: 26, cols: 82 },
+                        },
+                    ],
+                    focused: Some(second_id),
+                },
+            },
+        },
+    )
+    .unwrap();
+    handler.join().unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(1_500) && elapsed < Duration::from_secs(5),
+        "blocked writer close took {elapsed:?}"
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(state.dashboard_slot.lock().unwrap().is_none());
+    assert!(state.view.lock().unwrap().is_none());
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    let _ = client_stream.shutdown(Shutdown::Both);
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
 }
 
 #[test]
@@ -217,7 +1671,7 @@ fn test_state_with_dispatch(
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
-            selected: Mutex::new(None),
+            view: Mutex::new(None),
             dashboard: Mutex::new(dashboard.clone()),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
@@ -226,6 +1680,9 @@ fn test_state_with_dispatch(
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
+            #[cfg(test)]
+            resize_hook: Mutex::new(None),
+            before_view_publish_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
                 sink: dashboard.as_ref().unwrap().clone(),
                 identity,
@@ -255,7 +1712,7 @@ fn test_state_with_socket(
             registry_path: PathBuf::from("config.toml"),
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
-            selected: Mutex::new(None),
+            view: Mutex::new(None),
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
@@ -264,6 +1721,9 @@ fn test_state_with_socket(
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events)),
+            #[cfg(test)]
+            resize_hook: Mutex::new(None),
+            before_view_publish_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         }),
         dispatch_receiver,
@@ -289,6 +1749,29 @@ fn spawn_live_test_session(
                 "-c".into(),
                 "trap '' TERM; while :; do sleep 1; done".into(),
             ],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+    )
+    .unwrap();
+    (cwd, session, receiver)
+}
+
+fn spawn_exiting_test_session(
+    id: SessionId,
+) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let session = Session::spawn(
+        id,
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "exiting".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec!["sh".into(), "-c".into(), "printf FINAL; exit 0".into()],
             hook_env: None,
         },
         TerminalSize { rows: 24, cols: 80 },
@@ -397,7 +1880,13 @@ fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<
 fn queued_dashboard_message(sink: &Arc<DashboardSink>) -> ServerMessage {
     match sink.next().unwrap() {
         DashboardDelivery::Message(outbound) => outbound.message,
-        DashboardDelivery::Dirty(session) => {
+        DashboardDelivery::Terminal(outbound) => {
+            panic!(
+                "unexpected terminal dashboard delivery: {:?}",
+                outbound.message
+            )
+        }
+        DashboardDelivery::Dirty { session, .. } => {
             panic!(
                 "unexpected dirty dashboard delivery for session {}",
                 session.0
@@ -464,7 +1953,14 @@ fn history_owner_and_token_isolation() {
         } => opened,
         message => panic!("unexpected old begin response: {message:?}"),
     };
-    *state.selected.lock().unwrap() = Some(id);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: id,
+            size: TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(id),
+    });
     let (select_completion, select_result) = mpsc::sync_channel(1);
     state
         .dispatch
@@ -484,6 +1980,13 @@ fn history_owner_and_token_isolation() {
             request_id: 8,
             response: Response::Screen { session, .. },
         } if session == id
+    ));
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 8,
+            response: Response::Ok,
+        }
     ));
     send_history_command(
         &state,
@@ -505,7 +2008,6 @@ fn history_owner_and_token_isolation() {
             response: Response::HistoryRows(_),
         }
     ));
-
     let (switch_completion, switch_result) = mpsc::sync_channel(1);
     state
         .dispatch
@@ -525,6 +2027,13 @@ fn history_owner_and_token_isolation() {
             request_id: 10,
             response: Response::Screen { session, .. },
         } if session == switched_id
+    ));
+    assert!(matches!(
+        queued_dashboard_message(&old_sink),
+        ServerMessage::Response {
+            request_id: 10,
+            response: Response::Ok,
+        }
     ));
     send_history_command(
         &state,
@@ -1008,7 +2517,14 @@ fn history_capture_orders_with_output() {
         .lock()
         .unwrap()
         .insert(id, Arc::clone(&session));
-    *state.selected.lock().unwrap() = Some(id);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: id,
+            size: TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(id),
+    });
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
 
@@ -1046,7 +2562,11 @@ fn history_capture_orders_with_output() {
         .collect::<Vec<_>>();
     assert!(matches!(
         &messages[0],
-        ServerMessage::Event(ServerEvent::Output { session, bytes })
+        ServerMessage::Event(ServerEvent::Output {
+            session,
+            revision: _,
+            bytes,
+        })
             if *session == id && bytes == b"A"
     ));
     assert!(matches!(
@@ -1058,7 +2578,11 @@ fn history_capture_orders_with_output() {
     ));
     assert!(matches!(
         &messages[2],
-        ServerMessage::Event(ServerEvent::Output { session, bytes })
+        ServerMessage::Event(ServerEvent::Output {
+            session,
+            revision: _,
+            bytes,
+        })
             if *session == id && bytes == b"B"
     ));
     let page = match &messages[3] {
@@ -1105,6 +2629,7 @@ fn dashboard_overflow_closes_affected_connection() {
         &state,
         ServerMessage::Event(ServerEvent::ScreenDirty {
             session: SessionId(2),
+            revision: 0,
         }),
     );
     let mut byte = [0_u8; 1];
@@ -1900,7 +3425,14 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         .lock()
         .unwrap()
         .insert(id, Arc::clone(&session));
-    *state.selected.lock().unwrap() = Some(id);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 1,
+        panes: vec![PaneTarget {
+            session: id,
+            size: TerminalSize { rows: 24, cols: 80 },
+        }],
+        focused: Some(id),
+    });
 
     let error = state
         .close_terminal(id, Duration::from_millis(20))
@@ -1912,7 +3444,15 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         "unexpected close failure: {error:#}"
     );
     assert!(state.sessions.lock().unwrap().contains_key(&id));
-    assert_eq!(*state.selected.lock().unwrap(), Some(id));
+    assert_eq!(
+        state
+            .view
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|view| view.focused),
+        Some(id)
+    );
 
     loop {
         let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -1924,7 +3464,9 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     }
     state.close_terminal(id, Duration::from_millis(20)).unwrap();
     assert!(!state.sessions.lock().unwrap().contains_key(&id));
-    assert_eq!(*state.selected.lock().unwrap(), None);
+    assert!(state.view.lock().unwrap().as_ref().is_some_and(|view| {
+        view.revision == 1 && view.panes.is_empty() && view.focused.is_none()
+    }));
 }
 
 #[test]
@@ -1954,7 +3496,7 @@ fn registration_holds_sessions_guard_until_spawn_returns() {
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
-        selected: Mutex::new(None),
+        view: Mutex::new(None),
         dashboard: Mutex::new(None),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
@@ -1963,6 +3505,9 @@ fn registration_holds_sessions_guard_until_spawn_returns() {
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        before_view_publish_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
     });
     let dispatcher_state = Arc::clone(&state);

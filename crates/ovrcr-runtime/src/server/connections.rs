@@ -1,5 +1,18 @@
 use super::*;
 
+const TERMINAL_FAILURE_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn await_view_completion(receiver: Receiver<DispatchCompletion>) -> Response {
+    match receiver.recv() {
+        Ok(DispatchCompletion::Complete) => Response::Ok,
+        Ok(DispatchCompletion::Terminal(delivery)) => {
+            let _ = delivery.recv_timeout(TERMINAL_FAILURE_CLOSE_TIMEOUT);
+            Response::Ok
+        }
+        Err(_) => error_response(ErrorCode::Internal, "dispatcher is unavailable"),
+    }
+}
+
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     let mut role = ClientRole::Control;
     let mut dashboard_identity = None;
@@ -66,14 +79,21 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     .name("ovrcr-dashboard-writer".into())
                     .spawn(move || {
                         while let Some(delivery) = writer_sink.next() {
-                            let (message, completion, dirty) = match delivery {
+                            let (message, completion, dirty, terminal) = match delivery {
                                 DashboardDelivery::Message(outbound) => {
-                                    (outbound.message, outbound.completion, None)
+                                    (outbound.message, outbound.completion, None, false)
                                 }
-                                DashboardDelivery::Dirty(session) => (
-                                    ServerMessage::Event(ServerEvent::ScreenDirty { session }),
+                                DashboardDelivery::Terminal(outbound) => {
+                                    (outbound.message, outbound.completion, None, true)
+                                }
+                                DashboardDelivery::Dirty { revision, session } => (
+                                    ServerMessage::Event(ServerEvent::ScreenDirty {
+                                        session,
+                                        revision,
+                                    }),
                                     None,
-                                    Some(session),
+                                    Some((revision, session)),
+                                    false,
                                 ),
                             };
                             let result = match output.as_mut() {
@@ -83,14 +103,14 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                                 None => Err("dashboard writer stream unavailable".into()),
                             };
                             if result.is_ok()
-                                && let Some(session) = dirty
+                                && let Some((revision, session)) = dirty
                             {
-                                writer_sink.dirty_sent(session);
+                                writer_sink.dirty_sent(revision, session);
                             }
                             if let Some(completion) = completion {
                                 let _ = completion.send(result.clone());
                             }
-                            if result.is_err() {
+                            if result.is_err() || terminal {
                                 writer_sink.close();
                                 let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
                                 disconnect_dashboard(
@@ -114,7 +134,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             continue;
         }
         let shutdown = matches!(message.request, Request::Shutdown { .. });
-        let select = matches!(message.request, Request::Select { .. });
+        let deferred_view = matches!(
+            message.request,
+            Request::Select { .. } | Request::Resize { .. } | Request::SetView { .. }
+        );
         let history = matches!(
             message.request,
             Request::HistoryBegin { .. } | Request::HistoryPage { .. } | Request::HistoryEnd { .. }
@@ -146,7 +169,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                         });
                         (delivered, false)
                     }
-                } else if !select {
+                } else if !deferred_view {
                     if successful_shutdown {
                         let (completion, result) = mpsc::sync_channel(1);
                         let queued = dashboard_send(
@@ -166,11 +189,29 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                             false,
                         )
                     }
-                } else {
+                } else if matches!(response, Response::Ok) {
                     (true, false)
+                } else {
+                    let delivered = dashboard_identity.as_ref().is_some_and(|owner| {
+                        dashboard_send_owner(
+                            &state,
+                            owner,
+                            response_message(message.request_id, response),
+                        )
+                    });
+                    (delivered, false)
                 }
             }
         };
+        if dashboard_sink.is_closing() {
+            if let Some(owner) = dashboard_identity.as_ref()
+                && let Some(snapshot) = dashboard_snapshot(&state)
+                    .filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
+            {
+                disconnect_dashboard(&state, snapshot);
+            }
+            break;
+        }
         if successful_shutdown {
             debug_assert!(dashboard_shutdown_attempt || matches!(role, ClientRole::Control));
             state.shutdown.store(true, Ordering::Release);
@@ -194,7 +235,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 current.sink.close();
             }
             *state.dashboard.lock().unwrap() = None;
-            *state.selected.lock().unwrap() = None;
+            *state.view.lock().unwrap() = None;
             clear_dashboard_geometry(&state, dashboard_identity.as_ref().unwrap());
         }
     }
@@ -278,21 +319,33 @@ pub(super) fn handle_request_with_id(
                     "Select requires a dashboard connection",
                 );
             }
+            let Some(owner) = owner else {
+                return error_response(ErrorCode::Conflict, "dashboard is disconnected");
+            };
+            let revision = state
+                .view
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(1, |view| view.revision.saturating_add(1));
             let (sender, receiver) = mpsc::sync_channel(1);
             if state
                 .dispatch
-                .send(DispatchMessage::Select {
+                .send(DispatchMessage::SetView {
+                    owner: Arc::clone(owner),
                     request_id,
-                    session,
-                    size,
+                    view: ovrcr_protocol::DashboardView {
+                        revision,
+                        panes: vec![ovrcr_protocol::PaneTarget { session, size }],
+                        focused: Some(session),
+                    },
                     completion: sender,
                 })
                 .is_err()
             {
                 return error_response(ErrorCode::Internal, "dispatcher is unavailable");
             }
-            let _ = receiver.recv();
-            Response::Ok
+            await_view_completion(receiver)
         }
         Request::HistoryBegin { session } => dispatch_history_request(
             state,
@@ -330,10 +383,19 @@ pub(super) fn handle_request_with_id(
             HistoryRequest::End { session, snapshot },
         ),
         Request::Input { session, bytes } => {
-            if !dashboard || state.selected.lock().unwrap().as_ref() != Some(&session) {
+            if !dashboard
+                || owner.is_none_or(|owner| !dashboard_owner_matches(state, owner))
+                || state
+                    .view
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|view| view.focused)
+                    != Some(session)
+            {
                 return error_response(
                     ErrorCode::InvalidRequest,
-                    "input is only accepted for the selected dashboard session",
+                    "input is only accepted for the focused dashboard session",
                 );
             }
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
@@ -349,29 +411,50 @@ pub(super) fn handle_request_with_id(
             }
         }
         Request::Resize { session, size } => {
-            if !dashboard || state.selected.lock().unwrap().as_ref() != Some(&session) {
+            if !dashboard {
                 return error_response(
                     ErrorCode::InvalidRequest,
-                    "resize is only accepted for the selected dashboard session",
+                    "Resize requires a dashboard connection",
                 );
             }
-            let geometry_owner = dashboard_snapshot(state).map(|snapshot| snapshot.identity);
-            let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
-            match selected_session {
-                Some(session) => session.resize(size).map_or_else(
-                    |error| error_response(ErrorCode::Internal, error.to_string()),
-                    |_| {
-                        if let Some(owner) = geometry_owner.as_ref() {
-                            set_dashboard_geometry(state, owner, size);
-                        }
-                        Response::Ok
-                    },
-                ),
-                None => error_response(
-                    ErrorCode::NotFound,
-                    format!("session {} not found", session.0),
-                ),
+            let Some(owner) = owner else {
+                return error_response(ErrorCode::Conflict, "dashboard is disconnected");
+            };
+            let Some(current) = state.view.lock().unwrap().clone() else {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "resize is only accepted for a singleton dashboard view",
+                );
+            };
+            if current.panes.len() != 1 || current.focused != Some(session) {
+                return error_response(ErrorCode::InvalidRequest, "use SetView for split geometry");
             }
+            let revision = current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| error_response(ErrorCode::InvalidRequest, "view revision overflow"));
+            let revision = match revision {
+                Ok(revision) => revision,
+                Err(response) => return response,
+            };
+            let (sender, receiver) = mpsc::sync_channel(1);
+            if state
+                .dispatch
+                .send(DispatchMessage::SetView {
+                    owner: Arc::clone(owner),
+                    request_id,
+                    view: ovrcr_protocol::DashboardView {
+                        revision,
+                        panes: vec![ovrcr_protocol::PaneTarget { session, size }],
+                        focused: Some(session),
+                    },
+                    completion: sender,
+                })
+                .is_err()
+            {
+                return error_response(ErrorCode::Internal, "dispatcher is unavailable");
+            }
+            await_view_completion(receiver)
         }
         Request::Shutdown { kill } => state.request_shutdown(kill),
         Request::AddProject {
@@ -467,6 +550,31 @@ pub(super) fn handle_request_with_id(
             } else {
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")
             }
+        }
+        Request::SetView { view } => {
+            if !dashboard {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "SetView requires a dashboard connection",
+                );
+            }
+            let Some(owner) = owner else {
+                return error_response(ErrorCode::Conflict, "dashboard is disconnected");
+            };
+            let (sender, receiver) = mpsc::sync_channel(1);
+            if state
+                .dispatch
+                .send(DispatchMessage::SetView {
+                    owner: Arc::clone(owner),
+                    request_id,
+                    view,
+                    completion: sender,
+                })
+                .is_err()
+            {
+                return error_response(ErrorCode::Internal, "dispatcher is unavailable");
+            }
+            await_view_completion(receiver)
         }
     }
 }
