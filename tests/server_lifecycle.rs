@@ -1293,6 +1293,180 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
     );
 }
 
+fn with_kill_grace_ms<T>(value: &str, body: impl FnOnce() -> T) -> T {
+    let previous = std::env::var_os("OVRCR_KILL_GRACE_MS");
+    unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) };
+    let result = body();
+    match previous {
+        Some(value) => unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) },
+        None => unsafe { std::env::remove_var("OVRCR_KILL_GRACE_MS") },
+    }
+    result
+}
+
+fn register_fixture_workspace(fixture: &ControlFixture, branch: &str) {
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: branch.into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+}
+
+fn stubborn_session_argv() -> Vec<OsString> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        "trap '' HUP TERM; printf READY; while :; do sleep 1; done".into(),
+    ]
+}
+
+#[test]
+fn shutdown_kill_terminates_sessions_concurrently() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/concurrent-shutdown");
+    // Sessions that ignore SIGHUP and SIGTERM force the full grace period
+    // before SIGKILL, so a serial shutdown would cost sessions x grace.
+    let mut pgids = Vec::new();
+    for index in 0..6 {
+        let summary =
+            fixture.create_session_summary(&format!("stubborn-{index}"), stubborn_session_argv());
+        pgids.push(summary.pid.unwrap() as libc::pid_t);
+    }
+    let started = Instant::now();
+    let response = with_kill_grace_ms("500", || fixture.request(Request::Shutdown { kill: true }));
+    let elapsed = started.elapsed();
+    assert_eq!(response, Response::Ok);
+    assert!(
+        elapsed < Duration::from_millis(2_000),
+        "shutdown --kill should terminate sessions concurrently, took {elapsed:?}"
+    );
+    for pgid in pgids {
+        wait_for_group_absent(pgid, Duration::from_secs(3));
+    }
+    fixture.join();
+}
+
+#[test]
+fn kill_does_not_block_dashboard_geometry() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/unlocked-kill");
+    let stubborn = fixture.create_session("stubborn", stubborn_session_argv());
+
+    // A dashboard registers before the kill starts.
+    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ));
+
+    // The kill waits out a two-second grace period on another connection.
+    let socket = fixture.socket.clone();
+    let killer = thread::spawn(move || {
+        with_kill_grace_ms("2000", || {
+            let mut stream = UnixStream::connect(&socket).unwrap();
+            write_frame(
+                &mut stream,
+                &ClientMessage {
+                    request_id: 7,
+                    request: Request::KillSession { session: stubborn },
+                },
+            )
+            .unwrap();
+            read_frame::<ServerMessage>(&mut stream).unwrap()
+        })
+    });
+    thread::sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardGeometry {
+                size: ovrcr::session::TerminalSize {
+                    rows: 30,
+                    cols: 100,
+                },
+            },
+        },
+    )
+    .unwrap();
+    let reply = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id: 2,
+                response,
+            } => break response,
+            ServerMessage::Event(_) => continue,
+            other => panic!("unexpected dashboard message: {other:?}"),
+        }
+    };
+    let elapsed = started.elapsed();
+    assert_eq!(reply, Response::Ok);
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "dashboard geometry must not wait for an in-flight kill, took {elapsed:?}"
+    );
+    assert!(matches!(
+        killer.join().unwrap(),
+        ServerMessage::Response {
+            request_id: 7,
+            response: Response::Ok
+        }
+    ));
+    drop(dashboard);
+    fixture.wait_exited(stubborn);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: stubborn }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
 #[test]
 fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     let _env_lock = ENV_LOCK.lock().unwrap();

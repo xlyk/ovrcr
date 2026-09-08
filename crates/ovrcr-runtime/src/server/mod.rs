@@ -30,7 +30,8 @@ mod startup;
 
 use connections::{
     combine_control_and_refresh, error_chain_string, error_for_lifecycle, error_response,
-    handle_connection, handle_request_with_id, input_error_code, response_message,
+    handle_connection, handle_request_with_id, input_error_code, requested_kill_grace,
+    response_message,
 };
 pub use dispatch::{DispatchMessage, HistoryRequest, run_dispatcher};
 use dispatch::{bridge_events, clear_dashboard_geometry, set_dashboard_geometry};
@@ -171,14 +172,29 @@ impl ServerState {
     }
 
     pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
+        let termination = self.terminate_session_unlocked(id, grace);
         let _mutation = self.mutation_lock.lock().unwrap();
-        self.reject_if_stopping()?;
-        let session = self.session_for_control(id)?;
-        session.revoke_hook_capability();
-        let termination = session.terminate(grace).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)?;
         self.remove_session_locked(id)
+    }
+
+    /// Terminate a session without holding `mutation_lock` for the wait.
+    ///
+    /// Termination can take the full grace period, and the lock also gates
+    /// dashboard geometry updates and every create or remove, so holding it
+    /// would freeze the dashboard for the duration. The lookup and capability
+    /// revocation still happen under the lock; concurrent terminations of one
+    /// session are serialized by the session's own control lock.
+    fn terminate_session_unlocked(&self, id: SessionId, grace: Duration) -> Result<()> {
+        let session = {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            self.reject_if_stopping()?;
+            let session = self.session_for_control(id)?;
+            session.revoke_hook_capability();
+            session
+        };
+        session.terminate(grace).map(|_| ())
     }
 
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
@@ -288,11 +304,8 @@ impl ServerState {
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
+        let termination = self.terminate_session_unlocked(id, grace);
         let _mutation = self.mutation_lock.lock().unwrap();
-        self.reject_if_stopping()?;
-        let session = self.session_for_control(id)?;
-        session.revoke_hook_capability();
-        let termination = session.terminate(grace).map(|_| ());
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)
     }
@@ -384,11 +397,28 @@ impl ServerState {
             return error_response(ErrorCode::SessionsRemain, "sessions remain");
         }
         if kill {
+            // Terminate concurrently: each session may wait out the whole
+            // grace period, so a serial loop costs sessions x grace.
+            let grace = requested_kill_grace();
+            let workers = sessions
+                .into_iter()
+                .map(|session| {
+                    let id = session.summary().id;
+                    session.revoke_hook_capability();
+                    let worker = thread::Builder::new()
+                        .name(format!("ovrcr-shutdown-kill-{}", id.0))
+                        .spawn(move || session.terminate(grace).map(|_| ()));
+                    (id, worker)
+                })
+                .collect::<Vec<_>>();
             let mut failures = Vec::new();
-            for session in sessions {
-                let id = session.summary().id;
-                session.revoke_hook_capability();
-                let termination = session.terminate(Duration::from_secs(5)).map(|_| ());
+            for (id, worker) in workers {
+                let termination = match worker {
+                    Ok(handle) => handle
+                        .join()
+                        .unwrap_or_else(|_| Err(anyhow::anyhow!("termination worker panicked"))),
+                    Err(error) => Err(error).context("spawn termination worker"),
+                };
                 let refresh = self.refresh_session_locked(id);
                 if let Err(error) = combine_control_and_refresh(id, termination, refresh) {
                     failures.push(format!("session {}: {}", id.0, error_chain_string(&error)));

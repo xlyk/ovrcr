@@ -645,7 +645,7 @@ pub(super) fn error_response(code: ErrorCode, message: impl std::fmt::Display) -
     }
 }
 
-fn requested_kill_grace() -> Duration {
+pub(super) fn requested_kill_grace() -> Duration {
     // Integration tests use this per-server-process seam to exercise the short
     // escalation path without changing the normal five-second CLI behavior.
     std::env::var("OVRCR_KILL_GRACE_MS")
