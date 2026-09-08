@@ -1116,6 +1116,52 @@ fn dashboard_overflow_closes_affected_connection() {
 }
 
 #[test]
+fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
+    // A burst can leave the queue full of output frames before the writer
+    // thread runs. A lifecycle event arriving then must fold the output
+    // into a dirty marker rather than evict a dashboard that is keeping up.
+    let sink = DashboardSink::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(2),
+                bytes: b"x".to_vec(),
+            }),
+            completion: None,
+        }));
+    }
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new()
+        })),
+        completion: None,
+    }));
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Event(ServerEvent::HierarchyChanged(_))
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Dirty(SessionId(2)))
+    ));
+    // Messages that cannot be coalesced still evict once they fill the queue.
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            })),
+            completion: None,
+        }));
+    }
+    assert!(!sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new()
+        })),
+        completion: None,
+    }));
+}
+
+#[test]
 fn dashboard_overflow_does_not_clear_replacement_slot() {
     let (old_server, mut old_client) = UnixStream::pair().unwrap();
     let _old_handler_stream = old_server.try_clone().unwrap();

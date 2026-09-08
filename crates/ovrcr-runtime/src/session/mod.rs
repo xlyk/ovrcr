@@ -23,6 +23,39 @@ use process::*;
 /// handle SIGTERM a chance to exit cleanly first.
 const HANGUP_DELAY: Duration = Duration::from_millis(500);
 
+/// How long `spawn` waits for the child to claim the PTY as its controlling
+/// terminal. The child does that between `fork` and `exec`, so the parent
+/// normally observes it within microseconds; the bound only limits how long
+/// a wedged child can stall session creation.
+const GROUP_LEADER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The process group the child leads, once it has created it.
+///
+/// `spawn_command` returns as soon as the fork completes, while the child
+/// calls `setsid` and claims the PTY with `TIOCSCTTY` afterwards on its own
+/// schedule. Until then the terminal reports no foreground group, and a
+/// child that already exited reports none again, so a single read races
+/// both ways. Poll the terminal, and accept the child's own group id once
+/// `setsid` has run: that group persists while the child is a zombie, so a
+/// command that exits immediately is still attributed correctly.
+#[cfg(unix)]
+fn wait_for_group_leader(master: &dyn MasterPty, pid: u32) -> Result<libc::pid_t> {
+    let pid = libc::pid_t::try_from(pid).context("PTY child PID does not fit a pid_t")?;
+    let deadline = Instant::now() + GROUP_LEADER_TIMEOUT;
+    loop {
+        if let Some(pgid) = master.process_group_leader() {
+            return Ok(pgid);
+        }
+        if unsafe { libc::getpgid(pid) } == pid {
+            return Ok(pid);
+        }
+        if Instant::now() >= deadline {
+            bail!("PTY did not provide a process-group leader")
+        }
+        thread::park_timeout(Duration::from_micros(200));
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -226,10 +259,7 @@ impl Session {
         let pid = child.process_id().context("PTY child has no process ID")?;
 
         #[cfg(unix)]
-        let pgid = pair
-            .master
-            .process_group_leader()
-            .context("PTY did not provide a process-group leader")?;
+        let pgid = wait_for_group_leader(pair.master.as_ref(), pid)?;
         #[cfg(not(unix))]
         let pgid = {
             let _ = pid;

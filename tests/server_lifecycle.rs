@@ -24,6 +24,15 @@ use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Serialize tests that share process-wide state. A test that panics while
+/// holding the lock poisons it; later tests still run rather than failing
+/// on the poison, so a CI log shows the one real failure.
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn context_report(
     session: SessionId,
     capability: [u8; 32],
@@ -233,7 +242,7 @@ fn startup_socket_directory_is_private() {
 
 #[test]
 fn agent_hook_sequence_does_not_regress_state() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("ordered", "agent-hook-order");
     let pgid = fixture.original_pgid(identity.session);
@@ -338,7 +347,7 @@ fn agent_hook_sequence_does_not_regress_state() {
 
 #[test]
 fn agent_hook_capability_and_exit_are_enforced() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let first = fixture.create_hook_child("agent-a", "agent-hook-auth-a");
     let second = fixture.create_hook_child("agent-b", "agent-hook-auth-b");
@@ -462,7 +471,7 @@ fn agent_hook_capability_and_exit_are_enforced() {
 
 #[test]
 fn agent_hook_startup_registration_is_visible() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child_with_report("startup", "agent-hook-startup");
     assert_eq!(
@@ -484,7 +493,7 @@ fn agent_hook_startup_registration_is_visible() {
 
 #[test]
 fn agent_hook_round_trip_survives_dashboard_reconnect() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child_with_report("reconnect", "agent-hook-reconnect");
     let pgid = fixture.original_pgid(identity.session);
@@ -620,7 +629,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
 
 #[test]
 fn context_report_replaces_snapshot_and_preserves_activity() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-replace", "context-replace");
     let pgid = fixture.original_pgid(identity.session);
@@ -721,7 +730,7 @@ fn context_report_replaces_snapshot_and_preserves_activity() {
 
 #[test]
 fn context_report_rejects_old_and_invalid_samples() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-order", "context-order");
     let pgid = fixture.original_pgid(identity.session);
@@ -912,7 +921,7 @@ fn context_report_rejects_old_and_invalid_samples() {
 
 #[test]
 fn context_snapshot_survives_dashboard_reattach() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-reconnect", "context-reconnect");
     let pgid = fixture.original_pgid(identity.session);
@@ -1066,7 +1075,7 @@ fn context_snapshot_survives_dashboard_reattach() {
 
 #[test]
 fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let socket = fixture.socket.clone();
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1211,7 +1220,7 @@ fn startup_concurrent_attempts_leave_one_server() {
 
 #[test]
 fn startup_failure_reports_server_log() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
     std::fs::write(&registry, "[[projects]\n").unwrap();
@@ -1507,7 +1516,7 @@ fn stubborn_session_argv() -> Vec<OsString> {
 
 #[test]
 fn workspace_remove_succeeds_after_directory_deleted() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     register_fixture_workspace(&fixture, "feature/vanished-dir");
     let local = fixture.only_session_id();
@@ -1553,7 +1562,7 @@ fn workspace_remove_succeeds_after_directory_deleted() {
 
 #[test]
 fn shutdown_without_kill_rejects_exited_record() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     register_fixture_workspace(&fixture, "feature/exited-record");
     let local = fixture.only_session_id();
@@ -1585,7 +1594,7 @@ fn shutdown_without_kill_rejects_exited_record() {
 
 #[test]
 fn shutdown_kill_terminates_sessions_concurrently() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     register_fixture_workspace(&fixture, "feature/concurrent-shutdown");
     // Sessions that ignore SIGHUP and SIGTERM force the full grace period
@@ -1612,7 +1621,7 @@ fn shutdown_kill_terminates_sessions_concurrently() {
 
 #[test]
 fn kill_does_not_block_dashboard_geometry() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     register_fixture_workspace(&fixture, "feature/unlocked-kill");
     let stubborn = fixture.create_session("stubborn", stubborn_session_argv());
@@ -1718,7 +1727,7 @@ fn kill_does_not_block_dashboard_geometry() {
 
 #[test]
 fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -1909,7 +1918,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
 
 #[test]
 fn control_lifecycle_enforces_every_removal_gate() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert!(matches!(
         fixture.request(Request::RemoveProject {
@@ -2013,7 +2022,7 @@ fn control_lifecycle_enforces_every_removal_gate() {
 
 #[test]
 fn workspace_shell_failure_retains_worktree_and_registry() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.request(Request::AddProject {
         name: "fixture".into(),
@@ -2065,7 +2074,7 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
 
 #[test]
 fn fast_exit_session_is_retained_as_exited() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -2121,7 +2130,7 @@ fn fast_exit_session_is_retained_as_exited() {
 
 #[test]
 fn pause_resume_server_refuses_removal_and_late_mutation() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -3345,7 +3354,7 @@ fn wait_exited_and_assert_terminal_contains(
 
 #[test]
 fn pause_resume_stops_group_and_rejects_input() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (session, leader, descendant) = harness.create_session("pause-input");
     let (mut dashboard, before_screen) = dashboard_for_session(&harness.fixture.socket, session);
@@ -3442,7 +3451,7 @@ fn pause_resume_stops_group_and_rejects_input() {
 
 #[test]
 fn pause_resume_kill_runs_group_handlers() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (session, leader, descendant) = harness.create_session("kill-paused");
     let (mut dashboard, _) = dashboard_for_session(&harness.fixture.socket, session);
@@ -3524,7 +3533,7 @@ fn pause_resume_kill_runs_group_handlers() {
 
 #[test]
 fn pause_resume_shutdown_cleans_stopped_groups() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (first, first_leader, first_descendant) = harness.create_session("shutdown-one");
     let (second, second_leader, second_descendant) = harness.create_session("shutdown-two");
@@ -3570,7 +3579,7 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
 
 #[test]
 fn pause_resume_control_races_converge() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     pause_resume_control_races_body();
 }
 
@@ -3722,7 +3731,7 @@ fn request_on_stream(
 
 #[test]
 fn pause_resume_backpressured_input_keeps_controls_available() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let summary = harness.fixture.create_session_summary(
         "blocked-pause",
@@ -4019,7 +4028,7 @@ fn restore_pause_terminal(original: Option<libc::termios>) {
 #[test]
 #[ignore = "bounded historical scrollback RSS measurement"]
 fn history_memory_measurements() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let cols = match std::env::var("OVRCR_HISTORY_MEMORY_GEOMETRY").as_deref() {
         Ok("80") => 80,
         Ok("512") => 512,
@@ -4229,7 +4238,7 @@ fn history_memory_measurements() {
 
 #[test]
 fn history_reattach_reads_retained_output() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-reattach");
     let session = history_ready_shell(&fixture);
@@ -4322,7 +4331,7 @@ fn history_reattach_reads_retained_output() {
 
 #[test]
 fn history_frozen_page_survives_eviction_and_exit() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-eviction");
     let session = history_ready_shell(&fixture);
@@ -4428,15 +4437,14 @@ fn history_frozen_page_survives_eviction_and_exit() {
 
 #[test]
 fn history_slow_dashboard_recovers_after_finite_burst() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-slow-dashboard");
     let summary = fixture.create_session_summary(
         "history-burst",
         vec![
-            "sh".into(),
-            "-c".into(),
-            "i=0; while [ \"$i\" -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\\n'".into(),
+            "awk".into(),
+            "BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_HISTORY_MARKER\\n\" }".into(),
         ],
     );
     fixture.record_process_group(&summary);
@@ -4516,7 +4524,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
 
 #[test]
 fn slow_dashboard_recovers_after_output_burst() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);
     assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
     let fixture = ControlFixture::new();
@@ -4539,12 +4547,13 @@ fn slow_dashboard_recovers_after_output_burst() {
         }),
         Response::Ok
     );
+    // awk emits the burst in well under a second on any runner; a shell
+    // loop needs several seconds on a slow CI machine.
     let burst = fixture.create_session(
         "burst",
         vec![
-            "sh".into(),
-            "-c".into(),
-            "i=0; while [ $i -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf FINAL_MARKER".into(),
+            "awk".into(),
+            "BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_MARKER\" }".into(),
         ],
     );
 
@@ -4577,23 +4586,7 @@ fn slow_dashboard_recovers_after_output_burst() {
         .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if matches!(
-            fixture.request(Request::List),
-            Response::Hierarchy(ref snapshot)
-                if snapshot
-                    .projects
-                    .iter()
-                    .flat_map(|project| project.workspaces.iter())
-                    .flat_map(|workspace| workspace.sessions.iter())
-                    .any(|session| session.id == burst && matches!(session.phase, SessionPhase::Exited { .. }))
-        ) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "burst process did not finish");
-        thread::park_timeout(Duration::from_millis(5));
-    }
+    fixture.wait_exited(burst);
 
     let mut saw_dirty = false;
     while !saw_dirty {
@@ -4679,7 +4672,7 @@ fn slow_dashboard_recovers_after_output_burst() {
 
 #[test]
 fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -4800,7 +4793,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
 
 #[test]
 fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -5036,7 +5029,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
 
 #[test]
 fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -5766,7 +5759,7 @@ fn dashboard_request_id_zero_does_not_block_followup_response() {
 
 #[test]
 fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -5887,7 +5880,7 @@ fn dashboard_receives_concrete_ordinary_request_errors() {
 
 #[test]
 fn selection_snapshot_precedes_later_quiet_tail_output() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -6078,7 +6071,7 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
 
 #[test]
 fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args([

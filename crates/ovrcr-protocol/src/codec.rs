@@ -36,11 +36,16 @@ pub fn write_preamble<W: Write>(writer: &mut W) -> Result<()> {
 ///
 /// A peer that closes the connection or sends something other than the
 /// magic is reported as such; an older OVRCR server rejects the preamble as
-/// an oversized frame and closes, which surfaces here as an unexpected EOF.
+/// an oversized frame and closes. That close surfaces as an unexpected EOF,
+/// or on Linux as a connection reset when our preamble was still unread in
+/// the peer's socket buffer.
 pub fn read_preamble<R: Read>(reader: &mut R) -> Result<u32> {
     let mut preamble = [0_u8; 8];
     reader.read_exact(&mut preamble).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+        if matches!(
+            error.kind(),
+            std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+        ) {
             anyhow::anyhow!(
                 "peer closed the connection before completing the protocol handshake; it may be an older OVRCR build"
             )
@@ -173,6 +178,14 @@ mod tests {
         );
 
         let (left, mut right) = UnixStream::pair().unwrap();
+        drop(left);
+        let error = read_preamble(&mut right).unwrap_err().to_string();
+        assert!(error.contains("older OVRCR build"), "{error}");
+
+        // A peer that closes without reading our preamble: Linux reports the
+        // unread bytes as a connection reset rather than an EOF.
+        let (left, mut right) = UnixStream::pair().unwrap();
+        write_preamble(&mut right).unwrap();
         drop(left);
         let error = read_preamble(&mut right).unwrap_err().to_string();
         assert!(error.contains("older OVRCR build"), "{error}");
