@@ -382,6 +382,52 @@ fn removes_clean_registered_worktree_and_preserves_branch() {
 }
 
 #[test]
+fn removes_workspace_whose_directory_is_gone() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "vanished-work",
+        BranchSpec::New {
+            branch: "feature/vanished".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+    std::fs::remove_dir_all(&workspace.path).unwrap();
+    assert!(fixture.worktree_paths().contains(&workspace.path));
+
+    remove_worktree(&project, &workspace).unwrap();
+
+    assert!(!fixture.worktree_paths().contains(&workspace.path));
+    assert!(
+        git_output(
+            &fixture.project.repo,
+            &["show-ref", "--verify", "refs/heads/feature/vanished"]
+        )
+        .contains("feature/vanished"),
+        "pruning must preserve the branch"
+    );
+
+    // A missing directory whose path Git does not list is refused: the
+    // registry alone never authorizes a prune.
+    let unknown = WorkspaceRecord {
+        name: "never-created".into(),
+        path: fixture.project.workspace_root.join("never-created"),
+        branch: "feature/vanished".into(),
+    };
+    let project = ProjectRecord {
+        workspaces: vec![unknown.clone()],
+        ..fixture.project.clone()
+    };
+    let error = remove_worktree(&project, &unknown).unwrap_err().to_string();
+    assert!(error.contains("registry/Git path disagreement"), "{error}");
+}
+
+#[test]
 fn refuses_to_remove_unregistered_matching_worktree() {
     let fixture = GitFixture::new();
     let workspace = create_worktree(

@@ -2478,3 +2478,147 @@ fn wait_test_screen(session: &Session, marker: &str, timeout: Duration) -> bool 
     }
     false
 }
+
+#[test]
+fn dashboard_slot_is_released_when_registration_panics() {
+    let state = test_state(None, None);
+
+    let (server, mut client) = UnixStream::pair().unwrap();
+    let handler_state = Arc::clone(&state);
+    connections::PANIC_AFTER_DASHBOARD_REGISTRATION.store(true, Ordering::Release);
+    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(
+        handler.join().is_err(),
+        "the injected panic must unwind the handler"
+    );
+    assert!(
+        state.dashboard_slot.lock().unwrap().is_none(),
+        "unwinding must release the dashboard slot"
+    );
+    assert!(state.dashboard.lock().unwrap().is_none());
+    drop(client);
+
+    let (server, mut client) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            read_frame::<ServerMessage>(&mut client).unwrap(),
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Hierarchy(_),
+            }
+        ),
+        "a later dashboard must be accepted"
+    );
+    drop(client);
+    handler.join().unwrap();
+}
+
+#[test]
+fn accept_loop_survives_thread_spawn_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let registry = root.path().join("config.toml");
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
+    let paths = ServerPaths {
+        socket: socket.clone(),
+    };
+    let server = thread::spawn(move || run_server(paths, registry));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while UnixStream::connect(&socket).is_err() {
+        assert!(Instant::now() < deadline, "server did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // The readiness probes above were accepted in order; a completed request
+    // proves the accept loop is idle before the seam is armed.
+    let mut warm_up = UnixStream::connect(&socket).unwrap();
+    exchange_preamble(&mut warm_up).unwrap();
+    write_frame(
+        &mut warm_up,
+        &ClientMessage {
+            request_id: 0,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut warm_up).unwrap();
+    drop(warm_up);
+
+    startup::FAIL_NEXT_ACCEPT_SPAWN.store(true, Ordering::Release);
+    let mut dropped = UnixStream::connect(&socket).unwrap();
+    dropped
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(
+        exchange_preamble(&mut dropped).is_err(),
+        "the client whose thread could not be spawned is closed"
+    );
+    drop(dropped);
+
+    let mut client = UnixStream::connect(&socket).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            read_frame::<ServerMessage>(&mut client).unwrap(),
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Hierarchy(_),
+            }
+        ),
+        "the server must keep serving after one spawn failure"
+    );
+    drop(client);
+
+    let mut client = UnixStream::connect(&socket).unwrap();
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        }
+    ));
+    server.join().unwrap().unwrap();
+}

@@ -1506,6 +1506,52 @@ fn stubborn_session_argv() -> Vec<OsString> {
 }
 
 #[test]
+fn workspace_remove_succeeds_after_directory_deleted() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/vanished-dir");
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    let workspace_dir = fixture.workspace_root.join("work");
+    std::fs::remove_dir_all(&workspace_dir).unwrap();
+
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into(),
+        }),
+        Response::Ok
+    );
+    let listed = String::from_utf8(
+        fixture
+            .git_output(&["worktree", "list", "--porcelain"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        !listed
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .any(|path| path.ends_with("/work")),
+        "Git must no longer list the worktree: {listed}"
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
 fn shutdown_kill_terminates_sessions_concurrently() {
     let _env_lock = ENV_LOCK.lock().unwrap();
     let fixture = ControlFixture::new();

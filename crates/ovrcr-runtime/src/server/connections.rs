@@ -1,5 +1,39 @@
 use super::*;
 
+/// Test seam: make the next dashboard registration panic after the slot is
+/// taken, so the guard's cleanup can be exercised.
+#[cfg(test)]
+pub(super) static PANIC_AFTER_DASHBOARD_REGISTRATION: AtomicBool = AtomicBool::new(false);
+
+/// Ownership of the server's single dashboard slot for one connection.
+///
+/// Registration and cleanup used to sit at opposite ends of
+/// `handle_connection` with fallible and panicking calls in between, so an
+/// early exit leaked the slot and every later dashboard was refused. Dropping
+/// this guard releases the slot whether the handler returns, breaks, or
+/// unwinds.
+struct DashboardOwnership {
+    state: Arc<ServerState>,
+    identity: Arc<()>,
+}
+
+impl Drop for DashboardOwnership {
+    fn drop(&mut self) {
+        let mut slot = self.state.dashboard_slot.lock().unwrap();
+        let owns_dashboard = slot
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(&current.identity, &self.identity));
+        if owns_dashboard {
+            if let Some(current) = slot.take() {
+                current.sink.close();
+            }
+            *self.state.dashboard.lock().unwrap() = None;
+            *self.state.selected.lock().unwrap() = None;
+            clear_dashboard_geometry(&self.state, &self.identity);
+        }
+    }
+}
+
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     // Complete the version handshake before any frame. Probes that connect
     // and drop, and clients built from other sources, are simply closed.
@@ -11,7 +45,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         _ => return,
     }
     let mut role = ClientRole::Control;
-    let mut dashboard_identity = None;
+    let mut ownership: Option<DashboardOwnership> = None;
     let dashboard_sink = DashboardSink::new();
     let mut writer: Option<JoinHandle<()>> = None;
     while !state.shutdown.load(Ordering::Acquire) {
@@ -63,59 +97,69 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             });
             drop(slot);
             *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
-            dashboard_identity = Some(Arc::clone(&identity));
+            ownership = Some(DashboardOwnership {
+                state: Arc::clone(&state),
+                identity: Arc::clone(&identity),
+            });
+            #[cfg(test)]
+            if PANIC_AFTER_DASHBOARD_REGISTRATION.swap(false, Ordering::AcqRel) {
+                panic!("injected panic after dashboard registration");
+            }
             role = ClientRole::Dashboard;
             let mut output = stream.try_clone().ok();
             let writer_sink = Arc::clone(&dashboard_sink);
             let writer_state = Arc::clone(&state);
             let writer_identity = Arc::clone(&identity);
-            let writer_close_stream = stream.try_clone().expect("clone dashboard close stream");
-            writer = Some(
-                thread::Builder::new()
-                    .name("ovrcr-dashboard-writer".into())
-                    .spawn(move || {
-                        while let Some(delivery) = writer_sink.next() {
-                            let (message, completion, dirty) = match delivery {
-                                DashboardDelivery::Message(outbound) => {
-                                    (outbound.message, outbound.completion, None)
-                                }
-                                DashboardDelivery::Dirty(session) => (
-                                    ServerMessage::Event(ServerEvent::ScreenDirty { session }),
-                                    None,
-                                    Some(session),
-                                ),
-                            };
-                            let result = match output.as_mut() {
-                                Some(stream) => {
-                                    write_frame(stream, &message).map_err(|error| error.to_string())
-                                }
-                                None => Err("dashboard writer stream unavailable".into()),
-                            };
-                            if result.is_ok()
-                                && let Some(session) = dirty
-                            {
-                                writer_sink.dirty_sent(session);
+            let Ok(writer_close_stream) = stream.try_clone() else {
+                break;
+            };
+            let spawned = thread::Builder::new()
+                .name("ovrcr-dashboard-writer".into())
+                .spawn(move || {
+                    while let Some(delivery) = writer_sink.next() {
+                        let (message, completion, dirty) = match delivery {
+                            DashboardDelivery::Message(outbound) => {
+                                (outbound.message, outbound.completion, None)
                             }
-                            if let Some(completion) = completion {
-                                let _ = completion.send(result.clone());
+                            DashboardDelivery::Dirty(session) => (
+                                ServerMessage::Event(ServerEvent::ScreenDirty { session }),
+                                None,
+                                Some(session),
+                            ),
+                        };
+                        let result = match output.as_mut() {
+                            Some(stream) => {
+                                write_frame(stream, &message).map_err(|error| error.to_string())
                             }
-                            if result.is_err() {
-                                writer_sink.close();
-                                let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
-                                disconnect_dashboard(
-                                    &writer_state,
-                                    DashboardSnapshot {
-                                        sink: writer_sink,
-                                        identity: writer_identity,
-                                        stream: writer_close_stream,
-                                    },
-                                );
-                                break;
-                            }
+                            None => Err("dashboard writer stream unavailable".into()),
+                        };
+                        if result.is_ok()
+                            && let Some(session) = dirty
+                        {
+                            writer_sink.dirty_sent(session);
                         }
-                    })
-                    .expect("dashboard writer thread"),
-            );
+                        if let Some(completion) = completion {
+                            let _ = completion.send(result.clone());
+                        }
+                        if result.is_err() {
+                            writer_sink.close();
+                            let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
+                            disconnect_dashboard(
+                                &writer_state,
+                                DashboardSnapshot {
+                                    sink: writer_sink,
+                                    identity: writer_identity,
+                                    stream: writer_close_stream,
+                                },
+                            );
+                            break;
+                        }
+                    }
+                });
+            match spawned {
+                Ok(handle) => writer = Some(handle),
+                Err(_) => break,
+            }
             dashboard_try_send(
                 &state,
                 response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
@@ -133,7 +177,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             &mut role,
             message.request.clone(),
             message.request_id,
-            dashboard_identity.as_ref(),
+            ownership.as_ref().map(|owned| &owned.identity),
         );
         let successful_shutdown = shutdown && state.stopping.load(Ordering::Acquire);
         let (delivered, dashboard_shutdown_attempt) = match role {
@@ -146,10 +190,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     if matches!(response, Response::Ok) {
                         (true, false)
                     } else {
-                        let delivered = dashboard_identity.as_ref().is_some_and(|owner| {
+                        let delivered = ownership.as_ref().is_some_and(|owned| {
                             dashboard_send_owner(
                                 &state,
-                                owner,
+                                &owned.identity,
                                 response_message(message.request_id, response),
                             )
                         });
@@ -192,21 +236,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             break;
         }
     }
-    {
-        let mut slot = state.dashboard_slot.lock().unwrap();
-        let owns_dashboard = dashboard_identity.as_ref().is_some_and(|identity| {
-            slot.as_ref()
-                .is_some_and(|current| Arc::ptr_eq(&current.identity, identity))
-        });
-        if owns_dashboard {
-            if let Some(current) = slot.take() {
-                current.sink.close();
-            }
-            *state.dashboard.lock().unwrap() = None;
-            *state.selected.lock().unwrap() = None;
-            clear_dashboard_geometry(&state, dashboard_identity.as_ref().unwrap());
-        }
-    }
+    drop(ownership);
     dashboard_sink.close();
     if let Some(writer) = writer {
         let _ = writer.join();

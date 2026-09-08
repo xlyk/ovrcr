@@ -729,9 +729,13 @@ impl ServerState {
                     .clone(),
             )
         };
-        if git::inspect_worktree(&project_record, &workspace)
-            .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?
-            .dirty
+        // A directory deleted outside OVRCR has nothing left to protect;
+        // removal then prunes Git's stale registration (see git.rs).
+        let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
+        if directory_present
+            && git::inspect_worktree(&project_record, &workspace)
+                .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?
+                .dirty
         {
             return Err(lifecycle_error(
                 ErrorCode::DirtyWorktree,

@@ -528,7 +528,10 @@ ovrcr project remove consigint
 ```
 
 Removal uses ordinary `git worktree remove` and preserves the branch. OVRCR
-never removes a repository or an unregistered worktree.
+never removes a repository or an unregistered worktree. If the worktree
+directory was deleted outside OVRCR, removal instead runs `git worktree prune`,
+but only after Git itself lists the registered path and branch as prunable,
+and then drops the registry record.
 
 ## Shutdown
 

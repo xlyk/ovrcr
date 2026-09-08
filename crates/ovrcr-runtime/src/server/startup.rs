@@ -34,6 +34,10 @@ fn user_temp_dir(name: &str) -> PathBuf {
     temp.join(format!("{name}-{user}"))
 }
 
+/// Test seam: make the next accepted connection's thread spawn fail.
+#[cfg(test)]
+pub(super) static FAIL_NEXT_ACCEPT_SPAWN: AtomicBool = AtomicBool::new(false);
+
 pub(super) fn resolve_bound_socket(socket: &Path) -> Result<PathBuf> {
     let leaf = socket
         .file_name()
@@ -186,9 +190,24 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         match incoming {
             Ok(stream) => {
                 let connection_state = Arc::clone(&state);
-                thread::Builder::new()
-                    .name("ovrcr-client".into())
-                    .spawn(move || handle_connection(connection_state, stream))?;
+                #[cfg(test)]
+                let inject_failure = FAIL_NEXT_ACCEPT_SPAWN.swap(false, Ordering::AcqRel);
+                #[cfg(not(test))]
+                let inject_failure = false;
+                let spawned = if inject_failure {
+                    drop(stream);
+                    Err(io::Error::other("injected thread spawn failure"))
+                } else {
+                    thread::Builder::new()
+                        .name("ovrcr-client".into())
+                        .spawn(move || handle_connection(connection_state, stream))
+                };
+                if let Err(error) = spawned {
+                    // One EAGAIN under load must not take every PTY down
+                    // with the server; drop this client and keep serving.
+                    eprintln!("ovrcr server: cannot spawn client thread: {error}");
+                    thread::sleep(Duration::from_millis(50));
+                }
             }
             Err(_) if state.shutdown.load(Ordering::Acquire) => break,
             Err(error) => return Err(error).context("accept server client"),
