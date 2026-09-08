@@ -6277,6 +6277,14 @@ fn split_layout_renders_independent_cells_and_cursor() {
     }
     let mut emitted = vt100::Parser::new(40, 120, 0);
     emitted.process(&output);
+    let emitted_left = (40..44)
+        .map(|column| emitted.screen().cell(3, column).unwrap().contents())
+        .collect::<String>();
+    let emitted_right = (80..85)
+        .map(|column| emitted.screen().cell(3, column).unwrap().contents())
+        .collect::<String>();
+    assert_eq!(emitted_left, "LEFT");
+    assert_eq!(emitted_right, "RIGHT");
     assert_eq!(emitted.screen().cell(38, 77).unwrap().contents(), "界");
     assert!(
         emitted
