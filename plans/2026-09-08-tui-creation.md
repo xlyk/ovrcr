@@ -2,7 +2,7 @@
 
 > **Execution:** Use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Complete the tasks in order; each task is one PR against `main`.
 
-**Outcome:** Creating a terminal, a workspace, or a project from the dashboard takes one hotkey and a pick or two instead of a palette trip through free-text fields, every project has a shell in its checkout by default, and the common path lands the user inside the new session.
+**Outcome:** Creating a terminal, a workspace, or a project from the dashboard takes one hotkey and a pick or two instead of a palette trip through free-text fields, every project has a shell in its checkout by default, and the common path lands the user inside the new session. Tasks 7 through 9 then complete the dashboard's roadmap: two panes side by side, mouse input forwarded to applications that ask for it plus wheel scrolling of the pane, and explicit session restore after server loss.
 
 **Baseline:** `claude/review-fixes` (PR #28). The palette lives in `crates/ovrcr-tui/src/dashboard/palette.rs`: `:` opens a `Page::Search` over `Entry` values, Enter on "Create terminal", "Create workspace", or "Register project" opens a `Page::Form` of free-text `Field`s built by `palette_form`, and the last Enter builds a `Request` in `palette_key`. Browse-mode keys are in `key_action` in `dashboard/state.rs`; keyboard selection is session-only (`selected: Option<SessionId>`), so project and workspace rows are reached only by mouse.
 
@@ -30,7 +30,12 @@
 | 3 | Pick lists and defaults for workspaces, `w` hotkey | TUI-only, reuses Task 1's pick-list widget |
 | 4 | Path picker for project registration, `a` hotkey | TUI-only, reuses the same widget |
 | 5 | Root workspace per project | Touches registry, server, removal guards; needs its own safety tests |
-| 6 | Docs and GUI smoke-check update | Last, describes the finished flow |
+| 6 | Docs and GUI smoke-check update | Describes the creation flow |
+| 7 | Split panes | Changes the view contract; mouse forwarding builds on its `pane_rects` |
+| 8 | Terminal mouse forwarding and pane wheel scrolling | Reuses `pane_rects` and the history snapshot |
+| 9 | Session restore | Durable state and a Claude adapter; independent of 7 and 8 but last because it is the largest |
+
+Tasks 7 through 9 fold in `plans/2026-09-05-split-panes.md`, `plans/2026-09-05-terminal-mouse-forwarding.md`, and `plans/2026-09-05-session-restore.md`. Those files keep the per-step code sketches and are marked superseded; the decisions and gates below are authoritative where they differ.
 
 ---
 
@@ -210,6 +215,142 @@
 
 ---
 
+### Task 7: Split panes
+
+**Source:** `plans/2026-09-05-split-panes.md` for the step-level sketches. Decisions below are final.
+
+**Files:**
+- Modify: `crates/ovrcr-protocol/src/wire.rs` (`PaneTarget`, `DashboardView`, `Request::SetView`, `revision` on `Response::Screen`, `ServerEvent::Output`, `ServerEvent::ScreenDirty`; bump `PROTOCOL_VERSION`, regenerate the snapshot)
+- Modify: `crates/ovrcr-runtime/src/server/{mod,dispatch,connections,outbound}.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/{mod,state,input,render,event_loop}.rs`
+- Test: `tests/tui.rs`, `tests/server_lifecycle.rs`, `tests/terminal_acceptance.rs`, protocol and runtime unit test modules
+
+**Decisions:**
+- One or two panes, always side by side, a one-column `│` separator, integer width split with the extra column on the right, each pane keeping its two metadata rows. No split tree, horizontal split, ratios, drag handles, or third pane.
+- Browse mode: `v` opens the second pane with the next different visible session and focuses it ("No other visible session to split" when none); repeated `v` is a no-op; Tab and Shift-Tab switch focus; `x` closes the focused pane when there are two and expands the survivor, and closes the selected session's record when there is one (the Task 2 meaning). These join the which-key table from Task 2 with descriptions naming the pane's session.
+- Browsing the sidebar replaces the focused pane's session; selecting a session already shown in the other pane focuses that pane instead, so one PTY never receives two sizes. A browse-mode click in a pane focuses it and sends no bytes.
+- Enter attaches the focused, ready, live pane; Ctrl-g returns to browse. No broadcast input. A pane awaiting its snapshot refuses input with "Pane is loading; retry input". Exited panes keep their final screen.
+- Each split pane needs at least 20 columns and one row; when the right area cannot fit both, keep both slots but draw and subscribe only the focused pane at full width with "split hidden: terminal too small", restoring automatically. Never submit a zero size.
+- Closing, replacing, or hiding a pane unsubscribes its session; the server parser keeps consuming and the PTY keeps its last size. The focused visible pane's size is the default for new sessions.
+- Detach and reattach start in browse mode with one pane; layout is not persisted. Closing a pane never kills, removes, or recreates a session.
+- The operator row from `plans/2026-09-08-operator-agent.md` is an ordinary session for pane purposes; `o` assigns it to the focused pane.
+
+**Wire and server contract:**
+
+```rust
+pub struct PaneTarget { pub session: SessionId, pub size: TerminalSize }
+pub struct DashboardView { pub revision: u64, pub panes: Vec<PaneTarget>, pub focused: Option<SessionId> }
+// Request::SetView { view: DashboardView }
+// revision: u64 added to Response::Screen, ServerEvent::Output, ServerEvent::ScreenDirty
+impl DashboardView { pub fn validate(&self) -> Result<(), String> }
+```
+
+`validate` rejects zero revision, more than two panes, duplicate sessions, zero rows or columns, and a focus outside the list; empty requires no focus, nonempty requires focus. `ServerState.selected` becomes `view: Mutex<Option<DashboardView>>`; `last_user_selection` from the operator plan follows the focused pane. `DispatchMessage::SetView { owner, request_id, view, completion }` validates every session before resizing any PTY, resizes only changed geometries, captures each screen, and calls `DashboardSink::replace_view(&view, request_id, screens) -> bool`, which atomically discards obsolete output and dirty flags and queues one `Screen` per visible pane followed by one `Ok`. Preflight queue room for all of them or disconnect the dashboard rather than drop lifecycle frames. A failed second resize reports `PartialFailure` and disconnects that dashboard, preserving processes. `Select` and `Resize` remain as adapters: `Select` builds a singleton view at the next revision; `Resize` is accepted only for a singleton view and answers `InvalidRequest: use SetView for split geometry` otherwise. Output is emitted as `(revision, session, bytes)` only for committed view members; dirty keys are `(revision, SessionId)`; on a dirty event the client re-requests its whole view at a new revision.
+
+**Dashboard contract:**
+
+```rust
+pub struct PaneState { pub session: Option<SessionId>, pub parser: vt100::Parser, pub size: TerminalSize, pub desired_size: TerminalSize, pub snapshot_installed: bool, pub ready: bool, pub error: Option<String> }
+pub struct PaneRects { pub pane_index: usize, pub metadata: Rect, pub terminal: Rect }
+pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects>;
+// Dashboard: panes: Vec<PaneState>, focused_pane: usize, view_revision: u64
+// focused_session(), split_pane(), focus_pane(i), close_focused_pane(),
+// view_request(area, request_id) -> Result<Option<ClientMessage>>, apply_screen(revision, session, size, bytes)
+```
+
+`view_request` increments the revision with checked arithmetic and marks visible targets unready; `apply_screen` accepts only the current revision for a visible assigned session and replaces only that pane's parser; the matching `Ok` marks panes ready. `select_session` stays the sidebar entry point. Copy mode and history bind to the focused pane's session and reset when its assignment changes.
+
+- [ ] **Step 1: RED tests.** Protocol: `split_view_validation_rejects_ambiguous_targets`, `split_view_frames_round_trip`. Runtime: `set_view_publishes_two_ordered_snapshots_then_ok`, `set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames`, `resize_is_rejected_for_a_split_view`. TUI: `v_splits_to_the_next_visible_session_and_focuses_it`, `selecting_the_other_panes_session_focuses_it`, `pane_rects_at_120x40_are_39x36_and_40x36`, `narrow_terminal_hides_the_split_and_restores_it`, `input_reaches_only_the_focused_ready_pane`, `stale_screen_cannot_replace_a_reassigned_pane`. Acceptance: two real sessions render side by side through the outer PTY, keystrokes reach only the focused one, a burst on both recovers both screens, detach and reattach preserve both PTYs.
+- [ ] **Step 2: Implement** in the source plan's order: view contract, ordered snapshots and overflow recovery, pane-local focus and modes, exact rectangles and per-pane resize, then the acceptance run.
+- [ ] **Step 3: Verify** `rtk proxy cargo test --workspace` and the acceptance suite.
+
+**Gate:** the six acceptance criteria in the source plan hold: independent PTY sizes (39×36 and 40×36 at 120×40), focused-only input with per-pane cursor and paste modes, snapshots precede increments per revision, narrow terminals never send zero sizes, close/hide/detach/reattach preserve PTYs, and the existing sidebar, restoration, and 50-session gates still pass.
+
+---
+
+### Task 8: Terminal mouse forwarding and pane wheel scrolling
+
+**Source:** `plans/2026-09-05-terminal-mouse-forwarding.md` for the step-level sketches and byte tables. Decisions below are final, plus the wheel-scrolling addition that closes the gap between that plan and historical scrollback.
+
+**Files:**
+- Modify: `crates/ovrcr-tui/src/dashboard/{input,state,event_loop,mod,terminal_guard}.rs`, `render.rs` where the pane rectangle is consumed
+- Create: `tests/support/mouse_app.rs` (a raw fixture that enables a tracking mode and echoes received bytes)
+- Test: `tests/tui.rs`, `tests/terminal_acceptance.rs`
+
+No wire change; mouse bytes travel in the existing `Request::Input`.
+
+**Decisions:**
+- Forward only to the focused, ready, live pane's session, only in terminal mode, only when that session's parser reports a tracking mode (1000, 1002, 1003, or X10) it has requested. Encoding enablement alone forwards nothing.
+- Forward left, middle, and right presses; releases in 1000/1002/1003; drag in 1002/1003; unpressed motion only in 1003; wheel up/down/left/right in 1000/1002/1003; X10 gets the three presses only. Shift, Alt, and Control modifiers except in X10. No Shift-click bypass.
+- Coordinates are computed only after bounds checks against `pane_rects` from Task 7; metadata rows, separators, footer, sidebar, and cells beyond the parser's size are rejected. Columns are cells, never character indices.
+- A press owns its session until release or cancellation; up to three held buttons; duplicate motion at the same cell is suppressed. Leaving the rectangle emits a release at the last valid position. Before Ctrl-g, selection replacement, resize, or detach, held buttons are released with the old encoding and old session id, and that cleanup frame is written before the selection or resize request.
+- Outer mouse capture is on in browse mode or while forwarding is eligible, reconciled after output and snapshots as well as keys, using the existing enable and disable commands. Focus reporting is on for the dashboard lifetime; `FocusLost` finishes gestures and suppresses forwarding until `FocusGained`.
+- A parsed protocol change clears held state without sending old-protocol releases. During snapshot resynchronization or a pending resize, forwarding is disabled until the matching acknowledgement. Exited or removed sessions never receive mouse input.
+- **Pane wheel scrolling (new):** in browse mode, or in terminal mode when the focused application has not requested a tracking mode, a wheel-up over a pane opens the historical view (`begin_history_request`) for that pane's session positioned at the captured tail, and further wheel ticks page it one row per tick; a wheel-down at the newest row closes history and returns to the live pane. When the application has requested tracking, the wheel is forwarded to it instead. The which-key table's History entry gains "or scroll the wheel over the pane".
+
+**Interfaces:**
+
+```rust
+pub fn encode_mouse(event: MouseEvent, mode: vt100::MouseProtocolMode, encoding: vt100::MouseProtocolEncoding) -> Option<Vec<u8>>;
+// Dashboard: mouse: MouseForwarding { held: [Option<HeldMouse>; 3], last_motion, pending_cleanup: Option<ClientMessage> },
+//   mouse_focused: bool, mouse_ready: bool, mouse_awaiting: Option<MouseAwaiting>
+// pub fn mouse_capture_required(&self) -> bool; pub fn cancel_mouse_gesture(&mut self);
+// pub fn take_mouse_cleanup(&mut self) -> Option<ClientMessage>; fn terminal_mouse_enabled(&self) -> bool; fn reconcile_mouse_protocol(&mut self);
+```
+
+`None` from `encode_mouse` means the event is not representable; it never returns a truncated sequence. `pending_cleanup` holds at most one frame of at most three releases. Every path that writes a request drains cleanup first.
+
+- [ ] **Step 1: RED tests.** Unit: exact byte tables for every supported mode and encoding, all three buttons, all wheel axes, combined modifiers, SGR coordinates above 223, legacy cell 222 accepted and 223 rejected. TUI: `browse_click_in_pane_focuses_without_bytes`, `press_outside_rectangle_is_not_clamped`, `leaving_the_rectangle_releases_at_last_valid_cell`, `ctrl_g_releases_held_buttons_before_switching`, `protocol_change_clears_held_state`, `wheel_over_a_pane_without_tracking_opens_history_at_the_tail`, `wheel_down_at_newest_row_returns_to_live`, `wheel_is_forwarded_when_tracking_is_enabled`. Acceptance: through the outer PTY with `tests/support/mouse_app.rs`, send SGR press, drag, release, and wheel and assert the exact relative bytes; then the same gestures against a plain shell show no bytes and the wheel opens history.
+- [ ] **Step 2: Implement** encoder, gesture ownership through `pane_rects`, capture and focus reconciliation, snapshot and resize gating, then the wheel rule.
+- [ ] **Step 3: Verify** `rtk proxy cargo test --workspace`, the acceptance suite, and a manual pass in a real terminal with Vim `:set mouse=a` and the computer-use guide for the native gate.
+
+**Gate:** application requests control forwarding; browse ownership, Ctrl-g, keyboard and paste encoding, and terminal restoration are unchanged; held buttons never migrate between sessions; the wheel scrolls a plain shell's history and drives Vim when it asks.
+
+---
+
+### Task 9: Session restore after server loss
+
+**Source:** `plans/2026-09-05-session-restore.md` for the state machine table, storage rules, and step sketches. Decisions below are final.
+
+**Files:**
+- Create: `crates/ovrcr-runtime/src/restore.rs`
+- Modify: `crates/ovrcr-runtime/src/config.rs` (extract `write_atomic(path, bytes, mode) -> Result<(), SaveFailure>`), `crates/ovrcr-runtime/src/server/{mod,dispatch,startup}.rs`, `crates/ovrcr-runtime/src/session/mod.rs`
+- Modify: `crates/ovrcr-protocol/src/wire.rs` and `session.rs` (`restore_mode` on `CreateSessionRequest`, `Request::SavedSessions`, `Request::RestoreSession`, `ack_orphans_gone` on `RemoveSession`, `Response::SavedSessions`, `incarnation` on `SessionSummary`, `SessionPhase::Recoverable { reason }`; bump `PROTOCOL_VERSION`, regenerate the snapshot)
+- Modify: `src/cli/{args,mod,output}.rs`, `crates/ovrcr-tui/src/dashboard/{state,render}.rs`
+- Test: `tests/server_lifecycle.rs`, `tests/cli.rs`, `tests/tui.rs`, `crates/ovrcr-runtime/src/restore.rs` unit tests
+
+**Decisions:**
+- Opt-in at creation: `new --restore-mode relaunch`, or `new --restore-mode claude --conversation-id UUID -- claude`. Default sessions, workspace `local` shells, and the operator stay ephemeral. No retrospective recording.
+- Saved intent is the canonical executable (resolved on the server's PATH at creation), exact argv bytes, the canonical workspace path, the mode, and an attempt state. No environment, credentials, screen contents, or transcripts. File mode 0600; argv never appears in list output or errors, and CLI help warns that argv can contain secrets.
+- Storage is `<config-filename>.sessions.toml` beside the registry, written with the shared atomic writer, guarded by a lifetime `flock` on `<config-filename>.sessions.lock` acquired before the registry loads or the socket binds; two servers on one config are an ownership conflict. Version 1 schema, unknown fields rejected, at most 512 records and 64 KiB of argv per record; malformed, oversized, or duplicate files fail closed without replacement.
+- Session ids are reserved durably before every creation, including ephemeral ones, so a saved id is never reused after restart.
+- Startup never launches anything. `session saved` lists records without starting a server. `session restore ID --expected-incarnation N` starts the server if needed and restores exactly one record; there is no automatic or batch restore. An interrupted attempt is `MayBeRunning` and requires `--ack-orphans-gone`, an operator assertion that old descendants are gone; OVRCR never signals a saved PID. `kill` on an uncertain saved-only record refuses with inspection instructions. `session remove` of an uncertain record also needs the acknowledgement. Saved records block workspace removal; `shutdown --kill` refuses unresolved uncertain records; ordinary shutdown may leave safely stopped saved records.
+- A restore creates a new PTY, PID, group, incarnation, and start time. Events carry the incarnation and mismatches are discarded. The dashboard shows saved-only rows as "not running" with the restore reason, never an elapsed time since 1970, and the which-key Session group gains `R` "Restore this saved session" with the reason as its disabled text.
+- Claude Code is the only adapter: initial argv `[claude, --session-id, uuid]`, restore `[claude, --resume, uuid]`, one input argv element only, a five-second `--help` probe requiring both option tokens before committing intent, refusal when `CLAUDE_CODE_SKIP_PROMPT_HISTORY` is truthy, and a successful spawn reported as "resume launched", never "conversation restored".
+
+**Interfaces:**
+
+```rust
+pub struct RestoreFile { pub version: u32, pub next_id: u64, pub records: Vec<SavedSession> }
+pub struct SavedSession { pub id: SessionId, pub incarnation: u64, pub project: String, pub workspace: String, pub name: String, pub label: String, pub cwd: Vec<u8>, pub argv: Vec<Vec<u8>>, pub mode: RestoreMode, pub attempt: AttemptState }
+pub enum RestoreMode { Relaunch, Claude { conversation_id: String } }
+pub enum AttemptState { MayBeRunning, Stopped }
+pub fn load(path: &Path) -> Result<RestoreFile>; pub fn save(path: &Path, data: &RestoreFile) -> Result<(), SaveFailure>;
+pub fn acquire_owner(config: &Path) -> Result<File>; pub fn decode_spec(record: &SavedSession) -> Result<SessionSpec>;
+pub fn launch_argv(record: &SavedSession, restoring: bool) -> Result<Vec<OsString>>; pub fn check_claude(executable: &Path, cwd: &Path) -> Result<()>;
+// ServerState::restore_session(id, expected: u64, ack: bool) -> Result<SessionSummary>; saved_sessions() -> Vec<SavedSessionSummary>
+```
+
+Lock order is mutation, then sessions, then restore; the dispatcher persists exits under the restore mutex only, after applying the event, and never takes the mutation lock. `SaveFailure { source, replaced }` distinguishes a pre-rename failure (nothing changed) from a post-rename sync failure (durable mutations freeze until restart).
+
+- [ ] **Step 1: RED tests.** Unit: round trip with non-UTF-8 argv, rejection of each malformed shape, oversize refusal, lock conflict between two owners, `launch_argv` for both modes, `check_claude` against a fake `claude` that prints or omits the tokens. Server: `id_reservation_survives_restart`, `intent_is_durable_before_spawn`, `interrupted_attempt_blocks_until_acknowledged`, `restore_reuses_id_and_increments_incarnation`, `stale_incarnation_events_are_discarded`, `saved_records_block_workspace_removal_and_kill_shutdown`. CLI: `session saved` offline, `session restore` with wrong and right incarnation, `--ack-orphans-gone` on remove. TUI: recoverable rows render "not running" and the reason. Crash acceptance: start a saved relaunch session through the real binary, SIGKILL the server, prove the descendant survives and restore is refused, acknowledge, restore, and prove a new PID and incarnation.
+- [ ] **Step 2: Implement** in the source plan's order: durable storage and owner lock, intent before spawn, explicit reconciliation and gates, CLI and adapter, then the crash acceptance and documentation.
+- [ ] **Step 3: Verify** `rtk proxy cargo test --workspace` plus the crash acceptance run; measure the 50-session lifecycle gate before and after, since each allocation, intent, stop, and remove adds one fsync transaction.
+
+**Gate:** the acceptance list in the source plan: saved intent survives process loss, no old process or screen is ever presented as restored, every launch has durable pre-spawn intent, ambiguous attempts stay recoverable without an automatic duplicate, crash tests prove surviving descendants are refused until acknowledged, and provider identity is unchanged across restore.
+
+---
+
 ## Final verification
 
 From a clean checkout of the merged branch:
@@ -226,4 +367,7 @@ Then, with a release build and an isolated `OVRCR_CONFIG` and `OVRCR_SOCKET`:
 3. Press `w`, type a name, confirm the branch reads `feature/<name>` and the base is the repository's default branch, submit, and confirm the new workspace's `local` shell is selected.
 4. Press `a`, reach a repository with two Tabs from a configured root, and confirm the name and workspace root were derived.
 5. `ovrcr workspace remove --project X --name root` is refused; `ovrcr project remove X` closes the root shell and leaves the repository intact.
-6. Run the computer-use smoke check in `docs/testing-computer-use.md`.
+6. Press `v` on a session and confirm two panes render with independent sizes and that typing reaches only the focused one; press `x` to close it.
+7. In Vim with `:set mouse=a` inside a pane, click, drag, and wheel; then over a plain shell, wheel up and confirm the history view opens at the tail.
+8. Start a session with `--restore-mode relaunch`, kill the server with SIGKILL, run `ovrcr session saved`, restore it with the acknowledgement, and confirm a new PID and incarnation.
+9. Run the computer-use smoke check in `docs/testing-computer-use.md`.

@@ -2,7 +2,7 @@
 
 > **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
-**Status:** Proposed future design, not an approved specification or implemented behavior. All choices below marked as defaults are design assumptions for review.
+**Status:** Superseded on 2026-09-08 by Task 7 of `plans/2026-09-08-tui-creation.md`, which carries the final decisions and gates; this file is retained for its step-level sketches and byte tables. Its Luna execution contract no longer applies.
 
 **Goal:** View two different live sessions side by side, with keyboard input reaching only the focused pane.
 
