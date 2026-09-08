@@ -9,6 +9,22 @@ run *args:
 run-release *args:
     rtk proxy cargo run -p ovrcr --release -- "$@"
 
+# Stop a leftover local server (including an older build that cannot handshake) and start the dashboard.
+restart *args:
+    #!/usr/bin/env bash
+    set -eu
+    rtk proxy cargo run -p ovrcr -- shutdown --kill || true
+    socket="${OVRCR_SOCKET:-${TMPDIR:-/tmp}/ovrcr-$(id -u)/ovrcr/server.sock}"
+    if [[ -e "$socket" ]]; then
+      pids="$(lsof -t -- "$socket" 2>/dev/null || true)"
+      if [[ -n "${pids}" ]]; then
+        kill ${pids} 2>/dev/null || true
+        sleep 0.2
+        kill -KILL ${pids} 2>/dev/null || true
+      fi
+    fi
+    rtk proxy cargo run -p ovrcr -- "$@"
+
 build:
     rtk proxy cargo build --workspace
 
