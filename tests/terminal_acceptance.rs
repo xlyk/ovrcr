@@ -721,6 +721,147 @@ fn write_fifo_bounded(path: &Path, bytes: &[u8], timeout: Duration) -> Result<()
 }
 
 #[test]
+fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    let session_pid = |fixture: &AcceptanceFixture, name: &str| -> Result<u32> {
+        fixture
+            .list()?
+            .projects
+            .into_iter()
+            .flat_map(|project| project.workspaces)
+            .flat_map(|workspace| workspace.sessions)
+            .find(|session| session.name == name)
+            .and_then(|session| session.pid)
+            .with_context(|| format!("{name} session PID"))
+    };
+    let waiting_pid = session_pid(&fixture, "waiting")?;
+    let mouse_pid = session_pid(&fixture, "mouse")?;
+    eprintln!("split outer session PIDs: waiting={waiting_pid} mouse={mouse_pid}");
+
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.send(b"j")?;
+    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.send(b"v")?;
+    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.send(b"\rMOUSE_TOKEN\r")?;
+    dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for(b"> waiting", Duration::from_secs(3))?;
+    dashboard.send(b"\rWAITING_TOKEN\r")?;
+    dashboard.wait_for(b"WAITING_ACK", Duration::from_secs(3))?;
+
+    let assert_split_cells =
+        |dashboard: &OuterDashboard, area: ratatui::layout::Rect| -> Result<()> {
+            let rects = ovrcr::tui::pane_rects(area, 2, 0);
+            anyhow::ensure!(rects.len() == 2, "expected two visible pane rectangles");
+            dashboard.find_text_in_rect(rects[0].terminal, "WAITING_ACK")?;
+            anyhow::ensure!(
+                dashboard
+                    .find_text_in_rect(rects[1].terminal, "WAITING_ACK")
+                    .is_err(),
+                "WAITING_ACK rendered in the mouse pane"
+            );
+            dashboard.find_text_in_rect(rects[1].terminal, "MOUSE_ACK")?;
+            anyhow::ensure!(
+                dashboard
+                    .find_text_in_rect(rects[0].terminal, "MOUSE_ACK")
+                    .is_err(),
+                "MOUSE_ACK rendered in the waiting pane"
+            );
+            Ok(())
+        };
+    assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 120, 40))?;
+
+    dashboard.resize(30, 100)?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> waiting 29x26"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"SIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_26 29", Duration::from_secs(3))?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> mouse 30x26"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\rSIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_26 30", Duration::from_secs(3))?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> mouse 30x26") && screen.contains("BROWSE"),
+        Duration::from_secs(3),
+    )?;
+    assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 100, 30))?;
+
+    dashboard.resize(30, 80)?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("split hidden: terminal too small") && screen.contains("> mouse 40x26")
+        },
+        Duration::from_secs(3),
+    )?;
+    dashboard.resize(40, 120)?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("waiting 39x36") && screen.contains("> mouse 40x36"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"x")?;
+    dashboard.wait_for_screen(
+        |screen| screen.lines().all(|line| line.chars().nth(79) != Some('│')),
+        Duration::from_secs(3),
+    )?;
+    for line in dashboard.rendered().lines() {
+        anyhow::ensure!(
+            line.chars().nth(79) != Some('│'),
+            "split separator remained after closing the mouse pane"
+        );
+    }
+    assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
+    assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
+    dashboard.detach()?;
+
+    let mut reattached = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    reattached.wait_for_screen(
+        |screen| {
+            screen.contains("pid:") && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
+        },
+        Duration::from_secs(3),
+    )?;
+    reattached.send(b"j")?;
+    reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
+    assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
+
+    reattached.send(b"v")?;
+    reattached.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    reattached.send(b"\rMOUSE_TOKEN\r")?;
+    reattached.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
+    assert_split_cells(&reattached, ratatui::layout::Rect::new(0, 0, 120, 40))?;
+    assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
+    assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
+    reattached.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
 fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
@@ -1154,6 +1295,37 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     dashboard.send(b"MOUSE_TOKEN\r")?;
     dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
     dashboard.resize(40, 120)?;
+    let readiness_deadline = Instant::now() + Duration::from_secs(3);
+    let remaining = |deadline: Instant| deadline.saturating_duration_since(Instant::now());
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Terminal mode  Ctrl-g browse"),
+        remaining(readiness_deadline),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("BROWSE  j/k/↑/↓  Enter"),
+        remaining(readiness_deadline),
+    )?;
+    loop {
+        let timeout = remaining(readiness_deadline);
+        if timeout.is_zero() {
+            bail!("resized dashboard did not become input-ready before deadline");
+        }
+        dashboard.send(b"\r")?;
+        dashboard.wait_for_screen(
+            |screen| {
+                screen.contains("Terminal mode  Ctrl-g browse")
+                    || screen.contains("Pane is loading; retry input")
+            },
+            timeout,
+        )?;
+        if dashboard
+            .rendered()
+            .contains("Terminal mode  Ctrl-g browse")
+        {
+            break;
+        }
+    }
     dashboard.send(b"SIZE_TOKEN\r")?;
     dashboard.wait_for(b"SIZE_ACK_36 80", Duration::from_secs(3))?;
     let rendered = dashboard.rendered();
