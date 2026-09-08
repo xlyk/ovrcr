@@ -1,0 +1,80 @@
+# Path Picker for Project Registration Plan
+
+> **Execution:** Use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Each task is one PR against `main`.
+
+**Outcome:** Registering a project from the dashboard is `a`, a couple of Tabs through a directory picker that marks Git checkouts, and Enter: the project name and workspace root derive from the chosen repository.
+
+**Baseline:** `main` after PR #28. The palette lives in `crates/ovrcr-tui/src/dashboard/palette.rs`: `:` opens a `Page::Search` over `Entry` values, Enter on "Create terminal", "Create workspace", or "Register project" opens a `Page::Form` of free-text `Field`s built by `palette_form`, and the last Enter builds a `Request` in `palette_key`. Browse-mode keys are in `key_action` in `dashboard/state.rs`; keyboard selection is session-only (`selected: Option<SessionId>`), so project and workspace rows are reached only by mouse.
+
+**Decisions already taken:**
+- The picker applies to the two path fields of "Register project". The workspace root is prefilled from the project name.
+- Fuzzy matching stays within one directory; listing is one `read_dir` and stays synchronous.
+
+**Dependencies:** Depends on the `PickList` widget and `picker_roots` setting from `plans/2026-09-08-detected-agents.md`.
+
+## Constraints
+
+- Keep blocking I/O and threads. Do not add tokio or any async runtime.
+- The dashboard is a client. Anything it reads from Git or the filesystem for suggestions is best-effort and must never block the event loop for more than a few tens of milliseconds; use the existing `TaskWorker` pattern in `task_tui.rs` for anything slower.
+- Dashboard settings live in their own file, `dashboard.toml`, beside `config.toml`. The server rewrites `config.toml` atomically and would drop unknown tables, so never put dashboard settings there.
+- Any change to a serialized type in `crates/ovrcr-protocol` bumps `PROTOCOL_VERSION` and regenerates the wire snapshot in `wire.rs`.
+- OVRCR never removes a repository. The root workspace is not a worktree and is never passed to `git worktree remove` or `prune`.
+- Every behavior change gets the smallest test that would have caught a regression. Skip matrices.
+- Prefix every executable and pipeline stage with `rtk`. Before committing: `rtk proxy just verify` plus the task's named tests.
+
+---
+
+### Task 1: Path picker for project registration
+
+
+
+**Files:**
+- Modify: `crates/ovrcr-tui/src/dashboard/picker.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/palette.rs`
+- Modify: `crates/ovrcr-tui/src/dashboard/state.rs`
+- Test: `crates/ovrcr-tui/src/dashboard/tests.rs`, `tests/tui.rs`
+
+**Design:**
+- `FieldKind::Path(PathPicker)`: the field holds the typed text; the list under it shows the children of the directory named by the text up to its last separator, filtered by fuzzy subsequence on the last segment, directories only, hidden entries excluded unless the segment starts with `.`. `~` expands. Tab accepts the highlighted entry and appends `/` so the next segment can be typed; Enter accepts the text as typed. Entries whose directory contains `.git` carry a marker and sort first. Listing is a single `read_dir` of one directory, so it stays synchronous; a directory with more than 500 entries is truncated with a count.
+- When the field is empty, the list shows `picker_roots` from `dashboard.toml` (default `~/Code`, `~/src`, `~` when they exist) so the common case is two Tabs.
+- The form becomes: Repository (path picker), Name (text, prefilled with the repository's basename once the repository is chosen, editable), Workspace root (path picker, prefilled with `<config dir>/workspaces/<name>` and updated while Name changes until edited). The server already canonicalizes and validates both paths; the dashboard only makes them easier to type.
+- `a` in browse mode opens the form. The palette entry reads "Register project (a)".
+- After registration, `plans/2026-09-08-root-workspace.md` gives the project a root `local` shell; until then, select the project's first session if any.
+
+- [ ] **Step 1: RED tests**
+  1. `picker` unit against a temp tree: typing `~/Co` lists `Code`; Tab yields `~/Code/`; a child with `.git` is marked and sorted first; a hidden directory appears only when the segment starts with `.`.
+  2. `tests/tui.rs`: `a_opens_project_form_with_roots_and_derives_name_and_root`.
+
+- [ ] **Step 2: Implement.**
+
+- [ ] **Step 3: Verify** `rtk proxy cargo test -p ovrcr-tui` and `rtk proxy cargo test --test tui --test terminal_acceptance`.
+
+**Gate:** new tests pass; `cli` and `resource_cli` unchanged.
+
+---
+
+### Task 2: Documentation and the computer-use smoke check
+
+**Files:**
+- Modify: `README.md`
+- Modify: `docs/testing-computer-use.md`
+
+- [ ] **Step 1:** Document `a`, the picker keys, and `picker_roots` in the README "Command palette" section, and add a smoke-check step to `docs/testing-computer-use.md`: press `a`, reach the demo repository through the picker, and confirm the derived name and workspace root.
+
+**Gate:** the README transcript in "Disposable repository transcript" still runs as written.
+
+---
+
+## Final verification
+
+From a clean checkout of the merged branch:
+
+```sh
+rtk proxy just verify
+rtk proxy cargo test --features gui --test gui
+```
+
+Then, with a release build and an isolated `OVRCR_CONFIG` and `OVRCR_SOCKET`:
+
+1. Press `a`, reach a repository with two Tabs from a configured root, and confirm the name and workspace root were derived.
+2. Run the computer-use smoke check in `docs/testing-computer-use.md`.

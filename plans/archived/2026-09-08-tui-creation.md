@@ -1,5 +1,7 @@
 # OVRCR Dashboard Creation Flow Plan
 
+**Status:** Superseded on 2026-09-08 by one plan per feature in `plans/`: detected-agents, which-key-popup, workspace-creation-picks, project-path-picker, root-workspace, split-panes, terminal-mouse-forwarding, and session-restore. Retained for the combined priority table.
+
 > **Execution:** Use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Complete the tasks in order; each task is one PR against `main`.
 
 **Outcome:** Creating a terminal, a workspace, or a project from the dashboard takes one hotkey and a pick or two instead of a palette trip through free-text fields, every project has a shell in its checkout by default, and the common path lands the user inside the new session. Tasks 7 through 9 then complete the dashboard's roadmap: two panes side by side, mouse input forwarded to applications that ask for it plus wheel scrolling of the pane, and explicit session restore after server loss.

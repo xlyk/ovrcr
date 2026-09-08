@@ -1279,7 +1279,7 @@ git commit -m "feat(cli): add operator start/stop, terminal selected, and sessio
 - Modify: `crates/ovrcr-tui/src/dashboard/state.rs`
 - Modify: `crates/ovrcr-tui/src/dashboard/render.rs`
 - Modify: `crates/ovrcr-tui/src/dashboard/event_loop.rs` (mode reporting)
-- Modify: `crates/ovrcr-tui/src/dashboard/hints.rs` if Task 2 of the creation plan has landed; otherwise skip the popup entry
+- Modify: `crates/ovrcr-tui/src/dashboard/hints.rs` if `plans/2026-09-08-which-key-popup.md` has landed; otherwise skip the popup entry
 - Test: `tests/tui.rs`
 
 **Interfaces:**

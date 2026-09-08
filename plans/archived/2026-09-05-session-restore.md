@@ -2,7 +2,7 @@
 
 > **For the assigned worker:** Implement this plan task by task using the Luna execution contract below. Configure the worker as `gpt-5.6-luna` with `xhigh` reasoning effort. This document is a plan; execution starts only when the orchestrator assigns it.
 
-**Status:** Superseded on 2026-09-08 by Task 9 of `plans/2026-09-08-tui-creation.md`, which carries the final decisions and gates; this file is retained for its step-level sketches and byte tables. Its Luna execution contract no longer applies.
+**Status:** Superseded on 2026-09-08 by `plans/2026-09-08-session-restore.md`, which carries the final decisions and gates; this file is retained for its step-level sketches and byte tables. Its Luna execution contract no longer applies.
 
 **Goal:** Restore explicitly saved sessions after server loss by creating new PTYs, with one supported agent conversation adapter.
 
