@@ -99,7 +99,11 @@ fn default_branch(
     if let Ok(remote) = remote
         && let Some(branch) = remote.trim().strip_prefix("refs/remotes/origin/")
     {
-        return Ok(branch.into());
+        return Ok(if branches.iter().any(|local| local == branch) {
+            branch.into()
+        } else {
+            remote.trim().into()
+        });
     }
     if cancelled.load(Ordering::Relaxed) || Instant::now() >= deadline {
         bail!("Git lookup timed out or cancelled");
@@ -250,6 +254,9 @@ mod tests {
         );
         git(repo, &["pack-refs", "--all"]);
         assert_eq!(default_branch(repo).unwrap(), "topic");
+        git(repo, &["branch", "-D", "topic"]);
+        assert_eq!(default_branch(repo).unwrap(), "refs/remotes/origin/topic");
+        git(repo, &["branch", "topic", "refs/remotes/origin/topic"]);
         let worktree = dir.path().join("linked");
         git(
             repo,

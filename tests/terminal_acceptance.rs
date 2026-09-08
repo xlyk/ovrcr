@@ -764,6 +764,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
             "refs/remotes/origin/trunk",
         ],
     )?;
+    git(&fixture.repo, &["branch", "-D", "trunk"])?;
     std::fs::write(
         fixture.config.with_file_name("dashboard.toml"),
         "branch_prefix = \"task/\"\n",
@@ -816,7 +817,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     let tip = Command::new("git")
         .arg("-C")
         .arg(&workspace.path)
-        .args(["rev-parse", "HEAD", "trunk"])
+        .args(["rev-parse", "HEAD", "refs/remotes/origin/trunk"])
         .output()?;
     assert!(tip.status.success());
     let tips = String::from_utf8(tip.stdout)?;
