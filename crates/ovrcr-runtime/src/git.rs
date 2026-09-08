@@ -63,7 +63,7 @@ pub fn create_worktree(
     branch: BranchSpec,
 ) -> Result<WorkspaceRecord> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
-    validate_workspace_name(name)?;
+    ovrcr_protocol::validate_name(name, "workspace")?;
     let destination = workspace_root.join(name);
     if destination.exists() {
         bail!(
@@ -162,6 +162,12 @@ pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> 
     if workspace.path != expected_path {
         bail!("registry/Git path disagreement");
     }
+    if fs::symlink_metadata(&workspace.path)
+        .map_err(|error| error.kind() == std::io::ErrorKind::NotFound)
+        .is_err_and(|missing| missing)
+    {
+        return prune_missing_worktree(&repo, workspace, &expected_path);
+    }
     let canonical_path = canonical_workspace_path(&workspace_root, workspace)?;
     if canonical_path != expected_path {
         bail!("unexpected canonical path");
@@ -191,16 +197,63 @@ pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> 
     Ok(())
 }
 
-fn validate_workspace_name(name: &str) -> Result<()> {
-    if name.is_empty()
-        || name.contains("..")
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+/// Remove the registration of a worktree whose directory was deleted
+/// outside OVRCR.
+///
+/// `git worktree remove` refuses a missing directory, so the only Git
+/// operation that applies is `prune`. It is allowed only when Git itself
+/// lists the registered path as prunable with the registered branch, so a
+/// registry entry can never prune an unrelated worktree.
+fn prune_missing_worktree(
+    repo: &Path,
+    workspace: &WorkspaceRecord,
+    expected_path: &Path,
+) -> Result<()> {
+    let entries = worktree_entries(repo)?;
+    matching_entry(&entries, expected_path, &workspace.branch)?;
+    if !prunable_worktrees(repo)?.contains(&expected_path.to_path_buf()) {
+        bail!(
+            "worktree directory {} is missing but Git does not report it prunable",
+            expected_path.display()
+        );
+    }
+    run_git(repo, &[OsString::from("worktree"), OsString::from("prune")])?;
+    if worktree_entries(repo)?
+        .iter()
+        .any(|(path, _)| path == expected_path)
     {
-        bail!("invalid workspace name: {name:?}");
+        bail!(
+            "git worktree prune left {} registered",
+            expected_path.display()
+        );
     }
     Ok(())
+}
+
+fn prunable_worktrees(repo: &Path) -> Result<Vec<PathBuf>> {
+    let output = run_git(
+        repo,
+        &[
+            OsString::from("worktree"),
+            OsString::from("list"),
+            OsString::from("--porcelain"),
+        ],
+    )?;
+    let text = String::from_utf8(output.stdout).context("decode git worktree list")?;
+    let mut prunable = Vec::new();
+    let mut current = None;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            current = Some(PathBuf::from(value));
+        } else if line.starts_with("prunable")
+            && let Some(path) = current.take()
+        {
+            prunable.push(path);
+        } else if line.is_empty() {
+            current = None;
+        }
+    }
+    Ok(prunable)
 }
 
 fn validate_branch(repo: &Path, branch: &str) -> Result<()> {
@@ -234,16 +287,18 @@ fn validate_commitish(repo: &Path, base: &str) -> Result<()> {
 
 fn validate_local_branch(repo: &Path, branch: &str) -> Result<()> {
     let ref_name = format!("refs/heads/{branch}");
-    let output = Command::new("git")
-        .current_dir(repo)
-        .args(["show-ref", "--verify", "--quiet"])
-        .arg(&ref_name)
-        .output()
-        .with_context(|| format!("check local branch {branch:?}"))?;
-    if !output.status.success() {
-        bail!("local branch does not exist: {branch}");
+    match run_git(
+        repo,
+        &[
+            OsString::from("show-ref"),
+            OsString::from("--verify"),
+            OsString::from("--quiet"),
+            OsString::from(ref_name),
+        ],
+    ) {
+        Ok(_) => Ok(()),
+        Err(_) => bail!("local branch does not exist: {branch}"),
     }
-    Ok(())
 }
 
 fn canonical_workspace_path(workspace_root: &Path, workspace: &WorkspaceRecord) -> Result<PathBuf> {

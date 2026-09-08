@@ -281,10 +281,18 @@ fn multiline_cursor_edits_unicode_without_corruption() {
 
 #[test]
 fn dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open() {
-    use ovrcr::protocol::{Request, ServerEvent, ServerMessage};
+    use ovrcr::protocol::{Request, Response, ServerEvent, ServerMessage};
     use ovrcr::session::SessionId;
     let mut d = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
     d.select_request(SessionId(1), 1);
+    d.handle_server_message(ServerMessage::Response {
+        request_id: 1,
+        response: Response::Screen {
+            session: SessionId(1),
+            size: d.pane_size,
+            bytes: Vec::new(),
+        },
+    });
     d.ctrl('t');
     d.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
@@ -391,4 +399,22 @@ fn unicode_duration_keeps_editor_fields_available_for_correction() {
         assert_eq!(corrected.prompt, "hello\nworld");
         assert_eq!(corrected.name, "review");
     }
+}
+#[test]
+fn transcript_wrap_is_cached_between_frames() {
+    let mut v = fixture();
+    v.event(key(KeyCode::Char('h')));
+    v.transcript.append(
+        "a plain transcript line that is long enough to wrap 界 twice in a narrow pane\n"
+            .as_bytes(),
+        1,
+        false,
+    );
+    let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+    terminal.draw(|f| draw_tasks(f, &v)).unwrap();
+    terminal.draw(|f| draw_tasks(f, &v)).unwrap();
+    assert_eq!(v.transcript_wraps(), 1);
+    v.transcript.append(b"more\n", 2, false);
+    terminal.draw(|f| draw_tasks(f, &v)).unwrap();
+    assert_eq!(v.transcript_wraps(), 2);
 }

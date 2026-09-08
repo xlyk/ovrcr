@@ -140,7 +140,7 @@ impl AcceptanceFixture {
     }
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
-        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         write_frame(
@@ -173,7 +173,7 @@ impl AcceptanceFixture {
     }
 
     fn list(&self) -> Result<HierarchySnapshot> {
-        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         stream.set_write_timeout(Some(Duration::from_secs(3)))?;
         write_frame(
@@ -194,7 +194,7 @@ impl AcceptanceFixture {
     }
 
     fn read_terminal(&self, session: ovrcr::session::SessionId) -> Result<String> {
-        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
         write_frame(

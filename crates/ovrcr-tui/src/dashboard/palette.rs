@@ -154,12 +154,17 @@ impl Dashboard {
 
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
-        // Keep the result visible even if Escape is pressed while a request runs.
-        if palette.pending.is_some() {
-            self.palette = Some(palette);
+        if key.code == KeyCode::Esc || is_browse_key(key) {
+            // Escape closes even while a request runs; its late response is
+            // dropped so it cannot surface after the user has moved on.
+            if let Some(request_id) = palette.pending {
+                self.ignored_responses.insert(request_id);
+            }
             return DashboardAction::Redraw;
         }
-        if key.code == KeyCode::Esc || is_browse_key(key) {
+        // Other keys wait for the running request so a submit cannot repeat.
+        if palette.pending.is_some() {
+            self.palette = Some(palette);
             return DashboardAction::Redraw;
         }
         let mut action = DashboardAction::Redraw;

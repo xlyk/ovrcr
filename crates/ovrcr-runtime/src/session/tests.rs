@@ -68,6 +68,7 @@ struct ReapGate {
 
 #[cfg(target_os = "macos")]
 impl ReapGate {
+    #[allow(clippy::type_complexity)]
     fn new() -> (
         Arc<Self>,
         Receiver<()>,
@@ -266,7 +267,7 @@ fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandl
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap 'exit 0' TERM; printf READY; while :; do read line; done".into(),
+                "trap 'exit 0' HUP TERM; printf READY; while :; do read line; done".into(),
             ],
             hook_env: None,
         },
@@ -298,7 +299,7 @@ fn spawn_live_refusal_session(
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' TERM; printf READY; while :; do read line; done".into(),
+                "trap '' HUP TERM; printf READY; while :; do read line; done".into(),
             ],
             hook_env: None,
         },
@@ -449,7 +450,7 @@ fn pause_resume_terminate_runs_term_handler() {
                 argv: vec![
                     "sh".into(),
                     "-c".into(),
-                    "trap 'printf TERM_HANDLED; exit 0' TERM; printf READY; while :; do read line; done"
+                    "trap 'printf TERM_HANDLED; exit 0' HUP TERM; printf READY; while :; do read line; done"
                         .into(),
                 ],
                 hook_env: None,
@@ -921,6 +922,70 @@ fn terminate_removes_the_whole_process_group() {
     assert_pid_is_gone(leader);
     assert_pid_is_gone(descendant);
     assert!(!group_exists(session.pgid).unwrap());
+}
+
+#[test]
+fn terminate_removes_job_control_subgroups() {
+    // An interactive shell puts each background job in its own process
+    // group, so the job is invisible to leader-group signalling. Ownership
+    // is the controlling terminal, and terminate must hang up every group
+    // attached to it without waiting out the grace period.
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = mpsc::sync_channel(64);
+    let session = Session::spawn(
+        SessionId(4),
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "jobs".into(),
+            label: "bash".into(),
+            cwd: dir.path().to_path_buf(),
+            argv: vec!["bash".into(), "--norc".into(), "+H".into(), "-i".into()],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        tx,
+    )
+    .unwrap();
+    let _cleanup = TerminationGuard(Arc::clone(&session));
+    let dispatcher = dispatch_test_events(session.clone(), rx);
+    session
+        // Split the tag so the echoed command line does not match it.
+        .write(b"sleep 300 & printf 'OVRCR_JO''B:%s\\n' \"$!\"\r")
+        .unwrap();
+    let screen_deadline = Instant::now() + Duration::from_secs(3);
+    let job = loop {
+        if let Some(pid) = extract_tagged_pid(&session.current_screen(), b"OVRCR_JOB:")
+            && pid_exists(pid)
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < screen_deadline,
+            "job PID was not observed: {}",
+            String::from_utf8_lossy(&session.current_screen())
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    let job_group = unsafe { libc::getpgid(job as libc::pid_t) };
+    assert_ne!(
+        job_group, session.pgid,
+        "bash job control should isolate the job"
+    );
+    assert_eq!(job_group, job as libc::pid_t);
+
+    let started = Instant::now();
+    session.terminate(Duration::from_secs(5)).unwrap();
+    let elapsed = started.elapsed();
+    dispatcher.join().unwrap();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "interactive shell should hang up promptly, took {elapsed:?}"
+    );
+    assert_pid_is_gone(job);
+    assert!(!group_exists(session.pgid).unwrap());
+    assert!(!group_exists(job_group).unwrap());
 }
 
 #[test]

@@ -3,8 +3,21 @@ use ovrcr::session::AgentActivity;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+/// `ovrcr --version` output: the package version plus the wire protocol
+/// version, so a client and a long-running server can be compared.
+fn version_string() -> &'static str {
+    Box::leak(
+        format!(
+            "{} (protocol {})",
+            env!("CARGO_PKG_VERSION"),
+            ovrcr::protocol::PROTOCOL_VERSION
+        )
+        .into_boxed_str(),
+    )
+}
+
 #[derive(Parser)]
-#[command(name = "ovrcr")]
+#[command(name = "ovrcr", version = version_string())]
 pub(super) struct Cli {
     #[arg(long, global = true)]
     pub(super) json: bool,
@@ -14,51 +27,60 @@ pub(super) struct Cli {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Run the server in the foreground (normally started on demand).
     Server,
+    /// Manage scheduled Pi tasks.
     #[command(visible_alias = "tasks")]
     Task(Box<ovrcr::task_cli::TaskArgs>),
+    /// Inspect and control task runs.
     #[command(visible_alias = "runs")]
     Run(ovrcr::task_cli::RunArgs),
+    /// Install, start, stop, or remove the background service.
     Service(ovrcr::service::ServiceArgs),
     #[command(name = "__task-runner", hide = true)]
     TaskRunner {
         run_dir: PathBuf,
         pi_executable: PathBuf,
     },
+    /// Register and inspect Git projects.
     #[command(visible_alias = "projects")]
     Project {
         #[command(subcommand)]
         command: ProjectCommand,
     },
+    /// Create and remove worktree workspaces.
     #[command(visible_alias = "workspaces")]
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommand,
     },
+    /// Create, read, send to, and close terminals.
     #[command(visible_alias = "terminals")]
     Terminal {
         #[command(subcommand)]
         command: TerminalCommand,
     },
+    /// Start a session in a workspace (starts the server if needed).
     New(NewArgs),
+    /// List projects, workspaces, and sessions.
     List,
-    Kill {
-        id: u64,
-    },
-    Pause {
-        id: u64,
-    },
-    Resume {
-        id: u64,
-    },
+    /// Stop a session's process group and keep its final screen.
+    Kill { id: u64 },
+    /// Stop a running session with SIGSTOP.
+    Pause { id: u64 },
+    /// Resume a paused session with SIGCONT.
+    Resume { id: u64 },
+    /// Inspect or remove a session record.
     Session {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Stop the server; refuses while sessions remain unless --kill is given.
     Shutdown {
         #[arg(long)]
         kill: bool,
     },
+    /// Report agent activity from a provider hook (needs the hook environment).
     Report {
         #[command(subcommand)]
         command: ReportCommand,

@@ -4,6 +4,7 @@ use crate::protocol::{
 };
 use crate::session::{AgentActivity, SessionId};
 use anyhow::{Context, Result, bail};
+use ovrcr_protocol::exchange_preamble;
 use serde::Deserialize;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -72,7 +73,7 @@ impl HookIdentity {
             .filter(|value| value.len() == 64)
             .ok_or_else(|| report_error(ErrorCode::InvalidRequest, ReportFailure::Invalid))?;
         let mut capability = [0_u8; 32];
-        for (index, pair) in token.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in token.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             capability[index] = hex_pair(pair)
                 .ok_or_else(|| report_error(ErrorCode::InvalidRequest, ReportFailure::Invalid))?;
         }
@@ -101,6 +102,7 @@ pub fn send_report(update: AgentUpdate, sequence: Option<u64>, deadline: Instant
     let mut stream = connect_deadline(&identity.socket, deadline)
         .map_err(|error| map_transport_error(&error))?;
     let mut io = DeadlineIo::new(&mut stream, deadline);
+    exchange_preamble(&mut io).map_err(|error| map_transport_error(&error))?;
     let message = ClientMessage {
         request_id: 1,
         request: Request::AgentReport(AgentReport {

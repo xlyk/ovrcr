@@ -3,7 +3,7 @@ mod output;
 mod report;
 mod resources;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use ovrcr::client::{connect_if_running, connect_or_start};
 use ovrcr::config::{Registry, RegistryPath, load_registry};
@@ -15,6 +15,7 @@ use ovrcr::session::{SessionId, SessionSummary};
 use ovrcr::tui::run_dashboard;
 use serde_json::json;
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 use args::*;
 use output::*;
@@ -37,8 +38,10 @@ impl RuntimeError {
         }
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
-        Self::new(ErrorCode::Internal, error.to_string())
+    fn internal(error: impl Into<anyhow::Error>) -> Self {
+        // `{:#}` keeps the whole cause chain; `to_string` shows only the
+        // outermost context and hid the OS error behind "connect server".
+        Self::new(ErrorCode::Internal, format!("{:#}", error.into()))
     }
 }
 
@@ -117,7 +120,7 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::Workspace { command } => run_workspace(command, json_output),
         Command::Terminal { command } => run_terminal(command, json_output),
         Command::New(args) => create_terminal(args, json_output),
-        Command::Kill { id } => mutate_started(
+        Command::Kill { id } => mutate_without_start(
             Request::KillSession {
                 session: SessionId(id),
             },
@@ -140,7 +143,7 @@ fn run(cli: Cli) -> AppResult<()> {
         } => inspect_session_context(id),
         Command::Session {
             command: SessionCommand::Remove { id },
-        } => mutate_started(
+        } => mutate_without_start(
             Request::RemoveSession {
                 session: SessionId(id),
             },
@@ -197,7 +200,31 @@ fn unexpected_response(response: Response) -> RuntimeError {
     )
 }
 
+/// Default bound on one request round trip. Kill, close, and shutdown may
+/// legitimately wait out a termination grace period, so they get longer.
+fn request_timeout(request: &Request) -> Duration {
+    let default = match request {
+        Request::KillSession { .. } | Request::CloseTerminal { .. } | Request::Shutdown { .. } => {
+            Duration::from_secs(60)
+        }
+        _ => Duration::from_secs(30),
+    };
+    // Test seam so a wedged-server test does not wait half a minute.
+    std::env::var("OVRCR_REQUEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
 fn send_request(stream: &mut UnixStream, request: Request) -> Result<Response> {
+    let timeout = request_timeout(&request);
+    stream
+        .set_read_timeout(Some(timeout))
+        .context("bound server request")?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .context("bound server request")?;
     write_frame(
         stream,
         &ClientMessage {
@@ -205,7 +232,24 @@ fn send_request(stream: &mut UnixStream, request: Request) -> Result<Response> {
             request,
         },
     )?;
-    match read_frame::<ServerMessage>(stream)? {
+    let message = read_frame::<ServerMessage>(stream).map_err(|error| {
+        let timed_out = error.chain().any(|cause| {
+            cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                matches!(
+                    io.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                )
+            })
+        });
+        if timed_out {
+            anyhow::anyhow!(
+                "timed out after {timeout:?} waiting for the server's response; the server may be wedged, see its log"
+            )
+        } else {
+            error
+        }
+    })?;
+    match message {
         ServerMessage::Response { response, .. } => Ok(response),
         ServerMessage::Event(_) => bail!("server sent an event before the response"),
     }

@@ -13,11 +13,13 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 use std::{
+    cell::{Cell, Ref, RefCell},
     collections::VecDeque,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
+use unicode_width::UnicodeWidthChar;
 
 pub fn parse_duration(value: &str) -> Result<u64> {
     if !value.is_ascii() || value.len() < 2 {
@@ -353,6 +355,14 @@ pub struct TasksView {
     concurrency_input: Option<String>,
     pending: VecDeque<TaskRequest>,
     pub message: String,
+    wrap_cache: RefCell<Option<WrapCache>>,
+    wraps: Cell<u64>,
+}
+/// Transcript lines wrapped for one pane width, reused while nothing changes.
+struct WrapCache {
+    text: String,
+    width: u16,
+    lines: Vec<String>,
 }
 impl Default for TasksView {
     fn default() -> Self {
@@ -371,10 +381,37 @@ impl Default for TasksView {
             concurrency_input: None,
             pending: VecDeque::new(),
             message: String::new(),
+            wrap_cache: RefCell::new(None),
+            wraps: Cell::new(0),
         }
     }
 }
 impl TasksView {
+    /// How many times the transcript was re-wrapped; frames with an unchanged
+    /// transcript and width reuse the previous wrap.
+    pub fn transcript_wraps(&self) -> u64 {
+        self.wraps.get()
+    }
+    fn wrapped_transcript(&self, text: &str, width: u16) -> Ref<'_, [String]> {
+        let stale = self
+            .wrap_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cache| cache.width != width || cache.text != text);
+        if stale {
+            self.wraps.set(self.wraps.get() + 1);
+            *self.wrap_cache.borrow_mut() = Some(WrapCache {
+                text: text.to_owned(),
+                width,
+                lines: wrap_transcript(text, usize::from(width)),
+            });
+        }
+        Ref::map(self.wrap_cache.borrow(), |cache| {
+            cache
+                .as_ref()
+                .map_or(&[][..], |cache| cache.lines.as_slice())
+        })
+    }
     pub fn take_request(&mut self) -> Option<TaskRequest> {
         self.pending.pop_front()
     }
@@ -717,6 +754,25 @@ fn schedule_text(s: &Schedule) -> String {
         Schedule::Once { at } => timestamp(*at),
     }
 }
+fn wrap_transcript(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for line in text.split('\n') {
+        let mut row = String::new();
+        let mut used = 0;
+        for ch in line.chars() {
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + char_width > width && !row.is_empty() {
+                lines.push(std::mem::take(&mut row));
+                used = 0;
+            }
+            row.push(ch);
+            used += char_width;
+        }
+        lines.push(row);
+    }
+    lines
+}
+
 pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
     let area = frame.area();
     frame.render_widget(
@@ -930,21 +986,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             text.push_str(&format!("\n[error: {error}]"));
         }
         // Pre-wrap so line scrolling and following work for long streamed paragraphs.
-        let mut lines = Vec::new();
-        for line in text.split('\n') {
-            let mut row = String::new();
-            let mut width = 0;
-            for ch in line.chars() {
-                let char_width = Line::raw(ch.to_string()).width();
-                if width + char_width > inner.width as usize && !row.is_empty() {
-                    lines.push(std::mem::take(&mut row));
-                    width = 0;
-                }
-                row.push(ch);
-                width += char_width;
-            }
-            lines.push(row);
-        }
+        let lines = view.wrapped_transcript(&text, inner.width);
         let start = lines
             .len()
             .saturating_sub(inner.height as usize)
@@ -952,10 +994,10 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         frame.render_widget(
             Paragraph::new(
                 lines
-                    .into_iter()
+                    .iter()
                     .skip(start)
                     .take(inner.height as usize)
-                    .map(Line::raw)
+                    .map(|line| Line::raw(line.as_str()))
                     .collect::<Vec<_>>(),
             ),
             inner,

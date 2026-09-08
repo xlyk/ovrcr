@@ -1,6 +1,7 @@
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    ClientMessage, Request, Response, ServerMessage, connect_server, read_frame, write_frame,
+};
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
-use std::os::unix::net::UnixStream;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
@@ -89,7 +90,7 @@ impl Fixture {
     }
 
     fn sessions(&self) -> Vec<SessionSummary> {
-        let mut stream = UnixStream::connect(self.root.path().join("server.sock")).unwrap();
+        let mut stream = connect_server(self.root.path().join("server.sock")).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
@@ -680,4 +681,21 @@ while [ ! -e "$5" ]; do sleep 0.01; done
         group_absent,
         "managed process group {original_pgid} remained"
     );
+}
+
+#[test]
+fn remove_project_reports_workspaces_remain() {
+    let mut fixture = Fixture::new();
+    fixture.capture();
+    let output = fixture.run(&["--json", "project", "remove", "fixture"]);
+    assert_eq!(output.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "WorkspacesRemain");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("workspaces remain")
+    );
+    drop(fixture);
 }

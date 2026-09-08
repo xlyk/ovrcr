@@ -128,7 +128,10 @@ fn validate_workspace(workspace: &WorkspaceRecord) -> Result<()> {
     validate_name(&workspace.name, "workspace")
 }
 
-fn validate_name(name: &str, kind: &str) -> Result<()> {
+/// Validate a project or workspace name: non-empty, ASCII alphanumerics plus
+/// `.`, `_`, and `-`, and never containing `..`, so it is safe as a single
+/// path component under the workspace root.
+pub fn validate_name(name: &str, kind: &str) -> Result<()> {
     if name.is_empty()
         || name.contains("..")
         || !name

@@ -1,7 +1,10 @@
-use ovrcr::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use ovrcr::protocol::{
+    ClientMessage, Request, Response, ServerMessage, connect_server, read_frame, write_frame,
+};
 use ovrcr::session::{SessionId, SessionPhase};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
@@ -68,6 +71,106 @@ fn wait_captured(captured: &mut CapturedChild, deadline: Instant) -> io::Result<
 fn run_cli_bounded(command: Command) -> io::Result<Output> {
     let mut captured = spawn_captured(command)?;
     wait_captured(&mut captured, Instant::now() + Duration::from_secs(5))
+}
+
+#[test]
+fn version_flag_prints_package_version() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    command.arg("--version");
+    let output = run_cli_bounded(command).unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!(
+            "ovrcr {} (protocol {})",
+            env!("CARGO_PKG_VERSION"),
+            ovrcr::protocol::PROTOCOL_VERSION
+        )
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn mutations_do_not_start_a_server() {
+    let root = tempfile::tempdir().unwrap();
+    let cases: &[&[&str]] = &[
+        &["kill", "99"],
+        &["session", "remove", "99"],
+        &["terminal", "kill", "99"],
+        &["terminal", "remove", "99"],
+        &["project", "remove", "missing"],
+        &[
+            "workspace",
+            "remove",
+            "--project",
+            "missing",
+            "--name",
+            "gone",
+        ],
+    ];
+    for args in cases {
+        let mut command = isolated_command(&root);
+        command.args(*args);
+        let output = run_cli_bounded(command).unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("OVRCR server is not running"),
+            "{args:?}: {stderr}"
+        );
+        assert!(
+            !root.path().join("server.sock").exists(),
+            "{args:?} must not start a server"
+        );
+    }
+}
+
+#[test]
+fn runtime_errors_include_the_cause_chain() {
+    let root = tempfile::tempdir().unwrap();
+    let locked = root.path().join("locked");
+    std::fs::create_dir_all(locked.join("inner")).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .env("OVRCR_SOCKET", locked.join("inner").join("server.sock"))
+        .args(["terminal", "read", "1"]);
+    let output = run_cli_bounded(command).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("connect server") && stderr.contains("Permission denied"),
+        "the OS error must survive: {stderr}"
+    );
+}
+
+#[test]
+fn requests_time_out_against_a_wedged_server() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let wedged = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = ovrcr::protocol::exchange_preamble(&mut stream);
+        let _ = read_frame::<ClientMessage>(&mut stream);
+        // Never answer; hold the connection open past the client's bound.
+        std::thread::sleep(Duration::from_secs(3));
+    });
+    let started = Instant::now();
+    let mut command = isolated_command(&root);
+    command.env("OVRCR_REQUEST_TIMEOUT_MS", "500").arg("list");
+    let output = run_cli_bounded(command).unwrap();
+    let elapsed = started.elapsed();
+    wedged.join().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("timed out"), "{stderr}");
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "the client must give up at its bound, took {elapsed:?}"
+    );
 }
 
 #[test]
@@ -255,6 +358,7 @@ fn agent_hook_cli_timeout_is_bounded() {
         stream
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
+        ovrcr::protocol::exchange_preamble(&mut stream).unwrap();
         let _ = read_frame::<ClientMessage>(&mut stream).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -308,6 +412,7 @@ fn agent_hook_cli_deadline_spans_stdin_and_dripped_response() {
         stream
             .set_write_timeout(Some(Duration::from_millis(200)))
             .unwrap();
+        ovrcr::protocol::exchange_preamble(&mut stream).unwrap();
         let _ = read_frame::<ClientMessage>(&mut stream).unwrap();
         let mut frame = Vec::new();
         write_frame(
@@ -825,8 +930,12 @@ while IFS= read -r line; do :; done
     };
     let original_pgid = unsafe { libc::getpgid(original_pid) };
     cleanup.capture_live_process_groups(&socket);
+    // The shell creates the marker before it writes to it, so wait for the
+    // content rather than the file.
     let marker_deadline = Instant::now() + Duration::from_secs(3);
-    while !marker.exists() && Instant::now() < marker_deadline {
+    while std::fs::read_to_string(&marker).unwrap_or_default() != "READY"
+        && Instant::now() < marker_deadline
+    {
         std::thread::park_timeout(Duration::from_millis(10));
     }
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "READY");
@@ -1076,7 +1185,7 @@ fn accept_with_deadline(
 }
 
 fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, String> {
-    let mut stream = UnixStream::connect(socket).map_err(|error| error.to_string())?;
+    let mut stream = connect_server(socket).map_err(|error| error.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
         .map_err(|error| error.to_string())?;
@@ -1098,7 +1207,7 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
 }
 
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
-    let mut stream = UnixStream::connect(socket).unwrap();
+    let mut stream = connect_server(socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
         .unwrap();
@@ -1540,7 +1649,7 @@ fn session_command_keeps_arguments_after_separator() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut exited = false;
     while Instant::now() < deadline {
-        let mut control = UnixStream::connect(&socket).unwrap();
+        let mut control = connect_server(&socket).unwrap();
         write_frame(
             &mut control,
             &ClientMessage {
@@ -1572,7 +1681,7 @@ fn session_command_keeps_arguments_after_separator() {
     }
     assert!(exited, "session {id} did not reach Exited before deadline");
     cleanup.capture_live_process_groups(&socket);
-    let mut dashboard = UnixStream::connect(&socket).unwrap();
+    let mut dashboard = connect_server(&socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -1643,7 +1752,7 @@ impl<'a> CleanupGuard<'a> {
     }
 
     fn capture_live_process_groups(&mut self, socket: &std::path::Path) {
-        let mut stream = UnixStream::connect(socket).unwrap();
+        let mut stream = connect_server(socket).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();

@@ -7,7 +7,8 @@ current screen when it reconnects.
 
 ## Install
 
-OVRCR targets macOS and Linux and requires Rust. Build the binary with:
+OVRCR targets macOS and Linux and requires Rust 1.95 or newer. Build the
+binary with:
 
 ```sh
 rtk proxy cargo build -p ovrcr --release
@@ -16,7 +17,12 @@ rtk proxy install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 
 The server uses `$XDG_RUNTIME_DIR` on Linux and `$TMPDIR` on macOS for its
 private Unix socket. Set `OVRCR_SOCKET` and `OVRCR_CONFIG` when running an
-isolated instance or a test fixture.
+isolated instance or a test fixture. OVRCR creates a missing socket directory
+with mode 700 and refuses to start when an existing one is a symlink or is
+owned by another user. It never changes the permissions of a directory it did
+not create; the socket file itself is always mode 700, which is what gates
+connections, so other users cannot reach the server even from a shared
+directory.
 
 ## Register a project
 
@@ -64,8 +70,9 @@ selected PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
 collapse sidebar rows while browsing. The dashboard shows one selected
 terminal and the current `ctx —` field. Sidebar sessions use three lines: the
 session name, its label, and elapsed runtime with context usage. Context usage
-remains unknown in the MVP. The selected session is highlighted across all three
-lines; clicking any of those lines selects it.
+shows `-` until a provider reports it (see Context usage reporting below). The
+selected session is highlighted across all three lines; clicking any of those
+lines selects it.
 Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
 their status slot blank; busy sessions animate the braille spinner, waiting
 sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
@@ -88,6 +95,12 @@ buffered before pause may appear after pause.
 Pause/resume is a process lifecycle control separate from agent activity. It
 does not declare an agent idle, cancel remote agent work, or replace the
 hook-owned activity state.
+
+Modified keys are forwarded with xterm modifier parameters, and Shift+Enter is
+forwarded as the CSI-u sequence `ESC [ 13 ; 2 u` so agents that support it
+insert a newline instead of submitting. Terminals without the kitty keyboard
+protocol report Shift+Enter as plain Enter, so the dashboard cannot tell them
+apart there.
 
 Dashboard output is delivered through a bounded queue so a detached or slow
 dashboard can reattach and refresh the current screen. Output backlog is
@@ -203,7 +216,14 @@ not infer a target from the current directory.
 
 Read commands do not start a server. When the server is absent, project and
 workspace queries read the persisted registry and terminal lists are empty.
-Reading or controlling a missing terminal returns an error.
+Reading or controlling a missing terminal returns an error. Removal and kill
+commands (`project remove`, `workspace remove`, `terminal kill`, `terminal
+remove`, `kill`, `session remove`) also never start a server: with no server
+running they fail with "OVRCR server is not running", because there is nothing
+to remove. Only `new`, `terminal create`, `project add`, `workspace create`,
+and the dashboard start one on demand. Every request is bounded: an ordinary
+request fails after 30 seconds without a response, and kill, close, and
+shutdown after 60 seconds.
 
 ### Launch, send, read, and close
 
@@ -478,16 +498,25 @@ ovrcr kill SESSION_ID
 ovrcr session remove SESSION_ID
 ```
 
-`pause ID` sends SIGSTOP to the original process group owned by that session;
-`resume ID` sends SIGCONT to the same group. Both commands require a live,
+`pause ID` sends SIGSTOP to the process group owned by that session and to any
+job-control subgroup attached to its terminal; `resume ID` sends SIGCONT to
+the same groups. Both commands require a live,
 managed session and leave the session record in place. While paused, the server
 rejects input admission until `resume ID` succeeds.
 
-`kill` sends SIGTERM to the whole managed process group and uses SIGKILL after
-the five-second grace period when members remain. A stopped group is resumed
-with SIGCONT during cleanup so its TERM handlers and waiters can run; OVRCR
-then waits for the final PTY output, reader and child-waiter completion, and
-group disappearance before reporting successful cleanup. A session stays in
+`kill` signals every process group attached to the session's terminal: the
+managed process group and any job-control subgroup an interactive shell
+started. It sends SIGTERM and SIGCONT first so handlers can run, sends SIGHUP
+to any group still present half a second later, and uses SIGKILL after the
+five-second grace period when members remain. SIGHUP is what a closed
+terminal window delivers and is the only signal interactive shells honour, so
+`local` shells exit within about half a second instead of waiting out the
+grace period; a program that needs longer than that to finish its SIGTERM
+handling must also handle SIGHUP. Processes that detach from the terminal
+with `setsid` are outside the session and are not signalled. A stopped group
+is resumed with SIGCONT during cleanup so its handlers and waiters can run;
+OVRCR then waits for the final PTY output, reader and child-waiter completion,
+and group disappearance before reporting successful cleanup. A session stays in
 the hierarchy after exit until `session remove` is requested, so its final
 screen remains available.
 
@@ -508,7 +537,10 @@ ovrcr project remove consigint
 ```
 
 Removal uses ordinary `git worktree remove` and preserves the branch. OVRCR
-never removes a repository or an unregistered worktree.
+never removes a repository or an unregistered worktree. If the worktree
+directory was deleted outside OVRCR, removal instead runs `git worktree prune`,
+but only after Git itself lists the registered path and branch as prunable,
+and then drops the registry record.
 
 ## Shutdown
 
@@ -520,6 +552,33 @@ ovrcr shutdown
 
 This refuses while sessions remain. `ovrcr shutdown --kill` terminates every
 managed process group and then stops the server.
+
+## Troubleshooting
+
+### Test hooks and advanced variables
+
+These variables are read by the binary but exist for the integration suite
+and unusual deployments; ordinary use needs none of them.
+
+- `OVRCR_SERVER_EXECUTABLE`: the binary a command runs as `server` when it
+  starts one on demand (default: the running executable).
+- `OVRCR_KILL_GRACE_MS`: the server's grace period before SIGKILL for kill,
+  close, and `shutdown --kill` (default 5000).
+- `OVRCR_REQUEST_TIMEOUT_MS`: the client's bound on one request round trip
+  (default 30000, or 60000 for kill, close, and shutdown).
+- `OVRCR_ENV_FILE`: an environment file the server loads before starting;
+  the installed service points it at the file given to `service install`.
+- `OVRCR_PI_EXECUTABLE`: the Pi binary used by scheduled tasks (see
+  `docs/scheduled-tasks.md`).
+
+A server that a command started automatically writes its output to
+`server.log` beside the socket, so with the default paths that is
+`$XDG_RUNTIME_DIR/ovrcr/server.log` on Linux and `$TMPDIR/ovrcr-UID/ovrcr/server.log`
+on macOS. When startup fails, the command reports the exit status and the
+last lines of that log; a corrupt registry, an unusable socket directory, or
+a damaged task store shows up there. Run `ovrcr server` in the foreground to
+see the same output live. `ovrcr --version` prints the package version so a
+client and a long-running server can be compared after an upgrade.
 
 ## Disposable repository transcript
 
@@ -573,7 +632,7 @@ rtk proxy cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 
 Agents: follow the [computer-use testing guide](docs/testing-computer-use.md) for the smoke check and cleanup evidence.
 
-Run the optional development helper with Rust 1.95 or newer, `just`, and `rtk`:
+Run the optional development helper with `just` and `rtk`:
 
 ```sh
 rtk proxy just gui
@@ -637,10 +696,10 @@ Future additions, with priorities and release dates still to be decided:
 
 - [ ] Split panes to view multiple sessions side by side.
 - [x] Historical scrollback to revisit output beyond the current screen.
-- [ ] Copy mode to select and copy terminal output with the keyboard.
+- [x] Copy mode to select and copy terminal output with the keyboard.
 - [x] Pause and resume controls for sessions.
-- [ ] Agent hooks to report agent-specific activity and status.
-- [ ] Context usage accounting for agent sessions.
+- [x] Agent hooks to report agent-specific activity and status.
+- [x] Context usage accounting for agent sessions.
 - [ ] Mouse forwarding to applications running inside a terminal.
 - [ ] Multiple dashboards connected to the same server. **Deferred.**
 - [ ] Session restore after a server crash or reboot, including saved session

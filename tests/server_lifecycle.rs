@@ -3,7 +3,8 @@ use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, ErrorCode,
     HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES, PAGE_BYTES,
-    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, read_frame, write_frame,
+    PAGE_COLS, PAGE_ROWS, Request, Response, ServerEvent, ServerMessage, connect_server,
+    read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -22,6 +23,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serialize tests that share process-wide state. A test that panics while
+/// holding the lock poisons it; later tests still run rather than failing
+/// on the poison, so a CI log shows the one real failure.
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn context_report(
     session: SessionId,
@@ -64,7 +74,7 @@ fn hook_child_report_helper() {
     )
     .expect("write private hook identity");
 
-    let mut stream = UnixStream::connect(&socket).expect("connect hook socket");
+    let mut stream = connect_server(&socket).expect("connect hook socket");
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set hook read deadline");
@@ -106,7 +116,7 @@ fn hook_child_report_helper() {
     let mut stdin = std::io::stdin();
     let mut byte = [0_u8; 1];
     if stdin.read(&mut byte).is_ok() && byte[0] == b'w' {
-        let mut stream = UnixStream::connect(&socket).expect("reconnect hook socket");
+        let mut stream = connect_server(&socket).expect("reconnect hook socket");
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .expect("set reconnect hook read deadline");
@@ -190,7 +200,7 @@ impl ServerFixture {
     }
 
     fn request(&self, request: Request) -> ServerMessage {
-        let mut stream = UnixStream::connect(&self.paths.socket).unwrap();
+        let mut stream = connect_server(&self.paths.socket).unwrap();
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -232,7 +242,7 @@ fn startup_socket_directory_is_private() {
 
 #[test]
 fn agent_hook_sequence_does_not_regress_state() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("ordered", "agent-hook-order");
     let pgid = fixture.original_pgid(identity.session);
@@ -337,7 +347,7 @@ fn agent_hook_sequence_does_not_regress_state() {
 
 #[test]
 fn agent_hook_capability_and_exit_are_enforced() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let first = fixture.create_hook_child("agent-a", "agent-hook-auth-a");
     let second = fixture.create_hook_child("agent-b", "agent-hook-auth-b");
@@ -461,7 +471,7 @@ fn agent_hook_capability_and_exit_are_enforced() {
 
 #[test]
 fn agent_hook_startup_registration_is_visible() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child_with_report("startup", "agent-hook-startup");
     assert_eq!(
@@ -483,7 +493,7 @@ fn agent_hook_startup_registration_is_visible() {
 
 #[test]
 fn agent_hook_round_trip_survives_dashboard_reconnect() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child_with_report("reconnect", "agent-hook-reconnect");
     let pgid = fixture.original_pgid(identity.session);
@@ -492,7 +502,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
         ovrcr::session::AgentActivity::Busy
     );
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -533,7 +543,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
     );
     fixture.wait_identity_marker("agent-hook-reconnect", "WAITING_REPORTED");
 
-    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reconnect = connect_server(&fixture.socket).unwrap();
     reconnect
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -576,12 +586,12 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
     )
     .unwrap();
     let screen = loop {
-        match read_frame::<ServerMessage>(&mut reconnect).unwrap() {
-            ServerMessage::Response {
-                request_id: 21,
-                response: Response::Screen { bytes, .. },
-            } => break bytes,
-            _ => {}
+        if let ServerMessage::Response {
+            request_id: 21,
+            response: Response::Screen { bytes, .. },
+        } = read_frame::<ServerMessage>(&mut reconnect).unwrap()
+        {
+            break bytes;
         }
     };
     let mut parser = vt100::Parser::new(24, 80, 0);
@@ -619,7 +629,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
 
 #[test]
 fn context_report_replaces_snapshot_and_preserves_activity() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-replace", "context-replace");
     let pgid = fixture.original_pgid(identity.session);
@@ -720,7 +730,7 @@ fn context_report_replaces_snapshot_and_preserves_activity() {
 
 #[test]
 fn context_report_rejects_old_and_invalid_samples() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-order", "context-order");
     let pgid = fixture.original_pgid(identity.session);
@@ -911,11 +921,11 @@ fn context_report_rejects_old_and_invalid_samples() {
 
 #[test]
 fn context_snapshot_survives_dashboard_reattach() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let identity = fixture.create_hook_child("context-reconnect", "context-reconnect");
     let pgid = fixture.original_pgid(identity.session);
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -991,7 +1001,7 @@ fn context_snapshot_survives_dashboard_reattach() {
     assert!(retained.received_unix_ms > first_retained.received_unix_ms);
     drop(dashboard);
 
-    let mut reconnect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut reconnect = connect_server(&fixture.socket).unwrap();
     reconnect
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -1065,7 +1075,7 @@ fn context_snapshot_survives_dashboard_reattach() {
 
 #[test]
 fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     let socket = fixture.socket.clone();
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -1085,10 +1095,62 @@ fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
     assert!(!socket.exists());
 }
 
+fn create_private_dir(path: &Path) {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .unwrap();
+}
+
+#[test]
+fn startup_keeps_shared_existing_socket_directory_and_secures_the_socket() {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut fixture = ServerFixture::new();
+    let parent = fixture.paths.socket.parent().unwrap().to_path_buf();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(&parent)
+        .unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fixture.start();
+    let dir_mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dir_mode, 0o755,
+        "startup must not modify a directory it did not create"
+    );
+    let socket_mode = std::fs::metadata(&fixture.paths.socket)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(socket_mode, 0o700, "the socket file itself must be private");
+    fixture.stop();
+}
+
+#[test]
+fn startup_refuses_symlinked_socket_directory() {
+    let fixture = ServerFixture::new();
+    let target = fixture.root.path().join("real");
+    create_private_dir(&target);
+    std::os::unix::fs::symlink(&target, fixture.paths.socket.parent().unwrap()).unwrap();
+    let registry = fixture.root.path().join("config.toml");
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
+    let error = run_server(fixture.paths.clone(), registry).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("server socket directory") && message.contains("symlink"),
+        "unexpected error: {message}"
+    );
+    assert!(!fixture.paths.socket.exists());
+}
+
 #[test]
 fn startup_stale_socket_is_recovered() {
     let mut fixture = ServerFixture::new();
-    std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
+    create_private_dir(fixture.paths.socket.parent().unwrap());
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
     fixture.start();
@@ -1157,6 +1219,124 @@ fn startup_concurrent_attempts_leave_one_server() {
 }
 
 #[test]
+fn startup_failure_reports_server_log() {
+    let _env_lock = env_lock();
+    let fixture = ServerFixture::new();
+    let registry = fixture.root.path().join("config.toml");
+    std::fs::write(&registry, "[[projects]\n").unwrap();
+    unsafe {
+        std::env::set_var("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"));
+        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
+        std::env::set_var("OVRCR_CONFIG", &registry);
+    }
+    let started = Instant::now();
+    let result = connect_or_start(&fixture.paths);
+    let elapsed = started.elapsed();
+    unsafe {
+        std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
+        std::env::remove_var("OVRCR_SOCKET");
+        std::env::remove_var("OVRCR_CONFIG");
+    }
+    let error = format!("{:#}", result.expect_err("startup must fail"));
+    let log = fixture.paths.socket.parent().unwrap().join("server.log");
+    assert!(
+        error.contains("parse registry"),
+        "error must carry the server's failure: {error}"
+    );
+    assert!(
+        error.contains(&log.display().to_string()),
+        "error must name the log: {error}"
+    );
+    assert!(
+        error.contains("exited during startup"),
+        "a dead server must be reported immediately: {error}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "startup failure must not wait for the timeout, took {elapsed:?}"
+    );
+    let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("parse registry")
+    );
+    assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
+fn client_with_wrong_protocol_version_is_refused() {
+    use ovrcr::protocol::{PROTOCOL_VERSION, read_preamble};
+    let mut fixture = ServerFixture::new();
+    fixture.start();
+
+    // A newer client: the server answers with its own preamble, then closes
+    // the connection without serving a frame.
+    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut preamble = Vec::from(*b"OVRC");
+    preamble.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
+    stream.write_all(&preamble).unwrap();
+    assert_eq!(read_preamble(&mut stream).unwrap(), PROTOCOL_VERSION);
+    // The server closes the connection, so either the frame write or the
+    // response read fails; neither may succeed.
+    let served = write_frame(
+        &mut stream,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .and_then(|()| read_frame::<ServerMessage>(&mut stream));
+    assert!(
+        served.is_err(),
+        "server must not serve a client speaking another protocol version"
+    );
+    drop(stream);
+
+    // A newer server: the client reports both versions and advises restarting.
+    let peer = fixture.root.path().join("newer.sock");
+    let listener = UnixListener::bind(&peer).unwrap();
+    let fake_server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut answer = Vec::from(*b"OVRC");
+        answer.extend_from_slice(&(PROTOCOL_VERSION + 1).to_be_bytes());
+        stream.write_all(&answer).unwrap();
+        let _ = read_preamble(&mut stream);
+    });
+    let error = connect_if_running(&ServerPaths { socket: peer })
+        .expect_err("version mismatch must be an error");
+    let message = format!("{error:#}");
+    assert!(message.contains("protocol version mismatch"), "{message}");
+    assert!(
+        message.contains(&format!("version {}", PROTOCOL_VERSION + 1))
+            && message.contains("shutdown --kill"),
+        "{message}"
+    );
+    fake_server.join().unwrap();
+
+    // An older server that never sends a preamble closes on the client's.
+    let peer = fixture.root.path().join("older.sock");
+    let listener = UnixListener::bind(&peer).unwrap();
+    let old_server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        drop(stream);
+    });
+    let error = connect_if_running(&ServerPaths { socket: peer })
+        .expect_err("closed handshake must be an error");
+    assert!(
+        format!("{error:#}").contains("older OVRCR build"),
+        "{error:#}"
+    );
+    old_server.join().unwrap();
+
+    fixture.stop();
+}
+
+#[test]
 fn startup_read_only_commands_do_not_start_a_missing_server() {
     let fixture = ServerFixture::new();
     assert!(connect_if_running(&fixture.paths).unwrap().is_none());
@@ -1184,7 +1364,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
-    std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
+    create_private_dir(fixture.paths.socket.parent().unwrap());
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
     let executable = env!("CARGO_BIN_EXE_ovrcr");
@@ -1220,7 +1400,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         exited, 1,
         "exactly one detached server owner must survive startup"
     );
-    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -1268,7 +1448,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
 fn shutdown_disconnected_requester_still_wakes_accept() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut stream = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -1293,9 +1473,261 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
     );
 }
 
+fn with_kill_grace_ms<T>(value: &str, body: impl FnOnce() -> T) -> T {
+    let previous = std::env::var_os("OVRCR_KILL_GRACE_MS");
+    unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) };
+    let result = body();
+    match previous {
+        Some(value) => unsafe { std::env::set_var("OVRCR_KILL_GRACE_MS", value) },
+        None => unsafe { std::env::remove_var("OVRCR_KILL_GRACE_MS") },
+    }
+    result
+}
+
+fn register_fixture_workspace(fixture: &ControlFixture, branch: &str) {
+    assert_eq!(
+        fixture.request(Request::AddProject {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CreateWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+            branch: BranchRequest::New {
+                branch: branch.into(),
+                base: "main".into(),
+            },
+        }),
+        Response::Ok
+    );
+}
+
+fn stubborn_session_argv() -> Vec<OsString> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        "trap '' HUP TERM; printf READY; while :; do sleep 1; done".into(),
+    ]
+}
+
+#[test]
+fn workspace_remove_succeeds_after_directory_deleted() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/vanished-dir");
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    let workspace_dir = fixture.workspace_root.join("work");
+    std::fs::remove_dir_all(&workspace_dir).unwrap();
+
+    assert_eq!(
+        fixture.request(Request::RemoveWorkspace {
+            project: "fixture".into(),
+            name: "work".into(),
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::RemoveProject {
+            name: "fixture".into(),
+        }),
+        Response::Ok
+    );
+    let listed = String::from_utf8(
+        fixture
+            .git_output(&["worktree", "list", "--porcelain"])
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        !listed
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .any(|path| path.ends_with("/work")),
+        "Git must no longer list the worktree: {listed}"
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
+fn shutdown_without_kill_rejects_exited_record() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/exited-record");
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    let exited = fixture.create_session("exits", vec!["sh".into(), "-c".into(), "exit 0".into()]);
+    fixture.wait_exited(exited);
+    // An exited record still awaiting removal keeps the final screen; a
+    // non-kill shutdown must refuse just as it does for a live session.
+    assert!(matches!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: exited }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
+#[test]
+fn shutdown_kill_terminates_sessions_concurrently() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/concurrent-shutdown");
+    // Sessions that ignore SIGHUP and SIGTERM force the full grace period
+    // before SIGKILL, so a serial shutdown would cost sessions x grace.
+    let mut pgids = Vec::new();
+    for index in 0..6 {
+        let summary =
+            fixture.create_session_summary(&format!("stubborn-{index}"), stubborn_session_argv());
+        pgids.push(summary.pid.unwrap() as libc::pid_t);
+    }
+    let started = Instant::now();
+    let response = with_kill_grace_ms("500", || fixture.request(Request::Shutdown { kill: true }));
+    let elapsed = started.elapsed();
+    assert_eq!(response, Response::Ok);
+    assert!(
+        elapsed < Duration::from_millis(2_000),
+        "shutdown --kill should terminate sessions concurrently, took {elapsed:?}"
+    );
+    for pgid in pgids {
+        wait_for_group_absent(pgid, Duration::from_secs(3));
+    }
+    fixture.join();
+}
+
+#[test]
+fn kill_does_not_block_dashboard_geometry() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    register_fixture_workspace(&fixture, "feature/unlocked-kill");
+    let stubborn = fixture.create_session("stubborn", stubborn_session_argv());
+
+    // A dashboard registers before the kill starts.
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
+    dashboard
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+        ServerMessage::Response {
+            response: Response::Hierarchy(_),
+            ..
+        }
+    ));
+
+    // The kill waits out a two-second grace period on another connection.
+    let socket = fixture.socket.clone();
+    let killer = thread::spawn(move || {
+        with_kill_grace_ms("2000", || {
+            let mut stream = connect_server(&socket).unwrap();
+            write_frame(
+                &mut stream,
+                &ClientMessage {
+                    request_id: 7,
+                    request: Request::KillSession { session: stubborn },
+                },
+            )
+            .unwrap();
+            read_frame::<ServerMessage>(&mut stream).unwrap()
+        })
+    });
+    thread::sleep(Duration::from_millis(300));
+
+    let started = Instant::now();
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardGeometry {
+                size: ovrcr::session::TerminalSize {
+                    rows: 30,
+                    cols: 100,
+                },
+            },
+        },
+    )
+    .unwrap();
+    let reply = loop {
+        match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
+            ServerMessage::Response {
+                request_id: 2,
+                response,
+            } => break response,
+            ServerMessage::Event(_) => continue,
+            other => panic!("unexpected dashboard message: {other:?}"),
+        }
+    };
+    let elapsed = started.elapsed();
+    assert_eq!(reply, Response::Ok);
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "dashboard geometry must not wait for an in-flight kill, took {elapsed:?}"
+    );
+    assert!(matches!(
+        killer.join().unwrap(),
+        ServerMessage::Response {
+            request_id: 7,
+            response: Response::Ok
+        }
+    ));
+    drop(dashboard);
+    fixture.wait_exited(stubborn);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: stubborn }),
+        Response::Ok
+    );
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert_eq!(
+        fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+}
+
 #[test]
 fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -1324,7 +1756,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
             "stty raw -echo; printf READY; exec sleep 30".into(),
         ],
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1397,7 +1829,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         "input response unexpectedly completed while PTY stdin was backpressured"
     );
 
-    let mut blocked_send = UnixStream::connect(&fixture.socket).unwrap();
+    let mut blocked_send = connect_server(&fixture.socket).unwrap();
     blocked_send
         .set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
@@ -1418,7 +1850,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         "SendTerminal unexpectedly completed while PTY stdin was backpressured"
     );
 
-    let mut inspect = UnixStream::connect(&fixture.socket).unwrap();
+    let mut inspect = connect_server(&fixture.socket).unwrap();
     inspect
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1439,7 +1871,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     ));
     drop(inspect);
 
-    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    let mut control = connect_server(&fixture.socket).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1459,7 +1891,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         }
     ));
     drop(control);
-    let mut control = UnixStream::connect(&fixture.socket).unwrap();
+    let mut control = connect_server(&fixture.socket).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -1486,7 +1918,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
 
 #[test]
 fn control_lifecycle_enforces_every_removal_gate() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert!(matches!(
         fixture.request(Request::RemoveProject {
@@ -1590,7 +2022,7 @@ fn control_lifecycle_enforces_every_removal_gate() {
 
 #[test]
 fn workspace_shell_failure_retains_worktree_and_registry() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.request(Request::AddProject {
         name: "fixture".into(),
@@ -1642,7 +2074,7 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
 
 #[test]
 fn fast_exit_session_is_retained_as_exited() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -1698,7 +2130,7 @@ fn fast_exit_session_is_retained_as_exited() {
 
 #[test]
 fn pause_resume_server_refuses_removal_and_late_mutation() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -1720,7 +2152,7 @@ fn pause_resume_server_refuses_removal_and_late_mutation() {
         Response::Ok
     );
     let session = fixture.create_session("pause-resume", vec!["sh".into()]);
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -2091,7 +2523,7 @@ impl Drop for PauseHarness {
                 std::mem::replace(&mut self.fixture._root, tempfile::tempdir().unwrap()).keep();
             eprintln!(
                 "pause/resume fixture cleanup failed; preserved {}",
-                kept.display().to_string()
+                kept.display()
             );
         }
     }
@@ -2129,7 +2561,7 @@ fn request_with_timeout(
     request: Request,
     timeout: Duration,
 ) -> Option<Response> {
-    let mut stream = UnixStream::connect(socket).ok()?;
+    let mut stream = connect_server(socket).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     write_frame(
@@ -2147,7 +2579,7 @@ fn request_with_timeout(
 }
 
 fn dashboard_for_session(socket: &Path, session: SessionId) -> (UnixStream, Vec<u8>) {
-    let mut dashboard = UnixStream::connect(socket).unwrap();
+    let mut dashboard = connect_server(socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -2322,7 +2754,7 @@ struct HistoryConnection {
 impl HistoryConnection {
     fn connect(socket: &Path) -> Self {
         Self {
-            stream: UnixStream::connect(socket).unwrap(),
+            stream: connect_server(socket).unwrap(),
             frames: HistoryFrameReader::new(),
             parser: HistoryDashboardParser::new(),
         }
@@ -2512,14 +2944,13 @@ while :; do sleep 1; done
 }
 
 fn current_rss_kib() -> u64 {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        if let Some(value) = status
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status")
+        && let Some(value) = status
             .lines()
             .find_map(|line| line.strip_prefix("VmRSS:")?.split_whitespace().next())
             .and_then(|value| value.parse::<u64>().ok())
-        {
-            return value;
-        }
+    {
+        return value;
     }
     let output = Command::new("ps")
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
@@ -2563,10 +2994,9 @@ fn wait_memory_marker(
                 max_lines: None,
             },
             Duration::from_millis(250),
-        ) {
-            if text.contains(marker) {
-                return;
-            }
+        ) && text.contains(marker)
+        {
+            return;
         }
         thread::yield_now();
     }
@@ -2809,10 +3239,11 @@ fn expect_term_acks_and_descendant_final(
                     Some(libc::EIO),
                     "unexpected descendant PTY error (raw status {status:?})"
                 );
-                assert!(
-                    cfg!(target_os = "macos"),
-                    "EIO after leader hangup is only accepted on macOS (raw status {status:?})"
-                );
+                if !cfg!(target_os = "macos") {
+                    panic!(
+                        "EIO after leader hangup is only accepted on macOS (raw status {status:?})"
+                    );
+                }
             }
             // A successful write must be retained in the terminal; a flush
             // failure alone does not excuse the final-marker assertion.
@@ -2923,7 +3354,7 @@ fn wait_exited_and_assert_terminal_contains(
 
 #[test]
 fn pause_resume_stops_group_and_rejects_input() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (session, leader, descendant) = harness.create_session("pause-input");
     let (mut dashboard, before_screen) = dashboard_for_session(&harness.fixture.socket, session);
@@ -3020,7 +3451,7 @@ fn pause_resume_stops_group_and_rejects_input() {
 
 #[test]
 fn pause_resume_kill_runs_group_handlers() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (session, leader, descendant) = harness.create_session("kill-paused");
     let (mut dashboard, _) = dashboard_for_session(&harness.fixture.socket, session);
@@ -3102,7 +3533,7 @@ fn pause_resume_kill_runs_group_handlers() {
 
 #[test]
 fn pause_resume_shutdown_cleans_stopped_groups() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let (first, first_leader, first_descendant) = harness.create_session("shutdown-one");
     let (second, second_leader, second_descendant) = harness.create_session("shutdown-two");
@@ -3148,7 +3579,7 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
 
 #[test]
 fn pause_resume_control_races_converge() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     pause_resume_control_races_body();
 }
 
@@ -3163,7 +3594,7 @@ fn pause_resume_control_races_body() {
     ];
     let streams = operations
         .iter()
-        .map(|_| UnixStream::connect(&harness.fixture.socket).unwrap())
+        .map(|_| connect_server(&harness.fixture.socket).unwrap())
         .collect::<Vec<_>>();
     let workers = operations
         .into_iter()
@@ -3300,7 +3731,7 @@ fn request_on_stream(
 
 #[test]
 fn pause_resume_backpressured_input_keeps_controls_available() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let mut harness = PauseHarness::new();
     let summary = harness.fixture.create_session_summary(
         "blocked-pause",
@@ -3312,7 +3743,11 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
     );
     harness.record_created_pgid(&summary);
     let session = summary.id;
-    let mut dashboard = UnixStream::connect(&harness.fixture.socket).unwrap();
+    // The input below can only block once `stty raw` has run, and the
+    // dashboard drain must not race the READY output frame; wait for the
+    // marker server-side so both hold before selecting.
+    harness.fixture.wait_terminal_contains(session, "READY");
+    let mut dashboard = connect_server(&harness.fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -3349,7 +3784,7 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
         .unwrap();
     assert!(read_frame::<ServerMessage>(&mut dashboard).is_err());
 
-    let mut blocked_send = UnixStream::connect(&harness.fixture.socket).unwrap();
+    let mut blocked_send = connect_server(&harness.fixture.socket).unwrap();
     blocked_send
         .set_read_timeout(Some(Duration::from_millis(300)))
         .unwrap();
@@ -3597,7 +4032,7 @@ fn restore_pause_terminal(original: Option<libc::termios>) {
 #[test]
 #[ignore = "bounded historical scrollback RSS measurement"]
 fn history_memory_measurements() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let cols = match std::env::var("OVRCR_HISTORY_MEMORY_GEOMETRY").as_deref() {
         Ok("80") => 80,
         Ok("512") => 512,
@@ -3807,7 +4242,7 @@ fn history_memory_measurements() {
 
 #[test]
 fn history_reattach_reads_retained_output() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-reattach");
     let session = history_ready_shell(&fixture);
@@ -3900,7 +4335,7 @@ fn history_reattach_reads_retained_output() {
 
 #[test]
 fn history_frozen_page_survives_eviction_and_exit() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-eviction");
     let session = history_ready_shell(&fixture);
@@ -4006,15 +4441,14 @@ fn history_frozen_page_survives_eviction_and_exit() {
 
 #[test]
 fn history_slow_dashboard_recovers_after_finite_burst() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
     history_workspace(&fixture, "feature/history-slow-dashboard");
     let summary = fixture.create_session_summary(
         "history-burst",
         vec![
-            "sh".into(),
-            "-c".into(),
-            "i=0; while [ \"$i\" -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf 'FINAL_HISTORY_MARKER\\n'".into(),
+            "awk".into(),
+            "BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_HISTORY_MARKER\\n\" }".into(),
         ],
     );
     fixture.record_process_group(&summary);
@@ -4094,7 +4528,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
 
 #[test]
 fn slow_dashboard_recovers_after_output_burst() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);
     assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
     let fixture = ControlFixture::new();
@@ -4117,16 +4551,17 @@ fn slow_dashboard_recovers_after_output_burst() {
         }),
         Response::Ok
     );
+    // awk emits the burst in well under a second on any runner; a shell
+    // loop needs several seconds on a slow CI machine.
     let burst = fixture.create_session(
         "burst",
         vec![
-            "sh".into(),
-            "-c".into(),
-            "i=0; while [ $i -lt 200000 ]; do printf 'BURST_%06d\\n' \"$i\"; i=$((i+1)); done; printf FINAL_MARKER".into(),
+            "awk".into(),
+            "BEGIN { for (i = 0; i < 200000; i++) printf \"BURST_%06d\\n\", i; printf \"FINAL_MARKER\" }".into(),
         ],
     );
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -4155,23 +4590,7 @@ fn slow_dashboard_recovers_after_output_burst() {
         .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if matches!(
-            fixture.request(Request::List),
-            Response::Hierarchy(ref snapshot)
-                if snapshot
-                    .projects
-                    .iter()
-                    .flat_map(|project| project.workspaces.iter())
-                    .flat_map(|workspace| workspace.sessions.iter())
-                    .any(|session| session.id == burst && matches!(session.phase, SessionPhase::Exited { .. }))
-        ) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "burst process did not finish");
-        thread::park_timeout(Duration::from_millis(5));
-    }
+    fixture.wait_exited(burst);
 
     let mut saw_dirty = false;
     while !saw_dirty {
@@ -4198,14 +4617,24 @@ fn slow_dashboard_recovers_after_output_burst() {
         },
     )
     .unwrap();
-    let snapshot = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-    assert!(matches!(
-        snapshot,
-        ServerMessage::Response {
-            response: Response::Screen { bytes, .. },
-            ..
-        } if String::from_utf8_lossy(&bytes).contains("FINAL_MARKER")
-    ));
+    // The session's exit events may still be queued behind the dirty
+    // marker; skip them and judge the select response itself.
+    let screen = loop {
+        if let ServerMessage::Response {
+            request_id: 3,
+            response,
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            break response;
+        }
+    };
+    assert!(
+        matches!(
+            &screen,
+            Response::Screen { bytes, .. } if String::from_utf8_lossy(bytes).contains("FINAL_MARKER")
+        ),
+        "select after burst returned {screen:?}"
+    );
     let mut dirty_count = 1;
     dashboard
         .set_read_timeout(Some(Duration::from_millis(100)))
@@ -4257,7 +4686,7 @@ fn slow_dashboard_recovers_after_output_burst() {
 
 #[test]
 fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -4303,7 +4732,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         let socket = fixture.socket.clone();
         let barrier = std::sync::Arc::clone(&barrier);
         thread::spawn(move || {
-            let mut stream = UnixStream::connect(socket).unwrap();
+            let mut stream = connect_server(socket).unwrap();
             barrier.wait();
             write_frame(
                 &mut stream,
@@ -4378,7 +4807,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
 
 #[test]
 fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -4451,7 +4880,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
         }
     ));
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
@@ -4614,7 +5043,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
 
 #[test]
 fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -4648,7 +5077,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         })
         .collect::<Vec<_>>();
 
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -4694,16 +5123,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
-    let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
-    write_frame(
-        &mut reattached,
-        &ClientMessage {
-            request_id: 100,
-            request: Request::DashboardHello,
-        },
-    )
-    .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut reattached).unwrap();
+    let mut reattached = connect_dashboard(&fixture.socket, 100);
     reattached
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -4866,7 +5286,7 @@ impl ControlFixture {
         panic!("control server did not start");
     }
     fn request(&self, request: Request) -> Response {
-        let mut stream = UnixStream::connect(&self.socket).unwrap();
+        let mut stream = connect_server(&self.socket).unwrap();
         if let Some(timeout) = self.request_timeout {
             stream.set_read_timeout(Some(timeout)).unwrap();
             stream.set_write_timeout(Some(timeout)).unwrap();
@@ -4896,7 +5316,7 @@ impl ControlFixture {
             label: None,
             argv,
         })) {
-            Response::CreatedSession(summary) => summary,
+            Response::CreatedSession(summary) => *summary,
             response => panic!("unexpected response: {response:?}"),
         }
     }
@@ -5033,10 +5453,9 @@ impl ControlFixture {
                     max_lines: None,
                 },
                 Duration::from_millis(250),
-            ) {
-                if text.contains(marker) {
-                    return;
-                }
+            ) && text.contains(marker)
+            {
+                return;
             }
             thread::park_timeout(Duration::from_millis(5));
         }
@@ -5229,7 +5648,7 @@ fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
 fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut first = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -5239,7 +5658,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut first).unwrap();
-    let mut second = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut second = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut second,
         &ClientMessage {
@@ -5269,7 +5688,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
 fn duplicate_dashboard_hello_uses_the_sole_writer() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5313,7 +5732,7 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
 fn dashboard_request_id_zero_does_not_block_followup_response() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5345,7 +5764,7 @@ fn dashboard_request_id_zero_does_not_block_followup_response() {
 
 #[test]
 fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -5366,7 +5785,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
         }),
         Response::Ok
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5426,7 +5845,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
 fn dashboard_receives_concrete_ordinary_request_errors() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5466,7 +5885,7 @@ fn dashboard_receives_concrete_ordinary_request_errors() {
 
 #[test]
 fn selection_snapshot_precedes_later_quiet_tail_output() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     assert_eq!(
         fixture.request(Request::AddProject {
@@ -5495,7 +5914,7 @@ fn selection_snapshot_precedes_later_quiet_tail_output() {
             "printf READY; read line; printf QUIET_TAIL; exec sleep 30".into(),
         ],
     );
-    let mut dashboard = UnixStream::connect(&fixture.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -5621,7 +6040,7 @@ fn select_screen_containing(
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     let mut fixture = ServerFixture::new();
     fixture.start();
-    let mut dashboard = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5657,7 +6076,7 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
 
 #[test]
 fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args([
@@ -5846,17 +6265,39 @@ fn wait_for_socket(socket: &Path) {
     assert!(socket.exists(), "server socket did not appear");
 }
 
+/// Connect as the dashboard, replacing one that was just dropped.
+///
+/// The server releases the dashboard slot when it notices the previous
+/// connection closed, which can trail the drop by a few milliseconds; a
+/// refused hello is retried rather than treated as a failure.
+fn connect_dashboard(socket: &Path, request_id: u64) -> UnixStream {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut stream = connect_server(socket).unwrap();
+        write_frame(
+            &mut stream,
+            &ClientMessage {
+                request_id,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        match read_frame::<ServerMessage>(&mut stream).unwrap() {
+            ServerMessage::Response {
+                response: Response::Error { .. },
+                ..
+            } => {
+                drop(stream);
+                assert!(Instant::now() < deadline, "dashboard slot was not released");
+                thread::park_timeout(Duration::from_millis(10));
+            }
+            _ => return stream,
+        }
+    }
+}
+
 fn dashboard_screen(socket: &Path, session: SessionId) -> String {
-    let mut stream = UnixStream::connect(socket).unwrap();
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::DashboardHello,
-        },
-    )
-    .unwrap();
-    let _ = read_frame::<ServerMessage>(&mut stream).unwrap();
+    let mut stream = connect_dashboard(socket, 1);
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -5885,7 +6326,7 @@ fn dashboard_screen(socket: &Path, session: SessionId) -> String {
 }
 
 fn session_process_groups(socket: &Path) -> Vec<libc::pid_t> {
-    let mut stream = UnixStream::connect(socket).unwrap();
+    let mut stream = connect_server(socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {

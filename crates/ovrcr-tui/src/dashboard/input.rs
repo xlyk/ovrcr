@@ -8,14 +8,13 @@ pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
         return KeyEncoding::Browse;
     }
 
+    let modifier = modifier_param(event.modifiers);
     let bytes = match event.code {
         KeyCode::Char(ch) if event.modifiers.contains(KeyModifiers::CONTROL) => {
-            let ch = ch.to_ascii_lowercase();
-            if ch.is_ascii_lowercase() {
-                vec![ch as u8 - b'a' + 1]
-            } else {
+            let Some(byte) = control_byte(ch) else {
                 return KeyEncoding::Ignore;
-            }
+            };
+            vec![byte]
         }
         KeyCode::Char(ch) => {
             let mut bytes = Vec::new();
@@ -26,21 +25,27 @@ pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
             bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
             bytes
         }
-        KeyCode::Enter => vec![b'\r'],
+        // Modified Enter uses the CSI-u form so Shift+Enter can insert a
+        // newline instead of submitting; legacy terminals never deliver it.
+        KeyCode::Enter => match modifier {
+            Some(modifier) => format!("\x1b[13;{modifier}u").into_bytes(),
+            None => vec![b'\r'],
+        },
         KeyCode::Tab => vec![b'\t'],
         KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Backspace if event.modifiers.contains(KeyModifiers::ALT) => vec![0x1b, 0x7f],
         KeyCode::Backspace => vec![0x7f],
         KeyCode::Esc => vec![0x1b],
-        KeyCode::Left => cursor_sequence(application_cursor, b'D'),
-        KeyCode::Right => cursor_sequence(application_cursor, b'C'),
-        KeyCode::Up => cursor_sequence(application_cursor, b'A'),
-        KeyCode::Down => cursor_sequence(application_cursor, b'B'),
-        KeyCode::Home => b"\x1b[H".to_vec(),
-        KeyCode::End => b"\x1b[F".to_vec(),
-        KeyCode::Insert => b"\x1b[2~".to_vec(),
-        KeyCode::Delete => b"\x1b[3~".to_vec(),
-        KeyCode::PageUp => b"\x1b[5~".to_vec(),
-        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Left => cursor_sequence(application_cursor, modifier, b'D'),
+        KeyCode::Right => cursor_sequence(application_cursor, modifier, b'C'),
+        KeyCode::Up => cursor_sequence(application_cursor, modifier, b'A'),
+        KeyCode::Down => cursor_sequence(application_cursor, modifier, b'B'),
+        KeyCode::Home => cursor_sequence(false, modifier, b'H'),
+        KeyCode::End => cursor_sequence(false, modifier, b'F'),
+        KeyCode::Insert => tilde_sequence(2, modifier),
+        KeyCode::Delete => tilde_sequence(3, modifier),
+        KeyCode::PageUp => tilde_sequence(5, modifier),
+        KeyCode::PageDown => tilde_sequence(6, modifier),
         KeyCode::F(number) => {
             let Some(bytes) = function_key(number) else {
                 return KeyEncoding::Ignore;
@@ -57,11 +62,49 @@ pub(super) fn is_browse_key(key: KeyEvent) -> bool {
         || matches!(key.code, KeyCode::Char('\u{7}'))
 }
 
-fn cursor_sequence(application: bool, suffix: u8) -> Vec<u8> {
-    if application {
-        vec![0x1b, b'O', suffix]
-    } else {
-        vec![0x1b, b'[', suffix]
+/// Control bytes for letters and the punctuation xterm maps below 0x20.
+/// Legacy terminals report Ctrl with `\`, `]`, `^`, and `_` as the digits
+/// `4` through `7`; the kitty keyboard protocol sends the punctuation itself.
+fn control_byte(ch: char) -> Option<u8> {
+    let ch = ch.to_ascii_lowercase();
+    Some(match ch {
+        'a'..='z' => ch as u8 - b'a' + 1,
+        ' ' | '@' => 0x00,
+        '\\' | '4' => 0x1c,
+        ']' | '5' => 0x1d,
+        '^' | '6' => 0x1e,
+        '_' | '7' => 0x1f,
+        _ => return None,
+    })
+}
+
+/// The xterm modifier parameter: 1 plus shift (1), alt (2), and control (4).
+fn modifier_param(modifiers: KeyModifiers) -> Option<u8> {
+    let mut param = 1;
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        param += 1;
+    }
+    if modifiers.contains(KeyModifiers::ALT) {
+        param += 2;
+    }
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        param += 4;
+    }
+    (param > 1).then_some(param)
+}
+
+fn cursor_sequence(application: bool, modifier: Option<u8>, suffix: u8) -> Vec<u8> {
+    match modifier {
+        Some(modifier) => format!("\x1b[1;{modifier}{}", suffix as char).into_bytes(),
+        None if application => vec![0x1b, b'O', suffix],
+        None => vec![0x1b, b'[', suffix],
+    }
+}
+
+fn tilde_sequence(number: u8, modifier: Option<u8>) -> Vec<u8> {
+    match modifier {
+        Some(modifier) => format!("\x1b[{number};{modifier}~").into_bytes(),
+        None => format!("\x1b[{number}~").into_bytes(),
     }
 }
 

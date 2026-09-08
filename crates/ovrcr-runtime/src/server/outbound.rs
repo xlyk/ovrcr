@@ -18,6 +18,24 @@ pub(super) struct DashboardQueue {
     closed: bool,
 }
 
+impl DashboardQueue {
+    /// Replace every queued output frame with a pending dirty marker for
+    /// its session, so the dashboard re-reads the screen instead.
+    fn coalesce_output(&mut self) {
+        let mut sessions = Vec::new();
+        self.messages.retain(|queued| match queued.message {
+            ServerMessage::Event(ServerEvent::Output { session, .. }) => {
+                sessions.push(session);
+                false
+            }
+            _ => true,
+        });
+        for session in sessions {
+            self.dirty.entry(session).or_insert(DirtyState::Pending);
+        }
+    }
+}
+
 pub struct DashboardSink {
     pub(super) queue: Mutex<DashboardQueue>,
     wake: Condvar,
@@ -64,9 +82,16 @@ impl DashboardSink {
                 return true;
             }
         } else if queue.messages.len() == DASHBOARD_QUEUE {
-            queue.closed = true;
-            self.wake.notify_all();
-            return false;
+            // Queued output is not evidence of a stalled dashboard: the
+            // writer may simply not have run since a burst. Fold it into
+            // dirty markers, as the output path does, and evict only when
+            // the queue is still full of messages that cannot be coalesced.
+            queue.coalesce_output();
+            if queue.messages.len() == DASHBOARD_QUEUE {
+                queue.closed = true;
+                self.wake.notify_all();
+                return false;
+            }
         }
         queue.messages.push_back(outbound);
         self.wake.notify_one();

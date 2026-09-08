@@ -189,37 +189,36 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
             }
         }
     }
-    if let Some(cursor) = view.cursor.filter(|_| view.cursor_target.is_none()) {
-        if cursor.row_width > 0
-            && cursor.point.row >= view.top
-            && cursor.point.row < view.top.saturating_add(bounded.height as u32)
-            && cursor.point.col >= view.left
+    if let Some(cursor) = view.cursor.filter(|_| view.cursor_target.is_none())
+        && cursor.row_width > 0
+        && cursor.point.row >= view.top
+        && cursor.point.row < view.top.saturating_add(bounded.height as u32)
+        && cursor.point.col >= view.left
+    {
+        let screen_row = cursor.point.row.saturating_sub(view.top) as u16;
+        let screen_col = cursor.point.col.saturating_sub(view.left);
+        if screen_row < bounded.height
+            && screen_col < bounded.width
+            && (cursor.cell_width != 2 || screen_col.saturating_add(1) < bounded.width)
+            && history_cell_at(view, cursor.point.row, cursor.point.col)
+                .is_some_and(|(_, _, cell)| cell.width != 0)
         {
-            let screen_row = cursor.point.row.saturating_sub(view.top) as u16;
-            let screen_col = cursor.point.col.saturating_sub(view.left);
-            if screen_row < bounded.height
-                && screen_col < bounded.width
-                && (cursor.cell_width != 2 || screen_col.saturating_add(1) < bounded.width)
-                && history_cell_at(view, cursor.point.row, cursor.point.col)
-                    .is_some_and(|(_, _, cell)| cell.width != 0)
-            {
-                frame.set_cursor_position((
-                    bounded.x.saturating_add(screen_col),
-                    bounded.y.saturating_add(screen_row),
-                ));
-            }
+            frame.set_cursor_position((
+                bounded.x.saturating_add(screen_col),
+                bounded.y.saturating_add(screen_row),
+            ));
         }
     }
 }
 
-fn history_cell_at<'a>(
-    view: &'a HistoryView,
+fn history_cell_at(
+    view: &HistoryView,
     row: u32,
     col: u16,
 ) -> Option<(
     u16,
-    &'a crate::protocol::HistoryRow,
-    &'a crate::protocol::HistoryCell,
+    &crate::protocol::HistoryRow,
+    &crate::protocol::HistoryCell,
 )> {
     view.pages
         .iter()

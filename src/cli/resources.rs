@@ -39,7 +39,7 @@ pub(super) fn run_project(command: ProjectCommand, json_output: bool) -> AppResu
             print_value(project_value(project), json_output, print_project)
         }
         ProjectCommand::Remove { name } => {
-            mutate_started(Request::RemoveProject { name }, json_output)
+            mutate_without_start(Request::RemoveProject { name }, json_output)
         }
     }
 }
@@ -97,7 +97,7 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
             )
         }
         WorkspaceCommand::Remove { project, name } => {
-            mutate_started(Request::RemoveWorkspace { project, name }, json_output)
+            mutate_without_start(Request::RemoveWorkspace { project, name }, json_output)
         }
     }
 }
@@ -172,13 +172,13 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Kill { id } => mutate_started(
+        TerminalCommand::Kill { id } => mutate_without_start(
             Request::KillSession {
                 session: SessionId(id),
             },
             json_output,
         ),
-        TerminalCommand::Remove { id } => mutate_started(
+        TerminalCommand::Remove { id } => mutate_without_start(
             Request::RemoveSession {
                 session: SessionId(id),
             },

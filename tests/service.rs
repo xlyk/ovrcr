@@ -88,6 +88,7 @@ impl Fixture {
             &self.config,
             ServiceCommand::Install {
                 environment_file: None,
+                kill_sessions: false,
             },
             false,
         )
@@ -128,7 +129,7 @@ fn service_args_parse_install_environment_file() {
     .unwrap();
     let TestCommand::Service(args) = cli.command;
     assert!(
-        matches!(args.command, ServiceCommand::Install { environment_file: Some(path) } if path == Path::new("/tmp/ovrcr.env"))
+        matches!(args.command, ServiceCommand::Install { environment_file: Some(path), kill_sessions: false } if path == Path::new("/tmp/ovrcr.env"))
     );
 }
 
@@ -141,6 +142,7 @@ fn launchd_install_writes_login_job_that_restarts_only_after_failure() {
         &fixture.config,
         ServiceCommand::Install {
             environment_file: Some(environment_file.clone()),
+            kill_sessions: false,
         },
         false,
     )
@@ -183,6 +185,7 @@ fn systemd_install_writes_user_unit_and_enables_login_startup() {
         &fixture.config,
         ServiceCommand::Install {
             environment_file: Some(environment_file.clone()),
+            kill_sessions: false,
         },
         true,
     )
@@ -237,6 +240,7 @@ fn install_refuses_to_take_over_an_unmanaged_server() {
         &fixture.config,
         ServiceCommand::Install {
             environment_file: None,
+            kill_sessions: false,
         },
         false,
     )
@@ -278,6 +282,9 @@ fn stop_requests_graceful_server_shutdown_before_stopping_the_manager() {
         let server = thread::spawn(move || {
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
+                if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                    continue;
+                }
                 let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
                     continue;
                 };
@@ -304,6 +311,86 @@ fn stop_requests_graceful_server_shutdown_before_stopping_the_manager() {
 }
 
 #[test]
+fn service_install_refuses_when_sessions_exist() {
+    use ovrcr::protocol::{
+        AgentActivity, ErrorCode, Registry, SessionId, SessionPhase, SessionSummary,
+    };
+    let fixture = Fixture::new(ServicePlatform::Systemd);
+    fixture.install_stopped();
+    fixture.mark_managed();
+    let definition = fs::read(&fixture.config.definition_path).unwrap();
+    fs::create_dir_all(fixture.config.server_paths.socket.parent().unwrap()).unwrap();
+    let listener = UnixListener::bind(&fixture.config.server_paths.socket).unwrap();
+    let server = thread::spawn(move || {
+        let mut received = Vec::new();
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                break;
+            }
+            let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
+                break;
+            };
+            let response = match &message.request {
+                Request::Shutdown { kill: false } => Response::Error {
+                    code: ErrorCode::SessionsRemain,
+                    message: "sessions remain".into(),
+                },
+                Request::List => Response::Inventory {
+                    registry: Registry::default(),
+                    sessions: vec![SessionSummary {
+                        id: SessionId(7),
+                        project: "demo".into(),
+                        workspace: "main".into(),
+                        name: "shell".into(),
+                        label: "shell".into(),
+                        pid: Some(1),
+                        started_unix_ms: 0,
+                        phase: SessionPhase::Running,
+                        activity: AgentActivity::Idle,
+                        context_usage: None,
+                    }],
+                },
+                other => panic!("install sent {other:?}"),
+            };
+            received.push(message.request);
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: message.request_id,
+                    response,
+                },
+            )
+            .unwrap();
+        }
+        received
+    });
+
+    let error = run_with(
+        &fixture.config,
+        ServiceCommand::Install {
+            environment_file: None,
+            kill_sessions: false,
+        },
+        false,
+    )
+    .unwrap_err();
+    // The server must still be listening: an empty connection ends the fake server.
+    drop(std::os::unix::net::UnixStream::connect(&fixture.config.server_paths.socket).unwrap());
+    let received = server.join().unwrap();
+    let text = error.to_string();
+    assert!(text.contains("1 session"), "{text}");
+    assert!(text.contains("--kill-sessions"), "{text}");
+    assert!(received.contains(&Request::Shutdown { kill: false }));
+    assert!(!received.contains(&Request::Shutdown { kill: true }));
+    assert!(!fixture.manager_log().contains("restart"));
+    assert_eq!(
+        fs::read(&fixture.config.definition_path).unwrap(),
+        definition
+    );
+}
+
+#[test]
 fn failed_graceful_shutdown_does_not_stop_the_manager() {
     let fixture = Fixture::new(ServicePlatform::Systemd);
     fixture.install_stopped();
@@ -313,6 +400,9 @@ fn failed_graceful_shutdown_does_not_stop_the_manager() {
     let server = thread::spawn(move || {
         loop {
             let (mut stream, _) = listener.accept().unwrap();
+            if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                continue;
+            }
             let Ok(message) = read_frame::<ClientMessage>(&mut stream) else {
                 continue;
             };
@@ -362,6 +452,7 @@ fn service_definitions_reject_relative_runtime_paths() {
         &fixture.config,
         ServiceCommand::Install {
             environment_file: None,
+            kill_sessions: false,
         },
         false,
     )
@@ -387,6 +478,7 @@ fn loaded_service_does_not_send_shutdown_to_a_foreign_listener() {
                 "1",
                 ServiceCommand::Install {
                     environment_file: None,
+                    kill_sessions: false,
                 },
             ),
             ("1", ServiceCommand::Stop),
@@ -398,6 +490,7 @@ fn loaded_service_does_not_send_shutdown_to_a_foreign_listener() {
                 &fixture.config,
                 ServiceCommand::Install {
                     environment_file: None,
+                    kill_sessions: false,
                 },
                 false,
             )
@@ -414,6 +507,9 @@ fn loaded_service_does_not_send_shutdown_to_a_foreign_listener() {
                     let (mut stream, _) = listener.accept().unwrap();
                     if server_finished.load(Ordering::Acquire) {
                         break;
+                    }
+                    if ovrcr::protocol::exchange_preamble(&mut stream).is_err() {
+                        continue;
                     }
                     if let Ok(message) = read_frame::<ClientMessage>(&mut stream) {
                         received.push(message.request);
@@ -464,6 +560,7 @@ fn changed_socket_cannot_control_the_installed_job_even_without_a_listener() {
         for command in [
             ServiceCommand::Install {
                 environment_file: None,
+                kill_sessions: false,
             },
             ServiceCommand::Start,
             ServiceCommand::Stop,

@@ -2,6 +2,7 @@ use super::connections::lifecycle_response_with_partial_hierarchy;
 use super::startup::resolve_bound_socket;
 use super::*;
 use ovrcr_protocol::AgentReport;
+use ovrcr_protocol::exchange_preamble;
 use std::time::Instant;
 
 use crate::session::AgentActivity;
@@ -153,11 +154,11 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut identity_contents = None;
     while Instant::now() < deadline {
-        if let Ok(contents) = std::fs::read_to_string(&identity) {
-            if contents == expected_identity {
-                identity_contents = Some(contents);
-                break;
-            }
+        if let Ok(contents) = std::fs::read_to_string(&identity)
+            && contents == expected_identity
+        {
+            identity_contents = Some(contents);
+            break;
         }
         thread::park_timeout(Duration::from_millis(5));
     }
@@ -287,7 +288,7 @@ fn spawn_live_test_session(
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' TERM; while :; do sleep 1; done".into(),
+                "trap '' HUP TERM; while :; do sleep 1; done".into(),
             ],
             hook_env: None,
         },
@@ -671,6 +672,7 @@ fn history_owner_and_token_isolation() {
             let (server, mut client) = UnixStream::pair().unwrap();
             let handler_state = Arc::clone(&state);
             let handler = thread::spawn(move || handle_connection(handler_state, server));
+            exchange_preamble(&mut client).unwrap();
             write_frame(
                 &mut client,
                 &ClientMessage {
@@ -716,6 +718,7 @@ fn history_owner_and_token_isolation() {
     let replacement_handler_state = Arc::clone(&replacement_state);
     let replacement_handler =
         thread::spawn(move || handle_connection(replacement_handler_state, replacement_server));
+    exchange_preamble(&mut replacement_client).unwrap();
     write_frame(
         &mut replacement_client,
         &ClientMessage {
@@ -1113,6 +1116,52 @@ fn dashboard_overflow_closes_affected_connection() {
 }
 
 #[test]
+fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
+    // A burst can leave the queue full of output frames before the writer
+    // thread runs. A lifecycle event arriving then must fold the output
+    // into a dirty marker rather than evict a dashboard that is keeping up.
+    let sink = DashboardSink::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(2),
+                bytes: b"x".to_vec(),
+            }),
+            completion: None,
+        }));
+    }
+    assert!(sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new()
+        })),
+        completion: None,
+    }));
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Event(ServerEvent::HierarchyChanged(_))
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Dirty(SessionId(2)))
+    ));
+    // Messages that cannot be coalesced still evict once they fill the queue.
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            })),
+            completion: None,
+        }));
+    }
+    assert!(!sink.enqueue(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+            projects: Vec::new()
+        })),
+        completion: None,
+    }));
+}
+
+#[test]
 fn dashboard_overflow_does_not_clear_replacement_slot() {
     let (old_server, mut old_client) = UnixStream::pair().unwrap();
     let _old_handler_stream = old_server.try_clone().unwrap();
@@ -1343,6 +1392,7 @@ fn dashboard_shutdown_waits_for_stalled_writer_completion() {
         .collect();
     let handler_state = Arc::clone(&state);
     let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    exchange_preamble(&mut client_stream).unwrap();
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -1418,9 +1468,11 @@ fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
     let dashboard_state = Arc::clone(&state);
     let dashboard_handler =
         thread::spawn(move || handle_connection(dashboard_state, dashboard_server));
+    exchange_preamble(&mut dashboard_client).unwrap();
     let (control_server, mut control_client) = UnixStream::pair().unwrap();
     let control_state = Arc::clone(&state);
     let control_handler = thread::spawn(move || handle_connection(control_state, control_server));
+    exchange_preamble(&mut control_client).unwrap();
     write_frame(
         &mut dashboard_client,
         &ClientMessage {
@@ -1491,6 +1543,7 @@ fn accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked() {
         let control_state = Arc::clone(&state);
         let control_handler =
             thread::spawn(move || handle_connection(control_state, control_server));
+        exchange_preamble(&mut control_client).unwrap();
         write_frame(
             &mut control_client,
             &ClientMessage {
@@ -1648,7 +1701,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' TERM; printf READY; while :; do read line; done".into(),
+                "trap '' HUP TERM; printf READY; while :; do read line; done".into(),
             ],
             hook_env: Some(HookEnvironment {
                 socket: PathBuf::from("/private/test/ovrcr.sock"),
@@ -2290,10 +2343,9 @@ impl Drop for RegistrationCleanup {
                 || self.summary.is_some()
                 || self.dispatcher.is_some()
                 || self.bridge.is_some())
+            && !self.cleanup()
         {
-            if !self.cleanup() {
-                eprintln!("registration cleanup did not complete before its deadlines");
-            }
+            eprintln!("registration cleanup did not complete before its deadlines");
         }
     }
 }
@@ -2360,10 +2412,10 @@ impl KillFailureCleanup {
                 }
             }
         }
-        if let Some(dispatcher) = self.dispatcher.take() {
-            if !join_test_thread_bounded(dispatcher, Duration::from_secs(2)) {
-                cleaned = false;
-            }
+        if let Some(dispatcher) = self.dispatcher.take()
+            && !join_test_thread_bounded(dispatcher, Duration::from_secs(2))
+        {
+            cleaned = false;
         }
         if let Some(waiter) = self.waiter.take()
             && !join_test_thread_bounded(waiter, Duration::from_secs(2))
@@ -2401,10 +2453,8 @@ impl KillFailureCleanup {
 
 impl Drop for KillFailureCleanup {
     fn drop(&mut self) {
-        if self.waiter.is_some() || self.dispatcher.is_some() {
-            if !self.cleanup() {
-                eprintln!("kill failure cleanup did not complete before its deadlines");
-            }
+        if (self.waiter.is_some() || self.dispatcher.is_some()) && !self.cleanup() {
+            eprintln!("kill failure cleanup did not complete before its deadlines");
         }
     }
 }
@@ -2473,4 +2523,148 @@ fn wait_test_screen(session: &Session, marker: &str, timeout: Duration) -> bool 
         thread::park_timeout(Duration::from_millis(5));
     }
     false
+}
+
+#[test]
+fn dashboard_slot_is_released_when_registration_panics() {
+    let state = test_state(None, None);
+
+    let (server, mut client) = UnixStream::pair().unwrap();
+    let handler_state = Arc::clone(&state);
+    connections::PANIC_AFTER_DASHBOARD_REGISTRATION.store(true, Ordering::Release);
+    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(
+        handler.join().is_err(),
+        "the injected panic must unwind the handler"
+    );
+    assert!(
+        state.dashboard_slot.lock().unwrap().is_none(),
+        "unwinding must release the dashboard slot"
+    );
+    assert!(state.dashboard.lock().unwrap().is_none());
+    drop(client);
+
+    let (server, mut client) = UnixStream::pair().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server));
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            read_frame::<ServerMessage>(&mut client).unwrap(),
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Hierarchy(_),
+            }
+        ),
+        "a later dashboard must be accepted"
+    );
+    drop(client);
+    handler.join().unwrap();
+}
+
+#[test]
+fn accept_loop_survives_thread_spawn_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("server.sock");
+    let registry = root.path().join("config.toml");
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
+    let paths = ServerPaths {
+        socket: socket.clone(),
+    };
+    let server = thread::spawn(move || run_server(paths, registry));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while UnixStream::connect(&socket).is_err() {
+        assert!(Instant::now() < deadline, "server did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    // The readiness probes above were accepted in order; a completed request
+    // proves the accept loop is idle before the seam is armed.
+    let mut warm_up = UnixStream::connect(&socket).unwrap();
+    exchange_preamble(&mut warm_up).unwrap();
+    write_frame(
+        &mut warm_up,
+        &ClientMessage {
+            request_id: 0,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    let _ = read_frame::<ServerMessage>(&mut warm_up).unwrap();
+    drop(warm_up);
+
+    startup::FAIL_NEXT_ACCEPT_SPAWN.store(true, Ordering::Release);
+    let mut dropped = UnixStream::connect(&socket).unwrap();
+    dropped
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    assert!(
+        exchange_preamble(&mut dropped).is_err(),
+        "the client whose thread could not be spawned is closed"
+    );
+    drop(dropped);
+
+    let mut client = UnixStream::connect(&socket).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 1,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            read_frame::<ServerMessage>(&mut client).unwrap(),
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Hierarchy(_),
+            }
+        ),
+        "the server must keep serving after one spawn failure"
+    );
+    drop(client);
+
+    let mut client = UnixStream::connect(&socket).unwrap();
+    exchange_preamble(&mut client).unwrap();
+    write_frame(
+        &mut client,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Shutdown { kill: false },
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client).unwrap(),
+        ServerMessage::Response {
+            request_id: 2,
+            response: Response::Ok,
+        }
+    ));
+    server.join().unwrap().unwrap();
 }

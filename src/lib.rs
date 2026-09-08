@@ -6,7 +6,9 @@ pub use ovrcr_protocol as protocol;
 pub use ovrcr_runtime::{config, git, session};
 pub mod report;
 pub mod server {
-    pub use crate::client::{connect_if_running, connect_or_start};
+    pub use crate::client::{
+        connect_if_running, connect_or_start, connect_raw_if_running, handshake,
+    };
     pub use ovrcr_runtime::server::*;
 }
 pub mod service;
