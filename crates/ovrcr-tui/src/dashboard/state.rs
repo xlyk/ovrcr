@@ -526,6 +526,7 @@ impl Dashboard {
             requested_view: None,
             force_view_refresh: false,
             view_request_ids: HashSet::new(),
+            pending_snapshot_sessions: HashSet::new(),
         }
     }
 
@@ -729,6 +730,7 @@ impl Dashboard {
         self.force_view_refresh = false;
         self.last_view_request_id = Some(request_id);
         self.view_request_ids.insert(request_id);
+        self.pending_snapshot_sessions.clear();
         self.pending_view = Some(super::PendingView {
             request_id,
             view: view.clone(),
@@ -767,6 +769,7 @@ impl Dashboard {
         {
             return;
         }
+        self.pending_snapshot_sessions.insert(session);
         let Some(pane) = self
             .panes
             .iter_mut()
@@ -1801,11 +1804,11 @@ impl Dashboard {
                     let desired_now = self.desired_view();
                     let desired_matches =
                         !self.force_view_refresh && Self::same_view(&pending.view, &desired_now);
-                    let complete = pending.view.targets.iter().all(|(session, _)| {
-                        self.panes
-                            .iter()
-                            .any(|pane| pane.session == Some(*session) && pane.snapshot_installed)
-                    });
+                    let complete = pending
+                        .view
+                        .targets
+                        .iter()
+                        .all(|(session, _)| self.pending_snapshot_sessions.contains(session));
                     if complete && desired_matches {
                         for (session, _) in &pending.view.targets {
                             if let Some(pane) = self
@@ -1813,10 +1816,12 @@ impl Dashboard {
                                 .iter_mut()
                                 .find(|pane| pane.session == Some(*session))
                             {
+                                pane.snapshot_installed = true;
                                 pane.ready = true;
                             }
                         }
                         self.requested_view = Some(pending.view);
+                        self.pending_snapshot_sessions.clear();
                         self.error = None;
                     } else if !desired_matches {
                         self.requested_view = Some(pending.view);
@@ -1885,6 +1890,7 @@ impl Dashboard {
                         .is_some_and(|pending| pending.request_id == request_id);
                     if matched_view {
                         let pending = self.pending_view.take().expect("matching view request");
+                        self.pending_snapshot_sessions.clear();
                         for (session, _) in pending.view.targets {
                             if let Some(pane) = self
                                 .panes

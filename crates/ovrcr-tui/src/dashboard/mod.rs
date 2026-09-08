@@ -180,6 +180,7 @@ pub struct Dashboard {
     pub(super) requested_view: Option<RequestedView>,
     pub(super) force_view_refresh: bool,
     pub(super) view_request_ids: HashSet<u64>,
+    pub(super) pending_snapshot_sessions: HashSet<SessionId>,
 }
 
 #[derive(Clone)]

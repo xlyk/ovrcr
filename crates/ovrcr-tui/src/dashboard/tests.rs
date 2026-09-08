@@ -9,7 +9,7 @@ use super::{
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
-    HistorySnapshotId, Response, ServerMessage, SessionId, TerminalSize, write_frame,
+    HistorySnapshotId, Response, ServerEvent, ServerMessage, SessionId, TerminalSize, write_frame,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -104,6 +104,20 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
         .unwrap();
     thread::spawn(move || {
         for message in [
+            ServerMessage::Response {
+                request_id: request.request_id.saturating_add(1),
+                response: Response::Screen {
+                    session: SessionId(1),
+                    revision,
+                    size,
+                    bytes: b"wrong request".to_vec(),
+                },
+            },
+            ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision,
+                bytes: b"intervening".to_vec(),
+            }),
             ServerMessage::Response {
                 request_id: request.request_id,
                 response: Response::Screen {
