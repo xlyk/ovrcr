@@ -1,6 +1,6 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::input::is_browse_key;
-use super::picker::{PickItem, PickList};
+use super::picker::{PathPicker, PickItem, PickList, complete_path, list_path_entries};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -13,6 +13,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use std::ffi::OsString;
+use std::path::Path;
 
 #[derive(Clone)]
 enum Command {
@@ -33,6 +34,7 @@ struct Entry {
 enum FieldKind {
     Text,
     Pick(PickList),
+    Path(PathPicker),
 }
 
 struct Field {
@@ -53,6 +55,7 @@ enum Page {
         fields: Vec<Field>,
         active: usize,
         name_edited: bool,
+        root_edited: bool,
     },
     Confirm {
         request: Request,
@@ -95,14 +98,17 @@ impl Palette {
                 fields,
                 active,
                 name_edited,
+                root_edited,
                 ..
             } => {
-                if fields[*active].label == "Name" {
-                    *name_edited = true;
-                }
-                match &mut fields[*active].kind {
-                    FieldKind::Pick(list) => list.on_insert(&text),
-                    FieldKind::Text => fields[*active].value.push_str(&text),
+                mark_form_edit(fields, *active, name_edited, root_edited);
+                if let FieldKind::Pick(list) = &mut fields[*active].kind {
+                    list.on_insert(&text);
+                } else {
+                    if let FieldKind::Path(picker) = &mut fields[*active].kind {
+                        picker.selected = 0;
+                    }
+                    fields[*active].value.push_str(&text);
                 }
             }
             Page::Confirm { .. } => return,
@@ -171,6 +177,19 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_register_project(&mut self) -> DashboardAction {
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        self.palette = Some(Palette {
+            page: self.palette_form(Command::RegisterProject),
+            pending: None,
+            error: None,
+        });
+        self.mode = InputMode::Browse;
+        DashboardAction::Redraw
+    }
+
     pub(super) fn palette_paste(&mut self, text: &str) -> DashboardAction {
         self.palette.as_mut().unwrap().insert(text);
         DashboardAction::Redraw
@@ -187,7 +206,7 @@ impl Dashboard {
                 command: Command::CreateWorkspace,
             },
             Entry {
-                label: "Register project".into(),
+                label: "Register project (a)".into(),
                 command: Command::RegisterProject,
             },
         ];
@@ -257,15 +276,18 @@ impl Dashboard {
                         fields,
                         active,
                         name_edited,
+                        root_edited,
                         ..
                     } => {
-                        if fields[*active].label == "Name" {
-                            *name_edited = true;
-                        }
+                        mark_form_edit(fields, *active, name_edited, root_edited);
                         fields[*active].value.clear();
-                        if let FieldKind::Pick(list) = &mut fields[*active].kind {
-                            list.query.clear();
-                            list.selected = 0;
+                        match &mut fields[*active].kind {
+                            FieldKind::Pick(list) => {
+                                list.query.clear();
+                                list.selected = 0;
+                            }
+                            FieldKind::Path(picker) => picker.selected = 0,
+                            FieldKind::Text => {}
                         }
                     }
                     _ => {}
@@ -289,32 +311,39 @@ impl Dashboard {
                         fields,
                         active,
                         name_edited,
+                        root_edited,
                         ..
                     } => {
-                        if fields[*active].label == "Name" {
-                            *name_edited = true;
-                        }
-                        match &mut fields[*active].kind {
-                            FieldKind::Pick(list) => list.on_backspace(),
-                            FieldKind::Text => {
-                                fields[*active].value.pop();
+                        mark_form_edit(fields, *active, name_edited, root_edited);
+                        if let FieldKind::Pick(list) = &mut fields[*active].kind {
+                            list.on_backspace();
+                        } else {
+                            if let FieldKind::Path(picker) = &mut fields[*active].kind {
+                                picker.selected = 0;
                             }
+                            fields[*active].value.pop();
                         }
                     }
                     _ => {}
                 }
                 palette.error = None;
             }
-            KeyCode::Up | KeyCode::Down if form_pick_active(&palette.page) => {
-                if let Page::Form { fields, active, .. } = &mut palette.page
-                    && let FieldKind::Pick(list) = &mut fields[*active].kind
-                {
+            KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
+                if let Page::Form { fields, active, .. } = &mut palette.page {
                     let delta = if matches!(key.code, KeyCode::Up) {
                         -1
                     } else {
                         1
                     };
-                    list.move_selection(delta);
+                    let value = fields[*active].value.clone();
+                    match &mut fields[*active].kind {
+                        FieldKind::Pick(list) => list.move_selection(delta),
+                        FieldKind::Path(picker) => {
+                            let listing = list_path_entries(&value, &self.settings.picker_roots);
+                            picker.move_selection(&listing, delta);
+                        }
+                        FieldKind::Text => {}
+                    }
                 }
             }
             KeyCode::Up | KeyCode::BackTab | KeyCode::Down | KeyCode::Tab => {
@@ -334,14 +363,38 @@ impl Dashboard {
                         fields,
                         active,
                         name_edited,
+                        root_edited,
                         ..
                     } => {
+                        if matches!(key.code, KeyCode::Tab)
+                            && matches!(fields[*active].kind, FieldKind::Path(_))
+                        {
+                            let selected = match &fields[*active].kind {
+                                FieldKind::Path(picker) => picker.selected,
+                                _ => 0,
+                            };
+                            if let Some(next) = complete_path(
+                                &fields[*active].value,
+                                &self.settings.picker_roots,
+                                selected,
+                            ) {
+                                fields[*active].value = next;
+                                if let FieldKind::Path(picker) = &mut fields[*active].kind {
+                                    picker.selected = 0;
+                                }
+                            }
+                            self.refresh_terminal_form(fields, *name_edited);
+                            self.refresh_project_form(fields, *name_edited, *root_edited);
+                            self.palette = Some(palette);
+                            return action;
+                        }
                         if matches!(key.code, KeyCode::Tab) && !accept_pick(&mut fields[*active]) {
                             self.palette = Some(palette);
                             return action;
                         }
                         if matches!(key.code, KeyCode::Tab) {
                             self.refresh_terminal_form(fields, *name_edited);
+                            self.refresh_project_form(fields, *name_edited, *root_edited);
                         }
                         move_form_field(fields, active, backwards);
                     }
@@ -379,12 +432,14 @@ impl Dashboard {
                     fields,
                     active,
                     name_edited,
+                    root_edited,
                 } => {
                     if !accept_pick(&mut fields[*active]) {
                         self.palette = Some(palette);
                         return action;
                     }
                     self.refresh_terminal_form(fields, *name_edited);
+                    self.refresh_project_form(fields, *name_edited, *root_edited);
                     let visible = visible_indices(fields);
                     let last = visible.last().copied() == Some(*active);
                     if !last {
@@ -415,8 +470,8 @@ impl Dashboard {
                                 },
                             },
                             Command::RegisterProject => Request::AddProject {
-                                name: values[0].clone(),
-                                repo: values[1].clone().into(),
+                                name: values[1].clone(),
+                                repo: values[0].clone().into(),
                                 workspace_root: values[2].clone().into(),
                             },
                             Command::RemoveWorkspace => Request::RemoveWorkspace {
@@ -482,6 +537,41 @@ impl Dashboard {
         let suggested = self.suggest_session_name(&project, &workspace, &agent);
         if let Some(name) = fields.iter_mut().find(|field| field.label == "Name") {
             name.value = suggested;
+        }
+    }
+
+    fn refresh_project_form(&self, fields: &mut [Field], name_edited: bool, root_edited: bool) {
+        if fields.first().map(|field| field.label) != Some("Repository") {
+            return;
+        }
+        let repo = fields[0].value.trim_end_matches('/').to_string();
+        if !name_edited {
+            let name = Path::new(&repo)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if let Some(field) = fields.iter_mut().find(|field| field.label == "Name") {
+                field.value = name;
+            }
+        }
+        if root_edited {
+            return;
+        }
+        let name = fields
+            .iter()
+            .find(|field| field.label == "Name")
+            .map(|field| field.value.clone())
+            .unwrap_or_default();
+        if let Some(field) = fields
+            .iter_mut()
+            .find(|field| field.label == "Workspace root")
+        {
+            field.value = self
+                .config_dir
+                .join("workspaces")
+                .join(name)
+                .display()
+                .to_string();
         }
     }
 
@@ -626,9 +716,21 @@ impl Dashboard {
                 text("Base (blank = existing branch)", "main".into(), false),
             ],
             Command::RegisterProject => vec![
+                Field {
+                    label: "Repository",
+                    value: String::new(),
+                    required: true,
+                    hidden: false,
+                    kind: FieldKind::Path(PathPicker::new()),
+                },
                 text("Name", String::new(), true),
-                text("Repository (absolute path)", String::new(), true),
-                text("Workspace root (absolute path)", String::new(), true),
+                Field {
+                    label: "Workspace root",
+                    value: String::new(),
+                    required: true,
+                    hidden: false,
+                    kind: FieldKind::Path(PathPicker::new()),
+                },
             ],
             Command::RemoveWorkspace => vec![
                 text("Project", project, true),
@@ -642,6 +744,7 @@ impl Dashboard {
             fields,
             active: 0,
             name_edited: false,
+            root_edited: false,
         }
     }
 
@@ -793,6 +896,32 @@ impl Dashboard {
                             ));
                         }
                     }
+                    if index == *active
+                        && let FieldKind::Path(picker) = &field.kind
+                    {
+                        let listing = list_path_entries(&field.value, &self.settings.picker_roots);
+                        let count = 8.min(listing.entries.len());
+                        let start = picker.selected.saturating_sub(count.saturating_sub(1));
+                        for (offset, item) in
+                            listing.entries.iter().enumerate().skip(start).take(count)
+                        {
+                            let chosen = offset == picker.selected;
+                            lines.push(Line::styled(
+                                format!("  {} {}", if chosen { "›" } else { " " }, item.label),
+                                if chosen {
+                                    Style::default().bg(MAUVE).fg(CRUST)
+                                } else {
+                                    Style::default().fg(TEXT)
+                                },
+                            ));
+                        }
+                        if listing.omitted > 0 {
+                            lines.push(Line::styled(
+                                format!("  … {} more", listing.omitted),
+                                Style::default().fg(MUTED),
+                            ));
+                        }
+                    }
                 }
             }
             Page::Confirm { target, .. } => {
@@ -838,15 +967,26 @@ impl Dashboard {
     }
 }
 
-fn form_pick_active(page: &Page) -> bool {
+fn form_list_active(page: &Page) -> bool {
     matches!(
         page,
         Page::Form {
             fields,
             active,
             ..
-        } if matches!(fields.get(*active).map(|field| &field.kind), Some(FieldKind::Pick(_)))
+        } if matches!(
+            fields.get(*active).map(|field| &field.kind),
+            Some(FieldKind::Pick(_) | FieldKind::Path(_))
+        )
     )
+}
+
+fn mark_form_edit(fields: &[Field], active: usize, name_edited: &mut bool, root_edited: &mut bool) {
+    match fields.get(active).map(|field| field.label) {
+        Some("Name") => *name_edited = true,
+        Some("Workspace root") => *root_edited = true,
+        _ => {}
+    }
 }
 
 fn split_workspace(value: &str) -> (String, String) {
