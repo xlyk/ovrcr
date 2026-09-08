@@ -53,8 +53,10 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b":create terminal\r")?;
-    wait_screen(&terminal, "Command (blank")?;
-    terminal.send(b"\t\tpalette-check\t\r")?;
+    wait_screen(&terminal, "Workspace")?;
+    // Filter Agent to shell (CI may have no detected agents; local PATH may).
+    // Tab accepts Agent then Workspace. Ctrl-u clears the prefilled Name.
+    terminal.send(b"shell\t\t\x15palette-check\r")?;
     wait_screen(&terminal, "palette-check")?;
     // Wait for the palette to finish; its form also contains the new name.
     let deadline = Instant::now() + Duration::from_secs(5);
