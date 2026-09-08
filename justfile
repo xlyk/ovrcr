@@ -14,9 +14,14 @@ restart *args:
     #!/usr/bin/env bash
     set -eu
     rtk proxy cargo run -p ovrcr -- shutdown --kill || true
-    socket="${OVRCR_SOCKET:-${TMPDIR:-/tmp}/ovrcr-$(id -u)/ovrcr/server.sock}"
+    if [[ -n "${OVRCR_SOCKET:-}" ]]; then
+      socket="$OVRCR_SOCKET"
+    else
+      socket="${TMPDIR:-/tmp}"
+      socket="${socket%/}/ovrcr-$(id -u)/ovrcr/server.sock"
+    fi
     if [[ -e "$socket" ]]; then
-      pids="$(lsof -t -- "$socket" 2>/dev/null || true)"
+      pids="$(lsof -nP -U 2>/dev/null | awk -v s="$socket" '$NF == s { print $2 }' | sort -u || true)"
       if [[ -n "${pids}" ]]; then
         kill ${pids} 2>/dev/null || true
         sleep 0.2
