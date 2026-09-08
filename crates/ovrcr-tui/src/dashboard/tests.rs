@@ -89,6 +89,44 @@ fn initial_selection_completes_zero_target_view_on_ok() {
 }
 
 #[test]
+fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
+    dashboard.panes[0].session = Some(SessionId(1));
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 40, 8), 4)
+        .unwrap()
+        .expect("view should request a snapshot");
+    let revision = dashboard.view_revision;
+    let size = dashboard.panes[0].desired_size;
+    let (mut receiver, mut sender) = UnixStream::pair().unwrap();
+    thread::spawn(move || {
+        for message in [
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Screen {
+                    session: SessionId(2),
+                    revision,
+                    size,
+                    bytes: b"wrong".to_vec(),
+                },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
+            },
+        ] {
+            write_frame(&mut sender, &message).unwrap();
+        }
+    });
+    let result = super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 4, 1);
+    assert!(
+        result.is_err(),
+        "wrong Screen followed by Ok must not complete startup"
+    );
+    assert!(!dashboard.panes[0].ready);
+}
+
+#[test]
 fn initial_selection_ignores_wrong_screen_before_matching_ok() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
     dashboard.panes[0].session = Some(SessionId(1));
@@ -126,6 +164,10 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                     size,
                     bytes: b"wrong".to_vec(),
                 },
+            },
+            ServerMessage::Response {
+                request_id: request.request_id,
+                response: Response::Ok,
             },
             ServerMessage::Response {
                 request_id: request.request_id,

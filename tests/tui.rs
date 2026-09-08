@@ -2571,7 +2571,8 @@ fn history_resize_preserves_capture() {
     let before = dashboard.history.clone().expect("history opened");
     assert!(before.pages.iter().any(|page| page.start_row == 48));
     let resize = dashboard
-        .resize_request(TerminalSize { rows: 50, cols: 30 }, 99)
+        .view_request(Rect::new(0, 0, 70, 54), 99)
+        .unwrap()
         .expect("live resize request");
     assert!(matches!(resize.request, Request::SetView { .. }));
     dashboard.handle_server_message(ServerMessage::Response {
@@ -6177,6 +6178,10 @@ fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
         .expect("resize should issue SetView through the shared path");
     assert!(dashboard.copy.is_none());
     assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(!matches!(
+        dashboard.key(KeyCode::Char('y')),
+        ovrcr::tui::DashboardAction::CopyText(_)
+    ));
 
     acknowledge_all_view_targets(&mut dashboard, resized);
     assert!(dashboard.panes.iter().all(|pane| pane.ready));
@@ -6236,16 +6241,48 @@ fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
             .enumerate()
             .all(|(index, pane)| index == dashboard.focused_pane || !pane.ready)
     );
+    let hidden_index = (0..dashboard.panes.len())
+        .find(|index| *index != dashboard.focused_pane)
+        .expect("narrow view should retain a hidden pane");
+    let (hidden_session, hidden_size, hidden_contents) = &hidden_state[hidden_index];
+    let hidden_pane = &dashboard.panes[hidden_index];
+    assert_eq!(hidden_pane.session, *hidden_session);
+    assert_eq!(hidden_pane.size, *hidden_size);
+    assert_eq!(hidden_pane.parser.screen().contents(), *hidden_contents);
 
     let normal = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 25)
         .unwrap()
         .unwrap();
+    let Request::SetView { ref view } = normal.request else {
+        panic!("expected SetView");
+    };
+    deliver_all_view_screens(&mut dashboard, normal.request_id, view);
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 24).is_none());
-    acknowledge_all_view_targets(&mut dashboard, normal);
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: normal.request_id,
+        response: Response::Ok,
+    });
     assert!(dashboard.panes.iter().all(|pane| pane.ready));
     assert_eq!(dashboard.focused_session(), Some(focused));
+
+    let empty = dashboard
+        .view_request(Rect::new(0, 0, 1, 1), 26)
+        .unwrap()
+        .expect("empty view should still emit SetView");
+    let Request::SetView { ref view } = empty.request else {
+        panic!("expected SetView");
+    };
+    assert!(view.panes.is_empty());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: empty.request_id,
+        response: Response::Ok,
+    });
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 27).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
 
     let mut dirty_copy = copy_ready_dashboard();
     assert_eq!(
@@ -6269,7 +6306,7 @@ fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
 
     assert!(dashboard.focus_pane(0));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
-    assert!(dashboard.input_request(vec![b'x'], 26).is_none());
+    assert!(dashboard.input_request(vec![b'x'], 28).is_none());
     let focused_view = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 27)
         .unwrap()
@@ -6365,6 +6402,14 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
             bytes: b"wrong request".to_vec(),
         },
     });
+    assert!(
+        dashboard.panes.iter().all(|pane| !pane
+            .parser
+            .screen()
+            .contents()
+            .contains("wrong request"))
+    );
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Screen {
@@ -6374,6 +6419,13 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
             bytes: b"wrong revision".to_vec(),
         },
     });
+    assert!(
+        dashboard.panes.iter().all(|pane| !pane
+            .parser
+            .screen()
+            .contents()
+            .contains("wrong revision"))
+    );
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Screen {
@@ -6383,6 +6435,13 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
             bytes: b"wrong session".to_vec(),
         },
     });
+    assert!(
+        dashboard.panes.iter().all(|pane| !pane
+            .parser
+            .screen()
+            .contents()
+            .contains("wrong session"))
+    );
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Screen {
@@ -6403,6 +6462,10 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         ovrcr::tui::DashboardAction::Redraw
     );
     dashboard.mode = ovrcr::tui::InputMode::Browse;
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
     assert!(dashboard.panes.iter().all(|pane| !pane.ready));
     let second = view.panes[1].clone();
     dashboard.handle_server_message(ServerMessage::Response {
@@ -6415,7 +6478,19 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         },
     });
     assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("still-blocked".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
     assert!(dashboard.input_request(vec![b'x'], 42).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     for text in ["wrong request", "wrong revision", "wrong session"] {
@@ -6431,6 +6506,23 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id.saturating_add(1),
         response: Response::Ok,
     });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert_eq!(dashboard.view_revision, view.revision);
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("wrong-ok".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.input_request(vec![b'x'], 42).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: request.request_id,
         response: Response::Ok,
@@ -6458,6 +6550,9 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
             .unwrap()
             .is_none()
     );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 46).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
     let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
         request_id: narrow.request_id,
         response: Response::Ok,
@@ -6471,16 +6566,24 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
     assert_eq!(view.revision, dashboard.view_revision);
     assert_eq!(view.panes.len(), 2);
     assert_eq!(view.focused, focused_before_narrow);
+    let expected_targets = pane_rects(Rect::new(0, 0, 120, 40), 2, dashboard.focused_pane)
+        .into_iter()
+        .map(|rect| {
+            (
+                dashboard.panes[rect.pane_index].session.unwrap(),
+                TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         view.panes
             .iter()
             .map(|pane| (pane.session, pane.size))
             .collect::<Vec<_>>(),
-        dashboard
-            .panes
-            .iter()
-            .map(|pane| (pane.session.unwrap(), pane.desired_size))
-            .collect::<Vec<_>>()
+        expected_targets
     );
     acknowledge_all_view_targets(&mut dashboard, latest);
     assert!(dashboard.panes.iter().all(|pane| pane.ready));
@@ -6507,6 +6610,55 @@ fn split_review_pending_view_completes_after_focus_and_geometry_return() {
     });
     assert_eq!(focus_dashboard.view_revision, focus_revision);
     assert!(focus_dashboard.panes.iter().all(|pane| pane.ready));
+
+    let mut changed_focus_dashboard = dashboard_fixture();
+    assert!(changed_focus_dashboard.split_pane());
+    let changed_focus_view = changed_focus_dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 44)
+        .unwrap()
+        .unwrap();
+    let Request::SetView { ref view } = changed_focus_view.request else {
+        panic!("expected SetView");
+    };
+    let changed_focus_revision = view.revision;
+    deliver_all_view_screens(
+        &mut changed_focus_dashboard,
+        changed_focus_view.request_id,
+        view,
+    );
+    assert!(changed_focus_dashboard.focus_pane(0));
+    assert!(
+        changed_focus_dashboard
+            .view_request(Rect::new(0, 0, 120, 40), 45)
+            .unwrap()
+            .is_none()
+    );
+    let mut replacement = changed_focus_dashboard.handle_server_message(ServerMessage::Response {
+        request_id: changed_focus_view.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(replacement.len(), 1);
+    assert!(changed_focus_dashboard.panes.iter().all(|pane| !pane.ready));
+    changed_focus_dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(
+        changed_focus_dashboard
+            .input_request(vec![b'x'], 46)
+            .is_none()
+    );
+    let replacement_request = replacement.pop().expect("focus replacement SetView");
+    let Request::SetView { ref view } = replacement_request.request else {
+        panic!("expected focus replacement SetView");
+    };
+    assert_eq!(view.revision, changed_focus_revision + 1);
+    assert_eq!(
+        view.focused,
+        changed_focus_dashboard
+            .panes
+            .get(changed_focus_dashboard.focused_pane)
+            .and_then(|pane| pane.session)
+    );
+    acknowledge_all_view_targets(&mut changed_focus_dashboard, replacement_request);
+    assert!(changed_focus_dashboard.panes.iter().all(|pane| pane.ready));
 
     let mut geometry_dashboard = dashboard_fixture();
     assert!(geometry_dashboard.split_pane());
@@ -6537,6 +6689,131 @@ fn split_review_pending_view_completes_after_focus_and_geometry_return() {
     });
     assert_eq!(geometry_dashboard.view_revision, geometry_revision);
     assert!(geometry_dashboard.panes.iter().all(|pane| pane.ready));
+}
+
+#[test]
+fn split_review_pending_a_b_a_preserves_received_parser_before_ok() {
+    let mut dashboard = dashboard_fixture();
+    let initial = dashboard
+        .select_request(SessionId(3), 46)
+        .expect("A selection should request a view");
+    let Request::SetView { ref view } = initial.request else {
+        panic!("expected SetView");
+    };
+    let target = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Screen {
+            session: target.session,
+            revision: view.revision,
+            size: target.size,
+            bytes: b"PENDING_A\x1b[?1h\x1b[?2004h".to_vec(),
+        },
+    });
+    assert!(dashboard.select_request(SessionId(4), 47).is_none());
+    assert!(dashboard.select_request(SessionId(3), 48).is_none());
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "stale parser must request exactly one replacement"
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(!dashboard.panes[dashboard.focused_pane].ready);
+    assert!(dashboard.input_request(vec![b'x'], 52).is_none());
+    let replacement = outgoing.pop().expect("replacement SetView");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected replacement SetView");
+    };
+    assert_eq!(view.panes.len(), 1);
+    let replacement_target = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Screen {
+            session: replacement_target.session,
+            revision: view.revision,
+            size: replacement_target.size,
+            bytes: b"FRESH_A\x1b[?1h\x1b[?2004h".to_vec(),
+        },
+    });
+    assert!(!dashboard.panes[dashboard.focused_pane].ready);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    let pane = &dashboard.panes[dashboard.focused_pane];
+    assert!(pane.ready);
+    assert_eq!(pane.size, replacement_target.size);
+    assert!(pane.parser.screen().contents().contains("FRESH_A"));
+    assert_eq!(
+        dashboard.key(KeyCode::Up),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1bOA".to_vec())
+    );
+}
+
+#[test]
+fn split_review_absent_a_screen_cannot_authorize_reassigned_parser() {
+    let mut dashboard = dashboard_fixture();
+    let initial = dashboard
+        .select_request(SessionId(3), 49)
+        .expect("A selection should request a view");
+    let Request::SetView { ref view } = initial.request else {
+        panic!("expected SetView");
+    };
+    let target = view.panes[0].clone();
+    assert!(dashboard.select_request(SessionId(4), 50).is_none());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Screen {
+            session: target.session,
+            revision: view.revision,
+            size: target.size,
+            bytes: b"ABSENT_A".to_vec(),
+        },
+    });
+    assert!(dashboard.select_request(SessionId(3), 51).is_none());
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: initial.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "absent A must request exactly one replacement"
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 52).is_none());
+    let replacement = outgoing.pop().expect("replacement SetView");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected replacement SetView");
+    };
+    let replacement_target = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Screen {
+            session: replacement_target.session,
+            revision: view.revision,
+            size: replacement_target.size,
+            bytes: b"FRESH_ABSENT_A".to_vec(),
+        },
+    });
+    assert!(!dashboard.panes[dashboard.focused_pane].ready);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    assert!(
+        dashboard.panes[dashboard.focused_pane]
+            .parser
+            .screen()
+            .contents()
+            .contains("FRESH_ABSENT_A")
+    );
 }
 
 #[test]
@@ -6576,22 +6853,46 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
         dashboard.key(KeyCode::Char('q')),
         ovrcr::tui::DashboardAction::Redraw
     );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("blocked-terminal".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.input_request(vec![b'x'], 50).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     let refocus = dashboard
-        .view_request(Rect::new(0, 0, 120, 40), 50)
+        .view_request(Rect::new(0, 0, 120, 40), 51)
         .unwrap()
         .expect("focus change should emit one SetView");
     acknowledge_all_view_targets(&mut dashboard, refocus);
     assert!(dashboard.panes[0].ready);
 
     let select_other = dashboard
-        .select_request(SessionId(4), 51)
+        .select_request(SessionId(4), 52)
         .expect("selecting the other displayed pane should focus it");
-    assert!(matches!(select_other.request, Request::SetView { .. }));
+    let Request::SetView { ref view } = select_other.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(view.focused, Some(SessionId(4)));
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        vec![SessionId(3), SessionId(4)]
+    );
     assert_eq!(dashboard.panes.len(), 2);
     assert_eq!(dashboard.panes[0].session, Some(SessionId(3)));
     assert_eq!(dashboard.panes[1].session, Some(SessionId(4)));
-    assert!(dashboard.input_request(vec![b'x'], 52).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('q')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("other-pane".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.input_request(vec![b'x'], 53).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     assert_eq!(
         dashboard.key(KeyCode::Enter),
@@ -6612,20 +6913,29 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
             .flat_map(|workspace| workspace.sessions.iter())
             .any(|session| session.id == SessionId(4))
     );
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
-    assert!(dashboard.input_request(vec![b'x'], 53).is_none());
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.key(KeyCode::Char('q')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Paste("closed-pane".into())),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.input_request(vec![b'x'], 54).is_none());
     let close_view = dashboard
-        .view_request(Rect::new(0, 0, 120, 40), 54)
+        .view_request(Rect::new(0, 0, 120, 40), 55)
         .unwrap()
         .expect("close should emit only the replacement SetView");
     assert!(matches!(close_view.request, Request::SetView { .. }));
     acknowledge_view_request(&mut dashboard, close_view);
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
-    assert!(dashboard.input_request(vec![b'x'], 55).is_some());
+    assert!(dashboard.input_request(vec![b'x'], 56).is_some());
 }
 
 #[test]
@@ -6744,12 +7054,15 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
         .select_request(SessionId(2), 54)
         .expect("initial selection should request a view");
     acknowledge_view_request(&mut dashboard, initial);
+    assert!(dashboard.split_pane());
     let next = dashboard
-        .select_request(SessionId(4), 55)
-        .expect("replacement should request a view");
+        .view_request(Rect::new(0, 0, 120, 40), 55)
+        .unwrap()
+        .expect("replacement should request a two-target view");
     let Request::SetView { ref view } = next.request else {
         panic!("expected SetView");
     };
+    assert_eq!(view.panes.len(), 2);
     let target = view.panes[0].clone();
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: next.request_id,
@@ -6772,11 +7085,11 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 56).is_none());
     let retry = dashboard
-        .view_request(Rect::new(0, 0, 88, 38), 57)
+        .view_request(Rect::new(0, 0, 120, 40), 57)
         .unwrap()
         .expect("new view should retry after partial failure");
-    acknowledge_view_request(&mut dashboard, retry);
-    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    acknowledge_all_view_targets(&mut dashboard, retry);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
     assert!(dashboard.input_request(vec![b'x'], 58).is_some());
 }
 
@@ -7088,7 +7401,7 @@ fn split_review_unfocused_removal_preserves_focused_history_capture() {
         ovrcr::tui::DashboardAction::Request(request) => request,
         action => panic!("expected history begin request, got {action:?}"),
     };
-    dashboard.handle_server_message(ServerMessage::Response {
+    let viewport_requests = dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(HistoryOpened {
             session,
@@ -7096,24 +7409,52 @@ fn split_review_unfocused_removal_preserves_focused_history_capture() {
             revision: 1,
             size: TerminalSize { rows: 34, cols: 39 },
             history_rows: 0,
-            total_rows: 0,
+            total_rows: 1,
         }),
     });
-    let page = HistoryRows {
-        session,
-        snapshot: HistorySnapshotId(80),
-        start_row: 0,
-        start_col: 0,
-        rows: vec![HistoryRow {
-            width: 1,
-            cells: vec![history_cell("frozen", 1)],
-            wrapped: false,
-        }],
+    let viewport = viewport_requests
+        .into_iter()
+        .find(|request| matches!(request.request, Request::HistoryPage { .. }))
+        .expect("HistoryOpened should request its first page");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: viewport.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session,
+            snapshot: HistorySnapshotId(80),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![HistoryRow {
+                width: 39,
+                cells: (0..39)
+                    .map(|index| {
+                        if index == 0 {
+                            history_cell("frozen", 1)
+                        } else {
+                            history_cell("", 1)
+                        }
+                    })
+                    .collect(),
+                wrapped: false,
+            }],
+        }),
+    });
+    assert_eq!(
+        dashboard.key(KeyCode::Char(' ')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let copy_request = match dashboard.key(KeyCode::Char('y')) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("expected in-flight History copy request, got {action:?}"),
     };
-    dashboard.history.as_mut().unwrap().pages.push_back(page);
-    dashboard.history.as_mut().unwrap().anchor = Some(HistoryCopyPoint { row: 0, col: 0 });
+    assert!(
+        dashboard
+            .history
+            .as_ref()
+            .is_some_and(|view| view.copy_job.is_some())
+    );
     let before_pages = dashboard.history.as_ref().unwrap().pages.clone();
     let before_anchor = dashboard.history.as_ref().unwrap().anchor;
+    let opened_identity = dashboard.history.as_ref().unwrap().opened.clone();
     let removed = dashboard.panes[1].session.unwrap();
     let mut hierarchy = dashboard.hierarchy.clone();
     for project in &mut hierarchy.projects {
@@ -7132,8 +7473,37 @@ fn split_review_unfocused_removal_preserves_focused_history_capture() {
             .any(|request| matches!(request.request, Request::SetView { .. }))
     );
     assert_eq!(dashboard.focused_session(), Some(session));
+    assert_eq!(dashboard.history.as_ref().unwrap().opened, opened_identity);
     assert_eq!(dashboard.history.as_ref().unwrap().pages, before_pages);
     assert_eq!(dashboard.history.as_ref().unwrap().anchor, before_anchor);
+    let copy_page = HistoryRows {
+        session,
+        snapshot: HistorySnapshotId(80),
+        start_row: 0,
+        start_col: 0,
+        rows: vec![HistoryRow {
+            width: 128,
+            cells: (0..128)
+                .map(|index| {
+                    if index == 0 {
+                        history_cell("copied", 1)
+                    } else {
+                        history_cell("", 1)
+                    }
+                })
+                .collect(),
+            wrapped: false,
+        }],
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: copy_request.request_id,
+        response: Response::HistoryRows(copy_page),
+    });
+    let mut clipboard = Vec::new();
+    assert!(write_completed_history_copy(&mut dashboard, &mut clipboard));
+    let mut expected_clipboard = Vec::new();
+    write_clipboard(&mut expected_clipboard, "copied").unwrap();
+    assert_eq!(clipboard, expected_clipboard);
 }
 
 #[test]

@@ -527,6 +527,7 @@ impl Dashboard {
             force_view_refresh: false,
             view_request_ids: HashSet::new(),
             pending_snapshot_sessions: HashSet::new(),
+            pending_snapshot_generations: std::collections::HashMap::new(),
         }
     }
 
@@ -731,6 +732,7 @@ impl Dashboard {
         self.last_view_request_id = Some(request_id);
         self.view_request_ids.insert(request_id);
         self.pending_snapshot_sessions.clear();
+        self.pending_snapshot_generations.clear();
         self.pending_view = Some(super::PendingView {
             request_id,
             view: view.clone(),
@@ -769,19 +771,25 @@ impl Dashboard {
         {
             return;
         }
-        self.pending_snapshot_sessions.insert(session);
         let Some(pane) = self
             .panes
             .iter_mut()
             .find(|pane| pane.session == Some(session))
         else {
+            self.pending_snapshot_sessions.insert(session);
+            self.pending_snapshot_generations.remove(&session);
             return;
         };
+        pane.parser_generation = pane.parser_generation.wrapping_add(1);
+        let parser_generation = pane.parser_generation;
         pane.size = size;
         pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
         pane.parser.process(bytes);
         pane.snapshot_installed = true;
         pane.error = None;
+        self.pending_snapshot_sessions.insert(session);
+        self.pending_snapshot_generations
+            .insert(session, parser_generation);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
     }
@@ -904,6 +912,7 @@ impl Dashboard {
             self.release_for_selection_change();
             let size = self.focused_size();
             if let Some(pane) = self.focused_pane_mut() {
+                pane.parser_generation = pane.parser_generation.wrapping_add(1);
                 pane.session = Some(id);
                 pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
                 pane.size = size;
@@ -1809,7 +1818,19 @@ impl Dashboard {
                         .targets
                         .iter()
                         .all(|(session, _)| self.pending_snapshot_sessions.contains(session));
-                    if complete && desired_matches {
+                    let parser_valid = pending.view.targets.iter().all(|(session, _)| {
+                        self.panes
+                            .iter()
+                            .find(|pane| pane.session == Some(*session))
+                            .and_then(|pane| {
+                                self.pending_snapshot_generations
+                                    .get(session)
+                                    .map(|generation| *generation == pane.parser_generation)
+                            })
+                            .unwrap_or(false)
+                    });
+                    let stale_parser = complete && desired_matches && !parser_valid;
+                    if complete && desired_matches && parser_valid {
                         for (session, _) in &pending.view.targets {
                             if let Some(pane) = self
                                 .panes
@@ -1822,9 +1843,11 @@ impl Dashboard {
                         }
                         self.requested_view = Some(pending.view);
                         self.pending_snapshot_sessions.clear();
+                        self.pending_snapshot_generations.clear();
                         self.error = None;
-                    } else if !desired_matches {
+                    } else if !desired_matches || stale_parser {
                         self.requested_view = Some(pending.view);
+                        self.force_view_refresh |= stale_parser;
                         let next_id = self.next_request_id();
                         if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
                             outgoing.push(request);
@@ -1891,6 +1914,7 @@ impl Dashboard {
                     if matched_view {
                         let pending = self.pending_view.take().expect("matching view request");
                         self.pending_snapshot_sessions.clear();
+                        self.pending_snapshot_generations.clear();
                         for (session, _) in pending.view.targets {
                             if let Some(pane) = self
                                 .panes
