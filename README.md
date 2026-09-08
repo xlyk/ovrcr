@@ -60,12 +60,26 @@ OVRCR launches `$SHELL`.
 Run `ovrcr` with no subcommand to open the dashboard. Browse mode uses `j`,
 `k`, and the arrow keys to select sessions; Enter enters terminal mode; `q`
 detaches. Terminal mode sends keyboard and bracketed-paste input to the
-selected PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
-collapse sidebar rows while browsing. The dashboard shows one selected
-terminal and the current `ctx —` field. Sidebar sessions use three lines: the
-session name, its label, and elapsed runtime with context usage. Context usage
+focused PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
+collapse sidebar rows while browsing. The dashboard shows one terminal or two
+side-by-side panes and the current `ctx —` field. Sidebar sessions use three
+lines: the session name, its label, and elapsed runtime with context usage. Context usage
 remains unknown in the MVP. The selected session is highlighted across all three
 lines; clicking any of those lines selects it.
+
+To view two sessions side by side, press `v` in Browse mode. It opens the
+next different visible session in a second pane. Tab or Shift-Tab changes
+the focused pane; clicking inside a terminal while browsing also focuses it.
+Sidebar navigation replaces the focused pane's session. Selecting the session
+already shown in the other pane moves focus there.
+
+Press Enter to send keyboard and paste input to the focused terminal. Ctrl-g
+returns to Browse mode, where `x` closes the focused pane and expands the
+survivor. Closing a pane leaves its session running. If the window becomes
+too narrow for both panes, only the focused pane is shown; widening it restores
+both. Detaching with `q` also leaves sessions running. A new attachment starts
+with one pane; press `v` to open the second again.
+
 Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
 their status slot blank; busy sessions animate the braille spinner, waiting
 sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
