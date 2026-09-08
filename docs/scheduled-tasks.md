@@ -3,8 +3,9 @@
 Build and install the updated OVRCR binary. Install Pi separately and configure
 a model with `pi` before scheduling it. Pi 0.84.4 is the validated RPC baseline.
 Task commands require the updated server; stop the old server intentionally
-before upgrading. OVRCR does not replace a running server or terminate its
-sessions automatically during installation.
+before upgrading. Service installation asks a managed server to stop gracefully
+and refuses while sessions or task runs remain; pass `--kill-sessions` to
+terminate them. It never touches an unmanaged server.
 
 ## Create a task
 
@@ -86,7 +87,10 @@ Task lists and retained logs can be read without starting the server.
 
 Completion means Pi settled successfully and process cleanup finished. Provider
 errors, truncated generation, cancellation, timeout, and interruption are
-reported separately. Background processes started by the bash tool can remain alive
+reported separately. A cancelled run shows `Cancelling` until its supervisor
+confirms cleanup. If the supervisor does not confirm within 20 seconds, the
+server terminates it along with every process it recorded and reports
+`CleanupFailed`; inspect `processes.json` and the logs in the run directory. Background processes started by the bash tool can remain alive
 between tool calls and are terminated when the run ends. A server crash interrupts active work; a manual rerun
 starts a fresh directory and conversation. Later scheduled occurrences still
 run normally.

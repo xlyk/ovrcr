@@ -384,7 +384,8 @@ impl TaskManager {
                 unsafe {
                     libc::kill(-(child.id() as i32), libc::SIGTERM);
                 }
-                let deadline = Instant::now() + Duration::from_secs(2);
+                // The supervisor's own bounded cleanup takes up to four seconds.
+                let deadline = Instant::now() + Duration::from_secs(5);
                 while child.try_wait()?.is_none() && Instant::now() < deadline {
                     thread::sleep(Duration::from_millis(20));
                 }
@@ -394,7 +395,14 @@ impl TaskManager {
                     }
                     let _ = child.wait();
                 }
+                // Pi and its anchors live in their own groups; finish what the supervisor recorded.
+                if let Err(error) = crate::task_runner::kill_recorded_processes(&dir) {
+                    eprintln!("run {}: kill recorded processes: {error:#}", run.id.0);
+                }
                 let mut failed = read_run(&dir)?;
+                if failed.status.is_terminal() {
+                    return Ok(());
+                }
                 failed.status = RunStatus::CleanupFailed;
                 failed.finished_at = Some(now());
                 failed.error=Some("Pi supervisor exceeded cancellation deadline; inspect retained process logs before rerunning".into());
@@ -536,6 +544,7 @@ impl TaskManager {
                 let jobs = self.jobs.lock().unwrap();
                 let job = jobs.get(&id).context("active run has no supervisor")?;
                 job.cancel.store(true, Ordering::Release);
+                run.status = RunStatus::Cancelling;
             }
             Ok(TaskResponse::Ok)
         })
@@ -654,7 +663,15 @@ fn merge_runs(dir: &Path, store: &mut TaskStore) -> Result<()> {
             }
             Ok(latest)
         }) {
-            Ok(latest) => *run = latest,
+            Ok(latest) => {
+                // The supervisor does not know about cancellation until it finishes.
+                let cancelling =
+                    run.status == RunStatus::Cancelling && !latest.status.is_terminal();
+                *run = latest;
+                if cancelling {
+                    run.status = RunStatus::Cancelling;
+                }
+            }
             Err(error) => {
                 eprintln!("task run {}: {error:#}; marking it interrupted", run.id.0);
                 run.status = RunStatus::Interrupted;
