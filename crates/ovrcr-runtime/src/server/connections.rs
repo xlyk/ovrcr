@@ -1,9 +1,10 @@
 use super::*;
 
-/// Test seam: make the next dashboard registration panic after the slot is
-/// taken, so the guard's cleanup can be exercised.
+// Arm on the handler thread so unrelated parallel tests cannot steal the panic.
 #[cfg(test)]
-pub(super) static PANIC_AFTER_DASHBOARD_REGISTRATION: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    pub(super) static PANIC_AFTER_DASHBOARD_REGISTRATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// Ownership of the server's single dashboard slot for one connection.
 ///
@@ -115,7 +116,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 identity: Arc::clone(&identity),
             });
             #[cfg(test)]
-            if PANIC_AFTER_DASHBOARD_REGISTRATION.swap(false, Ordering::AcqRel) {
+            if PANIC_AFTER_DASHBOARD_REGISTRATION.with(|armed| armed.replace(false)) {
                 panic!("injected panic after dashboard registration");
             }
             role = ClientRole::Dashboard;
