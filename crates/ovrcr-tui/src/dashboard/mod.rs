@@ -28,7 +28,7 @@ use crate::task_tui::TasksView;
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
@@ -81,7 +81,6 @@ pub struct PaneState {
     pub snapshot_installed: bool,
     pub ready: bool,
     pub error: Option<String>,
-    pub(super) parser_generation: u64,
 }
 
 impl PaneState {
@@ -94,7 +93,6 @@ impl PaneState {
             snapshot_installed: false,
             ready: false,
             error: None,
-            parser_generation: 0,
         }
     }
 }
@@ -183,7 +181,6 @@ pub struct Dashboard {
     pub(super) force_view_refresh: bool,
     pub(super) view_request_ids: HashSet<u64>,
     pub(super) pending_snapshot_sessions: HashSet<SessionId>,
-    pub(super) pending_snapshot_generations: HashMap<SessionId, u64>,
 }
 
 #[derive(Clone)]
@@ -196,6 +193,7 @@ pub(super) struct RequestedView {
 pub(super) struct PendingView {
     pub request_id: u64,
     pub view: RequestedView,
+    pub parser_discarded: bool,
 }
 
 thread_local! {
