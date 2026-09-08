@@ -3743,6 +3743,10 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
     );
     harness.record_created_pgid(&summary);
     let session = summary.id;
+    // The input below can only block once `stty raw` has run, and the
+    // dashboard drain must not race the READY output frame; wait for the
+    // marker server-side so both hold before selecting.
+    harness.fixture.wait_terminal_contains(session, "READY");
     let mut dashboard = connect_server(&harness.fixture.socket).unwrap();
     dashboard
         .set_read_timeout(Some(Duration::from_secs(3)))
@@ -4613,14 +4617,24 @@ fn slow_dashboard_recovers_after_output_burst() {
         },
     )
     .unwrap();
-    let snapshot = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-    assert!(matches!(
-        snapshot,
-        ServerMessage::Response {
-            response: Response::Screen { bytes, .. },
-            ..
-        } if String::from_utf8_lossy(&bytes).contains("FINAL_MARKER")
-    ));
+    // The session's exit events may still be queued behind the dirty
+    // marker; skip them and judge the select response itself.
+    let screen = loop {
+        if let ServerMessage::Response {
+            request_id: 3,
+            response,
+        } = read_frame::<ServerMessage>(&mut dashboard).unwrap()
+        {
+            break response;
+        }
+    };
+    assert!(
+        matches!(
+            &screen,
+            Response::Screen { bytes, .. } if String::from_utf8_lossy(bytes).contains("FINAL_MARKER")
+        ),
+        "select after burst returned {screen:?}"
+    );
     let mut dirty_count = 1;
     dashboard
         .set_read_timeout(Some(Duration::from_millis(100)))
