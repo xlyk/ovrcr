@@ -1085,10 +1085,62 @@ fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
     assert!(!socket.exists());
 }
 
+fn create_private_dir(path: &Path) {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(path)
+        .unwrap();
+}
+
+#[test]
+fn startup_keeps_shared_existing_socket_directory_and_secures_the_socket() {
+    use std::os::unix::fs::DirBuilderExt;
+    let mut fixture = ServerFixture::new();
+    let parent = fixture.paths.socket.parent().unwrap().to_path_buf();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(&parent)
+        .unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    fixture.start();
+    let dir_mode = std::fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        dir_mode, 0o755,
+        "startup must not modify a directory it did not create"
+    );
+    let socket_mode = std::fs::metadata(&fixture.paths.socket)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(socket_mode, 0o700, "the socket file itself must be private");
+    fixture.stop();
+}
+
+#[test]
+fn startup_refuses_symlinked_socket_directory() {
+    let fixture = ServerFixture::new();
+    let target = fixture.root.path().join("real");
+    create_private_dir(&target);
+    std::os::unix::fs::symlink(&target, fixture.paths.socket.parent().unwrap()).unwrap();
+    let registry = fixture.root.path().join("config.toml");
+    save_registry_atomic(&Registry::default(), &registry).unwrap();
+    let error = run_server(fixture.paths.clone(), registry).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("server socket directory") && message.contains("symlink"),
+        "unexpected error: {message}"
+    );
+    assert!(!fixture.paths.socket.exists());
+}
+
 #[test]
 fn startup_stale_socket_is_recovered() {
     let mut fixture = ServerFixture::new();
-    std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
+    create_private_dir(fixture.paths.socket.parent().unwrap());
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
     fixture.start();
@@ -1184,7 +1236,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
-    std::fs::create_dir_all(fixture.paths.socket.parent().unwrap()).unwrap();
+    create_private_dir(fixture.paths.socket.parent().unwrap());
     let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
     drop(stale);
     let executable = env!("CARGO_BIN_EXE_ovrcr");

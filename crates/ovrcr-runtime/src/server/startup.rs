@@ -81,10 +81,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .with_context(|| format!("create server socket directory {}", parent.display()))?;
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("secure server socket directory {}", parent.display()))?;
+    secure_socket_directory(parent)?;
     let bound_socket = resolve_bound_socket(&paths.socket)?;
     let startup_lock = acquire_startup_lock(parent)?;
     if paths.socket.exists() {
@@ -114,6 +111,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     }
     let listener = UnixListener::bind(&paths.socket)
         .with_context(|| format!("bind server socket {}", paths.socket.display()))?;
+    fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("secure server socket {}", paths.socket.display()))?;
     drop(startup_lock);
     let registry = load_registry(&registry_path)
         .with_context(|| format!("load server registry {}", registry_path.display()))?;
@@ -199,6 +198,66 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     let _ = fs::remove_file(&paths.socket);
     task_shutdown
 }
+/// Prepare the socket's parent directory without modifying a directory OVRCR
+/// did not create.
+///
+/// A missing directory is created with mode 0700. An existing directory must
+/// be a real directory owned by the current user; startup refuses otherwise
+/// with an error naming it. Its mode is left alone, because `OVRCR_SOCKET`
+/// may point into a shared location such as the user's home directory; the
+/// bound socket file is made mode 0700 instead, which is what gates
+/// `connect`, so other users cannot reach the server even from a shared
+/// directory.
+fn secure_socket_directory(parent: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                bail!(
+                    "server socket directory {} is a symlink; point OVRCR_SOCKET at a real private directory",
+                    parent.display()
+                );
+            }
+            if !metadata.is_dir() {
+                bail!(
+                    "server socket directory {} is not a directory",
+                    parent.display()
+                );
+            }
+            if metadata.uid() != unsafe { libc::getuid() } {
+                bail!(
+                    "server socket directory {} is not owned by the current user",
+                    parent.display()
+                );
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .with_context(|| format!("create server socket directory {}", parent.display()))?;
+            // The umask can only remove bits from 0700, but a racing creator
+            // could have made the directory with a wider mode; verify it.
+            let mode = fs::metadata(parent)
+                .with_context(|| format!("inspect server socket directory {}", parent.display()))?
+                .permissions()
+                .mode()
+                & 0o777;
+            if mode & 0o077 != 0 {
+                bail!(
+                    "server socket directory {} was created with shared mode {mode:03o}",
+                    parent.display()
+                );
+            }
+            Ok(())
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect server socket directory {}", parent.display())),
+    }
+}
+
 fn acquire_startup_lock(parent: &Path) -> Result<File> {
     let path = parent.join(".server.lock");
     let file = OpenOptions::new()

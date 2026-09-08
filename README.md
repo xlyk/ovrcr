@@ -16,7 +16,12 @@ rtk proxy install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 
 The server uses `$XDG_RUNTIME_DIR` on Linux and `$TMPDIR` on macOS for its
 private Unix socket. Set `OVRCR_SOCKET` and `OVRCR_CONFIG` when running an
-isolated instance or a test fixture.
+isolated instance or a test fixture. OVRCR creates a missing socket directory
+with mode 700 and refuses to start when an existing one is a symlink or is
+owned by another user. It never changes the permissions of a directory it did
+not create; the socket file itself is always mode 700, which is what gates
+connections, so other users cannot reach the server even from a shared
+directory.
 
 ## Register a project
 
