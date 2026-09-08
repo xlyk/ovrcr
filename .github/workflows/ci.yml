@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # The Git lifecycle tests commit inside temporary repositories.
+      - name: Configure git identity
+        run: |
+          git config --global user.name "OVRCR CI"
+          git config --global user.email "ci@ovrcr.invalid"
+      # Same gates as `just verify`, without the rtk wrapper.
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --all-targets
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      # The GUI helper is a macOS app bundle; its tests need that platform.
+      - name: GUI helper tests
+        if: runner.os == 'macOS'
+        run: cargo test --features gui --test gui

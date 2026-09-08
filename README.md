@@ -7,7 +7,8 @@ current screen when it reconnects.
 
 ## Install
 
-OVRCR targets macOS and Linux and requires Rust. Build the binary with:
+OVRCR targets macOS and Linux and requires Rust 1.95 or newer. Build the
+binary with:
 
 ```sh
 rtk proxy cargo build -p ovrcr --release
@@ -631,7 +632,7 @@ rtk proxy cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 
 Agents: follow the [computer-use testing guide](docs/testing-computer-use.md) for the smoke check and cleanup evidence.
 
-Run the optional development helper with Rust 1.95 or newer, `just`, and `rtk`:
+Run the optional development helper with `just` and `rtk`:
 
 ```sh
 rtk proxy just gui
