@@ -1,7 +1,7 @@
 #![cfg(feature = "gui")]
 
 use anyhow::{Result, bail};
-use eframe::egui::{self, Event, Key, Modifiers};
+use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
 use ovrcr::gui::input::encode_event;
 use ovrcr::gui::{Demo, Terminal};
 use std::path::Path;
@@ -40,6 +40,7 @@ fn command_k_is_not_forwarded_to_terminal() {
         parser.screen(),
         egui::Rect::NOTHING,
         egui::vec2(8.0, 16.0),
+        egui::pos2(0.0, 0.0),
     );
     assert!(bytes.is_empty());
 }
@@ -189,6 +190,7 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
                 &terminal.screen(),
                 egui::Rect::NOTHING,
                 egui::vec2(8.0, 16.0),
+                egui::pos2(0.0, 0.0),
             );
             terminal.send(&paste)?;
             terminal.send(b"\r")?;
@@ -370,7 +372,9 @@ fn input_preserves_control_keys_terminal_modes_and_mouse_cells() {
     let mut parser = vt100::Parser::new(10, 20, 0);
     let rect = egui::Rect::from_min_size(egui::pos2(12.0, 30.0), egui::vec2(160.0, 160.0));
     let cell = egui::vec2(8.0, 16.0);
-    let encode = |event: Event, screen: &vt100::Screen| encode_event(&event, screen, rect, cell);
+    let encode = |event: Event, screen: &vt100::Screen| {
+        encode_event(&event, screen, rect, cell, egui::pos2(29.0, 79.0))
+    };
     assert_eq!(
         encode(key(Key::G, Modifiers::CTRL), parser.screen()),
         b"\x07"
@@ -419,6 +423,23 @@ fn input_preserves_control_keys_terminal_modes_and_mouse_cells() {
         modifiers: Modifiers::NONE,
     };
     assert!(encode(outside, parser.screen()).is_empty());
+    let wheel = |delta| Event::MouseWheel {
+        unit: MouseWheelUnit::Line,
+        delta,
+        phase: TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    };
+    parser.process(b"\x1b[?1000l");
+    assert!(encode(wheel(egui::vec2(0.0, 1.0)), parser.screen()).is_empty());
+    parser.process(b"\x1b[?1000h\x1b[?1006h");
+    assert_eq!(
+        encode(wheel(egui::vec2(0.0, 1.0)), parser.screen()),
+        b"\x1b[<64;3;4M"
+    );
+    assert_eq!(
+        encode(wheel(egui::vec2(0.0, -1.0)), parser.screen()),
+        b"\x1b[<65;3;4M"
+    );
 }
 
 #[test]

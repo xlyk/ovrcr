@@ -67,7 +67,16 @@ Run `ovrcr` with no subcommand to open the dashboard. Browse mode uses `j`,
 `k`, and the arrow keys to select sessions; Enter enters terminal mode; `q`
 detaches. Terminal mode sends keyboard and bracketed-paste input to the
 focused PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
-collapse sidebar rows while browsing. The dashboard shows one terminal or two
+collapse sidebar rows while browsing. In Terminal mode, mouse events reach the
+focused live pane only when that application has requested a tracking mode
+(X10, 1000, 1002, or 1003). Enabling SGR encoding alone does not forward
+anything. Coordinates are pane cells; clicks outside the pane are ignored, not
+clamped. Held buttons are released on the previous session before Ctrl-g, a
+selection change, or a resize. In Browse mode, or in Terminal mode when the
+focused application has not requested tracking, wheel-up over a pane opens
+History at the captured tail. Further wheel ticks move one row; wheel-down at
+the newest row returns to the live pane. History stays closed while an
+application is on the alternate screen. The dashboard shows one terminal or two
 side-by-side panes and the current `ctx —` field. Sidebar sessions use three
 lines: the session name, its label, and elapsed runtime with context usage. Context usage
 shows `-` until a provider reports it (see Context usage reporting below). The
@@ -155,7 +164,8 @@ values retained. Input stays in the palette while it is open.
 
 ### Historical scrollback
 
-In Browse mode, select a session and press PageUp to open its retained output.
+In Browse mode, select a session and press PageUp, or scroll the wheel up over
+the pane, to open its retained output.
 History starts as a frozen snapshot, so live PTY output does not move the rows
 under review. The footer marks new live output while the snapshot is open.
 Use Up/Down or `k`/`j` for one row, PageUp/PageDown for one viewport, Home/End
@@ -191,7 +201,7 @@ press `y` or Enter to request a clipboard copy. Both endpoints are included.
 Escape, `q`, or Ctrl-g leaves Copy mode. Live output continues while the
 captured screen stays fixed; resizing the terminal cancels this selection.
 
-To select older output, enter History with PageUp. Scroll to a loaded cursor
+To select older output, enter History with PageUp or the wheel. Scroll to a loaded cursor
 and press Space or `v` to anchor it. Movement then extends the range;
 PageUp/PageDown move by a viewport, Home/End move to row bounds, and
 `g`/`G` move to snapshot bounds. Movement waits when a target cell needs
@@ -714,7 +724,7 @@ Future additions, with priorities and release dates still to be decided:
 - [x] Pause and resume controls for sessions.
 - [x] Agent hooks to report agent-specific activity and status.
 - [x] Context usage accounting for agent sessions.
-- [ ] Mouse forwarding to applications running inside a terminal.
+- [x] Mouse forwarding to applications running inside a terminal.
 - [ ] Multiple dashboards connected to the same server. **Deferred.**
 - [ ] Session restore after a server crash or reboot, including saved session
   metadata, new PTYs, and agent conversation resumption where supported.

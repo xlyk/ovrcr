@@ -42,7 +42,15 @@ rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
 
 Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
-## 3. Exercise CLI controls through the GUI
+## 3. Mouse forwarding and wheel history
+
+Stay on `consigint / auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
+
+In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History (alternate screen). Quit Vim before repeating the plain-shell History check.
+
+Computer-use tools often cannot hold a mouse button across Ctrl-g. Skip that gesture here; the TUI test `ctrl_g_releases_held_buttons_before_switching` covers it.
+
+## 4. Exercise CLI controls through the GUI
 
 First inspect each inherited path separately; macOS `printenv` accepts one name:
 
@@ -78,7 +86,7 @@ rtk proxy "$c" terminal close "$t" --json
 
 Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell can take several seconds.
 
-## 4. Verify cleanup and report evidence
+## 5. Verify cleanup and report evidence
 
 Use the demo paths and process-group IDs recorded above. Close the native window through computer use and wait for the launch command to exit successfully; cleanup can take about a minute.
 

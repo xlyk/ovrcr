@@ -3,7 +3,7 @@ use super::copy::{
     HistoryCopyRange, MAX_COPY_BYTES,
 };
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
-use super::input::{encode_key, is_browse_key};
+use super::input::{encode_key, encode_mouse, is_browse_key};
 use super::render::{
     METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_gap,
     tree_row_height,
@@ -33,6 +33,7 @@ pub struct PendingHistoryBegin {
     pub request_id: u64,
     pub session: SessionId,
     pub cancelled: bool,
+    pub at_tail: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -497,6 +498,42 @@ fn history_motion_key(code: KeyCode) -> bool {
     )
 }
 
+fn is_wheel(kind: MouseEventKind) -> bool {
+    matches!(
+        kind,
+        MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    )
+}
+
+fn point_in_rect(mouse: MouseEvent, rect: Rect) -> bool {
+    mouse.column >= rect.x
+        && mouse.column < rect.right()
+        && mouse.row >= rect.y
+        && mouse.row < rect.bottom()
+}
+
+fn relative_mouse(mouse: MouseEvent, inner: Rect) -> Option<MouseEvent> {
+    if !point_in_rect(mouse, inner) {
+        return None;
+    }
+    Some(MouseEvent {
+        column: mouse.column - inner.x,
+        row: mouse.row - inner.y,
+        ..mouse
+    })
+}
+
+fn held_index(button: MouseButton) -> usize {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
@@ -516,6 +553,8 @@ impl Dashboard {
             copy_notice: None,
             history: None,
             history_begin_request: None,
+            mouse: super::MouseForwarding::default(),
+            mouse_focused: true,
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
@@ -653,6 +692,9 @@ impl Dashboard {
         request_id: u64,
     ) -> anyhow::Result<Option<ClientMessage>> {
         let geometry_changed = self.outer_area != area;
+        if geometry_changed {
+            self.cancel_mouse_gesture();
+        }
         if geometry_changed && self.copy.is_some() {
             self.cancel_copy(Some("Copy cancelled: terminal resized"));
         }
@@ -789,6 +831,9 @@ impl Dashboard {
         self.pending_snapshot_sessions.insert(session);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
+        if self.focused_session() == Some(session) {
+            self.reconcile_mouse_protocol();
+        }
     }
 
     pub(super) fn session_is_busy(&self, id: SessionId) -> bool {
@@ -998,7 +1043,7 @@ impl Dashboard {
                     }
                     KeyCode::Char('q') => DashboardAction::Detach,
                     KeyCode::Char('[') if key.kind == KeyEventKind::Press => self.begin_copy(),
-                    KeyCode::PageUp => self.begin_history_request(),
+                    KeyCode::PageUp => self.begin_history_request(false),
                     KeyCode::Char('p') => self.pause_request(true),
                     KeyCode::Char('r') => self.pause_request(false),
                     KeyCode::Char('v') => {
@@ -1042,6 +1087,7 @@ impl Dashboard {
             }
             InputMode::Terminal => {
                 if is_browse_key(key) {
+                    self.cancel_mouse_gesture();
                     if let Some(begin) = self.history_begin_request.as_mut() {
                         begin.cancelled = true;
                     }
@@ -1199,7 +1245,7 @@ impl Dashboard {
         });
     }
 
-    fn begin_history_request(&mut self) -> DashboardAction {
+    fn begin_history_request(&mut self, at_tail: bool) -> DashboardAction {
         let Some(session) = self.focused_session() else {
             return DashboardAction::None;
         };
@@ -1218,6 +1264,7 @@ impl Dashboard {
             request_id,
             session,
             cancelled: false,
+            at_tail,
         });
         DashboardAction::Request(ClientMessage {
             request_id,
@@ -1485,6 +1532,7 @@ impl Dashboard {
     }
 
     fn release_for_selection_change(&mut self) {
+        self.cancel_mouse_gesture();
         self.cancel_copy(None);
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
@@ -1678,36 +1726,76 @@ impl Dashboard {
                     ))
                 }
             }
-            Event::Mouse(mouse) => self.mouse_action(mouse, Rect::new(0, 0, 0, 0)),
-            Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => DashboardAction::Redraw,
+            Event::Mouse(mouse) => self.mouse_action(mouse, self.outer_area),
+            Event::FocusLost => {
+                self.cancel_mouse_gesture();
+                self.mouse_focused = false;
+                DashboardAction::Redraw
+            }
+            Event::FocusGained => {
+                self.mouse_focused = true;
+                DashboardAction::Redraw
+            }
+            Event::Resize(_, _) => DashboardAction::Redraw,
             Event::Paste(_) => DashboardAction::None,
         }
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if self.mode != InputMode::Browse
-            || self.tasks.is_some()
-            || self.palette.is_some()
-            || mouse.kind != MouseEventKind::Down(MouseButton::Left)
-        {
+        if self.tasks.is_some() || self.palette.is_some() {
+            return DashboardAction::None;
+        }
+        match self.mode {
+            InputMode::Copy => DashboardAction::None,
+            InputMode::History => self.history_wheel_action(mouse, area),
+            InputMode::Browse => {
+                if is_wheel(mouse.kind) {
+                    if let Some(action) = self.pane_wheel_history(mouse, area) {
+                        return action;
+                    }
+                    return DashboardAction::None;
+                }
+                self.browse_mouse_action(mouse, area)
+            }
+            InputMode::Terminal => self.terminal_mouse_action(mouse, area),
+        }
+    }
+
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        self.mouse_action(mouse, area)
+    }
+
+    pub fn mouse_capture_required(&self) -> bool {
+        if self.tasks.is_some() || self.palette.is_some() {
+            return false;
+        }
+        match self.mode {
+            InputMode::Browse | InputMode::History => true,
+            InputMode::Copy => false,
+            InputMode::Terminal => self.input_is_allowed(),
+        }
+    }
+
+    pub fn cancel_mouse_gesture(&mut self) {
+        self.queue_held_releases();
+    }
+
+    pub fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
+        self.mouse.pending_cleanup.take()
+    }
+
+    fn browse_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return DashboardAction::None;
         }
         for pane in super::pane_rects(area, self.panes.len(), self.focused_pane) {
-            if mouse.column >= pane.terminal.x
-                && mouse.column < pane.terminal.right()
-                && mouse.row >= pane.terminal.y
-                && mouse.row < pane.terminal.bottom()
-            {
+            if point_in_rect(mouse, pane.terminal) {
                 self.focus_pane(pane.pane_index);
                 return DashboardAction::Redraw;
             }
         }
         let sidebar = sidebar_area(area);
-        if mouse.column < sidebar.x
-            || mouse.column >= sidebar.x.saturating_add(sidebar.width)
-            || mouse.row < sidebar.y
-            || mouse.row >= sidebar.y.saturating_add(sidebar.height)
-        {
+        if !point_in_rect(mouse, sidebar) {
             return DashboardAction::None;
         }
         let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
@@ -1736,8 +1824,259 @@ impl Dashboard {
         }
     }
 
-    pub fn handle_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        self.mouse_action(mouse, area)
+    fn terminal_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if !self.mouse_focused {
+            return DashboardAction::None;
+        }
+        if self.terminal_mouse_enabled() {
+            return self.forward_mouse(mouse, area);
+        }
+        if is_wheel(mouse.kind) {
+            return self
+                .pane_wheel_history(mouse, area)
+                .unwrap_or(DashboardAction::None);
+        }
+        DashboardAction::None
+    }
+
+    fn terminal_mouse_enabled(&self) -> bool {
+        self.mode == InputMode::Terminal
+            && self.mouse_focused
+            && self.input_is_allowed()
+            && self.focused_mouse_mode() != vt100::MouseProtocolMode::None
+    }
+
+    fn focused_mouse_mode(&self) -> vt100::MouseProtocolMode {
+        self.focused_pane()
+            .map(|pane| pane.parser.screen().mouse_protocol_mode())
+            .unwrap_or(vt100::MouseProtocolMode::None)
+    }
+
+    fn focused_mouse_encoding(&self) -> vt100::MouseProtocolEncoding {
+        self.focused_pane()
+            .map(|pane| pane.parser.screen().mouse_protocol_encoding())
+            .unwrap_or_default()
+    }
+
+    fn forward_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        let Some(inner) = super::pane_rects(area, self.panes.len(), self.focused_pane)
+            .into_iter()
+            .find(|pane| pane.pane_index == self.focused_pane)
+            .map(|pane| pane.terminal)
+        else {
+            return DashboardAction::None;
+        };
+        let parser_size = self.focused_size();
+        let relative = relative_mouse(mouse, inner);
+        let inside = relative
+            .is_some_and(|event| event.column < parser_size.cols && event.row < parser_size.rows);
+        if !inside {
+            return self.release_held_leaving_rectangle(mouse.kind);
+        }
+        let relative = relative.expect("inside cell is relative");
+        if matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Drag(_))
+            && self.mouse.last_motion.as_ref().is_some_and(|last| {
+                last.kind == relative.kind
+                    && last.column == relative.column
+                    && last.row == relative.row
+                    && last.modifiers == relative.modifiers
+            })
+        {
+            return DashboardAction::None;
+        }
+        if let MouseEventKind::Drag(button) = mouse.kind
+            && self.mouse.held[held_index(button)].is_none()
+        {
+            return DashboardAction::None;
+        }
+        if matches!(mouse.kind, MouseEventKind::Moved)
+            && self.mouse.held.iter().any(Option::is_some)
+        {
+            return DashboardAction::None;
+        }
+        if let MouseEventKind::Up(button) = mouse.kind
+            && self.mouse.held[held_index(button)].is_none()
+        {
+            return DashboardAction::None;
+        }
+        let mode = self.focused_mouse_mode();
+        let encoding = self.focused_mouse_encoding();
+        let Some(bytes) = encode_mouse(relative, mode, encoding) else {
+            return DashboardAction::None;
+        };
+        let session = self.focused_session();
+        match mouse.kind {
+            MouseEventKind::Down(button) => {
+                if let Some(session) = session {
+                    self.mouse.held[held_index(button)] = Some(super::HeldMouse {
+                        session,
+                        event: relative,
+                        mode,
+                        encoding,
+                    });
+                }
+            }
+            MouseEventKind::Up(button) => {
+                self.mouse.held[held_index(button)] = None;
+            }
+            MouseEventKind::Drag(button) => {
+                if let Some(held) = &mut self.mouse.held[held_index(button)] {
+                    held.event = relative;
+                }
+            }
+            _ => {}
+        }
+        if matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
+            self.mouse.last_motion = Some(relative);
+        }
+        DashboardAction::PtyBytes(bytes)
+    }
+
+    fn release_held_leaving_rectangle(&mut self, kind: MouseEventKind) -> DashboardAction {
+        let button = match kind {
+            MouseEventKind::Drag(button) | MouseEventKind::Up(button) => button,
+            _ => return DashboardAction::None,
+        };
+        let Some(held) = self.mouse.held[held_index(button)].take() else {
+            return DashboardAction::None;
+        };
+        let release = MouseEvent {
+            kind: MouseEventKind::Up(button),
+            ..held.event
+        };
+        self.mouse.last_motion = None;
+        encode_mouse(release, held.mode, held.encoding)
+            .map_or(DashboardAction::None, DashboardAction::PtyBytes)
+    }
+
+    fn pane_wheel_history(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
+        if mouse.kind != MouseEventKind::ScrollUp {
+            return None;
+        }
+        let pane = super::pane_rects(area, self.panes.len(), self.focused_pane)
+            .into_iter()
+            .find(|pane| point_in_rect(mouse, pane.terminal))?;
+        if pane.pane_index != self.focused_pane {
+            self.focus_pane(pane.pane_index);
+        }
+        Some(self.begin_history_request(true))
+    }
+
+    fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        let Some(inner) = super::pane_rects(area, self.panes.len(), self.focused_pane)
+            .into_iter()
+            .find(|pane| pane.pane_index == self.focused_pane)
+            .map(|pane| pane.terminal)
+        else {
+            return DashboardAction::None;
+        };
+        if !point_in_rect(mouse, inner) {
+            return DashboardAction::None;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.history_scroll_rows(-1),
+            MouseEventKind::ScrollDown => {
+                let size = history_view_size(self.focused_size());
+                let at_tail = self.history.as_ref().is_some_and(|view| {
+                    let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
+                    view.top >= max_top
+                });
+                if at_tail {
+                    self.leave_history()
+                } else {
+                    self.history_scroll_rows(1)
+                }
+            }
+            _ => DashboardAction::None,
+        }
+    }
+
+    fn history_scroll_rows(&mut self, delta: i32) -> DashboardAction {
+        let size = history_view_size(self.focused_size());
+        let Some(view) = self.history.as_mut() else {
+            return DashboardAction::None;
+        };
+        let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
+        let next = if delta < 0 {
+            view.top.saturating_sub(delta.unsigned_abs())
+        } else {
+            view.top.saturating_add(delta.unsigned_abs())
+        }
+        .min(max_top);
+        if next == view.top {
+            return DashboardAction::Redraw;
+        }
+        view.top = next;
+        view.cursor_target =
+            (view.opened.total_rows > 0).then_some(HistoryCursorTarget::At(HistoryCopyPoint {
+                row: view.top,
+                col: view.left,
+            }));
+        view.cursor_reveal = false;
+        self.history_page_error = false;
+        self.error = None;
+        self.copy_notice = None;
+        self.history_request_if_needed()
+            .map_or(DashboardAction::Redraw, DashboardAction::Request)
+    }
+
+    fn queue_held_releases(&mut self) {
+        if self.mouse.pending_cleanup.is_some() {
+            self.clear_held_mouse();
+            return;
+        }
+        let mut bytes = Vec::new();
+        let mut session = None;
+        for held in self.mouse.held.iter_mut() {
+            let Some(gesture) = held.take() else {
+                continue;
+            };
+            session = Some(gesture.session);
+            let button = match gesture.event.kind {
+                MouseEventKind::Down(button)
+                | MouseEventKind::Up(button)
+                | MouseEventKind::Drag(button) => button,
+                _ => continue,
+            };
+            let release = MouseEvent {
+                kind: MouseEventKind::Up(button),
+                ..gesture.event
+            };
+            if let Some(encoded) = encode_mouse(release, gesture.mode, gesture.encoding) {
+                bytes.extend(encoded);
+            }
+        }
+        self.mouse.last_motion = None;
+        if bytes.is_empty() {
+            return;
+        }
+        let Some(session) = session else {
+            return;
+        };
+        let request_id = self.next_request_id();
+        self.mouse.pending_cleanup = Some(ClientMessage {
+            request_id,
+            request: Request::Input { session, bytes },
+        });
+    }
+
+    fn clear_held_mouse(&mut self) {
+        self.mouse.held = Default::default();
+        self.mouse.last_motion = None;
+    }
+
+    fn reconcile_mouse_protocol(&mut self) {
+        let mode = self.focused_mouse_mode();
+        let encoding = self.focused_mouse_encoding();
+        let stale = self
+            .mouse
+            .held
+            .iter()
+            .flatten()
+            .any(|held| held.mode != mode || held.encoding != encoding);
+        if stale {
+            self.clear_held_mouse();
+        }
     }
 
     pub(super) fn request_selected(&mut self) -> DashboardAction {
@@ -1990,11 +2329,13 @@ impl Dashboard {
                         {
                             pane.parser.process(&bytes);
                         }
-                        if self.focused_session() == Some(session)
-                            && let Some(view) = self.history.as_mut()
-                            && view.opened.session == session
-                        {
-                            view.new_output = true;
+                        if self.focused_session() == Some(session) {
+                            self.reconcile_mouse_protocol();
+                            if let Some(view) = self.history.as_mut()
+                                && view.opened.session == session
+                            {
+                                view.new_output = true;
+                            }
                         }
                     }
                 }
@@ -2149,10 +2490,14 @@ impl Dashboard {
         }
         let size = history_view_size(self.focused_size());
         let max_top = opened.total_rows.saturating_sub(u32::from(size.rows));
-        let top = opened
-            .total_rows
-            .saturating_sub(u32::from(size.rows).saturating_mul(2))
-            .min(max_top);
+        let top = if pending.at_tail {
+            max_top
+        } else {
+            opened
+                .total_rows
+                .saturating_sub(u32::from(size.rows).saturating_mul(2))
+                .min(max_top)
+        };
         self.history = Some(HistoryView::new(opened, top));
         self.mode = InputMode::History;
         if let Some(request) = self.history_request_if_needed() {

@@ -1,3 +1,6 @@
+#[path = "support/mouse_app.rs"]
+mod mouse_app;
+
 use anyhow::{Context, Result, bail};
 use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::{
@@ -135,6 +138,28 @@ impl AcceptanceFixture {
             "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "mouse session")?;
+        self.managed_pgids = self.session_pgids()?;
+        Ok(())
+    }
+
+    fn start_mouse_fixture(&mut self) -> Result<()> {
+        let exe = std::env::current_exe()?;
+        let output = self.cli(&[
+            "new",
+            "--project",
+            "fixture",
+            "--workspace",
+            "work",
+            "--name",
+            "mouse-protocol",
+            "--",
+            exe.to_str().context("test executable path")?,
+            "--ignored",
+            "--exact",
+            "mouse_fixture_child",
+            "--nocapture",
+        ])?;
+        require_success(output, "mouse-protocol session")?;
         self.managed_pgids = self.session_pgids()?;
         Ok(())
     }
@@ -443,6 +468,52 @@ impl OuterDashboard {
             })?;
         self.parser = vt100::Parser::new(rows, cols, 0);
         Ok(())
+    }
+
+    fn wait_until<F>(&mut self, predicate: F, timeout: Duration) -> Result<()>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if predicate(&self.parser.screen().contents()) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!(
+                    "outer terminal did not reach expected screen state: {}",
+                    self.rendered()
+                );
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if let Ok(bytes) = self
+                .received
+                .recv_timeout(remaining.min(Duration::from_millis(50)))
+            {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    fn wait_for_mouse_capture(&mut self, enabled: bool, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let mode = self.parser.screen().mouse_protocol_mode();
+            let active = mode != vt100::MouseProtocolMode::None;
+            if active == enabled {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!("mouse capture enabled={enabled} timed out, mode={mode:?}");
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if let Ok(bytes) = self
+                .received
+                .recv_timeout(remaining.min(Duration::from_millis(50)))
+            {
+                self.parser.process(&bytes);
+            }
+        }
     }
 
     fn wait_for(&mut self, needle: &[u8], timeout: Duration) -> Result<Vec<u8>> {
@@ -1306,7 +1377,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "single-key visible echo exceeded 100ms: {sorted_single_key:?}"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for_output(b"\x1b[?1000h", Duration::from_secs(3))?;
+    dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
     dashboard.send(b"\x1b[<0;5;10M")?;
     dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
     dashboard.send(b"\r")?;
@@ -1567,6 +1638,61 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     reattached.send(b"PAUSE_RESUME_TOKEN\r")?;
     reattached.wait_for(b"PAUSE_RESUME_ACK", Duration::from_secs(3))?;
     reattached.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn mouse_fixture_child() {
+    mouse_app::run().expect("mouse fixture child");
+}
+
+#[test]
+fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    fixture.setup()?;
+    fixture.start_mouse_fixture()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    dashboard.wait_for(b"mouse-protocol", Duration::from_secs(3))?;
+    dashboard.click_visible_text("  - mouse-protocol")?;
+    dashboard.wait_until(
+        |screen| screen.contains("MOUSE_FIXTURE_READY"),
+        Duration::from_secs(5),
+    )?;
+    dashboard.wait_until(|screen| !screen.contains("loading"), Duration::from_secs(3))?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"E")?;
+    dashboard.wait_for(b"MOUSE_ENABLED", Duration::from_secs(3))?;
+    dashboard.wait_for_mouse_capture(true, Duration::from_secs(3))?;
+    let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
+        .into_iter()
+        .next()
+        .context("focused pane rect")?
+        .terminal;
+    dashboard.send(format!("\x1b[<0;{};{}M", inner.x + 3, inner.y + 4).as_bytes())?;
+    dashboard.send(format!("\x1b[<0;{};{}mQ", inner.x + 3, inner.y + 4).as_bytes())?;
+    dashboard.wait_for(
+        b"MOUSE_CHECK_1:1b5b3c303b333b344d1b5b3c303b333b346d:END",
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"D")?;
+    dashboard.wait_for(b"MOUSE_DISABLED", Duration::from_secs(3))?;
+    dashboard.send(format!("\x1b[<0;{};{}MQ", inner.x + 3, inner.y + 4).as_bytes())?;
+    dashboard.wait_for(b"MOUSE_CHECK_2::END", Duration::from_secs(3))?;
+    dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
 }
