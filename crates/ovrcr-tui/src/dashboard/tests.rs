@@ -160,7 +160,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
             .unwrap()
     );
     assert!(dashboard.pending_view.is_some());
-    assert!(dashboard.panes.iter().any(|pane| !pane.ready));
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
     assert!(
         dashboard.panes[0]
             .parser

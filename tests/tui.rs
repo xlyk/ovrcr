@@ -6177,6 +6177,22 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .view_request(Rect::new(0, 0, 120, 40), 100)
         .unwrap()
         .expect("split view should request both panes");
+    let initial_view = match &split.request {
+        Request::SetView { view } => view,
+        other => panic!("expected SetView, got {other:?}"),
+    };
+    assert_eq!(initial_view.focused, Some(right_session));
+    assert_eq!(initial_view.panes.len(), 2);
+    assert_eq!(initial_view.panes[0].session, left_session);
+    assert_eq!(
+        initial_view.panes[0].size,
+        TerminalSize { rows: 36, cols: 39 }
+    );
+    assert_eq!(initial_view.panes[1].session, right_session);
+    assert_eq!(
+        initial_view.panes[1].size,
+        TerminalSize { rows: 36, cols: 40 }
+    );
     let mut loading_terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     loading_terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -6278,6 +6294,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
             .unwrap()
             .is_wide_continuation()
     );
+    assert_eq!(emitted.screen().cell(38, 40).unwrap().contents(), "<");
+    assert_eq!(emitted.screen().cell(38, 80).unwrap().contents(), ">");
 
     let mut edge_parser = vt100::Parser::new(36, 41, 0);
     edge_parser.process(b"\x1b[36;40H\xE7\x95\x8C");
@@ -6308,7 +6326,49 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(emitted.screen().cell(38, 119).unwrap().contents(), " ");
     assert_eq!(emitted.screen().cell(38, 79).unwrap().contents(), "│");
 
+    let mut left_edge_parser = vt100::Parser::new(36, 40, 0);
+    left_edge_parser.process(b"\x1b[36;39H\xE7\x95\x8C");
+    dashboard.panes[0].parser = left_edge_parser;
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(78, 38)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(79, 38)].symbol(), "│");
+    let mut left_edge_output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut left_edge_output);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 40)),
+            },
+        )
+        .unwrap();
+        terminal
+            .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+    }
+    let mut emitted = vt100::Parser::new(40, 120, 0);
+    emitted.process(&left_edge_output);
+    assert_eq!(emitted.screen().cell(38, 78).unwrap().contents(), " ");
+    assert_eq!(emitted.screen().cell(38, 79).unwrap().contents(), "│");
+
     assert!(dashboard.focus_pane(0));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    dashboard.panes[0].parser.process(b"\x1b[?25h\x1b[2;4H");
+    assert!(
+        dashboard
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .find(|session| Some(session.id) == dashboard.panes[0].session)
+            .is_some_and(|session| matches!(session.phase, SessionPhase::Running))
+    );
+    assert!(!dashboard.panes[0].parser.screen().hide_cursor());
     let focused_left = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 101)
         .unwrap()
@@ -6347,6 +6407,19 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
 
     let backend = TestBackend::new(1, 1);
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    dashboard.panes[0].parser.process(b"\x1b[?25h\x1b[2;4H");
+    assert!(
+        dashboard
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| project.workspaces.iter())
+            .flat_map(|workspace| workspace.sessions.iter())
+            .find(|session| Some(session.id) == dashboard.panes[0].session)
+            .is_some_and(|session| matches!(session.phase, SessionPhase::Running))
+    );
+    assert!(!dashboard.panes[0].parser.screen().hide_cursor());
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -6392,6 +6465,21 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .collect::<String>();
     assert!(footer.contains("split hidden: terminal too small"));
 
+    let mut ordinary = dashboard_fixture();
+    ordinary.mode = ovrcr::tui::InputMode::Browse;
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &ordinary, 0))
+        .unwrap();
+    let ordinary_footer = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>();
+    assert!(ordinary_footer.contains("BROWSE"));
+    assert!(ordinary_footer.contains("v split"));
+    assert!(ordinary_footer.contains("Tab/Shift-Tab"));
+    assert!(ordinary_footer.contains("x close"));
+
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -6415,6 +6503,10 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .collect::<String>();
     assert!(copy_footer.contains("COPY"));
     assert!(copy_footer.contains("split hidden: terminal too small"));
+    assert!(copy_footer.contains("h/j/k/l"));
+    assert!(copy_footer.contains("Space"));
+    assert!(copy_footer.contains("y copy"));
+    assert!(copy_footer.contains("Esc"));
     dashboard.mode = ovrcr::tui::InputMode::History;
     dashboard.history = Some(HistoryView::new(history_opened(1), 0));
     let backend = TestBackend::new(80, 24);
@@ -6426,7 +6518,9 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
     assert!(history_footer.contains("HISTORY"));
+    assert!(history_footer.contains("Waiting"));
     assert!(history_footer.contains("split hidden: terminal too small"));
+    assert!(history_footer.contains("Esc/q"));
     dashboard.history = None;
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
 
@@ -6468,7 +6562,24 @@ fn split_layout_renders_independent_cells_and_cursor() {
         dashboard.key(KeyCode::Char('[')),
         ovrcr::tui::DashboardAction::Redraw
     ));
-    dashboard.panes[1].parser.process(b"\x1b[1;1HOTHER");
+    assert!(dashboard.copy.is_some());
+    assert_eq!(
+        dashboard
+            .copy
+            .as_ref()
+            .unwrap()
+            .screen
+            .cell(0, 0)
+            .unwrap()
+            .contents(),
+        "L"
+    );
+    dashboard.panes[0].parser.process(b"\x1b[1;1HNEW");
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: right_session,
+        revision: dashboard.view_revision,
+        bytes: b"\x1b[1;1HOTHER".to_vec(),
+    }));
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -6616,6 +6727,14 @@ fn split_layout_renders_independent_cells_and_cursor() {
         ovrcr::tui::DashboardAction::None
     );
     assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.session)
+            .collect::<Vec<_>>(),
+        mouse_sessions
+    );
 }
 
 #[test]

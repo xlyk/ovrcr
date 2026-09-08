@@ -369,6 +369,28 @@ fn history_footer(dashboard: &Dashboard) -> Line<'static> {
     Line::from(Span::styled(text, Style::default().fg(TEXT)))
 }
 
+fn compact_history_footer(dashboard: &Dashboard) -> Line<'static> {
+    let status =
+        dashboard
+            .history
+            .as_ref()
+            .map_or("HISTORY  scroll  Space/v anchor".to_owned(), |view| {
+                if view.copy_job.is_some() || view.copy_completion.is_some() {
+                    "HISTORY COPY  Copying selection".to_owned()
+                } else if view.cursor_target.is_some() {
+                    "HISTORY  Waiting for cell".to_owned()
+                } else if view.anchor.is_some() {
+                    "HISTORY SELECT  h/j/k/l Space/v y".to_owned()
+                } else {
+                    "HISTORY  scroll  Space/v anchor".to_owned()
+                }
+            });
+    Line::from(Span::styled(
+        format!("{status}  split hidden: terminal too small  Esc/q"),
+        Style::default().fg(TEXT),
+    ))
+}
+
 fn history_color(value: HistoryColor, default: Color) -> Color {
     match value {
         HistoryColor::Default => default,
@@ -636,7 +658,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             if dashboard.mode == InputMode::Copy {
                 if split_hidden {
                     return Line::from(Span::styled(
-                        "COPY  split hidden: terminal too small  Esc cancel",
+                        "COPY  split hidden: terminal too small  h/j/k/l  Space anchor  y copy  Esc",
                         Style::default().fg(TEXT),
                     ));
                 }
@@ -653,10 +675,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 ]);
             }
             if dashboard.mode == InputMode::History && split_hidden {
-                return Line::from(Span::styled(
-                    "HISTORY  split hidden: terminal too small  Esc/q exit",
-                    Style::default().fg(TEXT),
-                ));
+                return compact_history_footer(dashboard);
             }
             if dashboard.mode == InputMode::Browse && split_hidden {
                 return Line::from(Span::styled(
@@ -667,8 +686,13 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
             let narrow = layout.footer.width < 60;
             if dashboard.mode == InputMode::Browse && !(paused && narrow) {
+                let footer = if layout.footer.width < 100 {
+                    "BROWSE  v split  Tab/Shift-Tab panes  x close  q detach"
+                } else {
+                    "BROWSE  j/k/↑/↓  Enter  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach"
+                };
                 return Line::from(Span::styled(
-                    "BROWSE  j/k/↑/↓  Enter  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach",
+                    footer,
                     Style::default().fg(TEXT),
                 ));
             }
@@ -708,23 +732,6 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     Span::styled(" browse  ", Style::default().fg(MUTED)),
                     Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
                     Span::styled(" tasks  ", Style::default().fg(MUTED)),
-                ]);
-            }
-            if dashboard.mode == InputMode::Browse && !(paused && narrow) {
-                footer.insert(
-                    0,
-                    Span::styled("BROWSE  ", Style::default().fg(TEAL)),
-                );
-                footer.extend([
-                    Span::styled("v", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" split  ", Style::default().fg(MUTED)),
-                    Span::styled("Tab/Shift-Tab", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" panes  ", Style::default().fg(MUTED)),
-                    Span::styled("x", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" close  ", Style::default().fg(MUTED)),
-                    Span::styled("q", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" detach", Style::default().fg(MUTED)),
-                    Span::styled("  : commands", Style::default().fg(MAUVE)),
                 ]);
             }
             if split_hidden {
