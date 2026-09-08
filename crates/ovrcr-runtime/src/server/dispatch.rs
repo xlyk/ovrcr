@@ -360,15 +360,6 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
             );
         }
     } else {
-        if state
-            .view
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|view| view.focused == Some(id))
-        {
-            clear_view_subscription(state, None);
-        }
         dashboard_try_send(
             state,
             ServerMessage::Event(ServerEvent::SessionChanged(session.summary())),
@@ -544,7 +535,11 @@ fn dispatch_set_view_with_resize(
     });
     if let Err(error) = resize_result {
         if resized > 0 {
-            clear_view_subscription(state, previous.as_ref().map(|view| view.revision));
+            clear_view_subscription_for_owner(
+                state,
+                owner,
+                previous.as_ref().map(|view| view.revision),
+            );
             let (terminal_sender, terminal_receiver) = mpsc::sync_channel(1);
             let queued = dashboard_send_owner_terminal(
                 state,
@@ -616,6 +611,36 @@ fn dispatch_set_view_with_resize(
 }
 
 pub(super) fn clear_view_subscription(state: &ServerState, fallback_revision: Option<u64>) {
+    let mut view = state.view.lock().unwrap();
+    match view.as_mut() {
+        Some(current) => {
+            current.panes.clear();
+            current.focused = None;
+        }
+        None => {
+            if let Some(revision) = fallback_revision {
+                *view = Some(DashboardView {
+                    revision,
+                    panes: Vec::new(),
+                    focused: None,
+                });
+            }
+        }
+    }
+}
+
+fn clear_view_subscription_for_owner(
+    state: &ServerState,
+    owner: &Arc<()>,
+    fallback_revision: Option<u64>,
+) {
+    let slot = state.dashboard_slot.lock().unwrap();
+    if !slot
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
+    {
+        return;
+    }
     let mut view = state.view.lock().unwrap();
     match view.as_mut() {
         Some(current) => {

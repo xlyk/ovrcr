@@ -1137,9 +1137,16 @@ fn agent_hook_summary_updates_drive_animation() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
-        revision: 0,
+        revision: dashboard.view_revision,
         bytes: b"PTY output\x1b]52;c;V0FJVElORw==\x1b\\".to_vec(),
     }));
+    assert!(
+        dashboard.panes[dashboard.focused_pane]
+            .parser
+            .screen()
+            .contents()
+            .contains("PTY output")
+    );
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
@@ -6626,15 +6633,32 @@ fn split_layout_renders_independent_cells_and_cursor() {
         signal: None,
     };
     exited_summary.pid = None;
-    exited_split.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
-        exited_summary,
-    )));
+    let lifecycle_outgoing = exited_split.handle_server_message(ServerMessage::Event(
+        ServerEvent::SessionChanged(exited_summary),
+    ));
+    assert!(lifecycle_outgoing.is_empty());
+    assert_eq!(exited_split.focused_pane, 0);
+    assert_eq!(exited_split.panes[0].session, Some(SessionId(1)));
+    assert_eq!(exited_split.panes[1].session, Some(SessionId(2)));
+    exited_split.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(2),
+        revision: exited_split.view_revision,
+        bytes: b"SURVIVOR".to_vec(),
+    }));
+    assert!(
+        exited_split.panes[1]
+            .parser
+            .screen()
+            .contents()
+            .contains("SURVIVOR")
+    );
     let backend = TestBackend::new(120, 40);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &exited_split, 0))
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "F");
+    assert_eq!(terminal.backend().buffer()[(80, 3)].symbol(), "S");
     assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
 
     let mut exited_single = dashboard_fixture();
