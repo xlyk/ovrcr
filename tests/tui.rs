@@ -402,7 +402,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         ),
         (
             "register project",
-            vec!["repo", "/tmp/repo with spaces", "/tmp/worktrees"],
+            vec!["/tmp/repo with spaces", "repo", "/tmp/worktrees"],
             Request::AddProject {
                 name: "repo".into(),
                 repo: "/tmp/repo with spaces".into(),
@@ -439,7 +439,12 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                     .unwrap();
             }
             if index + 1 < values.len() {
-                dashboard.key(KeyCode::Tab);
+                let next = if query == "register project" {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Tab
+                };
+                dashboard.key(next);
             }
         }
         let mut action = dashboard.key(KeyCode::Enter);
@@ -523,6 +528,28 @@ fn n_is_listed_in_the_browse_footer() {
 }
 
 #[test]
+fn a_opens_project_form_with_roots_and_derives_name_and_root() {
+    use ovrcr::tui::DashboardAction;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Code");
+    let repo = root.join("demo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir(root.join("plain")).unwrap();
+    let mut dashboard = dashboard_fixture();
+    dashboard.settings.picker_roots = vec![root];
+    dashboard.config_dir = dir.path().join("config");
+    assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Register project"), "{text}");
+    assert!(text.contains("Code"), "{text}");
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("demo"), "{text}");
+    assert!(text.contains("workspaces/demo"), "{text}");
+}
+
+#[test]
 fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
@@ -533,11 +560,12 @@ fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     );
     dashboard.ctrl('g');
     palette_search(&mut dashboard, "register project");
+    dashboard.settings.picker_roots.clear();
     dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Tab);
-    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
-    assert!(palette_text(&dashboard).contains("Name is required"));
+    assert!(palette_text(&dashboard).contains("Repository is required"));
     dashboard.event_action(Event::Paste("é\nname\u{1b}".into()));
     dashboard.key(KeyCode::Backspace);
     assert!(palette_text(&dashboard).contains("énam"));
