@@ -541,6 +541,17 @@ ovrcr shutdown
 This refuses while sessions remain. `ovrcr shutdown --kill` terminates every
 managed process group and then stops the server.
 
+## Troubleshooting
+
+A server that a command started automatically writes its output to
+`server.log` beside the socket, so with the default paths that is
+`$XDG_RUNTIME_DIR/ovrcr/server.log` on Linux and `$TMPDIR/ovrcr-UID/ovrcr/server.log`
+on macOS. When startup fails, the command reports the exit status and the
+last lines of that log; a corrupt registry, an unusable socket directory, or
+a damaged task store shows up there. Run `ovrcr server` in the foreground to
+see the same output live. `ovrcr --version` prints the package version so a
+client and a long-running server can be compared after an upgrade.
+
 ## Disposable repository transcript
 
 The following transcript uses an isolated temporary repository, config, and

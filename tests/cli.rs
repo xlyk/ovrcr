@@ -71,6 +71,20 @@ fn run_cli_bounded(command: Command) -> io::Result<Output> {
 }
 
 #[test]
+fn version_flag_prints_package_version() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    command.arg("--version");
+    let output = run_cli_bounded(command).unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!("ovrcr {}", env!("CARGO_PKG_VERSION"))
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
 fn agent_hook_cli_requires_identity_without_starting_server() {
     let root = tempfile::tempdir().unwrap();
     let output = isolated_command(&root)

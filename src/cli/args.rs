@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "ovrcr")]
+#[command(name = "ovrcr", version)]
 pub(super) struct Cli {
     #[arg(long, global = true)]
     pub(super) json: bool,

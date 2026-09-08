@@ -40,7 +40,7 @@ use outbound::{
     dashboard_send_owner, dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
-pub use startup::{ServerPaths, run_server};
+pub use startup::{ServerPaths, prepare_socket_directory, run_server};
 use startup::{generate_hook_capability, validate_bound_socket, wake_accept};
 
 #[cfg(test)]

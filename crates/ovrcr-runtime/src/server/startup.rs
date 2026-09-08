@@ -83,6 +83,7 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     secure_socket_directory(parent)?;
     let bound_socket = resolve_bound_socket(&paths.socket)?;
+    eprintln!("ovrcr server starting for {}", paths.socket.display());
     let startup_lock = acquire_startup_lock(parent)?;
     if paths.socket.exists() {
         match UnixStream::connect(&paths.socket) {
@@ -114,9 +115,23 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
     fs::set_permissions(&paths.socket, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("secure server socket {}", paths.socket.display()))?;
     drop(startup_lock);
-    let registry = load_registry(&registry_path)
-        .with_context(|| format!("load server registry {}", registry_path.display()))?;
-    let task_manager = crate::task_manager::TaskManager::open(&registry_path)?;
+    eprintln!("ovrcr server listening on {}", paths.socket.display());
+    // The socket is bound so concurrent starters see a live server, but a
+    // failure from here on must not leave a dead socket file behind.
+    let loaded = (|| -> Result<_> {
+        let registry = load_registry(&registry_path)
+            .with_context(|| format!("load server registry {}", registry_path.display()))?;
+        let task_manager = crate::task_manager::TaskManager::open(&registry_path)?;
+        Ok((registry, task_manager))
+    })();
+    let (registry, task_manager) = match loaded {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            drop(listener);
+            let _ = fs::remove_file(&paths.socket);
+            return Err(error);
+        }
+    };
     let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
     let state = Arc::new(ServerState {
@@ -196,7 +211,23 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         .join()
         .map_err(|_| anyhow::anyhow!("server event bridge panicked"))?;
     let _ = fs::remove_file(&paths.socket);
+    match &task_shutdown {
+        Ok(()) => eprintln!("ovrcr server stopped"),
+        Err(error) => eprintln!("ovrcr server stopped with task shutdown error: {error:#}"),
+    }
     task_shutdown
+}
+
+/// Prepare the socket's parent directory for a server that a client is
+/// about to start, applying the same rules the server applies itself, and
+/// return the log file path the detached server should write to.
+pub fn prepare_socket_directory(socket: &Path) -> Result<PathBuf> {
+    let parent = socket
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    secure_socket_directory(parent)?;
+    Ok(parent.join("server.log"))
 }
 /// Prepare the socket's parent directory without modifying a directory OVRCR
 /// did not create.

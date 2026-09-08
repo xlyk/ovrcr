@@ -1209,6 +1209,53 @@ fn startup_concurrent_attempts_leave_one_server() {
 }
 
 #[test]
+fn startup_failure_reports_server_log() {
+    let _env_lock = ENV_LOCK.lock().unwrap();
+    let fixture = ServerFixture::new();
+    let registry = fixture.root.path().join("config.toml");
+    std::fs::write(&registry, "[[projects]\n").unwrap();
+    unsafe {
+        std::env::set_var("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"));
+        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
+        std::env::set_var("OVRCR_CONFIG", &registry);
+    }
+    let started = Instant::now();
+    let result = connect_or_start(&fixture.paths);
+    let elapsed = started.elapsed();
+    unsafe {
+        std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
+        std::env::remove_var("OVRCR_SOCKET");
+        std::env::remove_var("OVRCR_CONFIG");
+    }
+    let error = format!("{:#}", result.expect_err("startup must fail"));
+    let log = fixture.paths.socket.parent().unwrap().join("server.log");
+    assert!(
+        error.contains("parse registry"),
+        "error must carry the server's failure: {error}"
+    );
+    assert!(
+        error.contains(&log.display().to_string()),
+        "error must name the log: {error}"
+    );
+    assert!(
+        error.contains("exited during startup"),
+        "a dead server must be reported immediately: {error}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "startup failure must not wait for the timeout, took {elapsed:?}"
+    );
+    let mode = std::fs::metadata(&log).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .contains("parse registry")
+    );
+    assert!(!fixture.paths.socket.exists());
+}
+
+#[test]
 fn startup_read_only_commands_do_not_start_a_missing_server() {
     let fixture = ServerFixture::new();
     assert!(connect_if_running(&fixture.paths).unwrap().is_none());

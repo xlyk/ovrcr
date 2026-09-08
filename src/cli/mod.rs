@@ -37,8 +37,10 @@ impl RuntimeError {
         }
     }
 
-    fn internal(error: impl std::fmt::Display) -> Self {
-        Self::new(ErrorCode::Internal, error.to_string())
+    fn internal(error: impl Into<anyhow::Error>) -> Self {
+        // `{:#}` keeps the whole cause chain; `to_string` shows only the
+        // outermost context and hid the OS error behind "connect server".
+        Self::new(ErrorCode::Internal, format!("{:#}", error.into()))
     }
 }
 
