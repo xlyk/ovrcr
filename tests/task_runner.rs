@@ -199,6 +199,53 @@ fn timeout_cancel_and_parent_loss_remove_detached_descendants() {
     }
 }
 #[test]
+fn transient_ps_failure_does_not_fail_run() {
+    let temp = prepare("stop", 5);
+    let root = temp.path();
+    let path = std::env::var("PATH").unwrap();
+    let real_ps = std::env::split_paths(&path)
+        .map(|dir| dir.join("ps"))
+        .find(|ps| ps.is_file())
+        .expect("ps on PATH");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("ps"),
+        format!(
+            "#!/bin/sh\ncount=$(cat '{root}/ps-count' 2>/dev/null || echo 0)\n\
+             count=$((count + 1))\nprintf '%s' \"$count\" > '{root}/ps-count'\n\
+             [ \"$count\" -le 2 ] && exit 1\nexec '{}' \"$@\"\n",
+            real_ps.display(),
+            root = root.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("ps"), fs::Permissions::from_mode(0o755)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .arg("__task-runner")
+        .arg(root)
+        .arg(root.join("pi"))
+        .env("PATH", format!("{}:{path}", bin.display()))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait(&mut child);
+    let run = tasks::read_run(root).unwrap();
+    assert_eq!(run.status, RunStatus::Succeeded, "{:?}", run.error);
+    let scans: u32 = fs::read_to_string(root.join("ps-count"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        scans >= 3,
+        "supervisor stopped scanning after {scans} calls"
+    );
+}
+
+#[test]
 fn logs_are_bounded_and_cursor_is_in_bytes() {
     let temp = tempfile::tempdir().unwrap();
     fs::write(temp.path().join("events.jsonl"), vec![b'x'; 200_000]).unwrap();

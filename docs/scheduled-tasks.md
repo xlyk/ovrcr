@@ -101,6 +101,15 @@ ovrcr run clean 1
 ovrcr run clean 2 --yes
 ```
 
+Run history is bounded. The scheduler keeps the newest 200 runs of each task
+and every run that finished within the last 30 days. Older finished runs are
+removed together with their run directory, which holds the transcript and, for
+scratch tasks, the working files; copy anything you need within that window.
+Git worktrees live outside the run directory and are not deleted, but once the
+run record is gone the worktree must be removed with `ovrcr workspace remove`.
+A run whose `run.json` cannot be read is reported as `Interrupted` with the
+file path in its error; the server still starts and other runs continue.
+
 ## Run the scheduler at login
 
 ```sh

@@ -14,6 +14,8 @@ use std::{
 };
 
 const LOG_CHUNK: usize = 64 * 1024;
+const SCAN_INTERVAL: Duration = Duration::from_millis(250);
+const SCAN_FAILURE_TOLERANCE: u32 = 3;
 
 pub fn read_log(run_dir: &Path, offset: u64, max_bytes: usize) -> Result<(Vec<u8>, u64)> {
     let mut file = match File::open(run_dir.join("events.jsonl")) {
@@ -119,6 +121,7 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
     let mut output = child.stdout.take().context("Pi stdout missing")?;
     let mut groups = BTreeSet::new();
     let mut descendants = BTreeMap::new();
+    let mut scanner = Scanner::default();
     let mut pending = Vec::new();
     let mut control = Vec::new();
     let mut final_reason: Option<String> = None;
@@ -144,10 +147,10 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
         run.session_file = Some(session_file.to_string_lossy().into_owned());
         tasks::write_run(run_dir, run)?;
         nonblocking(input.as_ref().context("Pi stdin missing")?.as_raw_fd())?;
-        let mut last_scan = Instant::now() - Duration::from_secs(1);
+        let mut last_scan = Instant::now() - SCAN_INTERVAL;
         loop {
-            if last_scan.elapsed() >= Duration::from_millis(100) {
-                discover(&mut descendants, &mut groups)?;
+            if last_scan.elapsed() >= SCAN_INTERVAL {
+                scanner.scan(&mut descendants, &mut groups)?;
                 last_scan = Instant::now();
             }
             let mut bytes = [0; 16 * 1024];
@@ -265,7 +268,7 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
         Ok(())
     })();
     // Snapshot detached descendants before Pi can exit and orphan them.
-    let discovery = discover(&mut descendants, &mut groups);
+    let discovery = scanner.scan(&mut descendants, &mut groups);
     // Never append commands in the middle of an incomplete prompt JSON line.
     if sent == request.len() {
         let _ = send(&mut input, json!({"type":"clear_queue","id":"clear"}));
@@ -274,6 +277,7 @@ fn execute(run_dir: &Path, pi: &Path, run: &mut Run) -> Result<()> {
     drop(input);
     let cleanup = cleanup(
         &mut child,
+        &mut scanner,
         &mut descendants,
         &mut groups,
         &mut output,
@@ -424,6 +428,34 @@ fn retain_owned(
         }
     }
 }
+/// Descendant discovery that tolerates a few consecutive `ps` failures.
+#[derive(Default)]
+struct Scanner {
+    failures: u32,
+}
+impl Scanner {
+    fn scan(
+        &mut self,
+        owned: &mut BTreeMap<i32, Process>,
+        groups: &mut BTreeSet<i32>,
+    ) -> Result<()> {
+        match discover(owned, groups) {
+            Ok(()) => {
+                self.failures = 0;
+                Ok(())
+            }
+            Err(error) if self.failures < SCAN_FAILURE_TOLERANCE => {
+                self.failures += 1;
+                eprintln!(
+                    "descendant scan failed ({} of {SCAN_FAILURE_TOLERANCE} tolerated): {error:#}",
+                    self.failures
+                );
+                Ok(())
+            }
+            Err(error) => Err(error.context("descendant discovery failed repeatedly")),
+        }
+    }
+}
 fn discover(owned: &mut BTreeMap<i32, Process>, groups: &mut BTreeSet<i32>) -> Result<()> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,ppid=,pgid="])
@@ -494,6 +526,7 @@ fn signal_owned(owned: &BTreeMap<i32, Process>, groups: &BTreeSet<i32>, signal: 
 }
 fn cleanup(
     child: &mut Child,
+    scanner: &mut Scanner,
     descendants: &mut BTreeMap<i32, Process>,
     groups: &mut BTreeSet<i32>,
     output: &mut impl Read,
@@ -512,7 +545,7 @@ fn cleanup(
                 Err(e) => return Err(e.into()),
             }
         }
-        discover(descendants, groups)?;
+        scanner.scan(descendants, groups)?;
         let reaped = child.try_wait()?.is_some();
         if reaped && descendants.is_empty() {
             return Ok(());

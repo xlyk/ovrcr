@@ -155,19 +155,35 @@ impl TaskManager {
         project: &str,
         workspace: &crate::config::WorkspaceRecord,
     ) -> Result<()> {
-        let mut store = self.store.lock().unwrap().clone();
-        merge_runs(&self.directory, &mut store)?;
-        for run in &mut store.runs {
-            if run.status.is_terminal()
-                && matches!(&run.spec.target, TaskTarget::Git { project: name, .. } if name == project)
-                && run.workspace.as_deref() == Some(workspace.name.as_str())
-                && run.directory.as_ref() == Some(&workspace.path)
-            {
-                run.workspace = None;
-                write_run(&run_dir(&self.directory, run.id), run)?;
+        self.change(|store| {
+            merge_runs(&self.directory, store)?;
+            for run in &mut store.runs {
+                if run.status.is_terminal()
+                    && matches!(&run.spec.target, TaskTarget::Git { project: name, .. } if name == project)
+                    && run.workspace.as_deref() == Some(workspace.name.as_str())
+                    && run.directory.as_ref() == Some(&workspace.path)
+                {
+                    run.workspace = None;
+                    write_run(&run_dir(&self.directory, run.id), run)?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
+    }
+    /// Re-read one run's `run.json` regardless of status, after another writer changed it.
+    fn refresh_run(&self, id: RunId) -> Result<()> {
+        self.change(|store| {
+            let dir = run_dir(&self.directory, id);
+            if let Some(run) = store.runs.iter_mut().find(|run| run.id == id)
+                && dir.join("run.json").exists()
+            {
+                let latest = read_run(&dir)?;
+                if latest.id == id {
+                    *run = latest;
+                }
+            }
+            Ok(())
+        })
     }
 
     fn tick(self: &Arc<Self>, server: &Arc<ServerState>) -> Result<()> {
@@ -187,11 +203,19 @@ impl TaskManager {
                 }
             }
         }
-        let admitted = self.change(|store| {
+        let (admitted, pruned) = self.change(|store| {
             merge_runs(&self.directory, store)?;
             store.advance_due(now())?;
-            Ok(store.admit(now()))
+            let pruned = store.prune(now());
+            Ok((store.admit(now()), pruned))
         })?;
+        for id in pruned {
+            match fs::remove_dir_all(run_dir(&self.directory, id)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => eprintln!("prune run {}: {error}", id.0),
+            }
+        }
         #[cfg(test)]
         if !admitted.is_empty()
             && let Some(hook) = self.after_admit.lock().unwrap().as_ref()
@@ -472,6 +496,7 @@ impl TaskManager {
                     match &run.spec.target {
                         TaskTarget::Git { .. } => {
                             server.remove_task_workspace(run, &run_dir(&self.directory, id))?;
+                            self.refresh_run(id)?;
                         }
                         TaskTarget::Scratch => {
                             if !confirmed {
@@ -609,16 +634,32 @@ fn inspect_store(dir: &Path, store: &TaskStore, request: TaskRequest) -> Result<
         _ => bail!("request requires a running server"),
     })
 }
+/// Refresh in-flight runs from their `run.json`. Terminal runs are history and are
+/// never re-read; a damaged file interrupts its run instead of failing the caller.
 fn merge_runs(dir: &Path, store: &mut TaskStore) -> Result<()> {
     for run in &mut store.runs {
-        if run.status != RunStatus::Queued {
-            let path = run_dir(dir, run.id);
-            if path.join("run.json").exists() {
-                let latest = read_run(&path)?;
-                if latest.id != run.id {
-                    bail!("run metadata ID mismatch");
-                }
-                *run = latest;
+        if run.status == RunStatus::Queued || run.status.is_terminal() {
+            continue;
+        }
+        let path = run_dir(dir, run.id);
+        if !path.join("run.json").exists() {
+            continue;
+        }
+        match read_run(&path).and_then(|latest| {
+            if latest.id != run.id {
+                bail!(
+                    "run metadata ID mismatch in {}",
+                    path.join("run.json").display()
+                );
+            }
+            Ok(latest)
+        }) {
+            Ok(latest) => *run = latest,
+            Err(error) => {
+                eprintln!("task run {}: {error:#}; marking it interrupted", run.id.0);
+                run.status = RunStatus::Interrupted;
+                run.finished_at = Some(now());
+                run.error = Some(format!("{error:#}"));
             }
         }
     }
@@ -730,6 +771,56 @@ mod tests {
             })
             .unwrap();
         (root, manager, server, id)
+    }
+    #[test]
+    fn corrupt_run_file_does_not_block_open() {
+        let (root, manager, server, id) = fixture();
+        manager
+            .change(|store| {
+                store.runs[0].status = RunStatus::Running;
+                Ok(())
+            })
+            .unwrap();
+        let dir = run_dir(&manager.directory, id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("run.json"), "{not json").unwrap();
+        drop(server);
+        drop(manager);
+        let manager = TaskManager::open(&root.path().join("config.toml")).unwrap();
+        let run = manager.store.lock().unwrap().runs[0].clone();
+        assert_eq!(run.status, RunStatus::Interrupted);
+        assert!(
+            run.error
+                .as_deref()
+                .is_some_and(|error| error.contains(dir.join("run.json").to_str().unwrap())),
+            "{:?}",
+            run.error
+        );
+    }
+    #[test]
+    fn tick_does_not_reread_terminal_runs() {
+        let (_root, manager, server, _id) = fixture();
+        manager
+            .change(|store| {
+                let task = store.tasks[0].id;
+                for _ in 0..500 {
+                    let mut run = store.enqueue(task, RunTrigger::Manual, now())?;
+                    run.status = RunStatus::Succeeded;
+                    run.finished_at = Some(now());
+                    let dir = run_dir(&manager.directory, run.id);
+                    fs::create_dir_all(&dir)?;
+                    fs::write(dir.join("run.json"), serde_json::to_vec(&run)?)?;
+                    let id = run.id;
+                    *store.runs.iter_mut().find(|r| r.id == id).unwrap() = run;
+                }
+                Ok(())
+            })
+            .unwrap();
+        READ_RUN_CALLS.with(|calls| calls.set(0));
+        for _ in 0..10 {
+            manager.tick(&server).unwrap();
+        }
+        assert_eq!(READ_RUN_CALLS.with(|calls| calls.get()), 0);
     }
     #[test]
     fn cancellation_waits_for_admission_to_publish_its_worker() {
