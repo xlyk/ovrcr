@@ -13,7 +13,7 @@ pub use copy::{
     HistoryCopyRange, append_history_selection, write_clipboard,
 };
 pub use event_loop::{dashboard_message_channel, run_dashboard};
-pub use input::{encode_key, event_to_request};
+pub use input::{encode_key, encode_mouse, event_to_request};
 pub use render::{
     actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
     render_terminal,
@@ -25,6 +25,7 @@ pub use state::{
 pub use terminal_guard::TerminalGuard;
 
 use crate::task_tui::TasksView;
+use crossterm::event::MouseEvent;
 use ovrcr_protocol::{ClientMessage, HierarchySnapshot, SessionId, TerminalSize};
 use ovrcr_terminal::vt100;
 use ratatui::layout::Rect;
@@ -156,6 +157,20 @@ pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRect
     ]
 }
 
+pub(super) struct HeldMouse {
+    pub(super) session: SessionId,
+    pub(super) event: MouseEvent,
+    pub(super) mode: vt100::MouseProtocolMode,
+    pub(super) encoding: vt100::MouseProtocolEncoding,
+}
+
+#[derive(Default)]
+pub(super) struct MouseForwarding {
+    pub(super) held: [Option<HeldMouse>; 3],
+    pub(super) last_motion: Option<MouseEvent>,
+    pub(super) pending_cleanup: Option<ClientMessage>,
+}
+
 pub struct Dashboard {
     pub tasks: Option<TasksView>,
     pub hierarchy: HierarchySnapshot,
@@ -171,6 +186,8 @@ pub struct Dashboard {
     pub copy_notice: Option<String>,
     pub history: Option<HistoryView>,
     pub history_begin_request: Option<PendingHistoryBegin>,
+    pub(super) mouse: MouseForwarding,
+    pub(super) mouse_focused: bool,
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,

@@ -337,13 +337,23 @@ impl App {
                     }
                 }
                 if status.is_none() {
+                    let pointer = ui.input(|input| {
+                        input
+                            .pointer
+                            .hover_pos()
+                            .or(input.pointer.latest_pos())
+                            .unwrap_or(rect.min)
+                    });
                     for event in ui.input(|input| input.events.clone()) {
                         if !response.has_focus()
-                            && !matches!(event, egui::Event::PointerButton { .. })
+                            && !matches!(
+                                event,
+                                egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. }
+                            )
                         {
                             continue;
                         }
-                        let bytes = encode_event(&event, &screen, rect, cell);
+                        let bytes = encode_event(&event, &screen, rect, cell, pointer);
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
                         {

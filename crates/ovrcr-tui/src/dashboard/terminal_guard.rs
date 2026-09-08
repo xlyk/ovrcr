@@ -1,7 +1,8 @@
 use super::PANIC_TERMINAL_RESTORED;
 use anyhow::{Context, Result};
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture,
 };
 use crossterm::{cursor, execute, terminal as crossterm_terminal};
 use std::io::{self, Write};
@@ -62,6 +63,7 @@ impl<W: Write> TerminalGuard<W> {
         self.bracketed_paste = true;
         execute!(self.writer, EnableMouseCapture).context("enable dashboard mouse")?;
         self.mouse = true;
+        execute!(self.writer, EnableFocusChange).context("enable dashboard focus reporting")?;
         execute!(self.writer, cursor::Hide).context("hide dashboard cursor")?;
         self.cursor_hidden = true;
         Ok(())
@@ -81,6 +83,7 @@ impl<W: Write> TerminalGuard<W> {
         // flag: disabling capture is idempotent and cheap.
         let _ = execute!(self.writer, DisableMouseCapture);
         self.mouse = false;
+        let _ = execute!(self.writer, DisableFocusChange);
         if self.bracketed_paste {
             let _ = execute!(self.writer, DisableBracketedPaste);
             self.bracketed_paste = false;

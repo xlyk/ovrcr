@@ -1,8 +1,8 @@
 use super::render::{draw_dashboard, pane_size};
 use super::terminal_guard::TerminalGuard;
 use super::{
-    DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, InputMode,
-    PANIC_TERMINAL_RESTORED, TreeRow, write_clipboard,
+    DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, PANIC_TERMINAL_RESTORED, TreeRow,
+    write_clipboard,
 };
 use crate::TaskRequestFn;
 use crate::protocol::{ClientMessage, Request, Response, ServerMessage};
@@ -288,16 +288,16 @@ fn update_mouse_capture<W: Write>(
     dashboard: &Dashboard,
     mouse_enabled: &mut bool,
 ) -> Result<()> {
-    if dashboard.mode == InputMode::Terminal {
-        if *mouse_enabled {
-            execute!(terminal.backend_mut(), DisableMouseCapture)
-                .context("disable dashboard mouse")?;
-            *mouse_enabled = false;
-        }
-    } else if !*mouse_enabled {
-        execute!(terminal.backend_mut(), EnableMouseCapture).context("enable dashboard mouse")?;
-        *mouse_enabled = true;
+    let required = dashboard.mouse_capture_required();
+    if required == *mouse_enabled {
+        return Ok(());
     }
+    if required {
+        execute!(terminal.backend_mut(), EnableMouseCapture).context("enable dashboard mouse")?;
+    } else {
+        execute!(terminal.backend_mut(), DisableMouseCapture).context("disable dashboard mouse")?;
+    }
+    *mouse_enabled = required;
     Ok(())
 }
 
@@ -342,7 +342,11 @@ pub(super) fn next_dashboard_messages(
 
 fn emit_view_request(stream: &mut UnixStream, dashboard: &mut Dashboard, area: Rect) -> Result<()> {
     let request_id = dashboard.next_request_id();
-    if let Some(request) = dashboard.view_request(area, request_id)? {
+    let request = dashboard.view_request(area, request_id)?;
+    if let Some(cleanup) = dashboard.take_mouse_cleanup() {
+        write_frame(stream, &cleanup)?;
+    }
+    if let Some(request) = request {
         write_frame(stream, &request)?;
     }
     Ok(())
@@ -462,19 +466,28 @@ fn process_dashboard_input<W: Write>(
             let area = terminal.size()?.into();
             dashboard.mouse_action(mouse, area)
         }
-        event @ (Event::Key(_) | Event::Paste(_)) => dashboard.event_action(event),
+        event @ (Event::Key(_) | Event::Paste(_) | Event::FocusGained | Event::FocusLost) => {
+            dashboard.event_action(event)
+        }
         Event::Resize(_, _) => DashboardAction::Redraw,
-        Event::FocusGained | Event::FocusLost => DashboardAction::None,
     };
-    match action {
+    send_dashboard_action(terminal, stream, dashboard, mouse_enabled, action)
+}
+
+fn send_dashboard_action<W: Write>(
+    terminal: &mut Terminal<CrosstermBackend<&mut W>>,
+    stream: &mut UnixStream,
+    dashboard: &mut Dashboard,
+    mouse_enabled: &mut bool,
+    action: DashboardAction,
+) -> Result<bool> {
+    if let Some(cleanup) = dashboard.take_mouse_cleanup() {
+        write_frame(stream, &cleanup)?;
+    }
+    let result = match action {
         DashboardAction::None | DashboardAction::Redraw => Ok(false),
         DashboardAction::Detach => Ok(true),
         DashboardAction::EnterBrowse => {
-            if !*mouse_enabled {
-                execute!(terminal.backend_mut(), EnableMouseCapture)
-                    .context("enable dashboard mouse")?;
-                *mouse_enabled = true;
-            }
             if let Some(request) = dashboard.take_pending_history_end() {
                 write_frame(stream, &request)?;
             }
@@ -502,7 +515,9 @@ fn process_dashboard_input<W: Write>(
             }
             Ok(false)
         }
-    }
+    };
+    update_mouse_capture(terminal, dashboard, mouse_enabled)?;
+    result
 }
 
 pub(super) struct DashboardActivity {

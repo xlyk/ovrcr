@@ -1,5 +1,5 @@
-use crate::tui::{KeyEncoding, encode_key, encode_paste};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::tui::{KeyEncoding, encode_key, encode_mouse, encode_paste};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use eframe::egui::{self, Event, Key};
 
 pub fn encode_event(
@@ -7,6 +7,7 @@ pub fn encode_event(
     screen: &vt100::Screen,
     rect: egui::Rect,
     cell: egui::Vec2,
+    pointer: egui::Pos2,
 ) -> Vec<u8> {
     match event {
         Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => text.as_bytes().to_vec(),
@@ -136,6 +137,68 @@ pub fn encode_event(
                 }
             }
         }
+        Event::MouseWheel {
+            delta, modifiers, ..
+        } => {
+            let Some((column, row)) = pointer_cell(pointer, screen, rect, cell) else {
+                return Vec::new();
+            };
+            let kind = if delta.y.abs() >= delta.x.abs() {
+                if delta.y > 0.0 {
+                    MouseEventKind::ScrollUp
+                } else if delta.y < 0.0 {
+                    MouseEventKind::ScrollDown
+                } else {
+                    return Vec::new();
+                }
+            } else if delta.x > 0.0 {
+                MouseEventKind::ScrollRight
+            } else if delta.x < 0.0 {
+                MouseEventKind::ScrollLeft
+            } else {
+                return Vec::new();
+            };
+            encode_mouse(
+                MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: key_modifiers(*modifiers),
+                },
+                screen.mouse_protocol_mode(),
+                screen.mouse_protocol_encoding(),
+            )
+            .unwrap_or_default()
+        }
         _ => Vec::new(),
     }
+}
+
+fn pointer_cell(
+    pos: egui::Pos2,
+    screen: &vt100::Screen,
+    rect: egui::Rect,
+    cell: egui::Vec2,
+) -> Option<(u16, u16)> {
+    if !rect.contains(pos) {
+        return None;
+    }
+    let column = ((pos.x - rect.min.x) / cell.x).floor() as u16;
+    let row = ((pos.y - rect.min.y) / cell.y).floor() as u16;
+    let (rows, cols) = screen.size();
+    (row < rows && column < cols).then_some((column, row))
+}
+
+fn key_modifiers(modifiers: egui::Modifiers) -> KeyModifiers {
+    let mut bits = KeyModifiers::NONE;
+    if modifiers.shift {
+        bits |= KeyModifiers::SHIFT;
+    }
+    if modifiers.alt {
+        bits |= KeyModifiers::ALT;
+    }
+    if modifiers.ctrl {
+        bits |= KeyModifiers::CONTROL;
+    }
+    bits
 }
