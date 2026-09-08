@@ -185,8 +185,18 @@ fn terminal_fonts_render_mockup_glyphs_or_default_symbols() {
 #[test]
 #[cfg(target_os = "macos")]
 fn terminal_paints_missing_unicode_as_native_images() {
+    assert_native_unicode_paint(true);
+    assert_native_unicode_paint(false);
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn assert_native_unicode_paint(installed_fonts: bool) {
     let context = egui::Context::default();
-    let fonts = install_terminal_fonts(&context);
+    let fonts = if installed_fonts {
+        install_terminal_fonts(&context)
+    } else {
+        TerminalFonts::current_monospace()
+    };
     let mut parser = vt100::Parser::new(1, 12, 0);
     parser.process("\x1b[31mRED 界🙂 END\x1b[0m".as_bytes());
     assert_eq!(parser.screen().contents(), "RED 界🙂 END");
@@ -576,14 +586,19 @@ fn paint_terminal(
             if !contents.is_empty() {
                 let (font, synthetic_italic) = fonts.for_cell(cell.bold(), cell.italic());
                 #[cfg(target_os = "macos")]
-                let native = !ui.fonts_mut(|fonts| fonts.has_glyphs(font, contents))
-                    && fonts.fallback.borrow_mut().paint(
-                        ui,
-                        cell_rect.intersect(rect),
-                        font,
-                        cell,
-                        fg,
-                    );
+                // egui 0.36's has_glyphs rejects every glyph in the face that
+                // also supplies the replacement character. Query real coverage.
+                let native = !ui.fonts_mut(|view| {
+                    let mut family = view.fonts.font(&font.family);
+                    let characters = family.characters();
+                    contents.chars().all(|ch| characters.contains_key(&ch))
+                }) && fonts.fallback.borrow_mut().paint(
+                    ui,
+                    cell_rect.intersect(rect),
+                    font,
+                    cell,
+                    fg,
+                );
                 #[cfg(not(target_os = "macos"))]
                 let native = false;
                 if !native {
