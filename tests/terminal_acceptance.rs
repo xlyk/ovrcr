@@ -927,33 +927,45 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
-    dashboard.wait_for_screen(|screen| screen.contains("history"), Duration::from_secs(3))?;
+    dashboard
+        .wait_for(b"agent runtime", Duration::from_secs(3))
+        .context("history dashboard initial runtime header")?;
+    dashboard
+        .wait_for_screen(|screen| screen.contains("history"), Duration::from_secs(3))
+        .context("history dashboard hierarchy")?;
     dashboard.click_visible_text("history")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY_READY"),
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| screen.contains("HISTORY_READY"),
+            Duration::from_secs(3),
+        )
+        .context("history dashboard selected session snapshot")?;
     dashboard.send(b"\r")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("Terminal mode"),
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| screen.contains("Terminal mode"),
+            Duration::from_secs(3),
+        )
+        .context("history dashboard terminal mode")?;
     dashboard.send(b"\x07")?;
-    dashboard.wait_for_screen(
-        |screen| !screen.contains("Terminal mode"),
-        Duration::from_secs(3),
-    )?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("j/k/↑/↓") && screen.contains("Ctrl-g browse"),
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| {
+                !screen.contains("Terminal mode")
+                    && screen.contains("BROWSE")
+                    && screen.contains("j/k/↑/↓")
+            },
+            Duration::from_secs(3),
+        )
+        .context("history dashboard browse mode")?;
     let page_up = b"\x1b[5~";
     dashboard.send(page_up)?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY · frozen"),
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| screen.contains("HISTORY · frozen"),
+            Duration::from_secs(3),
+        )
+        .context("history dashboard frozen history")?;
     let mut old_marker_visible = false;
     for _ in 0..10 {
         dashboard.send(page_up)?;
@@ -993,12 +1005,14 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         live_seen,
         "fixture terminal did not observe live output while history was frozen"
     );
-    dashboard.wait_for_screen(
-        |screen| {
-            screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
-        },
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| {
+                screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
+            },
+            Duration::from_secs(3),
+        )
+        .context("history dashboard frozen history after live output")?;
     let frozen_with_new_output = dashboard.rendered();
     assert!(frozen_with_new_output.contains("HIST_OLD_000"));
     assert!(frozen_with_new_output.contains("HISTORY · frozen · new output"));
@@ -1008,12 +1022,14 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         .context("frozen history status line")?
         .to_owned();
     dashboard.resize(40, 120)?;
-    dashboard.wait_for_screen(
-        |screen| {
-            screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
-        },
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| {
+                screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
+            },
+            Duration::from_secs(3),
+        )
+        .context("history dashboard resized frozen history")?;
     let resized = dashboard.rendered();
     assert!(resized.contains("HIST_OLD_000"));
     assert!(resized.contains("HISTORY · frozen · new output"));
@@ -1023,10 +1039,12 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         .context("resized history status line")?;
     assert_ne!(resized_status, frozen_status);
     dashboard.send(b"\x07")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("HIST_NEW_LIVE_TOKEN"),
-        Duration::from_secs(3),
-    )?;
+    dashboard
+        .wait_for_screen(
+            |screen| screen.contains("HIST_NEW_LIVE_TOKEN"),
+            Duration::from_secs(3),
+        )
+        .context("history dashboard live output after history exit")?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
