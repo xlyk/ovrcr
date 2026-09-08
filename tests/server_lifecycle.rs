@@ -6,9 +6,9 @@ use ovrcr::protocol::{
     PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PaneTarget, Request, Response, ServerEvent, ServerMessage,
     read_frame, write_frame,
 };
-use std::collections::{HashMap, HashSet};
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io::{Cursor, Read, Write};
 use std::net::Shutdown;
@@ -5603,10 +5603,17 @@ fn split_next_message(
         Instant::now() < deadline,
         "{label} exceeded its absolute deadline"
     );
+    let two_second_deadline = Instant::now() + Duration::from_secs(2);
+    let read_deadline = deadline.min(two_second_deadline);
+    let timeout_label = if deadline <= two_second_deadline {
+        "outer"
+    } else {
+        "two-second read"
+    };
     frames
-        .next(stream, deadline)
+        .next(stream, read_deadline)
         .unwrap_or_else(|error| panic!("{label} read failed before deadline: {error}"))
-        .unwrap_or_else(|| panic!("{label} exceeded its two-second deadline"))
+        .unwrap_or_else(|| panic!("{label} exceeded its {timeout_label} deadline"))
 }
 
 fn split_view_messages(
@@ -5640,9 +5647,23 @@ fn split_view_messages(
         {
             match response {
                 Response::Screen { session, .. } => {
-                    screens.insert(*session);
+                    assert!(
+                        view.panes.iter().any(|pane| pane.session == *session),
+                        "split view returned snapshot for unexpected session {session:?}"
+                    );
+                    assert!(
+                        screens.insert(*session),
+                        "split view returned duplicate snapshot for {session:?}"
+                    );
                 }
-                Response::Ok => acknowledged = true,
+                Response::Ok => {
+                    assert_eq!(
+                        screens,
+                        view.panes.iter().map(|pane| pane.session).collect(),
+                        "split view acknowledged before all expected snapshots"
+                    );
+                    acknowledged = true;
+                }
                 Response::Error { message, .. } => {
                     panic!("split view request failed: {message}")
                 }
@@ -5656,7 +5677,10 @@ fn split_view_messages(
         view.panes.iter().map(|pane| pane.session).collect(),
         "split view must return exactly one snapshot per pane"
     );
-    assert!(acknowledged, "split view did not acknowledge after snapshots");
+    assert!(
+        acknowledged,
+        "split view did not acknowledge after snapshots"
+    );
     messages
 }
 
@@ -5706,10 +5730,9 @@ fn split_view_parsers(
                     parsers.get_mut(session).unwrap().process(bytes);
                 }
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty {
-                session,
-                revision,
-            }) if view.panes.iter().any(|pane| pane.session == *session) => {
+            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
+                if view.panes.iter().any(|pane| pane.session == *session) =>
+            {
                 if screens.contains(session) {
                     assert_eq!(
                         *revision, view.revision,
@@ -5747,7 +5770,11 @@ fn split_input_marker(
     let mut frames = HistoryFrameReader::new();
     let mut acknowledged = false;
     let mut raw = Vec::new();
-    while !acknowledged || !raw.windows(marker.len()).any(|window| window == marker.as_bytes()) {
+    while !acknowledged
+        || !raw
+            .windows(marker.len())
+            .any(|window| window == marker.as_bytes())
+    {
         let message = split_next_message(stream, &mut frames, deadline, "split input marker");
         match message {
             ServerMessage::Response {
@@ -5922,7 +5949,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
     let first_messages = split_view_messages(&mut dashboard, 2, &first_view);
     let mut parsers = split_view_parsers(&first_messages, &first_view);
     assert!(parsers[&left.id].screen().contents().contains("LEFT_READY"));
-    assert!(parsers[&right.id].screen().contents().contains("RIGHT_READY"));
+    assert!(
+        parsers[&right.id]
+            .screen()
+            .contents()
+            .contains("RIGHT_READY")
+    );
     split_input_marker(
         &mut dashboard,
         3,
@@ -6086,10 +6118,9 @@ fn split_server_two_streams_resize_resync_and_detach() {
                 );
                 let _ = bytes;
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty {
-                session,
-                revision,
-            }) if session == left.id || session == right.id => {
+            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
+                if session == left.id || session == right.id =>
+            {
                 assert_eq!(
                     revision, resized_focus_right_view.revision,
                     "old-revision burst dirty notification arrived after replacement"
@@ -6120,8 +6151,14 @@ fn split_server_two_streams_resize_resync_and_detach() {
 
     drop(dashboard);
     assert!(group_exists(left_pgid), "left process group died on detach");
-    assert!(group_exists(right_pgid), "right process group died on detach");
-    assert!(group_exists(hidden_pgid), "hidden process group died on detach");
+    assert!(
+        group_exists(right_pgid),
+        "right process group died on detach"
+    );
+    assert!(
+        group_exists(hidden_pgid),
+        "hidden process group died on detach"
+    );
 
     let mut reattached = UnixStream::connect(&fixture.socket).unwrap();
     reattached
@@ -6144,10 +6181,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
     };
     let singleton_messages = split_view_messages(&mut reattached, 2, &singleton_view);
     let singleton_parsers = split_view_parsers(&singleton_messages, &singleton_view);
-    assert!(singleton_parsers[&left.id]
-        .screen()
-        .contents()
-        .contains("LEFT_FINAL"));
+    assert!(
+        singleton_parsers[&left.id]
+            .screen()
+            .contents()
+            .contains("LEFT_FINAL")
+    );
 
     let rebuilt_view = DashboardView {
         revision: 2,
@@ -6156,14 +6195,18 @@ fn split_server_two_streams_resize_resync_and_detach() {
     };
     let rebuilt_messages = split_view_messages(&mut reattached, 3, &rebuilt_view);
     let rebuilt_parsers = split_view_parsers(&rebuilt_messages, &rebuilt_view);
-    assert!(rebuilt_parsers[&left.id]
-        .screen()
-        .contents()
-        .contains("LEFT_FINAL"));
-    assert!(rebuilt_parsers[&right.id]
-        .screen()
-        .contents()
-        .contains("RIGHT_FINAL"));
+    assert!(
+        rebuilt_parsers[&left.id]
+            .screen()
+            .contents()
+            .contains("LEFT_FINAL")
+    );
+    assert!(
+        rebuilt_parsers[&right.id]
+            .screen()
+            .contents()
+            .contains("RIGHT_FINAL")
+    );
     drop(reattached);
 
     fixture.shutdown_kill();
