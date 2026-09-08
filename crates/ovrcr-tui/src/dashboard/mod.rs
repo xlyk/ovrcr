@@ -1,13 +1,17 @@
+mod agents;
 mod copy;
 mod event_loop;
 mod input;
 mod palette;
+mod picker;
 mod render;
+mod settings;
 mod state;
 mod terminal_guard;
 #[cfg(test)]
 mod tests;
 
+pub use agents::detect_agents;
 pub use copy::{
     CopyMotion, CopyPoint, CopySelection, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint,
     HistoryCopyRange, append_history_selection, write_clipboard,
@@ -194,6 +198,7 @@ pub struct Dashboard {
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
     ignored_responses: HashSet<u64>,
+    pub(super) settings: settings::DashboardSettings,
     pub(super) last_view_request_id: Option<u64>,
     pub(super) pending_view: Option<PendingView>,
     pub(super) requested_view: Option<RequestedView>,

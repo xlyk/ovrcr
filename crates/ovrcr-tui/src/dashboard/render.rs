@@ -683,9 +683,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             let narrow = layout.footer.width < 60;
             if dashboard.mode == InputMode::Browse && !(paused && narrow) {
                 let footer = if layout.footer.width < 100 {
-                    "BROWSE  v split  Tab/Shift-Tab panes  x close  q detach"
+                    "BROWSE  n terminal  v split  Tab/Shift-Tab panes  x close  q detach"
                 } else {
-                    "BROWSE  j/k/↑/↓  Enter  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach"
+                    "BROWSE  j/k/↑/↓  Enter  n terminal  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach"
                 };
                 return Line::from(Span::styled(
                     footer,

@@ -2747,8 +2747,11 @@ dependencies = [
  "ovrcr-protocol",
  "ovrcr-terminal",
  "ratatui",
+ "serde",
  "serde_json",
  "signal-hook",
+ "tempfile",
+ "toml",
  "unicode-width",
 ]
 

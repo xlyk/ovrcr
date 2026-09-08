@@ -42,6 +42,14 @@ rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
 
 Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
+Return to browse with `Ctrl-g`. Press `n`. On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
+
+```sh
+rtk proxy printf 'CUA_%s\n' N_SHELL_OK
+```
+
+Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command alone is insufficient.
+
 ## 3. Mouse forwarding and wheel history
 
 Stay on `consigint / auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.

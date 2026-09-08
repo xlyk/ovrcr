@@ -35,12 +35,15 @@ pub mod tui {
         HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, InputMode,
         KeyEncoding, PaneRects, PaneState, PendingHistoryBegin, PendingHistoryPage, TerminalGuard,
         TreeRow, actual_drawn_inner_rect, append_history_selection, dashboard_message_channel,
-        draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste,
+        detect_agents, draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste,
         event_to_request, history_view_size, pane_rects, render_copy, render_history,
         render_terminal, write_clipboard,
     };
 
-    pub fn run_dashboard(stream: std::os::unix::net::UnixStream) -> anyhow::Result<()> {
-        ovrcr_tui::run_dashboard(stream, crate::task_cli::request)
+    pub fn run_dashboard(
+        stream: std::os::unix::net::UnixStream,
+        settings_path: std::path::PathBuf,
+    ) -> anyhow::Result<()> {
+        ovrcr_tui::run_dashboard(stream, crate::task_cli::request, settings_path)
     }
 }
