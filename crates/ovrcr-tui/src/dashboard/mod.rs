@@ -97,6 +97,7 @@ impl PaneState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaneRects {
     pub pane_index: usize,
     pub metadata: Rect,

@@ -11,8 +11,8 @@ use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, Ter
 use ovrcr::tui::{
     CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, HistoryCopyCompletion,
     HistoryCopyJob, HistoryCopyPoint, HistoryCopyRange, HistoryCursor, HistoryView, KeyEncoding,
-    append_history_selection, dashboard_message_channel, encode_key, encode_paste,
-    event_to_request, pane_rects, render_copy, write_clipboard,
+    append_history_selection, dashboard_message_channel, draw_dashboard_at, encode_key,
+    encode_paste, event_to_request, pane_rects, render_copy, write_clipboard,
 };
 use ovrcr_terminal::{history::FrozenHistory, vt100};
 use ratatui::backend::{Backend, CrosstermBackend, TestBackend};
@@ -6152,6 +6152,204 @@ fn pane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane() {
     assert_eq!(focused_only[0].pane_index, 1);
     assert_eq!(focused_only[0].terminal, Rect::new(40, 3, 40, 20));
     assert!(pane_rects(Rect::new(0, 0, 1, 1), 2, 0).is_empty());
+}
+
+#[test]
+fn split_layout_geometry_and_narrow_fallback() {
+    let rects = pane_rects(Rect::new(0, 0, 120, 40), 2, 1);
+    assert_eq!(rects[0].terminal, Rect::new(40, 3, 39, 36));
+    assert_eq!(rects[1].terminal, Rect::new(80, 3, 40, 36));
+
+    let narrow = pane_rects(Rect::new(0, 0, 80, 24), 2, 1);
+    assert_eq!(narrow.len(), 1);
+    assert_eq!(narrow[0].pane_index, 1);
+    assert_eq!(narrow[0].terminal, Rect::new(40, 3, 40, 20));
+    assert!(pane_rects(Rect::new(0, 0, 1, 1), 2, 1).is_empty());
+}
+
+#[test]
+fn split_layout_renders_independent_cells_and_cursor() {
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 100)
+        .unwrap()
+        .expect("split view should request both panes");
+    let mut loading_terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    loading_terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let loading_buffer = loading_terminal.backend().buffer();
+    let loading_left = (40..79)
+        .map(|x| loading_buffer[(x, 1)].symbol())
+        .collect::<String>();
+    let loading_right = (80..120)
+        .map(|x| loading_buffer[(x, 1)].symbol())
+        .collect::<String>();
+    assert!(loading_left.starts_with("  loading review"));
+    assert!(loading_right.starts_with("> loading local"));
+    acknowledge_all_view_targets(&mut dashboard, split);
+
+    dashboard.panes[0]
+        .parser
+        .process(b"\x1b[31mLEFT\x1b[0m\x1b[36;38H\xE7\x95\x8C\x1b[31m\x1b[36;1H<\x1b[2;4H");
+    dashboard.panes[1]
+        .parser
+        .process(b"\x1b[32mRIGHT\x1b[0m\x1b[36;39H\xE7\x95\x8C\x1b[32m\x1b[36;1H>\x1b[2;5H");
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let left_metadata = (40..79)
+        .map(|x| buffer[(x, 1)].symbol())
+        .collect::<String>();
+    let right_metadata = (80..120)
+        .map(|x| buffer[(x, 1)].symbol())
+        .collect::<String>();
+    assert!(left_metadata.starts_with("  review 39x36"));
+    assert!(right_metadata.starts_with("> local 40x36"));
+    assert_eq!(buffer[(40, 3)].symbol(), "L");
+    assert_eq!(buffer[(80, 3)].symbol(), "R");
+    assert_eq!(buffer[(40, 3 + 35)].symbol(), "<");
+    assert_eq!(buffer[(80, 3 + 35)].symbol(), ">");
+    assert_eq!(buffer[(40, 3 + 35)].fg, Color::Indexed(1));
+    assert_eq!(buffer[(80, 3 + 35)].fg, Color::Indexed(2));
+    assert_eq!(buffer[(40 + 37, 3 + 35)].symbol(), "界");
+    assert_eq!(buffer[(40 + 38, 3 + 35)].symbol(), " ");
+    for row in 1..39 {
+        assert_eq!(buffer[(79, row)].symbol(), "│", "separator row {row}");
+    }
+    assert_eq!(terminal.backend().cursor_position(), (84, 4).into());
+
+    let mut output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut output);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 40)),
+            },
+        )
+        .unwrap();
+        terminal
+            .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+    }
+    let mut emitted = vt100::Parser::new(40, 120, 0);
+    emitted.process(&output);
+    assert_eq!(emitted.screen().cell(38, 77).unwrap().contents(), "界");
+    assert!(
+        emitted
+            .screen()
+            .cell(38, 78)
+            .unwrap()
+            .is_wide_continuation()
+    );
+    assert_eq!(emitted.screen().cell(38, 79).unwrap().contents(), "│");
+
+    assert!(dashboard.focus_pane(0));
+    let focused_left = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 101)
+        .unwrap()
+        .expect("focus change should request replacement view");
+    acknowledge_all_view_targets(&mut dashboard, focused_left);
+    dashboard.panes[0].parser.process(b"\x1b[2;4H");
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().cursor_position(), (43, 4).into());
+
+    dashboard.panes[0].parser.process(b"\x1b[?25l");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
+
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().cursor_position(), (0, 0).into());
+
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let narrow = dashboard
+        .view_request(Rect::new(0, 0, 80, 24), 102)
+        .unwrap()
+        .expect("narrow view should request the focused pane");
+    assert_eq!(pane_rects(Rect::new(0, 0, 80, 24), 2, 0).len(), 1);
+    acknowledge_all_view_targets(&mut dashboard, narrow);
+    dashboard.panes[0].parser.process(b"L\x1b[2;4H");
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "L");
+    assert_eq!(terminal.backend().cursor_position(), (43, 4).into());
+    let footer = (0..80)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>();
+    assert!(footer.contains("split hidden: terminal too small"));
+
+    let wide = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 103)
+        .unwrap()
+        .expect("wide view should restore both panes");
+    acknowledge_all_view_targets(&mut dashboard, wide);
+    dashboard.panes[0].parser.process(b"L");
+    dashboard.panes[1].parser.process(b"R");
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(40, 3)].symbol(), "L");
+    assert_eq!(terminal.backend().buffer()[(80, 3)].symbol(), "R");
+
+    let click = |column, row| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    dashboard.mode = ovrcr::tui::InputMode::Browse;
+    assert_eq!(
+        dashboard.mouse_action(click(40, 3), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard.mouse_action(click(79, 20), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard.mouse_action(click(80, 1), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard.mouse_action(click(80, 3), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, 1);
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        dashboard.mouse_action(click(40, 3), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(dashboard.focused_pane, 1);
 }
 
 #[test]
