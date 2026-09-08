@@ -138,24 +138,46 @@ restore a PTY after a server crash or reboot.
 
 ## Command palette
 
+Press `n` in browse mode to create a terminal. From a focused terminal, press
+`Ctrl-g` first. The Agent field lists coding agents found on `PATH` in this
+order: `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `goose`, `amp`,
+`cursor-agent`. `shell` (`$SHELL`, or `/bin/sh` when unset) is always last
+before Custom. Workspace lists `project / workspace` pairs and defaults to the
+selected session. Name defaults to `local` when the agent is `shell` and that
+name is free in the workspace; otherwise it is `<agent>-1`, `<agent>-2`, and
+so on. Custom shows a Command field that runs through `/bin/sh -lc`. After the
+session starts, typing goes to it immediately.
+
 Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
 command palette. `Cmd-K` opens the popup anywhere in the GUI window and moves
 keyboard focus into it. If the dashboard has detached, it reconnects first.
-Type to filter actions or
-search a terminal by its project, workspace, and name. Use the arrow keys to
-select a result, Enter to continue, and Escape to cancel.
+Type to filter actions or search a terminal by its project, workspace, and
+name. The Create terminal entry is labeled `Create terminal (n)`. Use the
+arrow keys to select a result, Enter to continue, and Escape to cancel.
 
-The palette can create and switch terminals, create workspaces, register
-projects, close terminals, and remove workspaces or projects. Forms prefill
-the selected terminal's project and workspace. Tab or the arrow keys move
-between fields; Enter advances to the next field and submits at the last
-field. Ctrl-u clears a field; Backspace deletes its last character.
+The palette can also switch terminals, create workspaces, register projects,
+close terminals, and remove workspaces or projects. Forms prefill from the
+selected terminal where that applies. On a pick list, Up/Down move the
+highlight and Tab or Enter accepts. On a text field, Tab or the arrow keys
+move between fields; Enter advances and submits at the last field. Ctrl-u
+clears a field; Backspace deletes its last character.
 
-For terminal creation, leave Command blank to start `$SHELL` (or `/bin/sh`
-when unset). A supplied command runs through `/bin/sh -lc`, so quoting and
-shell arguments work. For workspace creation, enter a base to create a new
-branch, or clear Base to use an existing branch. Project registration takes
-the repository and workspace-root paths.
+For workspace creation, enter a base to create a new branch, or clear Base to
+use an existing branch. Project registration takes the repository and
+workspace-root paths.
+
+Dashboard settings live in `dashboard.toml` beside `config.toml`. Override the
+path with `OVRCR_DASHBOARD_CONFIG`. Do not put these keys in `config.toml`; the
+server rewrites that file and drops unknown tables. A missing file uses
+defaults. A parse error shows in the footer and also uses defaults. An
+`[[agents]]` row whose name matches a detected agent replaces its argv; a new
+name is inserted before `shell`:
+
+```toml
+[[agents]]
+name = "claude"
+argv = ["claude", "--verbose"]
+```
 
 Close and remove actions show their target and require confirmation. Existing
 server safeguards still apply: workspaces must have no terminal records and

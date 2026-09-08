@@ -1,4 +1,5 @@
 use super::render::{draw_dashboard, pane_size};
+use super::settings::load_dashboard_settings;
 use super::terminal_guard::TerminalGuard;
 use super::{
     DASHBOARD_READER_QUEUE_CAPACITY, Dashboard, DashboardAction, PANIC_TERMINAL_RESTORED, TreeRow,
@@ -19,6 +20,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::panic;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,13 +37,22 @@ pub fn dashboard_message_channel() -> (
     mpsc::sync_channel(DASHBOARD_READER_QUEUE_CAPACITY)
 }
 
-pub fn run_dashboard(mut stream: UnixStream, task_request: TaskRequestFn) -> Result<()> {
+pub fn run_dashboard(
+    mut stream: UnixStream,
+    task_request: TaskRequestFn,
+    settings_path: PathBuf,
+) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
     write_client(&mut stream, 1, Request::DashboardHello)?;
     let initial = read_server(&mut stream)?;
     dashboard_hello_result(&initial)?;
     let mut dashboard = Dashboard::new(pane_size);
+    let (settings, settings_error) = load_dashboard_settings(&settings_path);
+    dashboard.settings = settings;
+    if let Some(error) = settings_error {
+        dashboard.error = Some(error);
+    }
     dashboard.handle_server_message(initial);
     write_client(
         &mut stream,

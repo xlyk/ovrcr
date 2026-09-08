@@ -16,8 +16,9 @@ pub use dashboard::{
     DashboardAction, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint, HistoryCopyRange,
     HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, InputMode, KeyEncoding,
     PaneRects, PaneState, PendingHistoryBegin, PendingHistoryPage, TerminalGuard, TreeRow,
-    actual_drawn_inner_rect, append_history_selection, dashboard_message_channel, draw_dashboard,
-    draw_dashboard_at, encode_key, encode_mouse, event_to_request, history_view_size, pane_rects,
-    render_copy, render_history, render_terminal, run_dashboard, write_clipboard,
+    actual_drawn_inner_rect, append_history_selection, dashboard_message_channel, detect_agents,
+    draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, event_to_request,
+    history_view_size, pane_rects, render_copy, render_history, render_terminal, run_dashboard,
+    write_clipboard,
 };
 pub use ovrcr_terminal::encode_paste;

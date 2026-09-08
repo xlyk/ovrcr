@@ -294,6 +294,7 @@ fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
     assert!(palette_text(&dashboard).contains("consigint"));
     dashboard.key(KeyCode::Tab);
     dashboard.key(KeyCode::Tab);
+    dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("palette-shell".into()));
     dashboard.key(KeyCode::Tab);
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
@@ -451,6 +452,74 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         };
         assert_eq!(message.request, expected);
     }
+}
+
+#[test]
+fn n_opens_terminal_form_prefilled_for_selected_workspace() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    assert_eq!(dashboard.key(KeyCode::Char('n')), DashboardAction::Redraw);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Create terminal"));
+    assert!(text.contains("consigint / auth"));
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let shell = std::env::var_os("SHELL");
+    let first = ovrcr::tui::detect_agents(&path, shell.as_deref())
+        .into_iter()
+        .next()
+        .expect("shell is always detected")
+        .name;
+    assert!(text.contains(&first), "{text}");
+}
+
+#[test]
+fn created_session_enters_terminal_mode() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("form did not submit");
+    };
+    let Request::CreateSession(request) = &message.request else {
+        panic!("wrong request");
+    };
+    let session = SessionSummary {
+        id: SessionId(99),
+        project: request.project.clone(),
+        workspace: request.workspace.clone(),
+        name: request.name.clone(),
+        label: request.label.clone().unwrap_or_default(),
+        pid: Some(1),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::CreatedSession(Box::new(session)),
+    });
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
+}
+
+#[test]
+fn n_is_listed_in_the_browse_footer() {
+    let dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .unwrap();
+    let text: String = (0..40)
+        .map(|y| {
+            (0..120)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect();
+    assert!(text.contains("n terminal"), "{text}");
 }
 
 #[test]

@@ -8,6 +8,7 @@ use super::render::{
     METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_gap,
     tree_row_height,
 };
+use super::settings::DashboardSettings;
 use super::{
     Dashboard, DashboardAction, InputMode, KeyEncoding, RequestedView, TreeRow, history_view_size,
 };
@@ -561,6 +562,7 @@ impl Dashboard {
             history_page_error: false,
             history_end_after_selection: None,
             ignored_responses: HashSet::new(),
+            settings: DashboardSettings::default(),
             last_view_request_id: None,
             pending_view: None,
             requested_view: None,
@@ -1035,6 +1037,7 @@ impl Dashboard {
                 }
                 match key.code {
                     KeyCode::Char(':') => self.open_palette(),
+                    KeyCode::Char('n') => self.open_create_terminal(),
                     KeyCode::Esc if self.history_begin_request.is_some() => {
                         if let Some(begin) = self.history_begin_request.as_mut() {
                             begin.cancelled = true;
