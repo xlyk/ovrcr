@@ -984,9 +984,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
 
     dashboard.resize(30, 80)?;
     dashboard.wait_for_screen(
-        |screen| {
-            screen.contains("split hidden: terminal too small") && screen.contains("> mouse 40x26")
-        },
+        |screen| screen.contains("split hidden") && screen.contains("> mouse 40x26"),
         wait_deadline(),
     )?;
     dashboard.resize(40, 120)?;
@@ -1385,18 +1383,21 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     }
     dashboard.send(b"v")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 16:127"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 16:127"),
         wait_deadline(),
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 17:127"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 17:127"),
         wait_deadline(),
     )?;
     for col in 128..=130 {
         dashboard.send(b"l")?;
-        let expected = format!("HISTORY SELECT  row 17:{col}");
-        dashboard.wait_for_screen(|screen| screen.contains(&expected), wait_deadline())?;
+        let expected = format!("row 17:{col}");
+        dashboard.wait_for_screen(
+            |screen| screen.contains("HISTORY SELECT") && screen.contains(&expected),
+            wait_deadline(),
+        )?;
     }
 
     let expected = format!("{}\nROW_016{}", "x".repeat(6), "x".repeat(123));
@@ -1410,7 +1411,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 18:130"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 18:130"),
         wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;

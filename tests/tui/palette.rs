@@ -959,6 +959,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         response: Response::Ok,
     });
     assert!(palette_text(&dashboard).contains("Working"));
+    assert!(palette_text(&dashboard).contains("┌ Create workspace"));
     let mut hierarchy = workspace_creation_hierarchy(&dashboard);
     let workspace = hierarchy
         .projects
@@ -978,9 +979,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     ));
     let text = palette_text(&dashboard);
     assert!(
-        !text
-            .lines()
-            .any(|line| line.contains("│") && line.contains("Create workspace")),
+        !text.lines().any(|line| line.contains("┌ Create workspace")),
         "{text}"
     );
     assert!(!text.contains("Working"), "{text}");
@@ -1027,6 +1026,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
         response: Response::Ok,
     });
     assert!(palette_text(&dashboard).contains("Working"));
+    assert!(palette_text(&dashboard).contains("┌ Create workspace"));
     let hierarchy = workspace_creation_hierarchy(&dashboard);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy.clone(),
@@ -1056,7 +1056,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     assert!(
         !palette_text(&dashboard)
             .lines()
-            .any(|line| line.contains("│") && line.contains("Create workspace"))
+            .any(|line| line.contains("┌ Create workspace"))
     );
 }
 
