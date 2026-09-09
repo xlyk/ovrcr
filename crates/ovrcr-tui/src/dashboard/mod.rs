@@ -2,6 +2,7 @@ mod agents;
 mod copy;
 mod event_loop;
 mod git_hints;
+mod hints;
 mod input;
 mod palette;
 mod picker;
@@ -11,6 +12,7 @@ mod state;
 mod terminal_guard;
 #[cfg(test)]
 mod tests;
+mod whichkey;
 
 pub use agents::detect_agents;
 pub use copy::{
@@ -197,6 +199,9 @@ pub struct Dashboard {
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
+    whichkey: Option<whichkey::WhichKey>,
+    selected_container: Option<TreeRow>,
+    pub configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
     ignored_responses: HashSet<u64>,

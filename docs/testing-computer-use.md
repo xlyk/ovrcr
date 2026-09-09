@@ -42,7 +42,12 @@ rtk proxy printf '\033[31mRED 界🙂 END\033[0m\n'
 
 Confirm readable red ASCII/CJK and a visible emoji, not replacement squares. The macOS helper uses native fallback artwork for missing glyphs, including color emoji. Compare the screenshot with accessibility text; correct text alone does not prove rendering. Repeat after opening a split with `Ctrl-g`, `v`, then Enter, after resizing, and after reattachment. Check wide-glyph spacing, cursor position, and clipping at the pane boundary.
 
-Return to browse with `Ctrl-g`. Press `n`. On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
+Return to browse with `Ctrl-g`. Press `?`. Confirm the Session group names the
+selected session, workspace, and session ID in each enabled action's description.
+Disabled actions should show a reason instead. Resize below 100 columns and use
+arrows to inspect the highlighted description below the key list. Press Escape.
+Press Space then `n`; confirm the key popup closes and the terminal form opens.
+On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' N_SHELL_OK

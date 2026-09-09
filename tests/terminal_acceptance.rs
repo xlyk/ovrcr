@@ -1136,7 +1136,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
             |screen| {
                 !screen.contains("Terminal mode")
                     && screen.contains("BROWSE")
-                    && screen.contains("j/k/↑/↓")
+                    && screen.contains("Space leader  ? help")
             },
             Duration::from_secs(3),
         )
@@ -1323,7 +1323,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
         Duration::from_secs(3),
     )?;
 
@@ -1356,7 +1356,8 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         |screen| {
             screen.contains("ROW_000")
                 && screen.contains("row 1-")
-                && screen.contains("HISTORY  arrows/hjkl scroll")
+                && screen.contains("HISTORY  Space leader")
+                && !screen.contains("Waiting for history cell")
         },
         Duration::from_secs(3),
     )?;
@@ -1364,7 +1365,11 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         dashboard.send(b"j")?;
         let expected = format!("row {}-", row + 1);
         dashboard.wait_for_screen(
-            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            |screen| {
+                screen.contains(&expected)
+                    && screen.contains("HISTORY  Space leader")
+                    && !screen.contains("Waiting for history cell")
+            },
             Duration::from_secs(3),
         )?;
     }
@@ -1372,11 +1377,15 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         dashboard.send(b"l")?;
         let expected = format!("col {}-", col + 1);
         dashboard.wait_for_screen(
-            |screen| screen.contains(&expected) && screen.contains("HISTORY  arrows/hjkl scroll"),
+            |screen| {
+                screen.contains(&expected)
+                    && screen.contains("HISTORY  Space leader")
+                    && !screen.contains("Waiting for history cell")
+            },
             Duration::from_secs(3),
         )?;
     }
-    dashboard.send(b" ")?;
+    dashboard.send(b"v")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY SELECT  row 16:127"),
         Duration::from_secs(3),
@@ -1408,7 +1417,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("j/k/↑/↓") && !screen.contains("HISTORY SELECT"),
+        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("HISTORY SELECT"),
         Duration::from_secs(3),
     )?;
     let detach_result = dashboard.detach();
@@ -1504,7 +1513,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  j/k/↑/↓  Enter"),
+        |screen| screen.contains("BROWSE  Space leader"),
         remaining(readiness_deadline),
     )?;
     loop {
@@ -1558,6 +1567,49 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     reattached.send(b"j")?;
     reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
     reattached.detach()?;
+    fixture.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
+    let mut fixture = AcceptanceFixture::new()?;
+    let mut dashboard = OuterDashboard::start(
+        &fixture,
+        PtySize {
+            rows: 30,
+            cols: 180,
+            pixel_width: 0,
+            pixel_height: 0,
+        },
+    )?;
+    eprintln!(
+        "start screen fixture root: {} outer pid: {:?}",
+        fixture._root.path().display(),
+        dashboard
+            .child
+            .as_ref()
+            .and_then(|child| child.process_id())
+    );
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("Welcome to OVRCR")
+                && screen.contains(fixture.config.to_str().unwrap())
+                && screen.contains(fixture.socket.to_str().unwrap())
+        },
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"a")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Repository") && screen.contains("Workspace root"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Repository"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
 }
@@ -1618,12 +1670,55 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         "waiting session snapshot did not render its marker"
     );
 
-    dashboard.send(b"[g ")?;
+    dashboard.send(b"?")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("Which key"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Which key"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b" n")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("Create terminal")
+                && screen.contains("Agent")
+                && !screen.contains("Which key")
+        },
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Command palette"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b" X")?;
+    dashboard.wait_for_screen(
+        |screen| {
+            screen.contains("Confirm action")
+                && screen.contains(&format!("waiting (#{})", waiting_id.0))
+        },
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\x1b")?;
+    dashboard.wait_for_screen(
+        |screen| !screen.contains("Confirm action"),
+        Duration::from_secs(3),
+    )?;
+    assert_eq!(
+        fixture.read_terminal(waiting_id)?,
+        waiting_screen,
+        "opening help and cancelling forms must preserve the live session"
+    );
+
+    dashboard.send(b"[gv")?;
     dashboard.send(b"lllllly")?;
     dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", Duration::from_secs(3))?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("j/k/↑/↓") && !screen.contains("COPY  "),
+        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("COPY  "),
         Duration::from_secs(3),
     )?;
     dashboard.send(b"\rINPUT_TOKEN\r")?;
@@ -1660,13 +1755,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     reattached.wait_for(b"mouse", Duration::from_secs(3))?;
     reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
     reattached.wait_for_screen(
-        |screen| screen.contains("j/k/↑/↓") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
         Duration::from_secs(3),
     )?;
     reattached.send(b"j")?;
     reattached.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
     let reattached_screen = reattached.rendered();
-    assert!(reattached_screen.contains("j/k/↑/↓"));
+    assert!(reattached_screen.contains("BROWSE  Space leader"));
     assert!(!reattached_screen.contains("Terminal mode"));
     assert!(!reattached_screen.contains("COPY  "));
     let pane = ovrcr::tui::actual_drawn_inner_rect(ratatui::layout::Rect::new(0, 0, 100, 30));
@@ -1676,13 +1771,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     reattached.wait_for_screen(|screen| screen.contains("COPY  "), Duration::from_secs(3))?;
     reattached.send(b"y")?;
     reattached.wait_for_screen(
-        |screen| screen.contains("Set an anchor with Space"),
+        |screen| screen.contains("Set an anchor with v"),
         Duration::from_secs(3),
     )?;
     let mut select_ack = vec![b'g'];
     select_ack.extend(vec![b'j'; usize::from(ack_row)]);
     select_ack.extend(vec![b'l'; usize::from(ack_col)]);
-    select_ack.push(b' ');
+    select_ack.push(b'v');
     select_ack.extend(vec![b'l'; b"INPUT_ACK".len() - 1]);
     select_ack.push(b'y');
     reattached.send(&select_ack)?;
@@ -1716,7 +1811,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
     dashboard.send(b"\r\x07")?;
-    dashboard.wait_for(b"p pause", Duration::from_secs(3))?;
+    dashboard.wait_for(b"BROWSE  Space leader", Duration::from_secs(3))?;
 
     dashboard.send(b"p")?;
     dashboard.wait_for(b"paused", Duration::from_secs(3))?;

@@ -559,6 +559,9 @@ impl Dashboard {
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
+            whichkey: None,
+            selected_container: None,
+            configuration_paths: None,
             history_page_error: false,
             history_end_after_selection: None,
             ignored_responses: HashSet::new(),
@@ -636,6 +639,7 @@ impl Dashboard {
         }
         self.release_for_selection_change();
         self.focused_pane = index;
+        self.selected_container = None;
         self.mode = InputMode::Browse;
         self.invalidate_view_readiness();
         true
@@ -648,6 +652,7 @@ impl Dashboard {
         self.mark_pending_parser_discarded();
         self.release_for_selection_change();
         self.panes.remove(self.focused_pane);
+        self.selected_container = None;
         self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
         self.mode = InputMode::Browse;
         self.invalidate_view_readiness();
@@ -952,6 +957,7 @@ impl Dashboard {
     }
 
     pub fn select_session(&mut self, id: SessionId) {
+        self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
             self.focus_pane(index);
         } else if self.focused_session() != Some(id) {
@@ -1018,6 +1024,9 @@ impl Dashboard {
         if self.palette.is_some() {
             return self.palette_key(key);
         }
+        if let Some(action) = self.whichkey_key(key) {
+            return action;
+        }
         match self.mode {
             InputMode::Browse => {
                 if is_browse_key(key) && self.history_begin_request.is_some() {
@@ -1041,6 +1050,8 @@ impl Dashboard {
                     KeyCode::Char('n') => self.open_create_terminal(),
                     KeyCode::Char('w') => self.open_create_workspace(),
                     KeyCode::Char('a') => self.open_register_project(),
+                    KeyCode::Char('X') => self.open_close_terminal(),
+                    KeyCode::Char('t') => self.ctrl('t'),
                     KeyCode::Esc if self.history_begin_request.is_some() => {
                         if let Some(begin) = self.history_begin_request.as_mut() {
                             begin.cancelled = true;
@@ -1188,7 +1199,7 @@ impl Dashboard {
             | KeyCode::End
             | KeyCode::Char('$')
             | KeyCode::Char('g' | 'G') => self.copy_move(key.code),
-            KeyCode::Char(' ' | 'v') => {
+            KeyCode::Char('v') => {
                 if let Some(copy) = self.copy.as_mut() {
                     copy.set_anchor();
                     self.copy_notice = None;
@@ -1199,7 +1210,7 @@ impl Dashboard {
             }
             KeyCode::Char('y') | KeyCode::Enter => {
                 let Some(text) = self.copy.as_ref().and_then(CopySelection::selected_text) else {
-                    self.copy_notice = Some("Set an anchor with Space".into());
+                    self.copy_notice = Some("Set an anchor with v".into());
                     return DashboardAction::Redraw;
                 };
                 if text.is_empty() {
@@ -1239,6 +1250,7 @@ impl Dashboard {
     }
 
     pub fn cancel_copy(&mut self, notice: Option<&str>) {
+        self.whichkey = None;
         self.copy = None;
         self.mode = InputMode::Browse;
         self.copy_notice = notice.map(str::to_owned);
@@ -1379,7 +1391,7 @@ impl Dashboard {
                         .min(u16::try_from(max_left).unwrap_or(u16::MAX));
                     true
                 }
-                KeyCode::Char(' ' | 'v') => return self.anchor_history_cursor(),
+                KeyCode::Char('v') => return self.anchor_history_cursor(),
                 KeyCode::Char('y') => return self.start_history_copy(),
                 KeyCode::Enter => false,
                 _ => false,
@@ -1401,7 +1413,7 @@ impl Dashboard {
                 .map_or(DashboardAction::Redraw, DashboardAction::Request);
         }
         match key.code {
-            KeyCode::Char(' ' | 'v') => self.anchor_history_cursor(),
+            KeyCode::Char('v') => self.anchor_history_cursor(),
             KeyCode::Char('y') => self.start_history_copy(),
             KeyCode::Enter => DashboardAction::None,
             _ => self.move_history_cursor(key.code, size),
@@ -1443,7 +1455,7 @@ impl Dashboard {
                 .map_or(DashboardAction::Redraw, DashboardAction::Request);
         }
         let Some(range) = view.copy_range() else {
-            self.copy_notice = Some("Set an anchor with Space".into());
+            self.copy_notice = Some("Set an anchor with v".into());
             return DashboardAction::Redraw;
         };
         let job_id = self.next_request_id();
@@ -1518,6 +1530,7 @@ impl Dashboard {
     }
 
     fn leave_history(&mut self) -> DashboardAction {
+        self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -1538,6 +1551,7 @@ impl Dashboard {
     }
 
     fn release_for_selection_change(&mut self) {
+        self.whichkey = None;
         self.cancel_mouse_gesture();
         self.cancel_copy(None);
         if let Some(begin) = self.history_begin_request.as_mut() {
@@ -1719,6 +1733,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         match event {
+            Event::Paste(_) if self.whichkey.is_some() => DashboardAction::None,
             Event::Paste(text) if self.palette.is_some() => self.palette_paste(&text),
             Event::Key(key) => self.key_action(key),
             Event::Paste(text) if self.mode == InputMode::Terminal => {
@@ -1751,6 +1766,9 @@ impl Dashboard {
         if self.tasks.is_some() || self.palette.is_some() {
             return DashboardAction::None;
         }
+        if self.whichkey.is_some() {
+            return self.whichkey_mouse(mouse, area);
+        }
         match self.mode {
             InputMode::Copy => DashboardAction::None,
             InputMode::History => self.history_wheel_action(mouse, area),
@@ -1774,6 +1792,9 @@ impl Dashboard {
     pub fn mouse_capture_required(&self) -> bool {
         if self.tasks.is_some() || self.palette.is_some() {
             return false;
+        }
+        if self.whichkey.is_some() {
+            return true;
         }
         match self.mode {
             InputMode::Browse | InputMode::History => true,
@@ -1815,12 +1836,17 @@ impl Dashboard {
                 self.request_selected()
             }
             TreeRow::Project { name } => {
+                self.select_container(TreeRow::Project { name: name.clone() });
                 if !self.collapsed_projects.remove(&name) {
                     self.collapsed_projects.insert(name);
                 }
                 DashboardAction::Redraw
             }
             TreeRow::Workspace { project, name } => {
+                self.select_container(TreeRow::Workspace {
+                    project: project.clone(),
+                    name: name.clone(),
+                });
                 let key = (project, name);
                 if !self.collapsed_workspaces.remove(&key) {
                     self.collapsed_workspaces.insert(key);
@@ -1828,6 +1854,18 @@ impl Dashboard {
                 DashboardAction::Redraw
             }
         }
+    }
+
+    fn select_container(&mut self, row: TreeRow) {
+        self.mark_pending_parser_discarded();
+        self.release_for_selection_change();
+        let size = self.focused_size();
+        if let Some(pane) = self.focused_pane_mut() {
+            *pane = super::PaneState::new(size);
+        }
+        self.selected_container = Some(row);
+        self.mode = InputMode::Browse;
+        self.invalidate_view_readiness();
     }
 
     fn terminal_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
@@ -2587,7 +2625,12 @@ impl Dashboard {
     }
 
     pub fn input_request(&self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {
-        if self.mode != InputMode::Terminal || !self.input_is_allowed() {
+        if self.whichkey.is_some()
+            || self.palette.is_some()
+            || self.tasks.is_some()
+            || self.mode != InputMode::Terminal
+            || !self.input_is_allowed()
+        {
             return None;
         }
         self.focused_session().map(|session| ClientMessage {
@@ -2602,7 +2645,7 @@ impl Dashboard {
             .map(|session| &session.phase)
     }
 
-    fn input_is_allowed(&self) -> bool {
+    pub(super) fn input_is_allowed(&self) -> bool {
         let Some(session) = self.focused_session() else {
             return false;
         };

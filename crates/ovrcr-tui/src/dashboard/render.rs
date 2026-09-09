@@ -340,55 +340,6 @@ fn history_hint(view: &HistoryView, pane_size: TerminalSize) -> String {
     )
 }
 
-fn history_footer(dashboard: &Dashboard) -> Line<'static> {
-    let text = dashboard.history.as_ref().map_or_else(
-        || "HISTORY  arrows/hjkl scroll  PgUp/PgDn page  Home/End bounds  Space/v anchor  Esc/q exit".to_owned(),
-        |view| {
-            if view.copy_job.is_some() || view.copy_completion.is_some() {
-                "HISTORY COPY  Copying selection  Esc cancel  q exit".to_owned()
-            } else if view.cursor_target.is_some() {
-                "HISTORY  Waiting for history cell  Esc/q exit".to_owned()
-            } else if view.anchor.is_some() {
-                view.cursor.map_or_else(
-                    || "HISTORY  Nothing to select on this row  Esc/q exit".to_owned(),
-                    |cursor| {
-                        format!(
-                            "HISTORY SELECT  row {}:{}  arrows/hjkl move  Space/v anchor  y copy  Esc/q exit",
-                            cursor.point.row.saturating_add(1),
-                            u32::from(cursor.point.col).saturating_add(1),
-                        )
-                    },
-                )
-            } else {
-                "HISTORY  arrows/hjkl scroll  PgUp/PgDn page  Home/End bounds  Space/v anchor  Esc/q exit".to_owned()
-            }
-        },
-    );
-    Line::from(Span::styled(text, Style::default().fg(TEXT)))
-}
-
-fn compact_history_footer(dashboard: &Dashboard) -> Line<'static> {
-    let status =
-        dashboard
-            .history
-            .as_ref()
-            .map_or("HISTORY  scroll  Space/v anchor".to_owned(), |view| {
-                if view.copy_job.is_some() || view.copy_completion.is_some() {
-                    "HISTORY COPY  Copying selection".to_owned()
-                } else if view.cursor_target.is_some() {
-                    "HISTORY  Waiting for cell".to_owned()
-                } else if view.anchor.is_some() {
-                    "HISTORY SELECT  h/j/k/l Space/v y".to_owned()
-                } else {
-                    "HISTORY  scroll  Space/v anchor".to_owned()
-                }
-            });
-    Line::from(Span::styled(
-        format!("{status}  split hidden: terminal too small  Esc/q"),
-        Style::default().fg(TEXT),
-    ))
-}
-
 fn history_color(value: HistoryColor, default: Color) -> Color {
     match value {
         HistoryColor::Default => default,
@@ -651,92 +602,38 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 }
                 return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
             }
-            if dashboard.mode == InputMode::Copy {
+            if dashboard.mode != InputMode::Terminal {
+                let mut text = super::hints::footer(dashboard, layout.footer.width);
                 if split_hidden {
-                    return Line::from(Span::styled(
-                        "COPY  split hidden: terminal too small  h/j/k/l  Space anchor  y copy  Esc",
-                        Style::default().fg(TEXT),
-                    ));
+                    text = format!("split hidden: terminal too small  {text}");
                 }
-                return Line::from(vec![
-                    Span::styled("COPY  ", Style::default().fg(TEAL)),
-                    Span::styled("h/j/k/l", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" move  ", Style::default().fg(MUTED)),
-                    Span::styled("Space", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" anchor  ", Style::default().fg(MUTED)),
-                    Span::styled("y", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" copy  ", Style::default().fg(MUTED)),
-                    Span::styled("Esc", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" cancel", Style::default().fg(MUTED)),
-                ]);
+                if dashboard.mode == InputMode::History
+                    && let Some(view) = &dashboard.history
+                {
+                    if view.copy_job.is_some() || view.copy_completion.is_some() {
+                        text = format!("HISTORY COPY  Copying selection  {text}");
+                    } else if view.cursor_target.is_some() {
+                        text = format!("HISTORY  Waiting for history cell  {text}");
+                    } else if view.anchor.is_some() {
+                        text = view.cursor.map_or_else(
+                            || format!("HISTORY SELECT  Nothing to select on this row  {text}"),
+                            |cursor| {
+                                format!(
+                                    "HISTORY SELECT  row {}:{}  {text}",
+                                    cursor.point.row + 1,
+                                    u32::from(cursor.point.col) + 1
+                                )
+                            },
+                        );
+                    }
+                }
+                return Line::from(Span::styled(text, Style::default().fg(TEXT)));
             }
-            if dashboard.mode == InputMode::History && split_hidden {
-                return compact_history_footer(dashboard);
-            }
-            if dashboard.mode == InputMode::Browse && split_hidden {
-                return Line::from(Span::styled(
-                    "BROWSE  split hidden: terminal too small  v split  Tab/Shift-Tab  x close",
-                    Style::default().fg(TEXT),
-                ));
-            }
-            let paused = dashboard.selected_phase() == Some(&SessionPhase::Paused);
-            let narrow = layout.footer.width < 60;
-            if dashboard.mode == InputMode::Browse && !(paused && narrow) {
-                let footer = if layout.footer.width < 100 {
-                    "BROWSE  n terminal  v split  Tab/Shift-Tab panes  x close  q detach"
-                } else {
-                    "BROWSE  j/k/↑/↓  Enter  n terminal  p pause  r resume  Ctrl-g  Ctrl-t tasks  v split  Tab/Shift-Tab  x close  q detach"
-                };
-                return Line::from(Span::styled(
-                    footer,
-                    Style::default().fg(TEXT),
-                ));
-            }
-            let mut footer = if dashboard.mode == InputMode::Terminal {
-                vec![
-                    Span::styled("Terminal mode  ", Style::default().fg(MUTED)),
-                    Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" browse  ", Style::default().fg(MUTED)),
-                ]
-            } else if dashboard.mode == InputMode::History {
-                return history_footer(dashboard);
-            } else if paused && narrow {
-                vec![
-                    Span::styled("r", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" resume  ", Style::default().fg(MUTED)),
-                    Span::styled("p", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" pause  ", Style::default().fg(MUTED)),
-                ]
-            } else {
-                vec![
-                    Span::styled("j/k/↑/↓", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" select  ", Style::default().fg(MUTED)),
-                    Span::styled("Enter", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" focus  ", Style::default().fg(MUTED)),
-                    Span::styled("p", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" pause  ", Style::default().fg(MUTED)),
-                    Span::styled("r", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" resume  ", Style::default().fg(MUTED)),
-                ]
-            };
-            if dashboard.mode != InputMode::Terminal
-                && dashboard.mode != InputMode::History
-                && !(paused && narrow)
-            {
-                footer.extend([
-                    Span::styled("Ctrl-g", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" browse  ", Style::default().fg(MUTED)),
-                    Span::styled("Ctrl-t", Style::default().fg(Color::Rgb(249, 226, 175))),
-                    Span::styled(" tasks  ", Style::default().fg(MUTED)),
-                ]);
-            }
+            let mut text = super::hints::footer(dashboard, layout.footer.width);
             if split_hidden {
-                footer.extend([Span::styled(
-                    "  split hidden: terminal too small",
-                    Style::default().fg(PEACH),
-                )]);
+                text.push_str("  split hidden: terminal too small");
             }
-            Line::from(footer)
+            Line::from(Span::styled(text, Style::default().fg(TEXT)))
         },
         |error| {
             Line::from(vec![
@@ -749,7 +646,65 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         Paragraph::new(footer).style(Style::default().bg(CRUST)),
         layout.footer,
     );
+    dashboard.draw_start_screen(frame);
     dashboard.draw_palette(frame);
+    dashboard.draw_whichkey(frame);
+}
+
+impl Dashboard {
+    fn draw_start_screen(&self, frame: &mut Frame<'_>) {
+        if self.mode != InputMode::Browse || self.focused_session().is_some() {
+            return;
+        }
+        let Some(rect) = pane_rects(frame.area(), self.panes.len(), self.focused_pane)
+            .into_iter()
+            .find(|r| r.pane_index == self.focused_pane)
+        else {
+            return;
+        };
+        let groups = super::hints::key_hints(self);
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let mut lines = Vec::new();
+        if self.hierarchy.projects.is_empty() {
+            lines.push(Line::from("Welcome to OVRCR"));
+            lines.push(Line::from(""));
+            for key in ["a", ":", "?"] {
+                if let Some(hint) = hints.iter().find(|h| h.key == key) {
+                    lines.push(Line::from(format!("{}  {}", hint.key, hint.name)));
+                    lines.push(Line::from(hint.description.clone()));
+                }
+            }
+            lines.push(Line::from(""));
+            let (config, socket) = self
+                .configuration_paths
+                .as_ref()
+                .map(|(c, s)| (c.display().to_string(), s.display().to_string()))
+                .unwrap_or_else(|| ("not supplied".into(), "not supplied".into()));
+            lines.push(Line::from(format!("Config: {config}")));
+            lines.push(Line::from(format!("Socket: {socket}")));
+        } else if let Some(super::TreeRow::Workspace { project, name }) = &self.selected_container {
+            let empty = self
+                .hierarchy
+                .projects
+                .iter()
+                .find(|p| p.name == *project)
+                .and_then(|p| p.workspaces.iter().find(|w| w.name == *name))
+                .is_some_and(|w| w.sessions.is_empty());
+            if empty && let Some(hint) = hints.iter().find(|h| h.key == "n") {
+                lines.push(Line::from(format!(
+                    "{project} / {name}: press {} to start a terminal here",
+                    hint.key
+                )));
+                lines.push(Line::from(hint.description.clone()));
+            }
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(ratatui::widgets::Wrap { trim: false })
+                .style(Style::default().fg(TEXT)),
+            rect.terminal,
+        );
+    }
 }
 
 fn render_split_metadata(
@@ -909,7 +864,14 @@ fn tree_line_text(
     width: usize,
     now_unix_ms: u64,
 ) -> (String, Style) {
-    let base_style = Style::default().fg(TEXT).bg(BASE);
+    let base_style =
+        Style::default()
+            .fg(TEXT)
+            .bg(if dashboard.selected_container.as_ref() == Some(row) {
+                CRUST
+            } else {
+                BASE
+            });
     match row {
         TreeRow::Project { name } => {
             let disclosure = if dashboard.collapsed_projects.contains(name) {

@@ -45,6 +45,10 @@ pub mod tui {
         stream: std::os::unix::net::UnixStream,
         settings_path: std::path::PathBuf,
     ) -> anyhow::Result<()> {
-        ovrcr_tui::run_dashboard(stream, crate::task_cli::request, settings_path)
+        let paths = (
+            crate::config::RegistryPath::resolve()?.0,
+            crate::server::ServerPaths::resolve()?.socket,
+        );
+        ovrcr_tui::run_dashboard(stream, crate::task_cli::request, settings_path, paths)
     }
 }

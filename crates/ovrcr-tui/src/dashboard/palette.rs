@@ -1,4 +1,5 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
+use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
 use super::picker::{PathPicker, PickItem, PickList, complete_path, list_path_entries};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
@@ -36,6 +37,7 @@ enum Command {
     RemoveWorkspace,
     RemoveProject,
     Switch(SessionId),
+    Hint(HintAction),
 }
 
 struct Entry {
@@ -175,6 +177,7 @@ fn accept_pick(field: &mut Field) -> bool {
 
 impl Dashboard {
     pub(super) fn open_palette(&mut self) -> DashboardAction {
+        self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -193,6 +196,7 @@ impl Dashboard {
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
+        self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -352,6 +356,55 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_close_terminal(&mut self) -> DashboardAction {
+        let Some(id) = self
+            .focused_session()
+            .filter(|id| find_session(self, *id).is_some())
+        else {
+            return DashboardAction::None;
+        };
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        self.whichkey = None;
+        self.palette = Some(Palette {
+            page: self.command_page(Command::CloseTerminal(id)),
+            ..Palette::new()
+        });
+        self.mode = InputMode::Browse;
+        DashboardAction::Redraw
+    }
+
+    fn command_page(&self, command: Command) -> Page {
+        if let Command::CloseTerminal(id) = command {
+            let session = find_session(self, id).expect("close target exists");
+            Page::Confirm {
+                request: Request::CloseTerminal { session: id },
+                target: format!(
+                    "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
+                    session.project, session.workspace, session.name, id.0
+                ),
+            }
+        } else {
+            self.palette_form(command)
+        }
+    }
+
+    fn command_hint(&self, command: &Command) -> Option<KeyHint> {
+        let action = match command {
+            Command::CreateTerminal => HintAction::Key(KeyCode::Char('n')),
+            Command::CreateWorkspace => HintAction::Key(KeyCode::Char('w')),
+            Command::RegisterProject => HintAction::Key(KeyCode::Char('a')),
+            Command::CloseTerminal(_) => HintAction::Key(KeyCode::Char('X')),
+            Command::Hint(action) => *action,
+            _ => return None,
+        };
+        key_hints(self)
+            .into_iter()
+            .flat_map(|g| g.hints)
+            .find(|h| h.action == action)
+    }
+
     pub(super) fn palette_paste(&mut self, text: &str) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         palette.insert(text);
@@ -404,6 +457,15 @@ impl Dashboard {
                     });
                 }
             }
+        }
+        for hint in key_hints(self).into_iter().flat_map(|g| g.hints) {
+            if matches!(hint.key, "n" | "w" | "a" | "X" | ":" | "Space") {
+                continue;
+            }
+            entries.push(Entry {
+                label: hint.name.into(),
+                command: Command::Hint(hint.action),
+            });
         }
         let query = query.to_lowercase();
         entries.retain(|entry| {
@@ -606,18 +668,15 @@ impl Dashboard {
                                 self.select_session(id);
                                 return self.request_selected();
                             }
-                            Command::CloseTerminal(id) => {
-                                if let Some(session) = find_session(self, id) {
-                                    palette.page = Page::Confirm {
-                                        request: Request::CloseTerminal { session: id },
-                                        target: format!(
-                                            "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
-                                            session.project, session.workspace, session.name, id.0
-                                        ),
-                                    };
+                            Command::Hint(action) => {
+                                if self.command_hint(&entry.command).is_some_and(|h| h.enabled) {
+                                    if let Some(request_id) = palette.suggestions.inspect {
+                                        self.ignored_responses.insert(request_id);
+                                    }
+                                    return self.run_hint(action);
                                 }
                             }
-                            command => palette.page = self.palette_form(command),
+                            command => palette.page = self.command_page(command),
                         }
                     }
                 }
@@ -839,9 +898,7 @@ impl Dashboard {
     }
 
     fn palette_form(&self, command: Command) -> Page {
-        let selected = self.focused_session().and_then(|id| find_session(self, id));
-        let project = selected.map(|s| s.project.clone()).unwrap_or_default();
-        let workspace = selected.map(|s| s.workspace.clone()).unwrap_or_default();
+        let (project, workspace) = self.creation_context();
         let text = |label, value: String, required| Field {
             label,
             value,
@@ -880,8 +937,14 @@ impl Dashboard {
                         })
                     })
                     .collect::<Vec<_>>();
-                let workspace_value = selected
-                    .map(|session| format!("{} / {}", session.project, session.workspace))
+                let workspace_value = (!workspace.is_empty())
+                    .then(|| format!("{project} / {workspace}"))
+                    .or_else(|| {
+                        workspace_items
+                            .iter()
+                            .find(|item| item.value.starts_with(&format!("{project} / ")))
+                            .map(|item| item.value.clone())
+                    })
                     .or_else(|| workspace_items.first().map(|item| item.value.clone()))
                     .unwrap_or_default();
                 let mut workspace_list = PickList::new(workspace_items);
@@ -1126,7 +1189,7 @@ impl Dashboard {
                 if entries.is_empty() {
                     lines.push(Line::from("No matching actions"));
                 }
-                let count = usize::from(body.height.saturating_sub(1)).max(1);
+                let count = usize::from(body.height.saturating_sub(1) / 2).max(1);
                 let start = selected.saturating_sub(count - 1);
                 for (index, entry) in entries.iter().enumerate().skip(start).take(count) {
                     lines.push(Line::styled(
@@ -1141,6 +1204,14 @@ impl Dashboard {
                             Style::default().fg(TEXT)
                         },
                     ));
+                    if let Some(hint) = self.command_hint(&entry.command) {
+                        lines.push(Line::styled(
+                            format!("  {} — {}", hint.key, hint.description),
+                            Style::default().fg(MUTED),
+                        ));
+                    } else {
+                        lines.push(Line::from(""));
+                    }
                 }
             }
             Page::Form {
@@ -1260,6 +1331,19 @@ impl Dashboard {
             },
             body,
         );
+        let selected_hint = if let Page::Search { query, selected } = &palette.page {
+            self.palette_entries(query)
+                .get(*selected)
+                .and_then(|entry| self.command_hint(&entry.command))
+        } else {
+            None
+        };
+        let detail = selected_hint.map(|hint| {
+            format!(
+                "{} — {}\n↑/↓ select · Enter continue · Esc cancel",
+                hint.key, hint.description
+            )
+        });
         let status = if palette.pending.is_some() {
             "Working…"
         } else if let Some(error) = &palette.error {
@@ -1270,7 +1354,9 @@ impl Dashboard {
             note
         } else {
             match palette.page {
-                Page::Search { .. } => "↑/↓ select · Enter continue · Esc cancel",
+                Page::Search { .. } => detail
+                    .as_deref()
+                    .unwrap_or("↑/↓ select · Enter continue · Esc cancel"),
                 Page::Form {
                     command: Command::CreateWorkspace,
                     ..
