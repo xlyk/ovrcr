@@ -3,12 +3,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use eframe::egui::{self, Event, Key, MouseWheelUnit};
 
 /// The mouse state [`encode_event`] carries between events: wheel distance too
-/// small to report yet, the button a drag belongs to, and the last motion
-/// report, so one cell is not reported twice.
+/// small to report yet, the held button with the last report sent for it, and
+/// the last motion report, so one cell is not reported twice.
 #[derive(Default)]
 pub struct Mouse {
     carry: egui::Vec2,
-    held: Option<(MouseButton, egui::Modifiers)>,
+    held: Option<(MouseButton, MouseEvent)>,
     last_motion: Option<MouseEvent>,
 }
 
@@ -28,10 +28,19 @@ impl Mouse {
             MouseWheelUnit::Line => delta,
             MouseWheelUnit::Page => delta * f32::from(rows),
         };
+        // Only an event's dominant axis scrolls, and the idle axis keeps no
+        // carry: a thumb never swipes straight, and lateral drift that survived
+        // the swipe would eventually cross a column and scroll sideways.
+        let vertical = delta.y.abs() >= delta.x.abs();
+        let (steps, kept) = if vertical {
+            (egui::vec2(0.0, steps.y), egui::vec2(0.0, self.carry.y))
+        } else {
+            (egui::vec2(steps.x, 0.0), egui::vec2(self.carry.x, 0.0))
+        };
         if !steps.is_finite() {
             return (0, 0);
         }
-        self.carry += steps;
+        self.carry = kept + steps;
         let whole = egui::vec2(self.carry.x.trunc(), self.carry.y.trunc());
         self.carry -= whole;
         // One event never scrolls past a screenful, and a nonsense delta must
@@ -130,34 +139,41 @@ pub fn encode_event(
             let Some(button) = mouse_button(*button) else {
                 return Vec::new();
             };
-            // A button change starts a new gesture, and a release ends its drag
-            // even where the position is not reportable, so a held button never
-            // outlives the gesture it belongs to.
+            // A button change starts a new gesture.
             mouse.last_motion = None;
-            if !*pressed && mouse.held.is_some_and(|(held, _)| held == button) {
-                mouse.held = None;
-            }
-            let Some((column, row)) = pointer_cell(*pos, screen, rect, cell) else {
-                return Vec::new();
-            };
+            let at = pointer_cell(*pos, screen, rect, cell);
             if *pressed {
-                mouse.held = Some((button, *modifiers));
-            }
-            encode_mouse(
-                MouseEvent {
-                    kind: if *pressed {
-                        MouseEventKind::Down(button)
-                    } else {
-                        MouseEventKind::Up(button)
-                    },
+                let Some((column, row)) = at else {
+                    return Vec::new();
+                };
+                let down = MouseEvent {
+                    kind: MouseEventKind::Down(button),
                     column,
                     row,
                     modifiers: key_modifiers(*modifiers),
-                },
-                screen.mouse_protocol_mode(),
-                screen.mouse_protocol_encoding(),
-            )
-            .unwrap_or_default()
+                };
+                mouse.held = Some((button, down));
+                return report(down, screen);
+            }
+            // A release off the terminal still ends its drag, at the cell the
+            // gesture last reported, or the child app keeps a selection live.
+            let held = mouse.held.take_if(|(held, _)| *held == button);
+            let release = at
+                .map(|(column, row)| MouseEvent {
+                    kind: MouseEventKind::Up(button),
+                    column,
+                    row,
+                    modifiers: key_modifiers(*modifiers),
+                })
+                .or_else(|| {
+                    held.map(|(_, last)| MouseEvent {
+                        kind: MouseEventKind::Up(button),
+                        ..last
+                    })
+                });
+            release
+                .map(|event| report(event, screen))
+                .unwrap_or_default()
         }
         // egui reports motion without modifiers or a button, so a drag carries
         // the ones its press did; free motion carries none.
@@ -166,25 +182,27 @@ pub fn encode_event(
                 return Vec::new();
             };
             let (kind, modifiers) = match mouse.held {
-                Some((button, modifiers)) => (MouseEventKind::Drag(button), modifiers),
-                None => (MouseEventKind::Moved, egui::Modifiers::NONE),
+                Some((button, press)) => (MouseEventKind::Drag(button), press.modifiers),
+                None => (MouseEventKind::Moved, KeyModifiers::NONE),
             };
             let moved = MouseEvent {
                 kind,
                 column,
                 row,
-                modifiers: key_modifiers(modifiers),
+                modifiers,
             };
             // Motion arrives per pixel; one cell earns one report.
             if mouse.last_motion.replace(moved) == Some(moved) {
                 return Vec::new();
             }
-            encode_mouse(
-                moved,
-                screen.mouse_protocol_mode(),
-                screen.mouse_protocol_encoding(),
-            )
-            .unwrap_or_default()
+            let bytes = report(moved, screen);
+            // A reported drag moves where a release off the terminal must land.
+            if let Some((_, last)) = &mut mouse.held
+                && !bytes.is_empty()
+            {
+                *last = moved;
+            }
+            bytes
         }
         Event::MouseWheel {
             unit,
@@ -197,33 +215,30 @@ pub fn encode_event(
             };
             let (rows, _) = screen.size();
             let (columns, lines) = mouse.accumulate(*delta, *unit, cell, rows);
-            let mode = screen.mouse_protocol_mode();
-            let encoding = screen.mouse_protocol_encoding();
             let modifiers = key_modifiers(*modifiers);
             let mut bytes = Vec::new();
+            // A positive delta moves the content down and right, revealing what
+            // lies above and to its left.
             for (steps, positive, negative) in [
                 (lines, MouseEventKind::ScrollUp, MouseEventKind::ScrollDown),
                 (
                     columns,
-                    MouseEventKind::ScrollRight,
                     MouseEventKind::ScrollLeft,
+                    MouseEventKind::ScrollRight,
                 ),
             ] {
                 if steps == 0 {
                     continue;
                 }
-                let Some(report) = encode_mouse(
+                let report = report(
                     MouseEvent {
                         kind: if steps > 0 { positive } else { negative },
                         column,
                         row,
                         modifiers,
                     },
-                    mode,
-                    encoding,
-                ) else {
-                    continue;
-                };
+                    screen,
+                );
                 // Each whole step is one report, so a long swipe travels as far
                 // as it was pushed.
                 for _ in 0..steps.unsigned_abs() {
@@ -253,6 +268,17 @@ pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
             });
         (!composed).then_some(event)
     })
+}
+
+/// One mouse report in the screen's own protocol mode and encoding. Empty when
+/// the mode does not report that event or the cell is past the encoding's limit.
+fn report(event: MouseEvent, screen: &vt100::Screen) -> Vec<u8> {
+    encode_mouse(
+        event,
+        screen.mouse_protocol_mode(),
+        screen.mouse_protocol_encoding(),
+    )
+    .unwrap_or_default()
 }
 
 fn mouse_button(button: egui::PointerButton) -> Option<MouseButton> {
@@ -348,12 +374,21 @@ mod tests {
         )
     }
 
-    fn pointer_button(pressed: bool, modifiers: egui::Modifiers) -> Event {
+    fn pointer_button(pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) -> Event {
         Event::PointerButton {
-            pos: egui::pos2(4.0, 8.0),
+            pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers,
+        }
+    }
+
+    fn wheel(unit: egui::MouseWheelUnit, delta: egui::Vec2) -> Event {
+        Event::MouseWheel {
+            unit,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
         }
     }
 
@@ -363,21 +398,54 @@ mod tests {
         parser.process(b"\x1b[?1000h\x1b[?1006h");
         // A trackpad reports point deltas far smaller than a cell, so scroll
         // distance must follow the pixels travelled, not the event count.
-        // egui's positive y scrolls up, so a downward swipe is negative.
-        let wheel = Event::MouseWheel {
-            unit: egui::MouseWheelUnit::Point,
-            delta: egui::vec2(0.0, -6.0),
-            phase: egui::TouchPhase::Move,
-            modifiers: egui::Modifiers::NONE,
-        };
+        // egui's positive y moves the content down, revealing what is above.
+        let down = wheel(egui::MouseWheelUnit::Point, egui::vec2(0.0, -6.0));
         let mut mouse = Mouse::default();
         let reports: Vec<Vec<u8>> = (0..3)
-            .map(|_| encode_pointer(&wheel, parser.screen(), &mut mouse))
+            .map(|_| encode_pointer(&down, parser.screen(), &mut mouse))
             .collect();
         assert_eq!(
             reports,
             vec![Vec::new(), Vec::new(), b"\x1b[<65;1;1M".to_vec()],
             "three sixth-of-a-cell deltas are one line, not three"
+        );
+        // Positive x moves the content right, revealing what is to its left,
+        // which is ScrollLeft (66); negative x is ScrollRight (67).
+        assert_eq!(
+            encode_pointer(
+                &wheel(egui::MouseWheelUnit::Line, egui::vec2(1.0, 0.0)),
+                parser.screen(),
+                &mut mouse
+            ),
+            b"\x1b[<66;1;1M"
+        );
+        assert_eq!(
+            encode_pointer(
+                &wheel(egui::MouseWheelUnit::Line, egui::vec2(-1.0, 0.0)),
+                parser.screen(),
+                &mut mouse
+            ),
+            b"\x1b[<67;1;1M"
+        );
+    }
+
+    #[test]
+    fn wheel_ignores_off_axis_drift() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1000h\x1b[?1006h");
+        // A thumb never swipes perfectly straight. Only the dominant axis of an
+        // event scrolls, so lateral drift must not accumulate across a swipe
+        // until it crosses a column and injects a horizontal report.
+        let drifting = wheel(egui::MouseWheelUnit::Point, egui::vec2(0.5, -6.0));
+        let mut mouse = Mouse::default();
+        let reports: Vec<Vec<u8>> = (0..10)
+            .map(|_| encode_pointer(&drifting, parser.screen(), &mut mouse))
+            .filter(|bytes| !bytes.is_empty())
+            .collect();
+        assert_eq!(reports, vec![b"\x1b[<65;1;1M".to_vec(); 3]);
+        assert_eq!(
+            mouse.carry.x, 0.0,
+            "ten events of half a point sideways must leave no horizontal carry"
         );
     }
 
@@ -399,7 +467,7 @@ mod tests {
         );
         assert_eq!(
             Some(encode_pointer(
-                &pointer_button(true, egui::Modifiers::SHIFT),
+                &pointer_button(egui::pos2(4.0, 8.0), true, egui::Modifiers::SHIFT),
                 screen,
                 &mut Mouse::default()
             )),
@@ -415,7 +483,7 @@ mod tests {
         let mut mouse = Mouse::default();
         assert_eq!(
             encode_pointer(
-                &pointer_button(true, egui::Modifiers::NONE),
+                &pointer_button(egui::pos2(4.0, 8.0), true, egui::Modifiers::NONE),
                 screen,
                 &mut mouse
             ),
@@ -429,6 +497,41 @@ mod tests {
                 &mut mouse
             ),
             b"\x1b[<32;3;2M"
+        );
+    }
+
+    #[test]
+    fn drag_released_outside_ends_at_the_last_reported_cell() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1002h\x1b[?1006h");
+        let screen = parser.screen();
+        let mut mouse = Mouse::default();
+        // Press on cell (2, 1), drag to (3, 1).
+        assert_eq!(
+            encode_pointer(
+                &pointer_button(egui::pos2(20.0, 24.0), true, egui::Modifiers::NONE),
+                screen,
+                &mut mouse
+            ),
+            b"\x1b[<0;3;2M"
+        );
+        assert_eq!(
+            encode_pointer(
+                &Event::PointerMoved(egui::pos2(28.0, 24.0)),
+                screen,
+                &mut mouse
+            ),
+            b"\x1b[<32;4;2M"
+        );
+        // Releasing off the terminal must still end the drag where it left it,
+        // or the child app keeps its selection live forever.
+        assert_eq!(
+            encode_pointer(
+                &pointer_button(egui::pos2(-10.0, -10.0), false, egui::Modifiers::NONE),
+                screen,
+                &mut mouse
+            ),
+            b"\x1b[<0;4;2m"
         );
     }
 
