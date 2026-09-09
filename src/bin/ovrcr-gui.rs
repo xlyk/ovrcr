@@ -299,6 +299,89 @@ fn native_glyph_cache_keeps_a_screen_of_distinct_glyphs() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn native_glyph_cache_evicts_entries_unused_last_frame() {
+    // Painting MAX_CACHE_ENTRIES (4096) distinct glyphs per frame would make
+    // this test slow, so exercise the sweep through a lowered, test-only
+    // threshold instead of a screen that size.
+    let mut fonts = TerminalFonts::current_monospace();
+    fonts.fallback = std::cell::RefCell::new(native_glyph::NativeGlyphs::with_max_entries(4));
+
+    let rows: u16 = 1;
+    let cols: u16 = 12;
+    let set_a: String = (0..6u32)
+        .map(|offset| char::from_u32(0x4E00 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let set_b: String = (0..6u32)
+        .map(|offset| char::from_u32(0x6000 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let mut parser_a = vt100::Parser::new(rows, cols, 0);
+    parser_a.process(set_a.as_bytes());
+    let mut parser_b = vt100::Parser::new(rows, cols, 0);
+    parser_b.process(set_b.as_bytes());
+    let cell_size = egui::vec2(10.0, 20.0);
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(f32::from(cols) * cell_size.x, f32::from(rows) * cell_size.y),
+    );
+    let context = egui::Context::default();
+    let paint = |screen: &vt100::Screen| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            paint_terminal(ui, rect, cell_size, &fonts, screen);
+        });
+        output.textures_delta.clear();
+    };
+
+    // Frame 1: paint set A (6 distinct glyphs), pushing the cache past the
+    // threshold of 4. The sweep only removes entries unused in the previous
+    // frame, so nothing is evicted yet.
+    paint(parser_a.screen());
+    let after_frame1 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(after_frame1, 6, "frame 1 should rasterize all of set A");
+
+    // Frame 2: paint set B (6 different distinct glyphs). Set A survives
+    // this frame's sweep because it was used in frame 1, the frame just
+    // completed when frame 2 begins.
+    paint(parser_b.screen());
+    let after_frame2 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame2 - after_frame1,
+        6,
+        "frame 2 should rasterize all of set B"
+    );
+    assert_eq!(
+        fonts.fallback.borrow().len(),
+        12,
+        "set A must still be cached one frame after its last use"
+    );
+
+    // Frame 3: paint set B again. At the start of this frame, set A (unused
+    // in frame 2) is swept away, leaving only set B's live entries; set B
+    // itself is entirely cache hits.
+    paint(parser_b.screen());
+    let after_frame3 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame3, after_frame2,
+        "set B must be reused on frame 3, not re-rasterized"
+    );
+    assert_eq!(
+        fonts.fallback.borrow().len(),
+        6,
+        "cache must be bounded to set B's live entries once set A ages out"
+    );
+
+    // Frame 4: repaint set A to prove it was actually evicted, not merely
+    // untouched by the length assertion above.
+    paint(parser_a.screen());
+    let after_frame4 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame4 - after_frame3,
+        6,
+        "evicted set A must be rasterized again from scratch"
+    );
+}
+
+#[test]
 fn terminal_paints_reserved_icon_cell_before_foreground_glyph() {
     let context = egui::Context::default();
     let fonts = TerminalFonts::current_monospace();

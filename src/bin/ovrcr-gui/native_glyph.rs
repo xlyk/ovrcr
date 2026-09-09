@@ -125,19 +125,46 @@ struct CacheEntry {
 // of a few thousand cells, so this only trims genuinely stale entries.
 const MAX_CACHE_ENTRIES: usize = 4096;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct NativeGlyphs {
     cache: HashMap<Key, CacheEntry>,
     frame: u64,
+    max_entries: usize,
     #[cfg(test)]
     pub(super) rasterize_calls: usize,
 }
+impl Default for NativeGlyphs {
+    fn default() -> Self {
+        Self {
+            cache: HashMap::new(),
+            frame: 0,
+            max_entries: MAX_CACHE_ENTRIES,
+            #[cfg(test)]
+            rasterize_calls: 0,
+        }
+    }
+}
 impl NativeGlyphs {
+    /// Test-only constructor overriding the eviction threshold, so tests can
+    /// exercise the sweep without painting thousands of real glyphs.
+    #[cfg(test)]
+    pub(super) fn with_max_entries(max_entries: usize) -> Self {
+        Self {
+            max_entries,
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.cache.len()
+    }
+
     /// Marks the start of a new whole-terminal paint. Must be called exactly
     /// once per frame (not once per cell) so `last_used` stamps distinguish
     /// "painted this frame" from "painted a previous frame".
     pub(super) fn begin_frame(&mut self) {
-        if self.cache.len() > MAX_CACHE_ENTRIES {
+        if self.cache.len() > self.max_entries {
             let previous_frame = self.frame;
             self.cache
                 .retain(|_, entry| entry.last_used >= previous_frame);
