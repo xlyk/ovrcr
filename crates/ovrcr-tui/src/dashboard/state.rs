@@ -556,6 +556,7 @@ impl Dashboard {
             history_begin_request: None,
             mouse: super::MouseForwarding::default(),
             mouse_focused: true,
+            deferred_history_at_tail: None,
             tree_offset: 0,
             next_request_id: 1,
             palette: None,
@@ -1571,6 +1572,9 @@ impl Dashboard {
     }
 
     fn invalidate_view_readiness(&mut self) {
+        // Every caller changes selection, assignment, or geometry, so a wheel tick parked
+        // against the previous selection is no longer the one the user asked for.
+        self.deferred_history_at_tail = None;
         self.requested_view = None;
         for pane in &mut self.panes {
             pane.ready = false;
@@ -2000,10 +2004,24 @@ impl Dashboard {
         let pane = super::pane_rects(area, self.panes.len(), self.focused_pane)
             .into_iter()
             .find(|pane| point_in_rect(mouse, pane.terminal))?;
-        if pane.pane_index != self.focused_pane {
-            self.focus_pane(pane.pane_index);
+        if pane.pane_index != self.focused_pane && self.focus_pane(pane.pane_index) {
+            // Focusing revoked readiness, so the open has to wait for the replacement view.
+            self.deferred_history_at_tail = Some(pane.pane_index);
+            return Some(DashboardAction::Redraw);
         }
         Some(self.begin_history_request(true))
+    }
+
+    /// Opens the history a wheel tick asked for once its pane became ready and stayed focused.
+    pub(super) fn take_deferred_history_request(&mut self) -> Option<ClientMessage> {
+        let index = self.deferred_history_at_tail.take()?;
+        if index != self.focused_pane || !self.focused_pane().is_some_and(|pane| pane.ready) {
+            return None;
+        }
+        match self.begin_history_request(true) {
+            DashboardAction::Request(request) => Some(request),
+            _ => None,
+        }
     }
 
     fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
@@ -2231,6 +2249,9 @@ impl Dashboard {
                         self.requested_view = Some(pending.view);
                         self.pending_snapshot_sessions.clear();
                         self.error = None;
+                        if let Some(request) = self.take_deferred_history_request() {
+                            outgoing.push(request);
+                        }
                     } else if !desired_matches || pending.parser_discarded {
                         self.requested_view = Some(pending.view);
                         self.force_view_refresh |= pending.parser_discarded;
@@ -2675,7 +2696,12 @@ impl Dashboard {
             && self.mode != InputMode::Copy
             && self.selected_phase() == Some(&SessionPhase::Paused)
         {
+            let leaving_terminal = self.mode != InputMode::Browse;
             self.mode = InputMode::Browse;
+            if leaving_terminal {
+                // A held button would otherwise release against a paused session.
+                self.cancel_mouse_gesture();
+            }
         }
     }
 

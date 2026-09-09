@@ -354,7 +354,13 @@ pub(super) fn next_dashboard_messages(
             break;
         };
         redraw = true;
-        for request in dashboard.handle_server_message(message) {
+        let requests = dashboard.handle_server_message(message);
+        // A synthetic release targets the session that is focused now; the server rejects it
+        // once the replacement SetView has moved focus, so it must lead the batch.
+        if let Some(cleanup) = dashboard.take_mouse_cleanup() {
+            write_frame(stream, &cleanup)?;
+        }
+        for request in requests {
             write_frame(stream, &request)?;
         }
     }

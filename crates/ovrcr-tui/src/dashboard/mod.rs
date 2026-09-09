@@ -196,6 +196,8 @@ pub struct Dashboard {
     pub history_begin_request: Option<PendingHistoryBegin>,
     pub(super) mouse: MouseForwarding,
     pub(super) mouse_focused: bool,
+    /// Pane index whose history a wheel tick asked for while that pane was still loading.
+    pub(super) deferred_history_at_tail: Option<usize>,
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,

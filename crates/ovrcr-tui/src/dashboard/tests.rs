@@ -835,3 +835,124 @@ fn copy_selection_moves_over_wide_cells_and_clamps() {
     clamped.move_cursor(CopyMotion::Last);
     assert_eq!(clamped.cursor, CopyPoint { row: 0, col: 0 });
 }
+
+#[test]
+fn mouse_release_precedes_the_replacement_view_request() {
+    use crate::protocol::{
+        AgentActivity, ClientMessage, HierarchySnapshot, ProjectSummary, SessionPhase,
+        SessionSummary, WorkspaceSummary,
+    };
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let summary = |id: u64| SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "session".into(),
+        label: "zsh".into(),
+        pid: Some(100 + u32::try_from(id).unwrap()),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids.iter().copied().map(summary).collect(),
+            }],
+        }],
+    };
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 0;
+
+    let request = dashboard
+        .view_request(area, 9)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let request_id = request.request_id;
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    dashboard.mode = InputMode::Terminal;
+    dashboard.panes[0].parser.process(b"\x1b[?1002h\x1b[?1006h");
+    let inner = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("focused pane rect")
+        .terminal;
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: inner.x + 2,
+        row: inner.y + 3,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert!(
+        matches!(
+            dashboard.mouse_action(down, area),
+            super::DashboardAction::PtyBytes(_)
+        ),
+        "a tracked press must forward bytes so a release is owed"
+    );
+
+    let (mut peer, mut stream) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ServerMessage::Response {
+            request_id: 77,
+            response: Response::Hierarchy(hierarchy(&[2])),
+        })
+        .unwrap();
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream).unwrap()
+    );
+    drop(sender);
+
+    let first = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
+    assert!(
+        matches!(
+            first.request,
+            Request::Input { session, .. } if session == SessionId(1)
+        ),
+        "the synthetic release must be written before the replacement view, got {:?}",
+        first.request
+    );
+    let second = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
+    assert!(
+        matches!(second.request, Request::SetView { .. }),
+        "the replacement view must follow the release, got {:?}",
+        second.request
+    );
+}

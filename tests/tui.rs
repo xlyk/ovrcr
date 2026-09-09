@@ -10414,3 +10414,109 @@ fn wheel_is_forwarded_when_tracking_is_enabled() {
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<64;3;4M".to_vec())
     );
 }
+
+#[test]
+fn wheel_up_over_the_unfocused_pane_opens_its_history() {
+    let mut dashboard = dashboard_fixture();
+    let area = dashboard.outer_area;
+    assert!(dashboard.split_pane());
+    let split_view = dashboard
+        .view_request(area, 70)
+        .unwrap()
+        .expect("split should request both snapshots");
+    acknowledge_all_view_targets(&mut dashboard, split_view);
+    assert!(dashboard.focus_pane(0));
+    let refocus = dashboard
+        .view_request(area, 71)
+        .unwrap()
+        .expect("focus change should request a view");
+    acknowledge_all_view_targets(&mut dashboard, refocus);
+    assert_eq!(dashboard.focused_pane, 0);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    let unfocused = pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("unfocused pane rect")
+        .terminal;
+    let session_b = dashboard.panes[1].session.expect("unfocused pane session");
+    let action = dashboard.mouse_action(click_in(unfocused, MouseEventKind::ScrollUp, 2, 3), area);
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(
+        dashboard.error.as_deref(),
+        None,
+        "a wheel over the other pane must not report a loading refusal"
+    );
+    assert!(dashboard.history.is_none());
+
+    let replacement = dashboard
+        .view_request(area, 72)
+        .unwrap()
+        .expect("the wheel focus change should emit one SetView");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected SetView");
+    };
+    deliver_all_view_screens(&mut dashboard, replacement.request_id, view);
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes[1].ready);
+    assert!(
+        outgoing.iter().any(|message| matches!(
+            message.request,
+            Request::HistoryBegin { session } if session == session_b
+        )),
+        "the deferred history open should follow the acknowledged view, got {outgoing:?}"
+    );
+}
+
+#[test]
+fn pause_cancels_a_held_mouse_gesture() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = focused_terminal_rect(&dashboard, area);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4M".to_vec())
+    );
+    let mut paused = dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .flat_map(|project| project.workspaces.iter())
+        .flat_map(|workspace| workspace.sessions.iter())
+        .find(|session| session.id == SessionId(1))
+        .expect("focused session")
+        .clone();
+    paused.phase = SessionPhase::Paused;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        paused,
+    ))));
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("pausing the focused session should release the held button");
+    assert!(
+        matches!(
+            cleanup.request,
+            Request::Input { session, ref bytes }
+                if session == SessionId(1) && bytes == b"\x1b[<0;3;4m"
+        ),
+        "{:?}",
+        cleanup.request
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(inner, MouseEventKind::Up(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert!(dashboard.take_mouse_cleanup().is_none());
+}
