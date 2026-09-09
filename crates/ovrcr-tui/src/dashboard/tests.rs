@@ -1,11 +1,12 @@
 use super::copy::{CopyMotion, CopyPoint, CopySelection};
 use super::event_loop::{
     dashboard_hello_result, dashboard_message_channel, drain_dashboard_input_then_emit_with,
-    drain_ready_dashboard_input, emit_pending_history_copy, next_dashboard_message,
+    drain_ready_dashboard_input, emit_pending_history_copy, install_panic_terminal_restore_hook,
+    next_dashboard_message,
 };
 use super::{
     Dashboard, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange, HistoryCursor,
-    HistoryView, InputMode,
+    HistoryView, InputMode, PANIC_TERMINAL_RESTORED,
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
@@ -20,7 +21,9 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::panic;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -354,10 +357,9 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                     bytes: b"wrong".to_vec(),
                 },
             },
-            ServerMessage::Response {
-                request_id: request.request_id,
-                response: Response::Ok,
-            },
+            // No `Ok` precedes the expected Screen here: a final acknowledgement without it
+            // fails the view, which `initial_selection_does_not_complete_after_wrong_screen_and_ok`
+            // covers.
             ServerMessage::Response {
                 request_id: request.request_id,
                 response: Response::Screen {
@@ -834,4 +836,332 @@ fn copy_selection_moves_over_wide_cells_and_clamps() {
     assert_eq!(clamped.cursor, CopyPoint { row: 0, col: 0 });
     clamped.move_cursor(CopyMotion::Last);
     assert_eq!(clamped.cursor, CopyPoint { row: 0, col: 0 });
+}
+
+#[test]
+fn mouse_release_precedes_the_replacement_view_request() {
+    use crate::protocol::{
+        AgentActivity, ClientMessage, HierarchySnapshot, ProjectSummary, SessionPhase,
+        SessionSummary, WorkspaceSummary,
+    };
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let summary = |id: u64| SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "session".into(),
+        label: "zsh".into(),
+        pid: Some(100 + u32::try_from(id).unwrap()),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids.iter().copied().map(summary).collect(),
+            }],
+        }],
+    };
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 0;
+
+    let request = dashboard
+        .view_request(area, 9)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let request_id = request.request_id;
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    dashboard.mode = InputMode::Terminal;
+    dashboard.panes[0].parser.process(b"\x1b[?1002h\x1b[?1006h");
+    let inner = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("focused pane rect")
+        .terminal;
+    let down = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: inner.x + 2,
+        row: inner.y + 3,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert!(
+        matches!(
+            dashboard.mouse_action(down, area),
+            super::DashboardAction::PtyBytes(_)
+        ),
+        "a tracked press must forward bytes so a release is owed"
+    );
+
+    let (mut peer, mut stream) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(ServerMessage::Response {
+            request_id: 77,
+            response: Response::Hierarchy(hierarchy(&[2])),
+        })
+        .unwrap();
+    assert!(
+        super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream).unwrap()
+    );
+    drop(sender);
+
+    let first = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
+    assert!(
+        matches!(
+            first.request,
+            Request::Input { session, .. } if session == SessionId(1)
+        ),
+        "the synthetic release must be written before the replacement view, got {:?}",
+        first.request
+    );
+    let second = crate::protocol::read_frame::<ClientMessage>(&mut peer).unwrap();
+    assert!(
+        matches!(second.request, Request::SetView { .. }),
+        "the replacement view must follow the release, got {:?}",
+        second.request
+    );
+}
+
+#[test]
+fn hierarchy_removal_clears_a_parked_wheel_deferral() {
+    use crate::protocol::{
+        AgentActivity, HierarchySnapshot, ProjectSummary, SessionPhase, SessionSummary,
+        WorkspaceSummary,
+    };
+    use crossterm::event::MouseEventKind;
+    let summary = |id: u64| SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "session".into(),
+        label: "zsh".into(),
+        pid: Some(100 + u32::try_from(id).unwrap()),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids.iter().copied().map(summary).collect(),
+            }],
+        }],
+    };
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 0;
+    let request = dashboard
+        .view_request(area, 11)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let request_id = request.request_id;
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    let unfocused = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("unfocused pane rect")
+        .terminal;
+    let wheel = crossterm::event::MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: unfocused.x + 2,
+        row: unfocused.y + 3,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        dashboard.mouse_action(wheel, area),
+        super::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(
+        dashboard.deferred_history_at_tail,
+        Some(1),
+        "the wheel tick should park against the pane it focused"
+    );
+
+    // Session A leaves. The survivor keeps focus, so `invalidate_view_readiness` never runs,
+    // but `retain` shifts B from pane 1 to pane 0 and `focused_pane` follows it.
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 12,
+        response: Response::Hierarchy(hierarchy(&[2])),
+    });
+    assert_eq!(dashboard.panes.len(), 1);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard.deferred_history_at_tail, None,
+        "removing a pane reshuffles indices, so the removal must clear the parked deferral itself"
+    );
+
+    let replacement = outgoing
+        .iter()
+        .find_map(|message| match &message.request {
+            Request::SetView { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("removal should emit a replacement view");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: replacement.request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    let completed = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        !completed
+            .iter()
+            .any(|message| matches!(message.request, Request::HistoryBegin { .. })),
+        "a deferral dropped by the removal must not open history later, got {completed:?}"
+    );
+    assert!(dashboard.history.is_none());
+}
+
+#[derive(Clone)]
+struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
+
+impl Write for RecordingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// The panic hook is process-global, so tests that install one must serialize
+// with any other test in this binary that also touches it.
+static PANIC_HOOK_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn panic_hook_ignores_non_main_threads() {
+    let _serialize = PANIC_HOOK_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let writer_bytes = Arc::clone(&bytes);
+    let prior_hook =
+        install_panic_terminal_restore_hook(move || RecordingWriter(Arc::clone(&writer_bytes)));
+
+    // A panic on a background thread (the dashboard reader or a task
+    // worker, in production) must not touch the terminal: the main loop is
+    // still drawing to it.
+    let background = thread::spawn(|| {
+        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            panic!("background thread panic must not restore the terminal");
+        }));
+    });
+    background
+        .join()
+        .expect("the background thread must not itself panic");
+    assert!(
+        bytes.lock().unwrap().is_empty(),
+        "a non-main-thread panic wrote to the terminal writer"
+    );
+
+    // A panic on the thread that installed the hook (the main loop) must
+    // restore the terminal.
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        panic!("installing thread panic must restore the terminal");
+    }));
+    let restored = bytes.lock().unwrap().clone();
+    for sequence in [b"\x1b[?1049l".as_slice(), b"\x1b[?25h".as_slice()] {
+        assert!(
+            restored
+                .windows(sequence.len())
+                .any(|window| window == sequence),
+            "the installing thread's panic did not emit {sequence:?}, got {restored:?}"
+        );
+    }
+
+    // Leave no trace for other tests in this binary: reinstall whatever
+    // hook was active before this test, and clear the thread-local flag the
+    // hook set on this thread.
+    let _ = panic::take_hook();
+    if let Some(prior) = prior_hook.lock().unwrap().take() {
+        panic::set_hook(prior);
+    }
+    PANIC_TERMINAL_RESTORED.with(|restored| restored.set(false));
 }

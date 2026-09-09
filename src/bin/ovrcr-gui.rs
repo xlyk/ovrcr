@@ -1,5 +1,8 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
-use ovrcr::gui::{Demo, Terminal, input::encode_event};
+use ovrcr::gui::{
+    Demo, Terminal,
+    input::{Mouse, encode_event, terminal_events},
+};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -257,6 +260,131 @@ fn assert_native_unicode_paint(installed_fonts: bool) {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn native_glyph_cache_keeps_a_screen_of_distinct_glyphs() {
+    let context = egui::Context::default();
+    let fonts = TerminalFonts::current_monospace();
+    let rows: u16 = 40;
+    let cols: u16 = 30;
+    // CJK Unified Ideographs are double-width and absent from egui's default
+    // font, so every one of these 600 distinct cells must go through the
+    // native fallback cache instead of the shared glyph atlas.
+    let text: String = (0..600u32)
+        .map(|offset| char::from_u32(0x4E00 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let mut parser = vt100::Parser::new(rows, cols, 0);
+    parser.process(text.as_bytes());
+    let cell_size = egui::vec2(10.0, 20.0);
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(f32::from(cols) * cell_size.x, f32::from(rows) * cell_size.y),
+    );
+
+    let mut first = context.run_ui(egui::RawInput::default(), |ui| {
+        paint_terminal(ui, rect, cell_size, &fonts, parser.screen());
+    });
+    first.textures_delta.clear();
+    let after_first_paint = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_first_paint, 600,
+        "first paint of 600 distinct glyphs should rasterize each of them once"
+    );
+
+    let mut second = context.run_ui(egui::RawInput::default(), |ui| {
+        paint_terminal(ui, rect, cell_size, &fonts, parser.screen());
+    });
+    second.textures_delta.clear();
+    let after_second_paint = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_second_paint, after_first_paint,
+        "second paint of the same screen must reuse cached glyphs, not re-rasterize them"
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn native_glyph_cache_evicts_entries_unused_last_frame() {
+    // Painting MAX_CACHE_ENTRIES (4096) distinct glyphs per frame would make
+    // this test slow, so exercise the sweep through a lowered, test-only
+    // threshold instead of a screen that size.
+    let mut fonts = TerminalFonts::current_monospace();
+    fonts.fallback = std::cell::RefCell::new(native_glyph::NativeGlyphs::with_max_entries(4));
+
+    let rows: u16 = 1;
+    let cols: u16 = 12;
+    let set_a: String = (0..6u32)
+        .map(|offset| char::from_u32(0x4E00 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let set_b: String = (0..6u32)
+        .map(|offset| char::from_u32(0x6000 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let mut parser_a = vt100::Parser::new(rows, cols, 0);
+    parser_a.process(set_a.as_bytes());
+    let mut parser_b = vt100::Parser::new(rows, cols, 0);
+    parser_b.process(set_b.as_bytes());
+    let cell_size = egui::vec2(10.0, 20.0);
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(f32::from(cols) * cell_size.x, f32::from(rows) * cell_size.y),
+    );
+    let context = egui::Context::default();
+    let paint = |screen: &vt100::Screen| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            paint_terminal(ui, rect, cell_size, &fonts, screen);
+        });
+        output.textures_delta.clear();
+    };
+
+    // Frame 1: paint set A (6 distinct glyphs), pushing the cache past the
+    // threshold of 4. The sweep only removes entries unused in the previous
+    // frame, so nothing is evicted yet.
+    paint(parser_a.screen());
+    let after_frame1 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(after_frame1, 6, "frame 1 should rasterize all of set A");
+
+    // Frame 2: paint set B (6 different distinct glyphs). Set A survives
+    // this frame's sweep because it was used in frame 1, the frame just
+    // completed when frame 2 begins.
+    paint(parser_b.screen());
+    let after_frame2 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame2 - after_frame1,
+        6,
+        "frame 2 should rasterize all of set B"
+    );
+    assert_eq!(
+        fonts.fallback.borrow().len(),
+        12,
+        "set A must still be cached one frame after its last use"
+    );
+
+    // Frame 3: paint set B again. At the start of this frame, set A (unused
+    // in frame 2) is swept away, leaving only set B's live entries; set B
+    // itself is entirely cache hits.
+    paint(parser_b.screen());
+    let after_frame3 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame3, after_frame2,
+        "set B must be reused on frame 3, not re-rasterized"
+    );
+    assert_eq!(
+        fonts.fallback.borrow().len(),
+        6,
+        "cache must be bounded to set B's live entries once set A ages out"
+    );
+
+    // Frame 4: repaint set A to prove it was actually evicted, not merely
+    // untouched by the length assertion above.
+    paint(parser_a.screen());
+    let after_frame4 = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_frame4 - after_frame3,
+        6,
+        "evicted set A must be rasterized again from scratch"
+    );
+}
+
+#[test]
 fn terminal_paints_reserved_icon_cell_before_foreground_glyph() {
     let context = egui::Context::default();
     let fonts = TerminalFonts::current_monospace();
@@ -304,6 +432,8 @@ struct App {
     fonts: TerminalFonts,
     error: Option<String>,
     closing: bool,
+    // Wheel distance, held button and last motion outlive a single frame.
+    mouse: Mouse,
 }
 
 impl App {
@@ -405,6 +535,25 @@ impl App {
                     node.set_label("OVRCR terminal");
                     node.set_value(screen.contents());
                 });
+                // Only a widget that publishes an IME area receives composition and
+                // dead keys; without it the platform never starts one for the terminal.
+                // egui-winit passes `rect` alone to `set_ime_cursor_area`, which macOS
+                // uses to place the candidate panel, so both rects are the cursor cell.
+                if status.is_none() && response.has_focus() {
+                    let (row, col) = screen.cursor_position();
+                    let cursor = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(f32::from(col) * cell.x, f32::from(row) * cell.y),
+                        cell,
+                    );
+                    ui.output_mut(|output| {
+                        output.ime = Some(egui::output::IMEOutput {
+                            purpose: egui::IMEPurpose::Normal,
+                            rect: cursor,
+                            cursor_rect: cursor,
+                            should_interrupt_composition: false,
+                        });
+                    });
+                }
                 paint_terminal(ui, rect, cell, &self.fonts, &screen);
                 // Individual rows avoid accessibility clients truncating one large text value.
                 for (row, text) in screen.rows(0, cols).enumerate() {
@@ -428,7 +577,8 @@ impl App {
                             .or(input.pointer.latest_pos())
                             .unwrap_or(rect.min)
                     });
-                    for event in ui.input(|input| input.events.clone()) {
+                    let events = ui.input(|input| input.events.clone());
+                    for event in terminal_events(&events) {
                         if !response.has_focus()
                             && !matches!(
                                 event,
@@ -437,7 +587,8 @@ impl App {
                         {
                             continue;
                         }
-                        let bytes = encode_event(&event, &screen, rect, cell, pointer);
+                        let bytes =
+                            encode_event(event, &screen, rect, cell, pointer, &mut self.mouse);
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
                         {
@@ -484,6 +635,7 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         fonts: TerminalFonts::current_monospace(),
         error: None,
         closing: false,
+        mouse: Mouse::default(),
     };
     for detached in [false, true] {
         if detached {
@@ -556,6 +708,10 @@ fn paint_terminal(
     let painter = ui.painter().with_clip_rect(rect);
     let background = Color32::from_rgb(30, 30, 46);
     painter.rect_filled(rect, 0.0, background);
+    // Once per whole-terminal paint (not per cell), so the native glyph
+    // cache's frame stamps distinguish "painted this frame" from stale.
+    #[cfg(target_os = "macos")]
+    fonts.fallback.borrow_mut().begin_frame();
     let (rows, cols) = screen.size();
     for row in 0..rows {
         for col in 0..cols {
@@ -713,6 +869,7 @@ fn main() -> eframe::Result {
                 fonts,
                 error: None,
                 closing: false,
+                mouse: Mouse::default(),
             }))
         }),
     )

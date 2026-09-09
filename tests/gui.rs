@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use eframe::egui::{self, Event, Key, Modifiers, MouseWheelUnit, TouchPhase};
-use ovrcr::gui::input::encode_event;
+use ovrcr::gui::input::{Mouse, encode_event};
 use ovrcr::gui::{Demo, Terminal};
 use std::path::Path;
 use std::thread;
@@ -41,6 +41,7 @@ fn command_k_is_not_forwarded_to_terminal() {
         egui::Rect::NOTHING,
         egui::vec2(8.0, 16.0),
         egui::pos2(0.0, 0.0),
+        &mut Mouse::default(),
     );
     assert!(bytes.is_empty());
 }
@@ -193,6 +194,7 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
                 egui::Rect::NOTHING,
                 egui::vec2(8.0, 16.0),
                 egui::pos2(0.0, 0.0),
+                &mut Mouse::default(),
             );
             terminal.send(&paste)?;
             terminal.send(b"\r")?;
@@ -374,8 +376,16 @@ fn input_preserves_control_keys_terminal_modes_and_mouse_cells() {
     let mut parser = vt100::Parser::new(10, 20, 0);
     let rect = egui::Rect::from_min_size(egui::pos2(12.0, 30.0), egui::vec2(160.0, 160.0));
     let cell = egui::vec2(8.0, 16.0);
-    let encode = |event: Event, screen: &vt100::Screen| {
-        encode_event(&event, screen, rect, cell, egui::pos2(29.0, 79.0))
+    let mut mouse = Mouse::default();
+    let mut encode = |event: Event, screen: &vt100::Screen| {
+        encode_event(
+            &event,
+            screen,
+            rect,
+            cell,
+            egui::pos2(29.0, 79.0),
+            &mut mouse,
+        )
     };
     assert_eq!(
         encode(key(Key::G, Modifiers::CTRL), parser.screen()),
