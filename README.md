@@ -96,7 +96,9 @@ returns to Browse mode, where `x` closes the focused pane and expands the
 survivor. Closing a pane leaves its session running. If the window becomes
 too narrow for both panes, only the focused pane is shown; widening it restores
 both. Detaching with `q` also leaves sessions running. A new attachment starts
-with one pane; press `v` to open the second again.
+with one pane; press `v` to open the second again. Each pane is capped at
+1000 rows and 1000 columns; a `SetView` requesting a larger pane is rejected
+before any PTY resize.
 
 Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
 their status slot blank; busy sessions animate the braille spinner, waiting

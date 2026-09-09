@@ -11,6 +11,13 @@ pub const PAGE_ROWS: u16 = 16;
 pub const PAGE_COLS: u16 = 128;
 pub const PAGE_BYTES: usize = 128 * 1024;
 
+/// Upper bound on a pane's terminal size. A pane beyond this allocates an
+/// oversized `vt100::Screen` and PTY before the resulting frame is found to
+/// exceed `MAX_FRAME_BYTES`, so it is rejected in `DashboardView::validate`
+/// before any PTY resize.
+pub const MAX_PANE_ROWS: u16 = 1000;
+pub const MAX_PANE_COLS: u16 = 1000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySnapshotId(pub u64);
 
@@ -86,6 +93,11 @@ impl DashboardView {
         for (index, pane) in self.panes.iter().enumerate() {
             if pane.size.rows == 0 || pane.size.cols == 0 {
                 return Err("pane dimensions must be greater than zero".into());
+            }
+            if pane.size.rows > MAX_PANE_ROWS || pane.size.cols > MAX_PANE_COLS {
+                return Err(format!(
+                    "pane dimensions must not exceed {MAX_PANE_ROWS} rows by {MAX_PANE_COLS} columns"
+                ));
             }
             if self.panes[index + 1..]
                 .iter()
@@ -763,5 +775,54 @@ mod wire_snapshot {
                 "wire encoding changed; bump PROTOCOL_VERSION in codec.rs and replace EXPECTED with the block above"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view_with(size: TerminalSize) -> DashboardView {
+        DashboardView {
+            revision: 1,
+            panes: vec![PaneTarget {
+                session: SessionId(1),
+                size,
+            }],
+            focused: Some(SessionId(1)),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_oversized_panes() {
+        let oversized_rows = view_with(TerminalSize {
+            rows: 1001,
+            cols: 80,
+        });
+        let error = oversized_rows
+            .validate()
+            .expect_err("1001 rows must be rejected");
+        assert!(
+            error.contains("1000"),
+            "error should name the limit: {error}"
+        );
+
+        let oversized_cols = view_with(TerminalSize {
+            rows: 24,
+            cols: 1001,
+        });
+        let error = oversized_cols
+            .validate()
+            .expect_err("1001 cols must be rejected");
+        assert!(
+            error.contains("1000"),
+            "error should name the limit: {error}"
+        );
+
+        let at_limit = view_with(TerminalSize {
+            rows: 1000,
+            cols: 1000,
+        });
+        assert!(at_limit.validate().is_ok(), "1000 by 1000 must pass");
     }
 }

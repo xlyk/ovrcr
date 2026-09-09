@@ -566,6 +566,64 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
 }
 
 #[test]
+fn oversized_set_view_returns_invalid_request_without_resizing() {
+    let id = SessionId(28);
+    let (_cwd, session, events_receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), events_receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state.sessions.lock().unwrap().insert(id, session.clone());
+    let initial_pty_size = session.master_size().unwrap();
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner,
+            request_id: 83,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![PaneTarget {
+                    session: id,
+                    size: TerminalSize {
+                        rows: 5000,
+                        cols: 80,
+                    },
+                }],
+                focused: Some(id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        sink.next(),
+        Some(DashboardDelivery::Message(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 83,
+                response: Response::Error {
+                    code: ErrorCode::InvalidRequest,
+                    ..
+                },
+            },
+            ..
+        }))
+    ));
+    assert!(state.view.lock().unwrap().is_none());
+    assert_eq!(session.master_size().unwrap(), initial_pty_size);
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
 fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     let first_id = SessionId(26);
     let second_id = SessionId(27);
