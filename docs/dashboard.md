@@ -200,9 +200,10 @@ the hook-owned activity state.
 `Space` shows the available keys and the next key runs an enabled action and
 closes the popup, so `Space` then `n` opens the terminal form. Bare hotkeys still
 work. `?` browses the same popup with arrows and `Enter`, and enabled rows are
-clickable. `Esc` closes it. Disabled rows stay visible with a reason, such as
-`Resume: not paused`. In a narrow window the highlighted row's description
-appears below the key list, and arrows reveal offscreen rows.
+clickable. `Esc` closes it. The compact list sits in the bottom-right corner,
+above the footer. The highlighted row's description appears below the keys,
+including the reason for a disabled action, such as `Resume: not paused`. Scroll
+the wheel, or use arrows in help mode, to reveal offscreen rows.
 
 The popup, the palette's key descriptions, and the enabled-key footer all read
 from one hint table. A new description names the selected target, states the

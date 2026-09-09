@@ -174,9 +174,21 @@ fn three_runs_stream_independently_and_cancel_admits_the_fourth() {
     }
     assert_ne!(dirs[0], dirs[1]);
     assert_eq!(f.call(&["run", "get", &runs[3]])["status"], "Queued");
-    let output = f.raw(&["run", "logs", &runs[0]]);
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stdout).contains("streamed fixture text"));
+    // `started` precedes the delta; wait for the supervisor to persist it too.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let output = f.raw(&["run", "logs", &runs[0]]);
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.contains("streamed fixture text") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "streamed output never arrived: {text}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     f.call(&["run", "cancel", &runs[0]]);
     f.wait(&runs[0], "Cancelled");
     f.wait(&runs[3], "Running");

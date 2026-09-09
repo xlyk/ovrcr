@@ -87,10 +87,12 @@ meta encodings they exercise are covered by the unit tests
 cannot prove composition or panel placement, so the IME path still needs this
 native check.
 
-Return to browse with `Ctrl-g`. Press `?`. Confirm the Session group names the
-selected session, workspace, and session ID in each enabled action's description.
-Disabled actions should show a reason instead. Resize below 100 columns and use
-arrows to inspect the highlighted description below the key list. Press Escape.
+Return to browse with `Ctrl-g`. Press Space. Confirm a compact bottom-right
+list above the footer, with the surrounding dashboard still visible. Press
+Escape, then `?`. Use arrows to highlight Session actions and confirm the detail
+below the list names the selected session, workspace, and session ID.
+Disabled actions should show a reason instead. Resize the window and scroll to
+the last entry; confirm it remains visible and clickable. Press Escape.
 Press Space then `n`; confirm the key popup closes and the terminal form opens.
 On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
 
