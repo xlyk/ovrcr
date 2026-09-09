@@ -787,7 +787,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         |screen| {
             screen.contains("wizard")
                 && screen.contains("Terminal mode")
-                && !screen.contains("Command palette")
+                && !screen.contains("┌ Create workspace")
         },
         Duration::from_secs(5),
     )?;
@@ -1681,7 +1681,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("Command palette"),
+        |screen| !screen.contains("┌ Create terminal"),
         wait_deadline(),
     )?;
     dashboard.send(b" tx")?;

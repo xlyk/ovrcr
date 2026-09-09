@@ -1415,8 +1415,9 @@ fn palette_escape_cancels_pending_request() {
     }
     let message = submitted.expect("form did not submit");
     assert!(palette_text(&dashboard).contains("Working…"));
+    assert!(palette_text(&dashboard).contains("┌ Register project"));
     assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
-    assert!(!palette_text(&dashboard).contains("Command palette"));
+    assert!(!palette_text(&dashboard).contains("┌ Register project"));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,
         response: Response::Error {
@@ -1424,7 +1425,7 @@ fn palette_escape_cancels_pending_request() {
             message: "late failure".into(),
         },
     });
-    assert!(!palette_text(&dashboard).contains("Command palette"));
+    assert!(!palette_text(&dashboard).contains("┌ Register project"));
     assert_eq!(dashboard.error, None);
 }
 
