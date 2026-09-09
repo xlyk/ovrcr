@@ -1872,3 +1872,38 @@ fn removal_pickers_with_empty_hierarchy_never_confirm() {
         assert!(!text.contains("Confirm action"));
     }
 }
+
+#[test]
+fn picker_validation_keeps_recovery_hints_and_cancels_without_removal() {
+    for query in ["remove workspace", "remove project"] {
+        for (width, height) in [(120, 40), (40, 12)] {
+            let mut dashboard = dashboard_fixture();
+            palette_search(&mut dashboard, query);
+            dashboard.key(KeyCode::Enter);
+            dashboard.ctrl('u');
+            dashboard.event_action(Event::Paste("missing".into()));
+            assert_eq!(
+                dashboard.key(KeyCode::Enter),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+            let text = rendered_rows(&dashboard, width, height).join("\n");
+            assert!(text.contains("not found"), "{text}");
+            assert!(text.contains("Esc cancel"), "{text}");
+            assert!(text.contains("Ctrl-u clear"), "{text}");
+            assert!(!text.contains("Confirm action"), "{text}");
+
+            assert_eq!(dashboard.ctrl('u'), ovrcr::tui::DashboardAction::Redraw);
+            dashboard.event_action(Event::Paste("spacelift".into()));
+            let text = palette_text(&dashboard);
+            assert!(text.contains("spacelift-agent"), "{text}");
+            assert!(!text.contains("not found"), "{text}");
+            assert_eq!(
+                dashboard.key(KeyCode::Esc),
+                ovrcr::tui::DashboardAction::Redraw
+            );
+            assert!(!palette_text(&dashboard).contains("Remove workspace"));
+            assert!(!palette_text(&dashboard).contains("Remove project"));
+            assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+        }
+    }
+}

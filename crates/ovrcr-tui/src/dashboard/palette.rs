@@ -1466,6 +1466,22 @@ impl Dashboard {
                 Page::Confirm { .. } => "Enter confirm · Esc cancel",
             }
         };
+        let mut status_area = Rect::new(inner.x, inner.y + body.height, inner.width, footer_height);
+        if palette.pending.is_none() && palette.error.is_some() && status_area.height > 1 {
+            status_area.height -= 1;
+            let recovery = match &palette.page {
+                Page::Form { fields, active, .. }
+                    if !matches!(fields[*active].kind, FieldKind::Toggle) =>
+                {
+                    "Esc cancel · Ctrl-u clear"
+                }
+                _ => "Esc cancel",
+            };
+            frame.render_widget(
+                Paragraph::new(recovery).style(Style::default().fg(SUBTEXT)),
+                Rect::new(inner.x, status_area.bottom(), inner.width, 1),
+            );
+        }
         frame.render_widget(
             Paragraph::new(status)
                 .wrap(Wrap { trim: false })
@@ -1474,7 +1490,7 @@ impl Dashboard {
                 } else {
                     SUBTEXT
                 })),
-            Rect::new(inner.x, inner.y + body.height, inner.width, footer_height),
+            status_area,
         );
     }
 }
