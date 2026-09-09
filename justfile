@@ -49,7 +49,7 @@ lint:
     rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 test *args:
-    rtk proxy cargo test --workspace "$@"
+    rtk proxy cargo test --workspace --all-targets --all-features "$@"
 
 verify: fmt-check check lint test
 
