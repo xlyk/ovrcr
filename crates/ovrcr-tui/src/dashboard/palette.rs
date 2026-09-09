@@ -187,9 +187,10 @@ fn unconfirmed_pick(page: &Page) -> Option<&'static str> {
     if field.value.is_empty() {
         return None;
     }
+    // Git refs are case-sensitive, so only the exact text the user typed stands.
     let exact = list
         .accepted()
-        .is_some_and(|item| item.value.eq_ignore_ascii_case(&field.value));
+        .is_some_and(|item| item.value == field.value);
     (!exact).then_some(field.label)
 }
 

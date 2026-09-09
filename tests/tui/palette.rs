@@ -793,6 +793,23 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
 }
 
 #[test]
+fn case_only_branch_mismatch_is_refused_not_submitted() {
+    // Git refs are case-sensitive, so `Release-2` is a different branch from the `release-2`
+    // the user typed: creating the workspace on it would silently use the wrong branch.
+    let repo = hint_repository(&["Release-2"]);
+    let mut dashboard = dashboard_fixture();
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+    let text = poll_until_deferred_submit_refused(
+        &mut dashboard,
+        "a branch that differs only in case must not be submitted",
+    );
+    assert!(text.contains("Create workspace"), "{text}");
+    assert!(text.contains("Branch not found in repository"), "{text}");
+    assert!(text.contains("Release-2"), "{text}");
+}
+
+#[test]
 fn typed_branch_missing_from_hints_is_refused_not_replaced() {
     let repo = hint_repository(&[]);
     let mut dashboard = dashboard_fixture();
