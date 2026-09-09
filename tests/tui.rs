@@ -260,6 +260,45 @@ fn palette_text(dashboard: &Dashboard) -> String {
 }
 
 #[test]
+fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char(' '));
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('w')) else {
+        panic!("leader workspace must request repository inspection");
+    };
+    assert_eq!(message.request, Request::Inspect);
+    dashboard.event_action(Event::Paste("leader-workspace".into()));
+    let text = palette_text(&dashboard);
+    assert!(!text.contains("Which key"));
+    assert!(text.contains("feature/leader-workspace"));
+    assert!(text.contains("consigint"));
+    assert!(text.contains("Branch mode"));
+}
+
+#[test]
+fn palette_hint_action_ignores_late_inspection_error() {
+    let mut dashboard = dashboard_fixture();
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char(':')) else {
+        panic!("palette must request inspection");
+    };
+    assert_eq!(message.request, Request::Inspect);
+    dashboard.event_action(Event::Paste("focus".into()));
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "late inspection".into(),
+        },
+    });
+    assert!(
+        dashboard.error.is_none(),
+        "closed palette must discard its inspection response"
+    );
+}
+
+#[test]
 fn space_then_n_opens_the_terminal_form() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
@@ -284,7 +323,8 @@ fn question_mark_popup_is_browsable() {
     let text = palette_text(&dashboard);
     assert!(!text.contains("Which key"));
     assert!(text.contains("Register project"));
-    assert!(text.contains("Repository (absolute path)"));
+    assert!(text.contains("Repository"));
+    assert!(text.contains("Workspace root"));
 }
 
 #[test]
@@ -393,7 +433,8 @@ fn whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks() {
             },
             Rect::new(0, 0, width, height),
         );
-        assert!(palette_text(&dashboard).contains("Repository (absolute path)"));
+        assert!(palette_text(&dashboard).contains("Repository"));
+        assert!(palette_text(&dashboard).contains("Workspace root"));
         assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
         dashboard.key(KeyCode::Esc);
         dashboard.key(KeyCode::Char('?'));
@@ -586,8 +627,25 @@ fn uppercase_x_confirms_session_close_without_closing_pane() {
 }
 
 fn palette_search(dashboard: &mut Dashboard, query: &str) {
-    dashboard.key(KeyCode::Char(':'));
+    let action = dashboard.key(KeyCode::Char(':'));
+    answer_palette_inspect(dashboard, action);
     dashboard.event_action(Event::Paste(query.into()));
+}
+
+fn answer_palette_inspect(dashboard: &mut Dashboard, action: ovrcr::tui::DashboardAction) {
+    if let ovrcr::tui::DashboardAction::Request(ClientMessage {
+        request_id,
+        request: Request::Inspect,
+    }) = action
+    {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Inventory {
+                registry: Default::default(),
+                sessions: Vec::new(),
+            },
+        });
+    }
 }
 
 #[test]
@@ -705,7 +763,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
     let cases = [
         (
             "create workspace",
-            vec!["consigint", "new-space", "feature/palette", "main"],
+            vec!["consigint", "new-space", "new", "feature/palette", "main"],
             Request::CreateWorkspace {
                 project: "consigint".into(),
                 name: "new-space".into(),
@@ -717,7 +775,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         ),
         (
             "create workspace",
-            vec!["consigint", "existing", "topic", ""],
+            vec!["consigint", "existing", "existing", "topic"],
             Request::CreateWorkspace {
                 project: "consigint".into(),
                 name: "existing".into(),
@@ -728,7 +786,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         ),
         (
             "register project",
-            vec!["repo", "/tmp/repo with spaces", "/tmp/worktrees"],
+            vec!["/tmp/repo with spaces", "repo", "/tmp/worktrees"],
             Request::AddProject {
                 name: "repo".into(),
                 repo: "/tmp/repo with spaces".into(),
@@ -755,9 +813,18 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         let mut dashboard = dashboard_fixture();
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
+        if query == "create workspace" {
+            dashboard.key(KeyCode::BackTab);
+        }
         for (index, value) in values.iter().enumerate() {
-            dashboard.ctrl('u');
-            dashboard.event_action(Event::Paste((*value).into()));
+            if query == "create workspace" && index == 2 {
+                if *value == "existing" {
+                    dashboard.key(KeyCode::Char(' '));
+                }
+            } else {
+                dashboard.ctrl('u');
+                dashboard.event_action(Event::Paste((*value).into()));
+            }
             for (width, height) in [(120, 40), (40, 12), (12, 5), (1, 1)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 terminal
@@ -765,7 +832,12 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                     .unwrap();
             }
             if index + 1 < values.len() {
-                dashboard.key(KeyCode::Tab);
+                let next = if query == "register project" {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Tab
+                };
+                dashboard.key(next);
             }
         }
         let mut action = dashboard.key(KeyCode::Enter);
@@ -777,6 +849,283 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             panic!("{query}: did not submit");
         };
         assert_eq!(message.request, expected);
+    }
+}
+
+#[test]
+fn w_opens_workspace_form_with_project_and_derived_branch() {
+    use ovrcr::protocol::BranchRequest;
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    dashboard.event_action(Event::Paste("pick-demo".into()));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Create workspace"), "{text}");
+    assert!(text.contains("consigint"), "{text}");
+    assert!(text.contains("feature/pick-demo"), "{text}");
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("Enter on Name must submit with defaults");
+    };
+    assert_eq!(
+        message.request,
+        Request::CreateWorkspace {
+            project: "consigint".into(),
+            name: "pick-demo".into(),
+            branch: BranchRequest::New {
+                branch: "feature/pick-demo".into(),
+                base: "main".into()
+            },
+        }
+    );
+}
+
+#[test]
+fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
+    use ovrcr::config::{ProjectRecord, Registry};
+    use ovrcr::tui::DashboardAction;
+    use std::process::Command;
+    let repo = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        vec!["branch", "topic"],
+        vec!["branch", "z1"],
+        vec!["branch", "z2"],
+        vec!["branch", "z3"],
+        vec!["branch", "z4"],
+        vec!["branch", "z5"],
+        vec!["branch", "z6"],
+        vec!["update-ref", "refs/remotes/origin/topic", "HEAD"],
+        vec![
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/topic",
+        ],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut dashboard = dashboard_fixture();
+    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char('w')) else {
+        panic!("Inspect missing");
+    };
+    assert_eq!(inspect.request, Request::Inspect);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: inspect.request_id,
+        response: Response::Inventory {
+            registry: Registry {
+                projects: vec![ProjectRecord {
+                    name: "consigint".into(),
+                    repo: repo.path().into(),
+                    workspace_root: repo.path().join("worktrees"),
+                    workspaces: vec![],
+                }],
+            },
+            sessions: vec![],
+        },
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        dashboard.event_action(Event::Paste(String::new()));
+        if palette_text(&dashboard).contains("topic") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Git hints never reached the form"
+        );
+        std::thread::yield_now();
+    }
+    dashboard.event_action(Event::Paste("first".into()));
+    dashboard.key(KeyCode::Tab); // mode
+    dashboard.key(KeyCode::Tab); // branch
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("custom/kept".into()));
+    dashboard.key(KeyCode::BackTab);
+    dashboard.key(KeyCode::BackTab); // name
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("renamed".into()));
+    assert!(palette_text(&dashboard).contains("custom/kept"));
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Right); // existing
+    dashboard.key(KeyCode::Tab); // branch pick
+    let text = palette_text(&dashboard);
+    assert!(text.contains("main") && text.contains("topic"), "{text}");
+    assert!(!text.contains("Base"), "{text}");
+    for _ in 0..7 {
+        dashboard.key(KeyCode::Down);
+    }
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("› z6"),
+        "selected branch must remain visible: {text}"
+    );
+    dashboard.event_action(Event::Paste("topic".into()));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("existing branch did not submit");
+    };
+    assert_eq!(
+        message.request,
+        Request::CreateWorkspace {
+            project: "consigint".into(),
+            name: "renamed".into(),
+            branch: ovrcr::protocol::BranchRequest::Existing {
+                branch: "topic".into()
+            },
+        }
+    );
+}
+
+fn workspace_creation_hierarchy(dashboard: &Dashboard) -> HierarchySnapshot {
+    let mut hierarchy = dashboard.hierarchy.clone();
+    let project = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap();
+    let mut workspace = project.workspaces[1].clone();
+    workspace.name = "pick-demo".into();
+    workspace.sessions.truncate(1);
+    workspace.sessions[0].id = SessionId(99);
+    workspace.sessions[0].workspace = "pick-demo".into();
+    workspace.sessions[0].name = "local".into();
+    project.workspaces.push(workspace);
+    hierarchy
+}
+
+#[test]
+fn palette_switch_drops_late_inventory_without_clearing_current_error() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char(':')) else {
+        panic!("no Inspect");
+    };
+    dashboard.event_action(Event::Paste("spacelift-agent progress local".into()));
+    dashboard.key(KeyCode::Enter);
+    dashboard.error = Some("current error".into());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: inspect.request_id,
+        response: Response::Inventory {
+            registry: Default::default(),
+            sessions: vec![],
+        },
+    });
+    assert_eq!(dashboard.error.as_deref(), Some("current error"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+}
+
+#[test]
+fn workspace_creation_cancel_and_failure_do_not_attach_late() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    dashboard.event_action(Event::Paste("pick-demo".into()));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("no create request");
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id + 1,
+        response: Response::Ok,
+    });
+    assert!(palette_text(&dashboard).contains("Working"));
+    let hierarchy = workspace_creation_hierarchy(&dashboard);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy.clone(),
+    )));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "creation refused".into(),
+        },
+    });
+    assert!(palette_text(&dashboard).contains("creation refused"));
+    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
+        panic!("no retry");
+    };
+    dashboard.key(KeyCode::Esc);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry.request_id,
+        response: Response::Ok,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(!palette_text(&dashboard).contains("Create workspace"));
+}
+
+#[test]
+fn workspace_creation_attaches_to_its_local_shell() {
+    use ovrcr::tui::{DashboardAction, InputMode};
+    for hierarchy_first in [true, false] {
+        let mut dashboard = dashboard_fixture();
+        let action = dashboard.key(KeyCode::Char('w'));
+        answer_palette_inspect(&mut dashboard, action);
+        dashboard.event_action(Event::Paste("pick-demo".into()));
+        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+            panic!("workspace form did not submit");
+        };
+        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(
+            workspace_creation_hierarchy(&dashboard),
+        ));
+        let ack = ServerMessage::Response {
+            request_id: message.request_id,
+            response: Response::Ok,
+        };
+        let outgoing = if hierarchy_first {
+            dashboard.handle_server_message(event);
+            assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
+            dashboard.handle_server_message(ack)
+        } else {
+            dashboard.handle_server_message(ack);
+            assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
+            dashboard.handle_server_message(event)
+        };
+        assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
+        assert_eq!(dashboard.mode, InputMode::Terminal);
+        assert!(
+            dashboard
+                .input_request(b"not ready".to_vec(), 999)
+                .is_none()
+        );
+        assert_eq!(outgoing.len(), 1);
+        assert!(
+            matches!(&outgoing[0].request, Request::SetView { view } if view.focused == Some(SessionId(99)))
+        );
+        acknowledge_view_request(&mut dashboard, outgoing[0].clone());
+        assert!(matches!(
+            dashboard.input_request(b"ready".to_vec(), 1000),
+            Some(ClientMessage {
+                request: Request::Input {
+                    session: SessionId(99),
+                    ..
+                },
+                ..
+            })
+        ));
     }
 }
 
@@ -849,6 +1198,28 @@ fn n_is_listed_in_the_browse_footer() {
 }
 
 #[test]
+fn a_opens_project_form_with_roots_and_derives_name_and_root() {
+    use ovrcr::tui::DashboardAction;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Code");
+    let repo = root.join("demo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir(root.join("plain")).unwrap();
+    let mut dashboard = dashboard_fixture();
+    dashboard.settings.picker_roots = vec![root];
+    dashboard.config_dir = dir.path().join("config");
+    assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Register project"), "{text}");
+    assert!(text.contains("Code"), "{text}");
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("demo"), "{text}");
+    assert!(text.contains("workspaces/demo"), "{text}");
+}
+
+#[test]
 fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
@@ -859,11 +1230,12 @@ fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     );
     dashboard.ctrl('g');
     palette_search(&mut dashboard, "register project");
+    dashboard.settings.picker_roots.clear();
     dashboard.key(KeyCode::Enter);
-    dashboard.key(KeyCode::Tab);
-    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
-    assert!(palette_text(&dashboard).contains("Name is required"));
+    assert!(palette_text(&dashboard).contains("Repository is required"));
     dashboard.event_action(Event::Paste("é\nname\u{1b}".into()));
     dashboard.key(KeyCode::Backspace);
     assert!(palette_text(&dashboard).contains("énam"));
@@ -2814,10 +3186,13 @@ fn history_begin_is_cancelled_and_captured_by_active_overlays() {
             })
         ));
         if overlay == "palette" {
-            assert_eq!(
+            assert!(matches!(
                 dashboard.key(KeyCode::Char(':')),
-                ovrcr::tui::DashboardAction::Redraw
-            );
+                ovrcr::tui::DashboardAction::Request(ClientMessage {
+                    request: Request::Inspect,
+                    ..
+                })
+            ));
         } else {
             assert_eq!(dashboard.ctrl('t'), ovrcr::tui::DashboardAction::Redraw);
         }

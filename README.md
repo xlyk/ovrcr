@@ -175,19 +175,42 @@ Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
 command palette. `Cmd-K` opens the popup anywhere in the GUI window and moves
 keyboard focus into it. If the dashboard has detached, it reconnects first.
 Type to filter actions or search a terminal by its project, workspace, and
-name. The Create terminal entry is labeled `Create terminal (n)`. Use the
-arrow keys to select a result, Enter to continue, and Escape to cancel.
+name. The Create terminal entry is labeled `Create terminal (n)`. Register
+project is `Register project (a)`. Use the arrow keys to select a result,
+Enter to continue, and Escape to cancel.
 
-The palette can also switch terminals, create workspaces, register projects,
-close terminals, and remove workspaces or projects. Forms prefill from the
-selected terminal where that applies. On a pick list, Up/Down move the
-highlight and Tab or Enter accepts. On a text field, Tab or the arrow keys
-move between fields; Enter advances and submits at the last field. Ctrl-u
-clears a field; Backspace deletes its last character.
+Press `a` in browse mode to register a project. Repository and Workspace root
+are path pickers: the list is one directory of children, directories only,
+filtered by fuzzy subsequence on the last path segment. Hidden names stay
+hidden unless that segment starts with `.`. Git checkouts sort first and are
+marked `git`. Tab accepts the highlight and appends `/`. Enter keeps the typed
+text and moves on. An empty field lists `picker_roots` from `dashboard.toml`
+(default `~/Code`, `~/src`, and `~` when those exist). Name is the repository
+basename once a path is chosen. Workspace root is `<config dir>/workspaces/<name>`
+until you edit it.
 
-For workspace creation, enter a base to create a new branch, or clear Base to
-use an existing branch. Project registration takes the repository and
-workspace-root paths.
+The palette can also switch terminals, create workspaces, close terminals, and
+remove workspaces or projects. Forms prefill from the selected terminal where
+that applies. On a pick list, Up/Down move the highlight and Tab or Enter
+accepts. On a text field, Tab or the arrow keys move between fields; Enter
+advances and submits at the last field. Ctrl-u clears a field; Backspace
+deletes its last character.
+
+Press `w` in browse mode, type a workspace name, and press Enter to create
+and select its `local` shell. The palette also lists `Create workspace (w)`.
+Project defaults to the selected terminal's project. Name has initial focus;
+Tab and Shift-Tab reach the other fields. On Branch mode, Space or Left/Right
+switches between `new` and `existing`. New branches start as `feature/<name>`
+and follow Name until you edit Branch. Existing mode lists local branches
+and hides Base.
+
+Base defaults to the repository's `origin/HEAD` target, then `main`, `master`,
+or the current HEAD. A remote-only default uses its full Git ref as Base.
+Git suggestions load in the background, are cached per project until the
+palette closes, and time out after two seconds. A footer
+note explains failures; Branch and Base then accept free text. Enter waits
+for pending suggestions before submitting. Project registration takes the
+repository and workspace-root paths.
 
 Dashboard settings live in `dashboard.toml` beside `config.toml`. Override the
 path with `OVRCR_DASHBOARD_CONFIG`. Do not put these keys in `config.toml`; the
@@ -197,6 +220,9 @@ defaults. A parse error shows in the footer and also uses defaults. An
 name is inserted before `shell`:
 
 ```toml
+branch_prefix = "feature/" # Prefix for new workspace branches
+picker_roots = ["~/Code", "~/src", "~"]
+
 [[agents]]
 name = "claude"
 argv = ["claude", "--verbose"]

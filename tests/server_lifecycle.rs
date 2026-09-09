@@ -1000,6 +1000,10 @@ fn context_snapshot_survives_dashboard_reattach() {
         .expect("equal-count context event snapshot");
     assert_eq!(retained.report, first_retained.report);
     assert!(retained.received_unix_ms > first_retained.received_unix_ms);
+    // Wait for server-side ownership cleanup before registering the replacement.
+    // Dropping the local socket alone races the old connection's reader.
+    dashboard.shutdown(std::net::Shutdown::Write).unwrap();
+    std::io::copy(&mut dashboard, &mut std::io::sink()).unwrap();
     drop(dashboard);
 
     let mut reconnect = connect_server(&fixture.socket).unwrap();

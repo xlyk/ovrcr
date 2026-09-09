@@ -116,6 +116,28 @@ from headless tests.
   received a self-review. These acceptance gaps are not covered by passing
   headless tests.
 
+## Conflict-resolution follow-up — 2026-09-08
+
+- Merged incoming `origin/main` at `c392059` into the PR branch. Kept both the
+  which-key table and Git-suggestion module, routed `w` and `a` through the
+  incoming creation entry points, and retained contextual palette details plus
+  the workspace form's submit/toggle instructions. `X` still opens the existing
+  close confirmation with the new palette defaults.
+- Added coverage proving leader `w` requests repository inspection and keeps
+  Name-first/derived-branch behavior. A failing regression exposed late Inspect
+  errors after palette hint actions; those responses are now ignored just as
+  they are for palette session switching. Updated old registration-label
+  assertions to the new path-picker fields without dropping form checks.
+- `rtk proxy env RUST_TEST_THREADS=1 just verify`: passed, 413 tests passed and
+  six existing ignored, including all-feature Clippy with warnings denied.
+- `rtk proxy env RUST_TEST_THREADS=1 cargo test --workspace --all-targets --all-features`:
+  passed, 424 tests passed and six existing ignored. TUI integration: 124;
+  TUI crate: 28; terminal acceptance: nine passed and one ignored. Serialization
+  follows the incoming workspace plan's recorded timing-test limitation.
+- Evidence and preserved failures: `/private/tmp/ovrcr-which-key-conflict-evidence/`.
+  Native/clipboard/Linux and independent-review gaps above remain open. This
+  integrates main into the feature branch, not PR #34 into main.
+
 ## Final verification
 
 From a clean checkout of the merged branch:

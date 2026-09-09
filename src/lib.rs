@@ -31,13 +31,14 @@ pub mod task_tui {
 pub mod tui {
     pub use ovrcr_tui::{
         CopyMotion, CopyPoint, CopySelection, DASHBOARD_READER_QUEUE_CAPACITY, Dashboard,
-        DashboardAction, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint, HistoryCopyRange,
-        HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, InputMode,
-        KeyEncoding, PaneRects, PaneState, PendingHistoryBegin, PendingHistoryPage, TerminalGuard,
-        TreeRow, actual_drawn_inner_rect, append_history_selection, dashboard_message_channel,
-        detect_agents, draw_dashboard, draw_dashboard_at, encode_key, encode_mouse, encode_paste,
-        event_to_request, history_view_size, pane_rects, render_copy, render_history,
-        render_terminal, write_clipboard,
+        DashboardAction, DashboardSettings, HistoryCopyCompletion, HistoryCopyJob,
+        HistoryCopyPoint, HistoryCopyRange, HistoryCursor, HistoryCursorTarget, HistoryPagePurpose,
+        HistoryView, InputMode, KeyEncoding, PaneRects, PaneState, PendingHistoryBegin,
+        PendingHistoryPage, TerminalGuard, TreeRow, actual_drawn_inner_rect,
+        append_history_selection, dashboard_message_channel, detect_agents, draw_dashboard,
+        draw_dashboard_at, encode_key, encode_mouse, encode_paste, event_to_request,
+        history_view_size, pane_rects, render_copy, render_history, render_terminal,
+        write_clipboard,
     };
 
     pub fn run_dashboard(

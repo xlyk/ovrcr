@@ -1,6 +1,7 @@
 mod agents;
 mod copy;
 mod event_loop;
+mod git_hints;
 mod hints;
 mod input;
 mod palette;
@@ -24,6 +25,7 @@ pub use render::{
     actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
     render_terminal,
 };
+pub use settings::DashboardSettings;
 pub use state::{
     HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, PendingHistoryBegin,
     PendingHistoryPage,
@@ -203,7 +205,8 @@ pub struct Dashboard {
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
     ignored_responses: HashSet<u64>,
-    pub(super) settings: settings::DashboardSettings,
+    pub settings: settings::DashboardSettings,
+    pub config_dir: std::path::PathBuf,
     pub(super) last_view_request_id: Option<u64>,
     pub(super) pending_view: Option<PendingView>,
     pub(super) requested_view: Option<RequestedView>,

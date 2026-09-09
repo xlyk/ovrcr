@@ -40,14 +40,14 @@
 - `w` in browse mode opens the form with Project prefilled. The palette entry reads "Create workspace (w)".
 - After `Response::Ok` for `CreateWorkspace`, the hierarchy event that follows carries the new `local` session; select it and enter terminal mode, matching `plans/2026-09-08-detected-agents.md`.
 
-- [ ] **Step 1: RED tests**
+- [x] **Step 1: RED tests**
   1. `git_hints` unit against a temp repository: `local_branches` lists `main` and a created branch; `default_branch` returns `main`, and returns the `origin/HEAD` target when a remote is configured.
   2. `tests/tui.rs`: `w_opens_workspace_form_with_project_and_derived_branch`: press `w` with a session selected, type a name, assert Branch shows `feature/<name>`, flip the mode, assert Branch becomes a pick list.
   3. `tests/tui.rs`: `workspace_creation_attaches_to_its_local_shell`.
 
-- [ ] **Step 2: Implement.** The `branch_prefix` default is `feature/`, overridable in `dashboard.toml`.
+- [x] **Step 2: Implement.** The `branch_prefix` default is `feature/`, overridable in `dashboard.toml`.
 
-- [ ] **Step 3: Verify** `rtk proxy cargo test -p ovrcr-tui` and `rtk proxy cargo test --test tui --test terminal_acceptance`.
+- [x] **Step 3: Verify** `rtk proxy cargo test -p ovrcr-tui` and `rtk proxy cargo test --test tui --test terminal_acceptance`.
 
 **Gate:** new tests pass; `git_lifecycle` unchanged.
 
@@ -59,7 +59,7 @@
 - Modify: `README.md`
 - Modify: `docs/testing-computer-use.md`
 
-- [ ] **Step 1:** Document `w`, the branch-mode toggle, and the derived defaults in the README "Command palette" section, and add a smoke-check step to `docs/testing-computer-use.md`: press `w`, type a name, confirm the derived branch and base, submit, and confirm the local shell is selected.
+- [x] **Step 1:** Document `w`, the branch-mode toggle, and the derived defaults in the README "Command palette" section, and add a smoke-check step to `docs/testing-computer-use.md`: press `w`, type a name, confirm the derived branch and base, submit, and confirm the local shell is selected.
 
 **Gate:** the README transcript in "Disposable repository transcript" still runs as written.
 
@@ -78,3 +78,43 @@ Then, with a release build and an isolated `OVRCR_CONFIG` and `OVRCR_SOCKET`:
 
 1. Press `w`, type a name, confirm the branch reads `feature/<name>` and the base is the repository's default branch, submit, and confirm the new workspace's `local` shell is selected.
 2. Run the computer-use smoke check in `docs/testing-computer-use.md`.
+
+## Execution checkpoint — 2026-09-08
+
+Implementation branch: `codex/workspace-creation-picks`, based on `6da699f`.
+Implementation commits: `07b02ef`, with review correction `d09599d`.
+
+Approved clarifications:
+- Open focused on Name; Enter there submits. Tab/Shift-Tab reach optional fields.
+- The server currently queues the hierarchy event before Ok. Attachment waits for
+  both, accepts either order, and uses the existing acknowledged-view input gate.
+
+Implementation details:
+- Reused the shipped picker and `dashboard.toml` loader. No protocol changes.
+- Git resolves refs itself, including linked worktrees and packed refs. One worker
+  enforces a shared two-second lookup deadline, bounds output, and kills/reaps its
+  own child on failure or cancellation. No timeout thread is left waiting on Git.
+- A remote-only default retains its full ref so runtime can resolve Base.
+- Added a real PTY regression in `tests/terminal_acceptance.rs`. It verifies a
+  configured prefix, a distinct remote-only base commit, shell output rather than
+  command echo, and fixture cleanup.
+
+Verification and review:
+- Evidence: `/private/tmp/ovrcr-workspace-picks-evidence/`, numbered attempts retained.
+- `26-just-verify-correction.log`: `RUST_TEST_THREADS=1 rtk proxy just verify`
+  passed, including 393 tests and all-feature Clippy with warnings denied.
+- `28-final-all-features.log`: final all-target/all-feature regression passed
+  after the correction: 404 passed, 6 ignored, with tests serialized.
+- `29-gui-tests.log`: `cargo test --features gui --test gui`, 6 passed.
+- `30-release-workspace-pty.log`: the release-build workspace shortcut test passed,
+  including real shell output and verified process-group/socket cleanup.
+- Independent review identified the remote-only ref defect. Logs 22–23 reproduce
+  it; the same reviewer confirmed the committed correction in log 27.
+- The first default-concurrency verify run failed two unchanged CLI timing tests.
+  Both passed in isolation and in the serialized suite. A separate serialized
+  attempt hit the harness's 180-second limit; the 600-second attempt completed.
+
+Remaining acceptance:
+- [ ] Native computer-use smoke check, including screenshots/accessibility and paste.
+- [ ] Execute the unchanged interactive README disposable-repository transcript.
+- [ ] Final verification from the merged branch. No merge or PR publication performed.

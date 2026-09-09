@@ -52,6 +52,9 @@ pub fn run_dashboard(
     dashboard.configuration_paths = Some(configuration_paths);
     let (settings, settings_error) = load_dashboard_settings(&settings_path);
     dashboard.settings = settings;
+    if let Some(parent) = settings_path.parent() {
+        dashboard.config_dir = parent.to_path_buf();
+    }
     if let Some(error) = settings_error {
         dashboard.error = Some(error);
     }
@@ -155,6 +158,11 @@ fn dashboard_loop<W: Write>(
     let mut task_worker =
         crate::task_tui::TaskWorker::start(task_request).context("start task control worker")?;
     loop {
+        let (palette_redraw, palette_request) = dashboard.poll_palette();
+        pending_redraw |= palette_redraw;
+        if let Some(request) = palette_request {
+            write_frame(stream, &request)?;
+        }
         pending_redraw |= task_worker.poll(dashboard.tasks.as_mut());
         let outer = terminal.size()?;
         emit_view_request(
