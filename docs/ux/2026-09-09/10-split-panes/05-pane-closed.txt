@@ -1,0 +1,57 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                          
+▼ 󰉋 consigint                          │pid: 39258  elapsed: 1m  agent unknown                                                  
+  ▼ auth-handoff                       │────────────────────────────────────────────────────────────────────────────────────────
+  - local                              │compinit:527: no such file or directory: /U                                        
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                          
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 39258  elapsed: 1m  agent unknown                                                  
+		5 text (settable)   ▼ auth-handoff                       │────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │compinit:527: no such file or directory: /U                                             
+		7 text (settable)      ├ terminal                        │╭─  /private/v/f/j/h/T/ovrcr-gui-6Cgdt5/wo                                             
+		8 text (settable)      └ run 1m  ctx —                   │╰─ rtk proxy printf '\nUX10_LEFT_%s\n' 'OUT                                             
+		9 text (settable)   - review auth handoff                │                                                                                        
+		10 text (settable)      ├ grok / grok-4.6                 │UX10_LEFT_OUTPUT                                                                        
+		11 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		12 text (settable)                                        │╭─  /private/v/f/j/h/T/ovrcr-g/w/c/auth-handoff   gui-consigint-auth-handoff        
+		13 text (settable)   ▼ worktree-lifecycle                 │╰─                                                                                   ─╯ 
+		14 text (settable)   - local                              │                                                                                        
+		15 text (settable)      ├ terminal                        │                                                                                        
+		16 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		17 text (settable)   - implement lifecycle cleanup        │                                                                                        
+		18 text (settable)      ├ claude / sonnet-4               │                                                                                        
+		19 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		20 text (settable)   - review websocket shutdown          │                                                                                        
+		21 text (settable)      ├ codex / gpt-5.4                 │                                                                                        
+		22 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		23 text (settable)   - plan snapshot restore              │                                                                                        
+		24 text (settable)      ├ pi / grok-4.6                   │                                                                                        
+		25 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		26 text (settable)                                        │                                                                                        
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │                                                                                        
+		28 text (settable)   ▼ pipeline-progress-v2               │                                                                                        
+		29 text (settable)   - local                              │                                                                                        
+		30 text (settable)      ├ terminal                        │                                                                                        
+		31 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		32 text (settable)   - build pipeline progress            │                                                                                        
+		33 text (settable)      ├ claude / opus-4                 │                                                                                        
+		34 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		35 text (settable)                                        │                                                                                        
+		36 text (settable)   ▼ scope-quality                      │                                                                                        
+		37 text (settable)   - local                              │                                                                                        
+		38 text (settable)      ├ terminal                        │                                                                                        
+		39 text (settable)      └ run 1m  ctx —                   │                                                                                        
+		40 text (settable)   - review scope quality               │                                                                                        
+		41 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace    
+	42 close button
+	43 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	44 minimize button
+	45 text OVRCR GUI
+46 menu bar
+	47 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                          
+▼ 󰉋 consigint                          │pid: 39258  elapsed: 1m  agent unknown                                                  
+  ▼ auth-handoff                       │────────────────────────────────────────────────────────────────────────────────────────
+  - local                              │compinit:527: no such file or directory: /U                                        
