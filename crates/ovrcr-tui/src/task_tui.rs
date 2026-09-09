@@ -1032,8 +1032,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             y += height;
         }
     } else if view.history {
-        footer_text =
-            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup";
+        footer_text = if view.runs.get(view.selected_run).is_some() {
+            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup"
+        } else {
+            "Esc tasks"
+        };
         let [history, log] = Layout::vertical([
             Constraint::Length((body.height / 3).max(4)),
             Constraint::Min(1),
@@ -1113,8 +1116,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             inner,
         );
     } else {
-        footer_text =
-            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit";
+        footer_text = if view.tasks.get(view.selected).is_some() {
+            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit"
+        } else {
+            "Esc back  n new  h all history  c limit"
+        };
         let mut rows = vec![Line::raw(
             "   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)",
         )];

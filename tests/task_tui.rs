@@ -363,6 +363,56 @@ fn invalid_concurrency_shows_error_with_edit_controls_and_recovers() {
         }
     }
 }
+
+#[test]
+fn empty_task_views_only_hint_actions_with_available_targets() {
+    let footer = |view: &TasksView, width| {
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, view)).unwrap();
+        (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>()
+    };
+    for width in [40, 120] {
+        let mut view = TasksView::default();
+        let text = footer(&view, width);
+        for available in ["Esc back", "n new", "h all history", "c limit"] {
+            assert!(text.contains(available), "{text}");
+        }
+        for unavailable in ["e edit", "p pause", "r run", "d del"] {
+            assert!(!text.contains(unavailable), "{text}");
+        }
+        for command in ['e', 'p', 'r', 'd'] {
+            view.event(key(KeyCode::Char(command)));
+            assert!(view.take_request().is_none());
+        }
+        view.event(key(KeyCode::Char('h')));
+        assert_eq!(view.take_request(), Some(TaskRequest::ListRuns(None)));
+        view.receive(&TaskRequest::ListRuns(None), Ok(TaskResponse::Runs(vec![])));
+        let text = footer(&view, width);
+        assert_eq!(text.trim(), "Esc tasks");
+        for command in ['x', 'd'] {
+            view.event(key(KeyCode::Char(command)));
+            assert!(view.take_request().is_none());
+        }
+        assert!(!view.event(key(KeyCode::Esc)));
+        assert!(footer(&view, width).contains("n new"));
+    }
+
+    let mut view = fixture();
+    for available in ["e edit", "p pause/resume", "r run", "d del"] {
+        assert!(footer(&view, 120).contains(available));
+    }
+    let mut store = TaskStore::default();
+    let task = store.create(spec(), 0).unwrap();
+    let run = store.enqueue(task.id, RunTrigger::Manual, 1).unwrap();
+    view.event(key(KeyCode::Char('h')));
+    let request = view.take_request().unwrap();
+    view.receive(&request, Ok(TaskResponse::Runs(vec![run])));
+    for available in ["↑/↓ run", "x cancel run", "d cleanup"] {
+        assert!(footer(&view, 120).contains(available));
+    }
+}
 #[test]
 fn multiline_cursor_edits_unicode_without_corruption() {
     let mut v = fixture();
