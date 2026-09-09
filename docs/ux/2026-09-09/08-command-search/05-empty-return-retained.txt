@@ -1,0 +1,57 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                         
+     ├ grok / grok-4.6                 │pid: 94838  elapsed: 0m  agent unknown                 
+     └ run 0m  ctx —                   │───────────────────────────────────────────────────────
+                                       │╭─ codex / gpt-5.4 ────────────────────────────────────
+  ▼ worktree-lifecycle                 ││ fixture: scope quality review                        
+  - local                      
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                         
+		4 text (settable)      ├ grok / grok-4.6                 │pid: 94838  elapsed: 0m  agent unknown                 
+		5 text (settable)      └ run 0m  ctx —                   │───────────────────────────────────────────────────────
+		6 text (settable)                                        │╭─ codex / gpt-5.4 ────────────────────────────────────
+		7 text (settable)   ▼ worktree-lifecycle                 ││ fixture: scope quality review                        
+		8 text (settable)   - local                              │╰──────────────────────────────────────────────────╯   
+		9 text (settable)      ├ terminal                        │                                                       
+		10 text (settable)      └ run 0m  ctx —                   │✓ deterministic local transcript ready                 
+		11 text (settable)   - im┌ Command palette ───────────────────────────────────────────────────────────────┐       
+		12 text (settable)      ├│Search: no-such-ux-action▏                                                      │       
+		13 text (settable)      └│No matching actions or terminals                                                │       
+		14 text (settable)   - re│                                                                                │       
+		15 text (settable)      ├│                                                                                │       
+		16 text (settable)      └│                                                                                │       
+		17 text (settable)   - pl│                                                                                │       
+		18 text (settable)      ├│                                                                                │       
+		19 text (settable)      └│                                                                                │       
+		20 text (settable)       │                                                                                │       
+		21 text (settable) ▼ 󰉋 sp│                                                                                │       
+		22 text (settable)   ▼ pi│                                                                                │       
+		23 text (settable)   - lo│                                                                                │       
+		24 text (settable)      ├│                                                                                │       
+		25 text (settable)      └│Edit search · Backspace delete · Esc close                                      │       
+		26 text (settable)   - bu│                                                                                │       
+		27 text (settable)      ├│                                                                                │       
+		28 text (settable)      └│                                                                                │       
+		29 text (settable)       └────────────────────────────────────────────────────────────────────────────────┘       
+		30 text (settable)   ▼ scope-quality                      │                                                       
+		31 text (settable)   - local                              │                                                       
+		32 text (settable)      ├ terminal                        │                                                       
+		33 text (settable)      └ run 0m  ctx —                   │                                                       
+		34 text (settable)   - review scope quality               │                                                       
+		35 text (settable)      ├ codex / gpt-5.4                 │                                                       
+		36 text (settable)      └ run 0m  ctx —                   │                                                       
+		37 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  p Pause  
+	38 close button
+	39 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	40 minimize button
+	41 text OVRCR GUI
+42 menu bar
+	43 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                         
+     ├ grok / grok-4.6                 │pid: 94838  elapsed: 0m  agent unknown                 
+     └ run 0m  ctx —                   │───────────────────────────────────────────────────────
+                                       │╭─ codex / gpt-5.4 ────────────────────────────────────
+  ▼ worktree-lifecycle                 ││ fixture: scope quality review                        
+  - local                      

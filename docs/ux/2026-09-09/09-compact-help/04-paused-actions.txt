@@ -1,0 +1,37 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                         
+▼ 󰉋 consigint                          │pid: 18234  elapsed: 0m  agent unknown  paused         
+  ▼ auth-handoff                       │───────────────────────────────────────────────────────
+  P local                              │compinit:527: no such file or directory: /Users/xlyk/.o
+     ├ terminal                        │compinit:shift:529: shift count must be <= $#          
+     └ run 0m  ctx —          
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                         
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 18234  elapsed: 0m  agent unknown  paused         
+		5 text (settable)   ▼ auth-handoff                       │───────────────────────────────────────────────────────
+		6 text (settable)   P local                              │compinit:527: no such file or directory: /Users/xlyk/.o
+		7 text (settable)      ├ terminal                        │compinit:shift:529: shift count must be <= $#          
+		8 text (settable)      └ run 0m  ctx —                   │╭─  /private/v/f/j/h/T/ovrcr-g/w/c/auth-handoff   gu
+		9 text (settable)   - review auth handoff                │i-consigint-auth-handoff                              
+		10 text (settable)      ├ grok / grok-4.6                 │╰─                                                  ─╯ 
+		11 text (settable)      └ run 0m  ctx —                   │                                                       
+		12 text (settable)                                        │               ┌ Which key · Space t ───────────────┐  
+		13 text (settable)   ▼ worktree-lifecycle                 │               │Terminal: local (#2)                │  
+		14 text (settable)   - local                              │               │r  Resume                           │  
+		15 text (settable)      ├ terminal                        │               │x  Close terminal                   │  
+		16 text (settable)      └ run 0m  ctx —                   │               │c  Copy screen                      │  
+		17 text (settable)   - implement lifecycle cleanup        │               │h  History                          │  
+		18 text (settable)      ├ claude / sonnet-4               │               │                                    │  
+		19 text (settable)      └ run 0m  ctx —                   │               │Resume the processes of local (#2)  │  
+		20 text (settable)   - review websocket shutdown          │               │in consigint / auth-handoff; no     │  
+		21 text (settable)      ├ codex / gpt-5.4                 │               │confirmation                        │  
+		22 text (settable)      └ run 0m  ctx —                   │               └ Esc close · Backspace up ──────────┘  
+		23 text (settable)   - plan snapshot restore              │                                                       
+		24 text (settable) BROWSE  ? Help  r Resume  n Create terminal  : Search  v Split  q Detach  t Tasks  Space Leader
+	25 close button
+	26 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	27 minimize button
+	28 text OVRCR GUI
+29 menu bar
+	30 OVRCR GUI

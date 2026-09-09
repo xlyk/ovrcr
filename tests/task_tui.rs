@@ -312,6 +312,209 @@ fn pause_resume_manual_run_and_concurrency() {
     v.event(key(KeyCode::Enter));
     assert_eq!(v.take_request(), Some(TaskRequest::Concurrency(Some(5))));
 }
+
+#[test]
+fn invalid_concurrency_shows_error_with_edit_controls_and_recovers() {
+    for width in [40, 80] {
+        for invalid in ["", "0"] {
+            let mut view = TasksView::default();
+            view.event(key(KeyCode::Char('c')));
+            for ch in invalid.chars() {
+                view.event(key(KeyCode::Char(ch)));
+            }
+            view.event(key(KeyCode::Enter));
+            assert!(view.take_request().is_none());
+            assert_eq!(view.concurrency, 3);
+            let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+            terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+            let rows = (0..12)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                rows.iter().any(|row| row.contains("positive integer")),
+                "{rows:?}"
+            );
+            assert!(
+                rows.iter().any(|row| row.contains("Concurrency:")),
+                "{rows:?}"
+            );
+            assert!(rows[11].contains("Esc cancel"), "{rows:?}");
+            assert!(rows[11].contains("Enter save"), "{rows:?}");
+
+            view.event(key(KeyCode::Backspace));
+            view.event(key(KeyCode::Char('5')));
+            view.event(key(KeyCode::Enter));
+            assert_eq!(view.take_request(), Some(TaskRequest::Concurrency(Some(5))));
+            assert_eq!(view.concurrency, 3, "wait for the server acknowledgement");
+            view.receive(
+                &TaskRequest::Concurrency(Some(5)),
+                Ok(TaskResponse::Concurrency(5)),
+            );
+            assert_eq!(view.concurrency, 5);
+
+            view.event(key(KeyCode::Char('c')));
+            assert!(!view.event(key(KeyCode::Esc)), "cancel stays in tasks");
+            assert!(view.take_request().is_none());
+            assert_eq!(view.concurrency, 5);
+        }
+    }
+}
+
+#[test]
+fn empty_task_views_only_hint_actions_with_available_targets() {
+    let footer = |view: &TasksView, width| {
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, view)).unwrap();
+        (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>()
+    };
+    for width in [40, 120] {
+        let mut view = TasksView::default();
+        let text = footer(&view, width);
+        for available in ["Esc back", "n new", "h all history", "c limit"] {
+            assert!(text.contains(available), "{text}");
+        }
+        for unavailable in ["e edit", "p pause", "r run", "d del"] {
+            assert!(!text.contains(unavailable), "{text}");
+        }
+        for command in ['e', 'p', 'r', 'd'] {
+            view.event(key(KeyCode::Char(command)));
+            assert!(view.take_request().is_none());
+        }
+        view.event(key(KeyCode::Char('h')));
+        assert_eq!(view.take_request(), Some(TaskRequest::ListRuns(None)));
+        view.receive(&TaskRequest::ListRuns(None), Ok(TaskResponse::Runs(vec![])));
+        let text = footer(&view, width);
+        assert_eq!(text.trim(), "Esc tasks");
+        for command in ['x', 'd'] {
+            view.event(key(KeyCode::Char(command)));
+            assert!(view.take_request().is_none());
+        }
+        assert!(!view.event(key(KeyCode::Esc)));
+        assert!(footer(&view, width).contains("n new"));
+    }
+
+    let mut view = fixture();
+    for available in ["e edit", "p pause/resume", "r run", "d del"] {
+        assert!(footer(&view, 120).contains(available));
+    }
+    let mut store = TaskStore::default();
+    let task = store.create(spec(), 0).unwrap();
+    let run = store.enqueue(task.id, RunTrigger::Manual, 1).unwrap();
+    view.event(key(KeyCode::Char('h')));
+    let request = view.take_request().unwrap();
+    view.receive(&request, Ok(TaskResponse::Runs(vec![run])));
+    for available in ["↑/↓ run", "x cancel run", "d cleanup"] {
+        assert!(footer(&view, 120).contains(available));
+    }
+}
+
+#[test]
+fn task_confirmations_honor_default_no_and_case_insensitive_answers() {
+    for cleanup in [false, true] {
+        for answer in [
+            KeyCode::Enter,
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+            KeyCode::Esc,
+            KeyCode::Char('y'),
+            KeyCode::Char('Y'),
+        ] {
+            let mut view = fixture();
+            let expected = if cleanup {
+                let mut store = TaskStore::default();
+                let task = store.create(spec(), 0).unwrap();
+                let run = store.enqueue(task.id, RunTrigger::Manual, 1).unwrap();
+                let id = run.id;
+                view.event(key(KeyCode::Char('h')));
+                let request = view.take_request().unwrap();
+                view.receive(&request, Ok(TaskResponse::Runs(vec![run])));
+                assert!(matches!(
+                    view.take_request(),
+                    Some(TaskRequest::ReadLog { .. })
+                ));
+                TaskRequest::Clean {
+                    id,
+                    confirmed: true,
+                }
+            } else {
+                TaskRequest::Delete(TaskId(1))
+            };
+            let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
+            let mut confirmation_visible = |view: &TasksView| {
+                terminal.draw(|f| draw_tasks(f, view)).unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|c| c.symbol())
+                    .collect::<String>()
+                    .contains("[y/N]")
+            };
+            view.event(key(KeyCode::Char('d')));
+            assert!(
+                confirmation_visible(&view),
+                "confirmation must be visible first"
+            );
+            assert!(view.take_request().is_none());
+            assert!(!view.event(key(answer)), "confirmation stays in task UI");
+            assert!(
+                !confirmation_visible(&view),
+                "answer {answer:?}, cleanup={cleanup}"
+            );
+            if matches!(answer, KeyCode::Char('y' | 'Y')) {
+                assert_eq!(view.take_request(), Some(expected));
+            } else {
+                assert!(view.take_request().is_none(), "No must not mutate");
+            }
+            assert_eq!(
+                view.tasks.len(),
+                1,
+                "no mutation before server acknowledgement"
+            );
+        }
+    }
+}
+#[test]
+fn confirmations_show_only_answer_controls_at_narrow_widths() {
+    for width in [24, 40, 120] {
+        let mut view = fixture();
+        view.event(key(KeyCode::Char('d')));
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(
+            footer.contains("n no") && footer.contains("y yes"),
+            "{footer}"
+        );
+        assert!(
+            !footer.contains("new") && !footer.contains("run"),
+            "{footer}"
+        );
+        if width >= 40 {
+            assert!(footer.contains("Enter/Esc no"), "{footer}");
+        }
+        view.event(key(KeyCode::Char('r')));
+        assert!(view.take_request().is_none());
+        view.event(key(KeyCode::Esc));
+        assert!(view.take_request().is_none());
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(footer.contains("Esc back"), "{footer}");
+        assert!(!footer.contains("y yes"), "{footer}");
+    }
+}
+
 #[test]
 fn multiline_cursor_edits_unicode_without_corruption() {
     let mut v = fixture();
@@ -638,6 +841,9 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
     v.receive(&expected, Err("retry".into()));
     v.event(key(KeyCode::Tab));
     v.event(key(KeyCode::Tab));
+    v.event(key(KeyCode::Tab));
+    assert_eq!(v.message, "retry", "acceptance must retain server errors");
+    v.event(key(KeyCode::BackTab));
     v.event(Event::Paste("missing".into()));
     v.event(ctrl('s'));
     assert!(v.take_request().is_none());
@@ -649,6 +855,11 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
         terminal.draw(|f| draw_tasks(f, v)).unwrap();
     }
     v.event(key(KeyCode::Enter));
+    assert!(
+        v.message.is_empty(),
+        "valid acceptance clears the picker error"
+    );
+    assert!(v.take_request().is_none());
     v.event(ctrl('s'));
     assert_eq!(v.take_request(), Some(expected));
 }

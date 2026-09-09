@@ -1,0 +1,43 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+│  Name: Long  review Long  review Long  review Long  review Long  review Long  review Long  r│
+│  Target (scratch/git): scratch                                                              │
+│  Project: consigint                                                                         │
+│  Remote: origin               
+		3 text (settable)  OVRCR  Tasks  │ concurrency: 3                                                                
+		4 text (settable) ┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+		5 text (settable) │  Name: Long  review Long  review Long  review Long  review Long  review Long  review Long  r│
+		6 text (settable) │  Target (scratch/git): scratch                                                              │
+		7 text (settable) │  Project: consigint                                                                         │
+		8 text (settable) │  Remote: origin                                                                             │
+		9 text (settable) │  Branch: main                                                                               │
+		10 text (settable) │  Schedule (interval/cron/once): interval                                                    │
+		11 text (settable) │  When (duration/cron/RFC3339): 1h                                                           │
+		12 text (settable) │  Timezone: UTC                                                                              │
+		13 text (settable) │  Model:                                                                                     │
+		14 text (settable) │  Thinking: off                                                                              │
+		15 text (settable) │  Timeout: 1h                                                                                │
+		16 text (settable) │> Prompt: first 界 line                                                                      │
+		17 text (settable) │          界 long prompt 界 long prompt 界 long prompt 界 long prompt 界 long prompt 界 TAIL │
+		18 text (settable) │          last 猫 line                                                                       │
+		19 text (settable) │                                                                                             │
+		20 text (settable) │                                                                                             │
+		21 text (settable) │                                                                                             │
+		22 text (settable) └─────────────────────────────────────────────────────────────────────────────────────────────┘
+		23 text (settable) Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline                      
+	24 close button
+	25 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	26 minimize button
+	27 text OVRCR GUI
+28 menu bar
+	29 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+│  Name: Long  review Long  review Long  review Long  review Long  review Long  review Long  r│
+│  Target (scratch/git): scratch                                                              │
+│  Project: consigint                                                                         │
+│  Remote: origin               

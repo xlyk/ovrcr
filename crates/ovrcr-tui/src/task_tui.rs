@@ -552,17 +552,24 @@ impl TasksView {
                     return false;
                 }
             }
+            let was_project = editor.field == 2;
             editor.edit(event);
+            if was_project && editor.field == 3 && self.message == "Select an available project" {
+                self.message.clear();
+            }
             return false;
         }
         let Event::Key(key) = event else {
             return false;
         };
         if self.confirmation.is_some() {
-            if key.code == KeyCode::Char('y') {
+            if matches!(key.code, KeyCode::Char('y' | 'Y')) {
                 let request = self.confirmation.take().unwrap();
                 self.queue(request);
-            } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('n')) {
+            } else if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n' | 'N')
+            ) {
                 self.confirmation = None;
             }
             return false;
@@ -861,9 +868,10 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         ),
         area,
     );
-    let [title, body, status, footer] = Layout::vertical([
+    let [title, body, concurrency, status, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
+        Constraint::Length(u16::from(view.concurrency_input.is_some())),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -1031,8 +1039,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             y += height;
         }
     } else if view.history {
-        footer_text =
-            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup";
+        footer_text = if view.runs.get(view.selected_run).is_some() {
+            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup"
+        } else {
+            "Esc tasks"
+        };
         let [history, log] = Layout::vertical([
             Constraint::Length((body.height / 3).max(4)),
             Constraint::Min(1),
@@ -1112,8 +1123,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             inner,
         );
     } else {
-        footer_text =
-            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit";
+        footer_text = if view.tasks.get(view.selected).is_some() {
+            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit"
+        } else {
+            "Esc back  n new  h all history  c limit"
+        };
         let mut rows = vec![Line::raw(
             "   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)",
         )];
@@ -1155,6 +1169,13 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
         status,
     );
+    let footer_text = if view.confirmation.is_some() {
+        "n no  y yes  Enter/Esc no"
+    } else if view.concurrency_input.is_some() {
+        "Esc cancel  Enter save  Backspace delete"
+    } else {
+        footer_text
+    };
     let mut hints = String::new();
     for hint in footer_text.split("  ") {
         let separator = if hints.is_empty() { "" } else { "  " };
@@ -1189,9 +1210,9 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
     }
     if let Some(value) = &view.concurrency_input {
         frame.render_widget(
-            Paragraph::new(format!("Concurrency: {value}  Enter save · Esc cancel"))
+            Paragraph::new(format!("Concurrency: {value}"))
                 .style(Style::default().fg(Color::Rgb(137, 220, 235))),
-            status,
+            concurrency,
         );
     }
 }

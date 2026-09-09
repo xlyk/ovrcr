@@ -1,0 +1,44 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+│  Name: Project selection review                                                             │
+│  Target (scratch/git): git                                                                  │
+│› Project: space▏                                                                            │
+│  › spacelift-agent            
+		3 text (settable)  OVRCR  Tasks  │ concurrency: 3                                                                
+		4 text (settable) ┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+		5 text (settable) │  Name: Project selection review                                                             │
+		6 text (settable) │  Target (scratch/git): git                                                                  │
+		7 text (settable) │› Project: space▏                                                                            │
+		8 text (settable) │  › spacelift-agent                                                                          │
+		9 text (settable) │  Remote: origin                                                                             │
+		10 text (settable) │  Branch: main                                                                               │
+		11 text (settable) │  Schedule (interval/cron/once): interval                                                    │
+		12 text (settable) │  When (duration/cron/RFC3339): 1h                                                           │
+		13 text (settable) │  Timezone: UTC                                                                              │
+		14 text (settable) │  Model:                                                                                     │
+		15 text (settable) │  Thinking: off                                                                              │
+		16 text (settable) │  Timeout: 1h                                                                                │
+		17 text (settable) │  Prompt:                                                                                    │
+		18 text (settable) │                                                                                             │
+		19 text (settable) │                                                                                             │
+		20 text (settable) │                                                                                             │
+		21 text (settable) │                                                                                             │
+		22 text (settable) └─────────────────────────────────────────────────────────────────────────────────────────────┘
+		23 text (settable) Select an available project                                                                    
+		24 text (settable) Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear              
+	25 close button
+	26 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	27 minimize button
+	28 text OVRCR GUI
+29 menu bar
+	30 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ New task ───────────────────────────────────────────────────────────────────────────────────┐
+│  Name: Project selection review                                                             │
+│  Target (scratch/git): git                                                                  │
+│› Project: space▏                                                                            │
+│  › spacelift-agent            
