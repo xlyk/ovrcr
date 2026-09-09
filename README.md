@@ -416,9 +416,9 @@ cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 Give every live fixture its own `OVRCR_CONFIG`, `OVRCR_SOCKET`, and temporary
 workspace, so a test cannot reach your real server.
 
-CI runs on ubuntu-latest and macos-latest: format and clippy, then three test
-suites (`core`, `lifecycle`, `tasks`, split by `scripts/ci-tests.sh`), plus the GUI
-helper's targets on macOS.
+CI runs one `checks` job on macos-latest: format, clippy, the full workspace
+test suite with all features (including the GUI helper), and doctests run
+sequentially using one build cache. Linux-specific behavior is not checked by CI.
 
 For changes to the dashboard or terminal handling, the
 [macOS GUI helper](docs/gui-helper.md) runs the real dashboard in a native window

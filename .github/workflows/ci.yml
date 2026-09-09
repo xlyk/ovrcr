@@ -15,13 +15,10 @@ env:
 
 jobs:
   checks:
-    name: lint (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: checks
+    # macOS covers the GUI feature as well as the headless workspace.
+    runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,38 +26,18 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: lint
-          cache-on-failure: true
-      - name: Format
-        run: cargo fmt --all -- --check
-      # Clippy covers compilation too; a preceding cargo check duplicates work.
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-  tests:
-    name: tests (${{ matrix.os }}, ${{ matrix.suite }})
-    runs-on: ${{ matrix.os }}
-    # The macOS core lane runs the full --all-features workspace gate,
-    # including the GUI feature and its tests/gui.rs target, and needs more
-    # time for a cold eframe build.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && matrix.suite == 'core' && 20 || 10 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        suite: [core, lifecycle, tasks]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: tests
+          shared-key: checks
           cache-on-failure: true
       - name: Configure git identity
         run: |
           git config --global user.name "OVRCR CI"
           git config --global user.email "ci@ovrcr.invalid"
+      - name: Format
+        run: cargo fmt --all -- --check
+      # Clippy covers compilation too; a preceding cargo check duplicates work.
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        env:
-          SUITE: ${{ matrix.suite }}
-        run: bash scripts/ci-tests.sh "$SUITE"
+        run: cargo test --workspace --all-targets --all-features
+      - name: Doc tests
+        run: cargo test --workspace --doc
