@@ -170,29 +170,28 @@ fn read_dirs(dir: &Path, segment: &str, show_hidden: bool) -> Vec<PathEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut entries = Vec::new();
-    for entry in read {
-        let Ok(entry) = entry else { continue };
+    read.filter_map(|entry| {
+        let entry = entry.ok()?;
         let path = entry.path();
         if !path.is_dir() {
-            continue;
+            return None;
         }
         let name = file_name(&path).to_string();
         if name == "." || name == ".." {
-            continue;
+            return None;
         }
         if name.starts_with('.') && !show_hidden {
-            continue;
+            return None;
         }
         if !subsequence(segment, &name) {
-            continue;
+            return None;
         }
-        // Past the display limit the git flag can no longer change which
-        // entries are shown, so skip the extra stat.
-        let git = entries.len() < PATH_LIST_LIMIT && path.join(".git").exists();
-        entries.push(path_entry(name, git));
-    }
-    entries
+        // The git flag decides sort order before truncation, so every
+        // matching entry needs it, not just the first PATH_LIST_LIMIT
+        // encountered in read_dir's (unsorted) order.
+        Some(path_entry(name, path.join(".git").exists()))
+    })
+    .collect()
 }
 
 fn split_input(input: &str) -> (&str, &str) {

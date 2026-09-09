@@ -459,6 +459,7 @@ impl Dashboard {
         palette.insert(text);
         self.refresh_workspace_form(&mut palette);
         self.palette = Some(palette);
+        self.refresh_active_path_listing();
         DashboardAction::Redraw
     }
 
@@ -525,7 +526,26 @@ impl Dashboard {
         entries
     }
 
+    /// Single authority for keeping a Path field's cached listing in sync:
+    /// every `palette_key`/`palette_paste` return path funnels through here
+    /// afterward, so no call site needs its own `refresh_path_listing` call.
+    fn refresh_active_path_listing(&mut self) {
+        let Some(palette) = &mut self.palette else {
+            return;
+        };
+        let Page::Form { fields, active, .. } = &mut palette.page else {
+            return;
+        };
+        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
+    }
+
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let action = self.palette_key_inner(key);
+        self.refresh_active_path_listing();
+        action
+    }
+
+    fn palette_key_inner(&mut self, key: KeyEvent) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
             // Escape closes even while a request runs; its late response is
@@ -575,7 +595,6 @@ impl Dashboard {
                             FieldKind::Path(picker) => picker.selected = 0,
                             FieldKind::Text | FieldKind::Toggle => {}
                         }
-                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {}
                 }
@@ -600,9 +619,6 @@ impl Dashboard {
                 ) =>
             {
                 palette.insert(&ch.to_string());
-                if let Page::Form { fields, active, .. } = &mut palette.page {
-                    refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
-                }
             }
             KeyCode::Backspace => {
                 match &mut palette.page {
@@ -629,7 +645,6 @@ impl Dashboard {
                                 fields[*active].value.pop();
                             }
                         }
-                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {}
                 }
@@ -693,10 +708,6 @@ impl Dashboard {
                                 if let FieldKind::Path(picker) = &mut fields[*active].kind {
                                     picker.selected = 0;
                                 }
-                                refresh_path_listing(
-                                    &mut fields[*active],
-                                    &self.settings.picker_roots,
-                                );
                                 self.refresh_terminal_form(fields, *name_edited);
                                 self.refresh_project_form(fields, *name_edited, *root_edited);
                                 self.palette = Some(palette);
@@ -712,7 +723,6 @@ impl Dashboard {
                             self.refresh_project_form(fields, *name_edited, *root_edited);
                         }
                         move_form_field(fields, active, backwards);
-                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {
                         self.palette = Some(palette);

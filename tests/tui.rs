@@ -1463,6 +1463,39 @@ fn tab_on_a_leaf_path_advances_to_the_next_field() {
 }
 
 #[test]
+fn paste_into_repository_field_refreshes_the_listing() {
+    use ovrcr::tui::DashboardAction;
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(repo.join("child")).unwrap();
+    let mut dashboard = dashboard_fixture();
+    dashboard.settings.picker_roots = vec![dir.path().to_path_buf()];
+    assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
+    dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("  › child"), "{text}");
+}
+
+#[test]
+fn double_enter_refreshes_the_derived_workspace_root_listing() {
+    use ovrcr::tui::DashboardAction;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("Code");
+    let repo = root.join("demo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let mut dashboard = dashboard_fixture();
+    dashboard.settings.picker_roots = vec![root];
+    dashboard.config_dir = dir.path().join("config");
+    std::fs::create_dir_all(dashboard.config_dir.join("workspaces").join("demo")).unwrap();
+    assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
+    dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("  › demo"), "{text}");
+}
+
+#[test]
 fn search_selection_clamps_when_entries_shrink() {
     // The fixture starts focused on session 1, so the two "lifecycle"
     // switch entries (sessions 2 and 4) are both a real focus change,
