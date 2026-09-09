@@ -212,8 +212,15 @@ pub struct Dashboard {
     pub(super) last_view_request_id: Option<u64>,
     pub(super) pending_view: Option<PendingView>,
     pub(super) requested_view: Option<RequestedView>,
+    /// The view the server refused, with the instant of the refusal. The same view waits out
+    /// `VIEW_RETRY_BACKOFF` before it is re-sent so a repeating failure cannot spin the loop.
+    pub(super) failed_view: Option<(RequestedView, std::time::Instant)>,
     pub(super) force_view_refresh: bool,
-    pub(super) view_request_ids: HashSet<u64>,
+    /// Ids of `SetView` requests still waiting for their final `Ok` or `Error`.
+    pub view_request_ids: HashSet<u64>,
+    /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
+    /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
+    pub(super) error_owning_requests: HashSet<u64>,
     pub(super) pending_snapshot_sessions: HashSet<SessionId>,
 }
 

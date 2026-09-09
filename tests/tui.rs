@@ -1639,13 +1639,26 @@ fn copy_ready_dashboard() -> Dashboard {
     screen_ready_dashboard(b"abc")
 }
 
+/// The outer area whose sole pane terminal is exactly `size`. The sidebar keeps its full 40
+/// columns only while the pane is at least as wide, so narrower panes are not expressible.
+fn outer_area_for_pane(size: TerminalSize) -> Rect {
+    assert!(size.cols >= 40, "a narrower pane splits the sidebar width");
+    Rect::new(
+        0,
+        0,
+        size.cols.saturating_add(40),
+        size.rows.saturating_add(4),
+    )
+}
+
 #[test]
 fn resize_matching_screen_restores_snapshot_and_ignores_stale_screen() {
     let mut dashboard = dashboard_fixture();
     let session = dashboard.focused_session().unwrap();
     let size = TerminalSize { rows: 20, cols: 40 };
     let resize = dashboard
-        .resize_request(size, 901)
+        .view_request(outer_area_for_pane(size), 901)
+        .unwrap()
         .expect("selected dashboard should request resize");
     assert!(matches!(
         resize.request,
@@ -2759,8 +2772,12 @@ fn matching_history_open_clears_resize_notice_but_stale_response_does_not() {
     let mut dashboard = copy_ready_dashboard();
     dashboard.key(KeyCode::Char('['));
     let resize = dashboard
-        .resize_request(TerminalSize { rows: 20, cols: 40 }, 901)
-        .unwrap();
+        .view_request(
+            outer_area_for_pane(TerminalSize { rows: 20, cols: 40 }),
+            901,
+        )
+        .unwrap()
+        .expect("the new geometry should request a view");
     acknowledge_all_view_targets(&mut dashboard, resize);
     assert_eq!(
         dashboard.copy_notice.as_deref(),
@@ -3060,7 +3077,13 @@ fn copy_mode_cancels_at_identity_boundaries() {
 
     let mut dashboard = copy_ready_dashboard();
     dashboard.key(KeyCode::Char('['));
-    dashboard.resize_request(TerminalSize { rows: 20, cols: 40 }, 901);
+    dashboard
+        .view_request(
+            outer_area_for_pane(TerminalSize { rows: 20, cols: 40 }),
+            901,
+        )
+        .unwrap()
+        .expect("the new geometry should request a view");
     assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
     assert!(dashboard.copy.is_none());
     assert_eq!(
@@ -4509,7 +4532,11 @@ fn copy_history_range_survives_live_eviction() {
 
     let before_resize = dashboard.history.as_ref().unwrap().copy_range();
     let resize = dashboard
-        .resize_request(TerminalSize { rows: 30, cols: 70 }, 900)
+        .view_request(
+            outer_area_for_pane(TerminalSize { rows: 30, cols: 70 }),
+            900,
+        )
+        .unwrap()
         .expect("resize should request a view");
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: resize.request_id,
@@ -6937,7 +6964,8 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
     dashboard.select_session(SessionId(50));
     assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     let resize = dashboard
-        .resize_request(TerminalSize { rows: 20, cols: 40 }, 99)
+        .view_request(outer_area_for_pane(TerminalSize { rows: 20, cols: 40 }), 99)
+        .unwrap()
         .expect("resize should request a view");
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: resize.request_id,
@@ -8554,24 +8582,14 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 46).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
-    let early_outgoing = dashboard.handle_server_message(ServerMessage::Response {
-        request_id: narrow.request_id,
-        response: Response::Ok,
-    });
-    assert!(early_outgoing.is_empty());
-    assert_eq!(dashboard.view_revision, narrow_revision);
-    deliver_all_view_screens(
-        &mut dashboard,
-        narrow.request_id,
-        match &narrow.request {
-            Request::SetView { view } => view,
-            _ => panic!("expected SetView"),
-        },
-    );
+    // `Ok` is final and every snapshot precedes it, so this acknowledgement without the narrow
+    // view's Screen is a failure: the dashboard refreshes instead of waiting for a receipt that
+    // can no longer arrive.
     let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
         request_id: narrow.request_id,
         response: Response::Ok,
     });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
     assert_eq!(outgoing.len(), 1);
     let latest = outgoing.pop().expect("latest desired view request");
     let Request::SetView { ref view } = latest.request else {
@@ -8608,6 +8626,21 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         expected_targets
     );
     assert_view_input_blocked(&mut dashboard, 47);
+    // The abandoned narrow request can neither install a snapshot nor complete a second time.
+    deliver_all_view_screens(
+        &mut dashboard,
+        narrow.request_id,
+        match &narrow.request {
+            Request::SetView { view } => view,
+            _ => panic!("expected SetView"),
+        },
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: narrow.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert_eq!(dashboard.view_revision, narrow_revision + 1);
     deliver_all_view_screens(&mut dashboard, latest.request_id, view);
     assert_view_input_blocked(&mut dashboard, 48);
     dashboard.handle_server_message(ServerMessage::Response {
@@ -8782,7 +8815,7 @@ fn split_review_pending_a_b_a_preserves_received_parser_before_ok() {
 }
 
 #[test]
-fn split_review_discarded_pending_view_waits_for_all_receipts_before_replacement() {
+fn split_review_discarded_pending_view_refreshes_before_late_receipts() {
     let mut dashboard = dashboard_fixture();
     let initial = dashboard
         .select_request(SessionId(3), 106)
@@ -8798,15 +8831,24 @@ fn split_review_discarded_pending_view_waits_for_all_receipts_before_replacement
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
     assert_eq!(dashboard.view_revision, initial_revision);
 
-    let early_outgoing = dashboard.handle_server_message(ServerMessage::Response {
+    // `Ok` is final, so an acknowledgement that arrives without the expected Screen has failed
+    // the discarded A→B→A request: it is abandoned and replaced rather than left waiting.
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
         request_id: initial.request_id,
         response: Response::Ok,
     });
-    assert!(
-        early_outgoing.is_empty(),
-        "early Ok must not emit a replacement before the expected Screen"
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "an incomplete discarded request must emit exactly one replacement"
     );
-    assert_eq!(dashboard.view_revision, initial_revision);
+    let replacement = outgoing.pop().expect("replacement SetView");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected replacement SetView");
+    };
+    assert_eq!(view.panes.len(), 1);
+    assert_eq!(view.panes[0].session, SessionId(3));
+    assert_eq!(dashboard.view_revision, initial_revision + 1);
     assert!(dashboard.panes.iter().all(|pane| !pane.ready));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 109).is_none());
@@ -8817,8 +8859,9 @@ fn split_review_discarded_pending_view_waits_for_all_receipts_before_replacement
             .unwrap()
             .is_none()
     );
-    assert_eq!(dashboard.view_revision, initial_revision);
+    assert_eq!(dashboard.view_revision, initial_revision + 1);
 
+    // The abandoned request's late snapshot and duplicate ack install nothing.
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: initial.request_id,
         response: Response::Screen {
@@ -8828,23 +8871,18 @@ fn split_review_discarded_pending_view_waits_for_all_receipts_before_replacement
             bytes: b"ORIGINAL_A".to_vec(),
         },
     });
-    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+    dashboard.handle_server_message(ServerMessage::Response {
         request_id: initial.request_id,
         response: Response::Ok,
     });
-    assert_eq!(
-        outgoing.len(),
-        1,
-        "complete discarded request must emit exactly one replacement"
-    );
-    let replacement = outgoing.pop().expect("replacement SetView");
-    let Request::SetView { ref view } = replacement.request else {
-        panic!("expected replacement SetView");
-    };
-    assert_eq!(view.panes.len(), 1);
-    assert_eq!(view.panes[0].session, SessionId(3));
-    assert_eq!(dashboard.view_revision, initial_revision + 1);
     assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !pane.parser.screen().contents().contains("ORIGINAL_A"))
+    );
+    assert_eq!(dashboard.view_revision, initial_revision + 1);
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 111).is_none());
     dashboard.mode = ovrcr::tui::InputMode::Browse;
@@ -9307,7 +9345,9 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         response: Response::Ok,
     });
     assert_eq!(dashboard.view_revision, current_revision);
-    assert_eq!(dashboard.error, None);
+    // A completed request id is retired, so this second response for it is indistinguishable
+    // from any other server error and shows the server's message; it still must not clear it.
+    assert_eq!(dashboard.error.as_deref(), Some("Conflict: old A error"));
     assert!(
         dashboard
             .panes
@@ -9371,6 +9411,14 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
     assert_eq!(dashboard.error.as_deref(), Some("Conflict: view refused"));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert!(dashboard.input_request(vec![b'x'], 56).is_none());
+    // The refused view is retried, but only once its backoff has elapsed.
+    assert!(
+        dashboard
+            .view_request(Rect::new(0, 0, 120, 40), 57)
+            .unwrap()
+            .is_none()
+    );
+    std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
     let retry = dashboard
         .view_request(Rect::new(0, 0, 120, 40), 57)
         .unwrap()
@@ -9378,6 +9426,234 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
     acknowledge_all_view_targets(&mut dashboard, retry);
     assert!(dashboard.panes.iter().all(|pane| pane.ready));
     assert!(dashboard.input_request(vec![b'x'], 58).is_some());
+}
+
+/// Slightly longer than `VIEW_RETRY_BACKOFF` in `crates/ovrcr-tui/src/dashboard/state.rs`.
+const PAST_VIEW_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(260);
+
+#[test]
+fn view_error_on_unchanged_view_retries_once_after_backoff() {
+    let mut dashboard = dashboard_fixture();
+    let session = dashboard.focused_session().unwrap();
+    let mut dirty =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+            session,
+            revision: dashboard.view_revision,
+        }));
+    assert_eq!(dirty.len(), 1);
+    let refresh = dirty
+        .pop()
+        .expect("a dirty screen should re-request the same view");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: refresh.request_id,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "session vanished".into(),
+        },
+    });
+    assert!(!dashboard.panes[dashboard.focused_pane].ready);
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("NotFound: session vanished")
+    );
+    assert_view_input_blocked(&mut dashboard, 601);
+    for request_id in 602..605 {
+        assert!(
+            dashboard
+                .view_request(dashboard.outer_area, request_id)
+                .unwrap()
+                .is_none(),
+            "a refused view must wait out the backoff before it is re-sent"
+        );
+    }
+    std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
+    let retry = dashboard
+        .view_request(dashboard.outer_area, 605)
+        .unwrap()
+        .expect("the refused view must be retried once the backoff elapses");
+    assert!(matches!(retry.request, Request::SetView { .. }));
+    acknowledge_view_request(&mut dashboard, retry);
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    assert_view_input_allowed(&mut dashboard, session, 606);
+}
+
+#[test]
+fn view_error_on_changed_view_does_not_spin() {
+    let mut dashboard = dashboard_fixture();
+    let wider = Rect::new(0, 0, 120, 40);
+    let changed = dashboard
+        .view_request(wider, 610)
+        .unwrap()
+        .expect("new geometry should request a view");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: changed.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "pty refused".into(),
+        },
+    });
+    for request_id in 611..615 {
+        assert!(
+            dashboard.view_request(wider, request_id).unwrap().is_none(),
+            "a changed view must not re-send SetView on every pass"
+        );
+    }
+    std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
+    let retry = dashboard
+        .view_request(wider, 615)
+        .unwrap()
+        .expect("the refused view must be retried once the backoff elapses");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: retry.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "pty refused".into(),
+        },
+    });
+    assert!(
+        dashboard.view_request(wider, 616).unwrap().is_none(),
+        "a second refusal must arm a new backoff window"
+    );
+}
+
+#[test]
+fn incomplete_final_ok_marks_panes_failed_and_refreshes() {
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let request = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 620)
+        .unwrap()
+        .expect("split should request a two-target view");
+    let Request::SetView { view } = request.request.clone() else {
+        panic!("expected SetView");
+    };
+    assert_eq!(view.panes.len(), 2);
+    let first = view.panes[0].clone();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Screen {
+            session: first.session,
+            revision: view.revision,
+            size: first.size,
+            bytes: b"only one snapshot".to_vec(),
+        },
+    });
+    let mut outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(dashboard.panes.iter().all(|pane| !pane.snapshot_installed));
+    assert_view_input_blocked(&mut dashboard, 621);
+    assert_eq!(
+        outgoing.len(),
+        1,
+        "a final Ok without every snapshot must refresh the view"
+    );
+    let refresh = outgoing.pop().expect("refreshed view request");
+    let Request::SetView { view: refreshed } = refresh.request.clone() else {
+        panic!("expected a refreshed SetView");
+    };
+    assert_eq!(refreshed.revision, view.revision + 1);
+    assert_eq!(refreshed.panes.len(), 2);
+    deliver_all_view_screens(&mut dashboard, request.request_id, &view);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        dashboard.panes.iter().all(|pane| !pane.ready),
+        "the abandoned request must not complete a second time"
+    );
+    acknowledge_all_view_targets(&mut dashboard, refresh);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+}
+
+#[test]
+fn view_request_ids_are_released_on_final_response() {
+    let mut dashboard = dashboard_fixture();
+    for round in 0..10 {
+        let session = if round % 2 == 0 {
+            SessionId(5)
+        } else {
+            SessionId(1)
+        };
+        let request = dashboard
+            .select_request(session, 700 + round)
+            .expect("alternating selection should request a view");
+        acknowledge_view_request(&mut dashboard, request);
+    }
+    assert!(
+        dashboard.view_request_ids.len() <= 1,
+        "completed view requests must release their ids, kept {}",
+        dashboard.view_request_ids.len()
+    );
+}
+
+#[test]
+fn settings_error_survives_the_geometry_ack() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.error = Some("settings: invalid TOML at line 3".into());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 2,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("settings: invalid TOML at line 3")
+    );
+}
+
+#[test]
+fn split_error_survives_mouse_cleanup_ack() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = focused_terminal_rect(&dashboard, area);
+    dashboard.mouse_action(
+        click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
+        area,
+    );
+    assert_eq!(
+        dashboard.ctrl('g'),
+        ovrcr::tui::DashboardAction::EnterBrowse
+    );
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("the held button should queue a release");
+    for project in &mut dashboard.hierarchy.projects {
+        for workspace in &mut project.workspaces {
+            workspace
+                .sessions
+                .retain(|session| session.id == SessionId(1));
+        }
+    }
+    assert!(!dashboard.split_pane());
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("No other visible session to split")
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: cleanup.request_id,
+        response: Response::Ok,
+    });
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("No other visible session to split"),
+        "a synthetic mouse release must not clear a fresh error"
+    );
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let input = dashboard
+        .input_request(b"x".to_vec(), 630)
+        .expect("a ready pane should accept input");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: input.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        dashboard.error.is_none(),
+        "an acknowledged user input owns the banner and clears it"
+    );
 }
 
 #[test]

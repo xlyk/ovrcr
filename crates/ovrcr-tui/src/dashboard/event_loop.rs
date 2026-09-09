@@ -55,9 +55,6 @@ pub fn run_dashboard(
     if let Some(parent) = settings_path.parent() {
         dashboard.config_dir = parent.to_path_buf();
     }
-    if let Some(error) = settings_error {
-        dashboard.error = Some(error);
-    }
     dashboard.handle_server_message(initial);
     write_client(
         &mut stream,
@@ -87,6 +84,10 @@ pub fn run_dashboard(
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
+    // Applied last: the handshake acknowledgements above clear the banner they do not own.
+    if let Some(error) = settings_error {
+        dashboard.error = Some(error);
+    }
 
     let mut guard = TerminalGuard::enter()?;
     let mut mouse_enabled = guard.mouse;
@@ -197,7 +198,12 @@ fn dashboard_loop<W: Write>(
 
         {
             let now = Instant::now();
-            let idle_wait = next_idle_redraw.saturating_duration_since(now);
+            // A refused view is re-sent by the `emit_view_request` below, so the wait cannot
+            // outlast its backoff deadline.
+            let idle_wait = dashboard
+                .view_retry_deadline()
+                .map_or(next_idle_redraw, |retry| next_idle_redraw.min(retry))
+                .saturating_duration_since(now);
             let frame_wait = next_frame_redraw.saturating_duration_since(now);
             let wait = if pending_redraw && frame_wait < idle_wait {
                 wait_for_dashboard_activity(input_fd, None, frame_wait)?

@@ -354,10 +354,9 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                     bytes: b"wrong".to_vec(),
                 },
             },
-            ServerMessage::Response {
-                request_id: request.request_id,
-                response: Response::Ok,
-            },
+            // No `Ok` precedes the expected Screen here: a final acknowledgement without it
+            // fails the view, which `initial_selection_does_not_complete_after_wrong_screen_and_ok`
+            // covers.
             ServerMessage::Response {
                 request_id: request.request_id,
                 response: Response::Screen {
