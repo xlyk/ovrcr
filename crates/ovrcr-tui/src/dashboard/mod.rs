@@ -224,6 +224,11 @@ pub struct Dashboard {
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     pub(super) error_owning_requests: HashSet<u64>,
+    /// Set when the user changes selection, splits, focuses, or closes a pane, and consumed by the
+    /// next `SetView` those changes produce, which then owns the error banner: a banner written
+    /// before the change describes the state the user just left. A server-driven refresh mints its
+    /// request with this clear, so its success leaves a fresh banner alone.
+    pub(super) pending_user_view_change: bool,
     pub(super) pending_snapshot_sessions: HashSet<SessionId>,
 }
 

@@ -2208,6 +2208,35 @@ fn split_error_survives_a_screen_dirty_refresh() {
 }
 
 #[test]
+fn split_error_is_cleared_by_the_view_the_next_selection_requests() {
+    let mut dashboard = dashboard_fixture();
+    // Hiding the focused session's workspace leaves `v` with nothing to split from while `j`
+    // still has another session to select, so the banner and the selection are independent.
+    dashboard
+        .collapsed_workspaces
+        .insert(("consigint".into(), "auth".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Char('v')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("No other visible session to split")
+    );
+    let request = match dashboard.key(KeyCode::Char('j')) {
+        ovrcr::tui::DashboardAction::Request(request) => request,
+        action => panic!("a selection change should request a view: {action:?}"),
+    };
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    acknowledge_view_request(&mut dashboard, request);
+    assert!(
+        dashboard.error.is_none(),
+        "a banner must not outlive the view change the user asked for: {:?}",
+        dashboard.error
+    );
+}
+
+#[test]
 fn settings_error_survives_the_geometry_ack() {
     let mut dashboard = dashboard_fixture();
     dashboard.error = Some("settings: invalid TOML at line 3".into());

@@ -579,6 +579,7 @@ impl Dashboard {
             force_view_refresh: false,
             view_request_ids: HashSet::new(),
             error_owning_requests: HashSet::new(),
+            pending_user_view_change: false,
             pending_snapshot_sessions: HashSet::new(),
         }
     }
@@ -643,6 +644,7 @@ impl Dashboard {
         self.panes.push(pane);
         self.focused_pane = 1;
         self.mode = InputMode::Browse;
+        self.pending_user_view_change = true;
         self.invalidate_view_readiness();
         true
     }
@@ -655,6 +657,7 @@ impl Dashboard {
         self.focused_pane = index;
         self.selected_container = None;
         self.mode = InputMode::Browse;
+        self.pending_user_view_change = true;
         self.invalidate_view_readiness();
         true
     }
@@ -669,6 +672,7 @@ impl Dashboard {
         self.selected_container = None;
         self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
         self.mode = InputMode::Browse;
+        self.pending_user_view_change = true;
         self.invalidate_view_readiness();
         true
     }
@@ -795,9 +799,14 @@ impl Dashboard {
             }
         }
         if self.pending_view.is_some() {
+            // The change the user asked for is coalesced into the request this pending view's
+            // completion sends, so its banner ownership waits here rather than being dropped.
             return Ok(None);
         }
         if unchanged {
+            // A true no-op completes nothing, so it must not hand a pending user change's banner
+            // ownership to whichever request the server asks for next.
+            self.pending_user_view_change = false;
             return Ok(None);
         }
         let revision = self
@@ -822,6 +831,9 @@ impl Dashboard {
         self.force_view_refresh = false;
         self.last_view_request_id = Some(request_id);
         self.view_request_ids.insert(request_id);
+        if std::mem::take(&mut self.pending_user_view_change) {
+            self.error_owning_requests.insert(request_id);
+        }
         self.pending_snapshot_sessions.clear();
         self.pending_view = Some(super::PendingView {
             request_id,
@@ -1012,6 +1024,7 @@ impl Dashboard {
                 pane.ready = false;
                 pane.error = None;
             }
+            self.pending_user_view_change = true;
             self.invalidate_view_readiness();
             self.mode = InputMode::Browse;
         }
@@ -2314,8 +2327,10 @@ impl Dashboard {
                         self.requested_view = Some(pending.view);
                         self.failed_view = None;
                         // A server-driven refresh completes the same way a user's selection does,
-                        // so only the banner a refused view wrote is cleared here.
-                        if self.error_owned_by_view {
+                        // so the banner is cleared only when a refused view wrote it or when this
+                        // view is the one the user's own selection, split, focus, or pane close
+                        // asked for.
+                        if self.error_owned_by_view || owns_error {
                             self.error = None;
                             self.error_owned_by_view = false;
                         }
