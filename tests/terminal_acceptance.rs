@@ -787,7 +787,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         |screen| {
             screen.contains("wizard")
                 && screen.contains("Terminal mode")
-                && !screen.contains("Command palette")
+                && !screen.contains("┌ Create workspace")
         },
         Duration::from_secs(5),
     )?;
@@ -984,9 +984,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
 
     dashboard.resize(30, 80)?;
     dashboard.wait_for_screen(
-        |screen| {
-            screen.contains("split hidden: terminal too small") && screen.contains("> mouse 40x26")
-        },
+        |screen| screen.contains("split hidden") && screen.contains("> mouse 40x26"),
         wait_deadline(),
     )?;
     dashboard.resize(40, 120)?;
@@ -1140,7 +1138,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
             |screen| {
                 !screen.contains("Terminal mode")
                     && screen.contains("BROWSE")
-                    && screen.contains("Space leader  ? help")
+                    && screen.contains("? Help")
             },
             wait_deadline(),
         )
@@ -1321,7 +1319,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
 
@@ -1354,7 +1352,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         |screen| {
             screen.contains("ROW_000")
                 && screen.contains("row 1-")
-                && screen.contains("HISTORY  Space leader")
+                && screen.contains("HISTORY  ? Help")
                 && !screen.contains("Waiting for history cell")
         },
         wait_deadline(),
@@ -1365,7 +1363,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         dashboard.wait_for_screen(
             |screen| {
                 screen.contains(&expected)
-                    && screen.contains("HISTORY  Space leader")
+                    && screen.contains("HISTORY  ? Help")
                     && !screen.contains("Waiting for history cell")
             },
             wait_deadline(),
@@ -1377,7 +1375,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         dashboard.wait_for_screen(
             |screen| {
                 screen.contains(&expected)
-                    && screen.contains("HISTORY  Space leader")
+                    && screen.contains("HISTORY  ? Help")
                     && !screen.contains("Waiting for history cell")
             },
             wait_deadline(),
@@ -1385,18 +1383,21 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     }
     dashboard.send(b"v")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 16:127"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 16:127"),
         wait_deadline(),
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 17:127"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 17:127"),
         wait_deadline(),
     )?;
     for col in 128..=130 {
         dashboard.send(b"l")?;
-        let expected = format!("HISTORY SELECT  row 17:{col}");
-        dashboard.wait_for_screen(|screen| screen.contains(&expected), wait_deadline())?;
+        let expected = format!("row 17:{col}");
+        dashboard.wait_for_screen(
+            |screen| screen.contains("HISTORY SELECT") && screen.contains(&expected),
+            wait_deadline(),
+        )?;
     }
 
     let expected = format!("{}\nROW_016{}", "x".repeat(6), "x".repeat(123));
@@ -1410,12 +1411,12 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("HISTORY SELECT  row 18:130"),
+        |screen| screen.contains("HISTORY SELECT") && screen.contains("row 18:130"),
         wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("HISTORY SELECT"),
+        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("HISTORY SELECT"),
         wait_deadline(),
     )?;
     let detach_result = dashboard.detach();
@@ -1511,7 +1512,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  Space leader"),
+        |screen| screen.contains("BROWSE  ? Help"),
         remaining(readiness_deadline),
     )?;
     loop {
@@ -1680,7 +1681,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| !screen.contains("Command palette"),
+        |screen| !screen.contains("┌ Create terminal"),
         wait_deadline(),
     )?;
     dashboard.send(b" tx")?;
@@ -1704,7 +1705,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", wait_deadline())?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
-        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("COPY  "),
+        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("COPY  "),
         wait_deadline(),
     )?;
     dashboard.send(b"\rINPUT_TOKEN\r")?;
@@ -1741,13 +1742,13 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     reattached.wait_for(b"mouse", wait_deadline())?;
     reattached.wait_for(b"agent runtime", wait_deadline())?;
     reattached.wait_for_screen(
-        |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
+        |screen| screen.contains("BROWSE  ? Help") && !screen.contains("Terminal mode"),
         wait_deadline(),
     )?;
     reattached.send(b"j")?;
     reattached.wait_for(b"INPUT_ACK", wait_deadline())?;
     let reattached_screen = reattached.rendered();
-    assert!(reattached_screen.contains("BROWSE  Space leader"));
+    assert!(reattached_screen.contains("BROWSE  ? Help"));
     assert!(!reattached_screen.contains("Terminal mode"));
     assert!(!reattached_screen.contains("COPY  "));
     let pane = ovrcr::tui::actual_drawn_inner_rect(ratatui::layout::Rect::new(0, 0, 100, 30));
@@ -1797,7 +1798,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"\r\x07")?;
-    dashboard.wait_for(b"BROWSE  Space leader", wait_deadline())?;
+    dashboard.wait_for(b"BROWSE  ? Help", wait_deadline())?;
 
     dashboard.send(b"p")?;
     dashboard.wait_for(b"paused", wait_deadline())?;

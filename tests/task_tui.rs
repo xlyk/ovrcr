@@ -475,6 +475,76 @@ fn transcript_wrap_is_cached_between_frames() {
 }
 
 #[test]
+fn ux_empty_history_preserves_status_without_stale_working() {
+    let mut view = TasksView::default();
+    view.event(key(KeyCode::Char('h')));
+    let request = view.take_request().unwrap();
+    assert!(matches!(request, TaskRequest::ListRuns(None)));
+    view.receive(&request, Ok(TaskResponse::Runs(vec![])));
+    assert_ne!(view.message, "Working…");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+    let text = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(text.contains("No runs to display"), "{text}");
+    for status in ["creation refused", "Working…", "Saved"] {
+        view.event(key(KeyCode::Esc));
+        view.message = status.into();
+        view.event(key(KeyCode::Char('h')));
+        let request = view.take_request().unwrap();
+        view.receive(&request, Ok(TaskResponse::Runs(vec![])));
+        assert_eq!(view.message, status);
+    }
+}
+
+#[test]
+fn ux_narrow_task_footer_keeps_escape_and_save_complete() {
+    for (width, field) in [(40, 0), (60, 0), (80, 0), (40, 2), (60, 2), (80, 2)] {
+        let mut view = TasksView::default();
+        view.event(key(KeyCode::Char('n')));
+        for _ in 0..field {
+            view.event(key(KeyCode::Tab));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(footer.contains("Esc cancel"), "{footer}");
+        assert!(footer.contains("Ctrl-s save"), "{footer}");
+        let allowed = [
+            "Esc cancel",
+            "Ctrl-s save",
+            "Tab/Shift-Tab field",
+            "Ctrl-a clear",
+            "Enter newline",
+            "↑/↓ pick",
+            "Tab/Enter accept",
+            "Shift-Tab back",
+            "Ctrl-u clear",
+        ];
+        assert!(
+            footer
+                .trim_end()
+                .split("  ")
+                .all(|hint| allowed.contains(&hint)),
+            "{footer}"
+        );
+        if field == 2 {
+            assert!(footer.contains("↑/↓ pick"), "{footer}");
+            assert!(!footer.contains("Enter newline"), "{footer}");
+        }
+        view.event(key(KeyCode::Esc));
+        assert!(view.editor.is_none());
+    }
+}
+
+#[test]
 fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
     let mut d = ready_dashboard();
     d.hierarchy.projects.push(ProjectSummary {

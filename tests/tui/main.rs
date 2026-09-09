@@ -1246,3 +1246,29 @@ fn enable_terminal_mouse(dashboard: &mut Dashboard, modes: &[u8]) {
 fn click_in(inner: Rect, kind: MouseEventKind, dx: u16, dy: u16) -> MouseEvent {
     mouse_event(kind, inner.x + dx, inner.y + dy, KeyModifiers::NONE)
 }
+
+fn rendered_footer(dashboard: &Dashboard, width: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..width)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+fn rendered_rows(dashboard: &Dashboard, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect()
+        })
+        .collect()
+}

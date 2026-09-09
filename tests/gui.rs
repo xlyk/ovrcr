@@ -54,14 +54,14 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_screen(&terminal, "implement lifecycle cleanup")?;
     terminal.send(b":create terminal\r")?;
-    wait_screen(&terminal, "Workspace")?;
+    wait_screen(&terminal, "┌ Create terminal")?;
     // Filter Agent to shell (CI may have no detected agents; local PATH may).
     // Tab accepts Agent then Workspace. Ctrl-u clears the prefilled Name.
     terminal.send(b"shell\t\t\x15palette-check\r")?;
     wait_screen(&terminal, "palette-check")?;
     // Wait for the palette to finish; its form also contains the new name.
     let deadline = Instant::now() + Duration::from_secs(5);
-    while terminal.screen().contents().contains("Command palette") {
+    while terminal.screen().contents().contains("┌ Create terminal") {
         assert!(
             Instant::now() < deadline,
             "create never completed: {}",
@@ -95,7 +95,7 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let text = terminal.screen().contents();
-        if !text.contains("Command palette") && !text.contains("palette-check") {
+        if !text.contains("┌ Confirm action") && !text.contains("palette-check") {
             break;
         }
         assert!(Instant::now() < deadline, "close never completed: {text}");

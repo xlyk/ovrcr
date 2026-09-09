@@ -603,30 +603,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 return Line::from(Span::styled(notice, Style::default().fg(TEXT)));
             }
             if dashboard.mode != InputMode::Terminal {
-                let mut text = super::hints::footer(dashboard, layout.footer.width);
-                if split_hidden {
-                    text = format!("split hidden: terminal too small  {text}");
-                }
-                if dashboard.mode == InputMode::History
-                    && let Some(view) = &dashboard.history
-                {
-                    if view.copy_job.is_some() || view.copy_completion.is_some() {
-                        text = format!("HISTORY COPY  Copying selection  {text}");
-                    } else if view.cursor_target.is_some() {
-                        text = format!("HISTORY  Waiting for history cell  {text}");
-                    } else if view.anchor.is_some() {
-                        text = view.cursor.map_or_else(
-                            || format!("HISTORY SELECT  Nothing to select on this row  {text}"),
-                            |cursor| {
-                                format!(
-                                    "HISTORY SELECT  row {}:{}  {text}",
-                                    cursor.point.row + 1,
-                                    u32::from(cursor.point.col) + 1
-                                )
-                            },
-                        );
-                    }
-                }
+                let prefix = if split_hidden { "split hidden  " } else { "" };
+                let width = layout.footer.width.saturating_sub(prefix.len() as u16);
+                let text = format!("{prefix}{}", super::hints::footer(dashboard, width));
                 return Line::from(Span::styled(text, Style::default().fg(TEXT)));
             }
             let mut text = super::hints::footer(dashboard, layout.footer.width);
@@ -939,9 +918,21 @@ fn tree_line_text(
             let mut style = if selected {
                 Style::default().fg(CRUST).bg(MAUVE)
             } else if line == 1 {
-                Style::default().fg(faded(label_color(label), 65)).bg(BASE)
+                Style::default()
+                    .fg(if matches!(session.phase, SessionPhase::Exited { .. }) {
+                        faded(label_color(label), 65)
+                    } else {
+                        label_color(label)
+                    })
+                    .bg(BASE)
             } else if line == 2 {
-                Style::default().fg(faded(MUTED, 80)).bg(BASE)
+                Style::default()
+                    .fg(if matches!(session.phase, SessionPhase::Exited { .. }) {
+                        faded(MUTED, 80)
+                    } else {
+                        SUBTEXT
+                    })
+                    .bg(BASE)
             } else {
                 base_style
             };
@@ -987,7 +978,7 @@ fn faded(color: Color, percent: u16) -> Color {
     }
 }
 
-fn clip_text(text: &str, width: usize) -> String {
+pub(super) fn clip_text(text: &str, width: usize) -> String {
     if Line::raw(text).width() <= width {
         return text.to_string();
     }
