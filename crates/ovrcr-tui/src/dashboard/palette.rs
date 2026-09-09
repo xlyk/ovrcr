@@ -294,7 +294,13 @@ impl Dashboard {
                     if fields[3].value.is_empty() {
                         fields[3].value = result.branches.first().cloned().unwrap_or_default();
                     }
-                    list.select_value(&fields[3].value);
+                    if result.branches.contains(&fields[3].value) {
+                        list.select_value(&fields[3].value);
+                    } else {
+                        // Filter to what the user typed instead of silently
+                        // replacing it; an unmatched query accepts nothing.
+                        list.query.clone_from(&fields[3].value);
+                    }
                     if !result.branches.is_empty() {
                         fields[3].kind = FieldKind::Pick(list);
                     }
@@ -316,7 +322,7 @@ impl Dashboard {
     }
 
     // Called by the real client loop, even when there is no keyboard/server input.
-    pub(super) fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
+    pub fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
         let Some(mut palette) = self.palette.take() else {
             return (false, None);
         };
@@ -690,6 +696,14 @@ impl Dashboard {
                     root_edited,
                 } => {
                     if !accept_pick(&mut fields[*active]) {
+                        let field = &fields[*active];
+                        if field.required {
+                            // A deferred submit must not wait on a pick that can
+                            // never resolve; say which field went unmatched.
+                            palette.error =
+                                Some(format!("{} not found in repository", field.label));
+                        }
+                        palette.submit_when_ready = false;
                         self.palette = Some(palette);
                         return action;
                     }
@@ -1128,7 +1142,7 @@ impl Dashboard {
         else {
             return Vec::new();
         };
-        let session = self
+        let workspace = self
             .hierarchy
             .projects
             .iter()
@@ -1138,19 +1152,24 @@ impl Dashboard {
                     .workspaces
                     .iter()
                     .find(|workspace| workspace.name == fields[1].value.trim())
-            })
-            .and_then(|workspace| {
-                workspace.sessions.iter().find(|session| {
-                    session.name == "local"
-                        && session.phase == crate::session::SessionPhase::Running
-                })
+            });
+        let Some(workspace) = workspace else {
+            return Vec::new();
+        };
+        let session = workspace
+            .sessions
+            .iter()
+            .find(|session| {
+                session.name == "local" && session.phase == crate::session::SessionPhase::Running
             })
             .map(|session| session.id);
+        // The workspace is in the hierarchy, so creation finished; the palette
+        // must not stay on "Working…" just because its shell already exited.
+        self.palette = None;
+        self.error = None;
         let Some(session) = session else {
             return Vec::new();
         };
-        self.palette = None;
-        self.error = None;
         let request_id = self.next_request_id();
         let outgoing = self
             .select_request(session, request_id)

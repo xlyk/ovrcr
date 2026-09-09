@@ -1005,6 +1005,183 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
     );
 }
 
+fn hint_repository(extra_branches: &[&str]) -> tempfile::TempDir {
+    use std::process::Command;
+    let repo = tempfile::tempdir().unwrap();
+    let mut commands: Vec<Vec<&str>> = vec![
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+    ];
+    for branch in extra_branches {
+        commands.push(vec!["branch", branch]);
+    }
+    for args in commands {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    repo
+}
+
+/// Answers the create-workspace Inspect so Git hints start for a real repository.
+fn answer_workspace_inspect(dashboard: &mut Dashboard, request_id: u64, repo: &std::path::Path) {
+    use ovrcr::config::{ProjectRecord, Registry};
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Inventory {
+            registry: Registry {
+                projects: vec![ProjectRecord {
+                    name: "consigint".into(),
+                    repo: repo.into(),
+                    workspace_root: repo.join("worktrees"),
+                    workspaces: vec![],
+                }],
+            },
+            sessions: vec![],
+        },
+    });
+}
+
+/// Drives the create-workspace form to a deferred submit on a typed branch.
+fn type_existing_branch_and_submit(dashboard: &mut Dashboard, name: &str, branch: &str) -> u64 {
+    use ovrcr::tui::DashboardAction;
+    let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char('w')) else {
+        panic!("leader workspace must request repository inspection");
+    };
+    assert_eq!(inspect.request, Request::Inspect);
+    dashboard.event_action(Event::Paste(name.into()));
+    dashboard.key(KeyCode::Tab); // branch mode
+    dashboard.key(KeyCode::Right); // existing
+    dashboard.key(KeyCode::Tab); // branch, still a text field while hints are absent
+    dashboard.event_action(Event::Paste(branch.into()));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let text = palette_text(dashboard);
+    assert!(text.contains("Waiting for Git suggestions"), "{text}");
+    inspect.request_id
+}
+
+#[test]
+fn typed_existing_branch_survives_hint_arrival() {
+    use ovrcr::protocol::BranchRequest;
+    let repo = hint_repository(&["release-2"]);
+    let mut dashboard = dashboard_fixture();
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let message = loop {
+        let (_, request) = dashboard.poll_palette();
+        let text = palette_text(&dashboard);
+        // Without real branches the field would stay text and submit vacuously.
+        assert!(!text.contains("enter branch/base manually"), "{text}");
+        if let Some(message) = request {
+            break message;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Git hints never reached the deferred submit: {text}"
+        );
+        std::thread::yield_now();
+    };
+    assert_eq!(
+        message.request,
+        Request::CreateWorkspace {
+            project: "consigint".into(),
+            name: "typed-branch".into(),
+            branch: BranchRequest::Existing {
+                branch: "release-2".into()
+            },
+        }
+    );
+}
+
+#[test]
+fn typed_branch_missing_from_hints_is_refused_not_replaced() {
+    let repo = hint_repository(&[]);
+    let mut dashboard = dashboard_fixture();
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let text = loop {
+        let (_, request) = dashboard.poll_palette();
+        assert!(
+            request.is_none(),
+            "a branch missing from the repository must not be submitted"
+        );
+        let text = palette_text(&dashboard);
+        assert!(!text.contains("enter branch/base manually"), "{text}");
+        if !text.contains("Waiting for Git suggestions") {
+            break text;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Git hints never reached the deferred submit: {text}"
+        );
+        std::thread::yield_now();
+    };
+    assert!(text.contains("Create workspace"), "{text}");
+    assert!(text.contains("Branch not found in repository"), "{text}");
+    assert!(!text.contains("Working"), "{text}");
+}
+
+#[test]
+fn workspace_created_with_exited_local_shell_closes_palette() {
+    use ovrcr::tui::{DashboardAction, InputMode};
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('w'));
+    answer_palette_inspect(&mut dashboard, action);
+    dashboard.event_action(Event::Paste("pick-demo".into()));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("workspace form did not submit");
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Ok,
+    });
+    assert!(palette_text(&dashboard).contains("Working"));
+    let mut hierarchy = workspace_creation_hierarchy(&dashboard);
+    let workspace = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap()
+        .workspaces
+        .last_mut()
+        .unwrap();
+    workspace.sessions[0].phase = SessionPhase::Exited {
+        code: Some(1),
+        signal: None,
+    };
+    workspace.sessions[0].pid = None;
+    let outgoing = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::HierarchyChanged(hierarchy),
+    ));
+    let text = palette_text(&dashboard);
+    assert!(!text.contains("Create workspace"), "{text}");
+    assert!(!text.contains("Working"), "{text}");
+    assert!(!outgoing.iter().any(
+        |message| matches!(&message.request, Request::SetView { view } if view.focused == Some(SessionId(99)))
+    ));
+    assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
+    assert_eq!(dashboard.mode, InputMode::Browse);
+}
+
 fn workspace_creation_hierarchy(dashboard: &Dashboard) -> HierarchySnapshot {
     let mut hierarchy = dashboard.hierarchy.clone();
     let project = hierarchy
