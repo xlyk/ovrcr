@@ -1446,6 +1446,48 @@ fn a_opens_project_form_with_roots_and_derives_name_and_root() {
 }
 
 #[test]
+fn tab_on_a_leaf_path_advances_to_the_next_field() {
+    use ovrcr::tui::DashboardAction;
+    let dir = tempfile::tempdir().unwrap();
+    let leaf = dir.path().join("leaf");
+    std::fs::create_dir(&leaf).unwrap();
+    let mut dashboard = dashboard_fixture();
+    dashboard.settings.picker_roots = vec![dir.path().to_path_buf()];
+    assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
+    dashboard.event_action(Event::Paste(format!("{}/", leaf.display())));
+    let before = palette_text(&dashboard);
+    assert!(before.contains("Repository"), "{before}");
+    dashboard.key(KeyCode::Tab);
+    let after = palette_text(&dashboard);
+    assert!(after.contains("› leaf"), "{after}");
+}
+
+#[test]
+fn search_selection_clamps_when_entries_shrink() {
+    // The fixture starts focused on session 1, so the two "lifecycle"
+    // switch entries (sessions 2 and 4) are both a real focus change,
+    // letting the assertions below distinguish "Enter did nothing" (the
+    // bug) from "Enter acted on the clamped last entry" (the fix).
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "lifecycle /");
+    dashboard.key(KeyCode::Down);
+    let mut hierarchy = dashboard.hierarchy.clone();
+    for workspace in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|p| &mut p.workspaces)
+    {
+        workspace.sessions.retain(|s| s.id != SessionId(4));
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    let action = dashboard.key(KeyCode::Enter);
+    assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+}
+
+#[test]
 fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();

@@ -78,11 +78,15 @@ pub struct PathListing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathPicker {
     pub selected: usize,
+    cached: Option<(String, PathListing)>,
 }
 
 impl PathPicker {
     pub fn new() -> Self {
-        Self { selected: 0 }
+        Self {
+            selected: 0,
+            cached: None,
+        }
     }
 
     pub fn move_selection(&mut self, listing: &PathListing, delta: isize) {
@@ -93,6 +97,22 @@ impl PathPicker {
         }
         let next = self.selected as isize + delta;
         self.selected = next.clamp(0, count as isize - 1) as usize;
+    }
+
+    /// Recomputes the directory listing only when `input` differs from the
+    /// last computed value; `draw_palette` cannot recompute it itself since
+    /// it only holds `&self`, so callers must refresh this after every edit.
+    pub fn listing(&mut self, input: &str, roots: &[PathBuf]) -> &PathListing {
+        if self.cached.as_ref().is_none_or(|(key, _)| key != input) {
+            self.cached = Some((input.to_owned(), list_path_entries(input, roots)));
+        }
+        &self.cached.as_ref().unwrap().1
+    }
+
+    /// The most recently computed listing, if any; `None` before the first
+    /// call to `listing`.
+    pub fn cached(&self) -> Option<&PathListing> {
+        self.cached.as_ref().map(|(_, listing)| listing)
     }
 }
 
@@ -150,25 +170,29 @@ fn read_dirs(dir: &Path, segment: &str, show_hidden: bool) -> Vec<PathEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    read.filter_map(|entry| {
-        let entry = entry.ok()?;
+    let mut entries = Vec::new();
+    for entry in read {
+        let Ok(entry) = entry else { continue };
         let path = entry.path();
         if !path.is_dir() {
-            return None;
+            continue;
         }
         let name = file_name(&path).to_string();
         if name == "." || name == ".." {
-            return None;
+            continue;
         }
         if name.starts_with('.') && !show_hidden {
-            return None;
+            continue;
         }
         if !subsequence(segment, &name) {
-            return None;
+            continue;
         }
-        Some(path_entry(name, path.join(".git").exists()))
-    })
-    .collect()
+        // Past the display limit the git flag can no longer change which
+        // entries are shown, so skip the extra stat.
+        let git = entries.len() < PATH_LIST_LIMIT && path.join(".git").exists();
+        entries.push(path_entry(name, git));
+    }
+    entries
 }
 
 fn split_input(input: &str) -> (&str, &str) {
@@ -272,6 +296,49 @@ mod tests {
                 ["Code"]
             );
             assert_eq!(complete_path("~/Co", &roots, 0).as_deref(), Some("~/Code/"));
+        });
+    }
+
+    #[test]
+    fn slash_prefix_lists_filesystem_root() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("Code")).unwrap();
+        with_home(dir.path(), || {
+            let roots = [dir.path().join("Code")];
+            let listing = list_path_entries("/", &roots);
+            assert!(!listing.entries.is_empty());
+            assert!(
+                listing.entries.iter().all(|entry| entry.name != "Code"),
+                "{:?}",
+                listing.entries
+            );
+            assert_eq!(expand_path("/"), PathBuf::from("/"));
+        });
+    }
+
+    #[test]
+    fn listing_is_cached_until_input_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let code = dir.path().join("Code");
+        std::fs::create_dir(&code).unwrap();
+        std::fs::create_dir(code.join("repo")).unwrap();
+        with_home(dir.path(), || {
+            let roots = [code.clone()];
+            let mut picker = PathPicker::new();
+            let first = picker.listing("~/Code/", &roots).clone();
+            assert_eq!(
+                first
+                    .entries
+                    .iter()
+                    .map(|entry| entry.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["repo"]
+            );
+            std::fs::remove_dir(code.join("repo")).unwrap();
+            let second = picker.listing("~/Code/", &roots).clone();
+            assert_eq!(first, second);
+            let third = picker.listing("~/Code/r", &roots).clone();
+            assert!(third.entries.is_empty(), "{:?}", third.entries);
         });
     }
 

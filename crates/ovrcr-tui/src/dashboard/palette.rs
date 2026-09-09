@@ -1,9 +1,7 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
-use super::picker::{
-    PathPicker, PickItem, PickList, complete_path, expand_path, list_path_entries,
-};
+use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -149,6 +147,16 @@ fn visible_indices(fields: &[Field]) -> Vec<usize> {
         .filter(|(_, field)| !field.hidden)
         .map(|(index, _)| index)
         .collect()
+}
+
+/// `draw_palette` only holds `&self` and cannot recompute a Path field's
+/// directory listing, so every key handler that edits a Path field's value
+/// or moves its selection must refresh the picker's cache here.
+fn refresh_path_listing(field: &mut Field, roots: &[PathBuf]) {
+    let value = field.value.clone();
+    if let FieldKind::Path(picker) = &mut field.kind {
+        picker.listing(&value, roots);
+    }
 }
 
 fn move_form_field(fields: &[Field], active: &mut usize, backwards: bool) {
@@ -383,8 +391,14 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
+        let mut page = self.palette_form(Command::RegisterProject);
+        if let Page::Form { fields, .. } = &mut page {
+            for field in fields.iter_mut() {
+                refresh_path_listing(field, &self.settings.picker_roots);
+            }
+        }
         self.palette = Some(Palette {
-            page: self.palette_form(Command::RegisterProject),
+            page,
             ..Palette::new()
         });
         self.mode = InputMode::Browse;
@@ -561,6 +575,7 @@ impl Dashboard {
                             FieldKind::Path(picker) => picker.selected = 0,
                             FieldKind::Text | FieldKind::Toggle => {}
                         }
+                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {}
                 }
@@ -584,7 +599,10 @@ impl Dashboard {
                     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
                 ) =>
             {
-                palette.insert(&ch.to_string())
+                palette.insert(&ch.to_string());
+                if let Page::Form { fields, active, .. } = &mut palette.page {
+                    refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
+                }
             }
             KeyCode::Backspace => {
                 match &mut palette.page {
@@ -611,6 +629,7 @@ impl Dashboard {
                                 fields[*active].value.pop();
                             }
                         }
+                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {}
                 }
@@ -627,7 +646,8 @@ impl Dashboard {
                     match &mut fields[*active].kind {
                         FieldKind::Pick(list) => list.move_selection(delta),
                         FieldKind::Path(picker) => {
-                            let listing = list_path_entries(&value, &self.settings.picker_roots);
+                            let listing =
+                                picker.listing(&value, &self.settings.picker_roots).clone();
                             picker.move_selection(&listing, delta);
                         }
                         FieldKind::Text | FieldKind::Toggle => {}
@@ -661,6 +681,9 @@ impl Dashboard {
                                 FieldKind::Path(picker) => picker.selected,
                                 _ => 0,
                             };
+                            // Nothing to complete (e.g. a leaf directory with
+                            // no children) falls through to the shared Tab
+                            // handling below instead of being a no-op.
                             if let Some(next) = complete_path(
                                 &fields[*active].value,
                                 &self.settings.picker_roots,
@@ -670,11 +693,15 @@ impl Dashboard {
                                 if let FieldKind::Path(picker) = &mut fields[*active].kind {
                                     picker.selected = 0;
                                 }
+                                refresh_path_listing(
+                                    &mut fields[*active],
+                                    &self.settings.picker_roots,
+                                );
+                                self.refresh_terminal_form(fields, *name_edited);
+                                self.refresh_project_form(fields, *name_edited, *root_edited);
+                                self.palette = Some(palette);
+                                return action;
                             }
-                            self.refresh_terminal_form(fields, *name_edited);
-                            self.refresh_project_form(fields, *name_edited, *root_edited);
-                            self.palette = Some(palette);
-                            return action;
                         }
                         if matches!(key.code, KeyCode::Tab) && !accept_pick(&mut fields[*active]) {
                             self.palette = Some(palette);
@@ -685,6 +712,7 @@ impl Dashboard {
                             self.refresh_project_form(fields, *name_edited, *root_edited);
                         }
                         move_form_field(fields, active, backwards);
+                        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
                     }
                     _ => {
                         self.palette = Some(palette);
@@ -694,7 +722,9 @@ impl Dashboard {
             }
             KeyCode::Enter => match &mut palette.page {
                 Page::Search { query, selected } => {
-                    if let Some(entry) = self.palette_entries(query).get(*selected) {
+                    let entries = self.palette_entries(query);
+                    *selected = (*selected).min(entries.len().saturating_sub(1));
+                    if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
                             Command::Switch(id) => {
                                 if let Some(request_id) = palette.suggestions.inspect {
@@ -1237,16 +1267,17 @@ impl Dashboard {
                 if entries.is_empty() {
                     lines.push(Line::from("No matching actions"));
                 }
+                let selected = (*selected).min(entries.len().saturating_sub(1));
                 let count = usize::from(body.height.saturating_sub(1) / 2).max(1);
                 let start = selected.saturating_sub(count - 1);
                 for (index, entry) in entries.iter().enumerate().skip(start).take(count) {
                     lines.push(Line::styled(
                         format!(
                             "{} {}",
-                            if index == *selected { "›" } else { " " },
+                            if index == selected { "›" } else { " " },
                             entry.label
                         ),
-                        if index == *selected {
+                        if index == selected {
                             Style::default().bg(MAUVE).fg(CRUST)
                         } else {
                             Style::default().fg(TEXT)
@@ -1336,8 +1367,8 @@ impl Dashboard {
                     }
                     if index == *active
                         && let FieldKind::Path(picker) = &field.kind
+                        && let Some(listing) = picker.cached()
                     {
-                        let listing = list_path_entries(&field.value, &self.settings.picker_roots);
                         let count = 8.min(listing.entries.len());
                         let start = picker.selected.saturating_sub(count.saturating_sub(1));
                         for (offset, item) in
