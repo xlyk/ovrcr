@@ -109,9 +109,42 @@ struct Glyph {
     size: egui::Vec2,
 }
 
+/// A cached rasterization result plus the frame it was last painted in, so
+/// stale entries (and their textures) can be evicted without a hard cap on
+/// distinct glyphs. `glyph` is `None` when rasterization legitimately
+/// produced nothing (see `rasterize`'s size guards), which we still cache to
+/// avoid retrying CoreText every frame for the same key.
+#[derive(Clone)]
+struct CacheEntry {
+    glyph: Option<Glyph>,
+    last_used: u64,
+}
+
+// Above this many entries, evict everything not painted in the previous
+// frame. A full 40x120 screen of distinct CJK/emoji glyphs is on the order
+// of a few thousand cells, so this only trims genuinely stale entries.
+const MAX_CACHE_ENTRIES: usize = 4096;
+
 #[derive(Clone, Default)]
-pub(super) struct NativeGlyphs(HashMap<Key, Option<Glyph>>);
+pub(super) struct NativeGlyphs {
+    cache: HashMap<Key, CacheEntry>,
+    frame: u64,
+    #[cfg(test)]
+    pub(super) rasterize_calls: usize,
+}
 impl NativeGlyphs {
+    /// Marks the start of a new whole-terminal paint. Must be called exactly
+    /// once per frame (not once per cell) so `last_used` stamps distinguish
+    /// "painted this frame" from "painted a previous frame".
+    pub(super) fn begin_frame(&mut self) {
+        if self.cache.len() > MAX_CACHE_ENTRIES {
+            let previous_frame = self.frame;
+            self.cache
+                .retain(|_, entry| entry.last_used >= previous_frame);
+        }
+        self.frame += 1;
+    }
+
     pub(super) fn paint(
         &mut self,
         ui: &egui::Ui,
@@ -129,23 +162,34 @@ impl NativeGlyphs {
             bold: cell.bold(),
             italic: cell.italic(),
         };
-        // Bound retained textures even when an application prints arbitrary Unicode.
-        if self.0.len() >= 256 && !self.0.contains_key(&key) {
-            self.0.clear();
+        let frame = self.frame;
+        #[cfg(test)]
+        if !self.cache.contains_key(&key) {
+            self.rasterize_calls += 1;
         }
-        let glyph = self.0.entry(key.clone()).or_insert_with(|| {
-            let image = rasterize(&key)?;
-            let size = egui::vec2(image.size[0] as f32, image.size[1] as f32) / scale;
-            Some(Glyph {
-                texture: ui.ctx().load_texture(
-                    "native terminal glyph",
-                    image,
-                    egui::TextureOptions::LINEAR,
-                ),
-                size,
-            })
+        let entry = self.cache.entry(key.clone()).or_insert_with(|| {
+            let glyph = rasterize(&key).map(|image| {
+                let size = egui::vec2(image.size[0] as f32, image.size[1] as f32) / scale;
+                Glyph {
+                    texture: ui.ctx().load_texture(
+                        "native terminal glyph",
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ),
+                    size,
+                }
+            });
+            CacheEntry {
+                glyph,
+                last_used: frame,
+            }
         });
-        let Some(glyph) = glyph else { return false };
+        // Stamp on every use, not only on insertion, so a live entry survives
+        // `begin_frame`'s sweep for as long as it keeps getting painted.
+        entry.last_used = frame;
+        let Some(glyph) = &entry.glyph else {
+            return false;
+        };
         // Preserve native glyph dimensions. Clip instead of stretching to the cell.
         let origin = rect.min + egui::vec2(0.0, (rect.height() - glyph.size.y) * 0.5);
         ui.painter().with_clip_rect(rect).image(

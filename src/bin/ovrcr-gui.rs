@@ -257,6 +257,48 @@ fn assert_native_unicode_paint(installed_fonts: bool) {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn native_glyph_cache_keeps_a_screen_of_distinct_glyphs() {
+    let context = egui::Context::default();
+    let fonts = TerminalFonts::current_monospace();
+    let rows: u16 = 40;
+    let cols: u16 = 30;
+    // CJK Unified Ideographs are double-width and absent from egui's default
+    // font, so every one of these 600 distinct cells must go through the
+    // native fallback cache instead of the shared glyph atlas.
+    let text: String = (0..600u32)
+        .map(|offset| char::from_u32(0x4E00 + offset).expect("valid CJK ideograph"))
+        .collect();
+    let mut parser = vt100::Parser::new(rows, cols, 0);
+    parser.process(text.as_bytes());
+    let cell_size = egui::vec2(10.0, 20.0);
+    let rect = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(f32::from(cols) * cell_size.x, f32::from(rows) * cell_size.y),
+    );
+
+    let mut first = context.run_ui(egui::RawInput::default(), |ui| {
+        paint_terminal(ui, rect, cell_size, &fonts, parser.screen());
+    });
+    first.textures_delta.clear();
+    let after_first_paint = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_first_paint, 600,
+        "first paint of 600 distinct glyphs should rasterize each of them once"
+    );
+
+    let mut second = context.run_ui(egui::RawInput::default(), |ui| {
+        paint_terminal(ui, rect, cell_size, &fonts, parser.screen());
+    });
+    second.textures_delta.clear();
+    let after_second_paint = fonts.fallback.borrow().rasterize_calls;
+    assert_eq!(
+        after_second_paint, after_first_paint,
+        "second paint of the same screen must reuse cached glyphs, not re-rasterize them"
+    );
+}
+
+#[test]
 fn terminal_paints_reserved_icon_cell_before_foreground_glyph() {
     let context = egui::Context::default();
     let fonts = TerminalFonts::current_monospace();
@@ -556,6 +598,10 @@ fn paint_terminal(
     let painter = ui.painter().with_clip_rect(rect);
     let background = Color32::from_rgb(30, 30, 46);
     painter.rect_filled(rect, 0.0, background);
+    // Once per whole-terminal paint (not per cell), so the native glyph
+    // cache's frame stamps distinguish "painted this frame" from stale.
+    #[cfg(target_os = "macos")]
+    fonts.fallback.borrow_mut().begin_frame();
     let (rows, cols) = screen.size();
     for row in 0..rows {
         for col in 0..cols {
