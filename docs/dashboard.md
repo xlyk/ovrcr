@@ -204,7 +204,9 @@ also expose their parent workspace and project. `a` registers a project and
 
 Choose a group, then an action: `Space t x` closes the selected terminal,
 `Space w x` removes its workspace, and `Space p x` unregisters its project.
-Each opens confirmation naming the target. Existing server removal safeguards
+Workspace and project removal open a searchable picker with the current target
+highlighted; Enter accepts it and opens confirmation. Terminal close opens
+confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
@@ -243,6 +245,12 @@ accepts. On a text field, `Tab` or the arrow keys move between fields, and
 `Enter` advances and submits at the last field. `Ctrl-u` clears a field;
 `Backspace` deletes its last character. Input stays in the palette while it is
 open.
+
+All existing-project and workspace fields use the same searchable picker,
+including removal forms and the scheduled-task editor. Type to filter, use
+Up/Down to choose, and Tab or Enter to accept. Workspace choices show
+`project / workspace`; removal excludes the protected `root` workspace.
+New names remain text fields, and project registration retains its path pickers.
 
 Close and remove actions show their target and require confirmation. Server
 safeguards still apply: a workspace must have no terminal records and a clean

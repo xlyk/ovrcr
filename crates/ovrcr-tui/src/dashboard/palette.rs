@@ -433,13 +433,13 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
-        let request = if workspace {
-            Request::RemoveWorkspace { project, name }
-        } else {
-            Request::RemoveProject { name: project }
-        };
+        self.whichkey = None;
         self.palette = Some(Palette {
-            page: removal_confirmation(request),
+            page: self.palette_form(if workspace {
+                Command::RemoveWorkspace
+            } else {
+                Command::RemoveProject
+            }),
             ..Palette::new()
         });
         self.mode = InputMode::Browse;
@@ -790,7 +790,7 @@ impl Dashboard {
                             // A deferred submit must not wait on a pick that can
                             // never resolve; say which field went unmatched.
                             palette.error =
-                                Some(format!("{} not found in repository", field.label));
+                                Some(format!("{} not found in available choices", field.label));
                         }
                         palette.submit_when_ready = false;
                         self.palette = Some(palette);
@@ -840,10 +840,10 @@ impl Dashboard {
                                 repo: expand_path(&values[0]),
                                 workspace_root: expand_path(&values[2]),
                             },
-                            Command::RemoveWorkspace => Request::RemoveWorkspace {
-                                project: values[0].clone(),
-                                name: values[1].clone(),
-                            },
+                            Command::RemoveWorkspace => {
+                                let (project, name) = split_workspace(&values[0]);
+                                Request::RemoveWorkspace { project, name }
+                            }
                             Command::RemoveProject => Request::RemoveProject {
                                 name: values[0].clone(),
                             },
@@ -1018,32 +1018,12 @@ impl Dashboard {
                     .unwrap_or_default();
                 let mut agent_list = PickList::new(agent_items);
                 agent_list.select_value(&agent_value);
-                let workspace_items = self
-                    .hierarchy
-                    .projects
-                    .iter()
-                    .flat_map(|project| {
-                        project.workspaces.iter().map(|workspace| {
-                            let label = format!("{} / {}", project.name, workspace.name);
-                            PickItem {
-                                value: label.clone(),
-                                label,
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                let workspace_value = (!workspace.is_empty())
-                    .then(|| format!("{project} / {workspace}"))
-                    .or_else(|| {
-                        workspace_items
-                            .iter()
-                            .find(|item| item.value.starts_with(&format!("{project} / ")))
-                            .map(|item| item.value.clone())
-                    })
-                    .or_else(|| workspace_items.first().map(|item| item.value.clone()))
+                let workspace_list =
+                    PickList::workspaces(&self.hierarchy, &project, &workspace, true);
+                let workspace_value = workspace_list
+                    .accepted()
+                    .map(|item| item.value.clone())
                     .unwrap_or_default();
-                let mut workspace_list = PickList::new(workspace_items);
-                workspace_list.select_value(&workspace_value);
                 let (project_name, workspace_name) = split_workspace(&workspace_value);
                 let name = self.suggest_session_name(&project_name, &workspace_name, &agent_value);
                 vec![
@@ -1075,26 +1055,14 @@ impl Dashboard {
                 ]
             }
             Command::CreateWorkspace => {
-                let items = self
-                    .hierarchy
-                    .projects
-                    .iter()
-                    .map(|project| PickItem {
-                        label: project.name.clone(),
-                        value: project.name.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                let project = if project.is_empty() {
-                    items
-                        .first()
+                let list = PickList::projects(&self.hierarchy, &project);
+                let mut project = text(
+                    "Project",
+                    list.accepted()
                         .map(|item| item.value.clone())
-                        .unwrap_or_default()
-                } else {
-                    project
-                };
-                let mut list = PickList::new(items);
-                list.select_value(&project);
-                let mut project = text("Project", project, true);
+                        .unwrap_or_default(),
+                    true,
+                );
                 project.kind = FieldKind::Pick(list);
                 let mut mode = text("Branch mode", "new".into(), true);
                 mode.kind = FieldKind::Toggle;
@@ -1125,11 +1093,25 @@ impl Dashboard {
                     kind: FieldKind::Path(PathPicker::new()),
                 },
             ],
-            Command::RemoveWorkspace => vec![
-                text("Project", project, true),
-                text("Workspace", workspace, true),
-            ],
-            Command::RemoveProject => vec![text("Project", project, true)],
+            Command::RemoveWorkspace | Command::RemoveProject => {
+                let (label, list) = if matches!(command, Command::RemoveWorkspace) {
+                    (
+                        "Workspace",
+                        PickList::workspaces(&self.hierarchy, &project, &workspace, false),
+                    )
+                } else {
+                    ("Project", PickList::projects(&self.hierarchy, &project))
+                };
+                let mut field = text(
+                    label,
+                    list.accepted()
+                        .map(|item| item.value.clone())
+                        .unwrap_or_default(),
+                    true,
+                );
+                field.kind = FieldKind::Pick(list);
+                vec![field]
+            }
             _ => unreachable!(),
         };
         let active = if matches!(command, Command::CreateWorkspace) {
@@ -1369,23 +1351,9 @@ impl Dashboard {
                     if index == *active
                         && let FieldKind::Pick(list) = &field.kind
                     {
-                        let filtered = list.filtered();
-                        let count = 8.min(filtered.len());
-                        let start = list.selected.saturating_sub(count.saturating_sub(1));
-                        for (offset, item) in filtered.iter().enumerate().skip(start).take(count) {
-                            let chosen = offset == list.selected;
-                            if chosen {
-                                focus_line = lines.len();
-                            }
-                            lines.push(Line::styled(
-                                format!("  {} {}", if chosen { "›" } else { " " }, item.label),
-                                if chosen {
-                                    Style::default().bg(MAUVE).fg(CRUST)
-                                } else {
-                                    Style::default().fg(TEXT)
-                                },
-                            ));
-                        }
+                        let (options, selected) = list.lines(8);
+                        focus_line = lines.len() + selected;
+                        lines.extend(options);
                     }
                     if index == *active
                         && let FieldKind::Path(picker) = &field.kind

@@ -1,3 +1,6 @@
+use super::render::{CRUST, MAUVE, TEXT};
+use ovrcr_protocol::HierarchySnapshot;
+use ratatui::{style::Style, text::Line};
 use std::path::{Path, PathBuf};
 
 const PATH_LIST_LIMIT: usize = 500;
@@ -22,6 +25,89 @@ impl PickList {
             query: String::new(),
             selected: 0,
         }
+    }
+
+    pub fn projects(hierarchy: &HierarchySnapshot, preferred: &str) -> Self {
+        let mut list = Self::new(
+            hierarchy
+                .projects
+                .iter()
+                .map(|project| PickItem {
+                    label: project.name.clone(),
+                    value: project.name.clone(),
+                })
+                .collect(),
+        );
+        list.select_value(preferred);
+        list
+    }
+
+    pub fn workspaces(
+        hierarchy: &HierarchySnapshot,
+        project: &str,
+        workspace: &str,
+        include_root: bool,
+    ) -> Self {
+        let mut list = Self::new(
+            hierarchy
+                .projects
+                .iter()
+                .flat_map(|project| {
+                    project
+                        .workspaces
+                        .iter()
+                        .filter(move |workspace| include_root || workspace.name != "root")
+                        .map(|workspace| {
+                            let label = format!("{} / {}", project.name, workspace.name);
+                            PickItem {
+                                value: label.clone(),
+                                label,
+                            }
+                        })
+                })
+                .collect(),
+        );
+        if let Some(item) = list
+            .items
+            .iter()
+            .find(|item| item.value.starts_with(&format!("{project} / ")))
+        {
+            let value = item.value.clone();
+            list.select_value(&value);
+        }
+        list.select_value(&format!("{project} / {workspace}"));
+        list
+    }
+
+    /// Visible options and the selected row, shared by palette and task forms.
+    pub fn lines(&self, limit: usize) -> (Vec<Line<'_>>, usize) {
+        let filtered = self.filtered();
+        if filtered.is_empty() {
+            return (
+                vec![Line::styled("    No matches", Style::default().fg(TEXT))],
+                0,
+            );
+        }
+        let count = limit.min(filtered.len());
+        let start = self.selected.saturating_sub(count.saturating_sub(1));
+        let lines = filtered
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(count)
+            .map(|(offset, item)| {
+                let chosen = offset == self.selected;
+                Line::styled(
+                    format!("  {} {}", if chosen { "›" } else { " " }, item.label),
+                    if chosen {
+                        Style::default().bg(MAUVE).fg(CRUST)
+                    } else {
+                        Style::default().fg(TEXT)
+                    },
+                )
+            })
+            .collect();
+        (lines, self.selected.saturating_sub(start))
     }
 
     pub fn filtered(&self) -> Vec<&PickItem> {

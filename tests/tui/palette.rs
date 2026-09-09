@@ -642,7 +642,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         ),
         (
             "remove workspace",
-            vec!["consigint", "auth"],
+            vec!["consigint / auth"],
             Request::RemoveWorkspace {
                 project: "consigint".into(),
                 name: "auth".into(),
@@ -1473,6 +1473,10 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             dashboard.key(KeyCode::Char(' '));
             dashboard.key(KeyCode::Char(group));
             assert_eq!(dashboard.key(KeyCode::Char('x')), DashboardAction::Redraw);
+            if group != 't' {
+                assert!(!palette_text(&dashboard).contains("Confirm action"));
+                assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+            }
             let text = palette_text(&dashboard);
             assert!(text.contains("Confirm action"), "{group}: {text}");
             assert!(text.contains("consigint"));
@@ -1573,6 +1577,8 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
         assert_eq!(menu.contains("w  Workspace"), group == 'w');
         dashboard.key(KeyCode::Char(group));
         dashboard.key(KeyCode::Char('x'));
+        assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+        assert!(palette_text(&dashboard).contains("Confirm action"));
         let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
             panic!("removal must require confirmation");
         };
@@ -1667,4 +1673,92 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('a'));
     assert!(palette_text(&dashboard).contains("Repository"));
+}
+
+#[test]
+fn removal_pickers_filter_and_confirm_a_different_target() {
+    for (query, filter, expected) in [
+        (
+            "remove workspace",
+            "spa / pro",
+            Request::RemoveWorkspace {
+                project: "spacelift-agent".into(),
+                name: "progress".into(),
+            },
+        ),
+        (
+            "remove project",
+            "spa",
+            Request::RemoveProject {
+                name: "spacelift-agent".into(),
+            },
+        ),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        palette_search(&mut dashboard, query);
+        dashboard.key(KeyCode::Enter);
+        assert!(palette_text(&dashboard).contains("spacelift-agent"));
+        dashboard.event_action(Event::Paste(filter.into()));
+        assert_eq!(
+            dashboard.key(KeyCode::Enter),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+        let text = palette_text(&dashboard);
+        assert!(text.contains("Confirm action"), "{text}");
+        assert!(text.contains("spacelift-agent"));
+        let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+            panic!("confirmation must submit the picked target");
+        };
+        assert_eq!(message.request, expected);
+    }
+}
+
+#[test]
+fn removal_picker_rejects_no_match_and_excludes_root() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.hierarchy.projects[1]
+        .workspaces
+        .push(WorkspaceSummary {
+            project: "consigint".into(),
+            name: "root".into(),
+            path: "/tmp/root".into(),
+            sessions: vec![],
+        });
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    assert!(!palette_text(&dashboard).contains("consigint / root"));
+    dashboard.event_action(Event::Paste("root".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("no-such-workspace".into()));
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(!palette_text(&dashboard).contains("Confirm action"));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+}
+
+#[test]
+fn removal_pickers_with_empty_hierarchy_never_confirm() {
+    for query in ["remove project", "remove workspace"] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.hierarchy.projects.clear();
+        palette_search(&mut dashboard, query);
+        dashboard.key(KeyCode::Enter);
+        for key in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {
+            assert!(!matches!(
+                dashboard.key(key),
+                ovrcr::tui::DashboardAction::Request(_)
+            ));
+        }
+        let text = palette_text(&dashboard);
+        assert!(text.contains("No matches"), "{text}");
+        assert!(!text.contains("Confirm action"));
+    }
 }

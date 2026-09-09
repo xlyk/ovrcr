@@ -1092,7 +1092,8 @@ impl Dashboard {
                         if let Some(begin) = self.history_begin_request.as_mut() {
                             begin.cancelled = true;
                         }
-                        self.tasks = Some(TasksView::default());
+                        let (project, _) = self.creation_context();
+                        self.tasks = Some(TasksView::with_projects(&self.hierarchy, &project));
                         return DashboardAction::Redraw;
                     }
                     return DashboardAction::None;

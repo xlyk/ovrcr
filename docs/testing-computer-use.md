@@ -93,9 +93,13 @@ list above the footer, with the surrounding dashboard still visible. Press
 `Space t`. Press Backspace and confirm the group list returns. Press Escape,
 then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
 running session and Resume is absent. Disabled actions should show a reason.
-Press Backspace, then `w`, then `x`; confirm the workspace-removal confirmation
-names the selected workspace. Escape cancels. Repeat with `Space p x` and
-`Space t x`, cancelling both. Click project and workspace sidebar rows and
+Press Backspace, then `w`, then `x`; confirm the workspace picker highlights
+the selected `project / workspace` and excludes `root`. Type to filter to a
+different workspace, then press Enter; confirmation must name the chosen target.
+Escape cancels. Repeat with `Space p x` for projects, then `Space t x` for direct
+terminal-close confirmation, cancelling both. Open tasks with `Ctrl-t`, press
+`n`, and Tab to Project; check the same filtering, Up/Down, and Tab/Enter controls.
+Escape cancels the editor, then Escape returns to the dashboard. Click project and workspace sidebar rows and
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
