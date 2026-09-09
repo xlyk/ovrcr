@@ -482,6 +482,40 @@ fn task_confirmations_honor_default_no_and_case_insensitive_answers() {
     }
 }
 #[test]
+fn confirmations_show_only_answer_controls_at_narrow_widths() {
+    for width in [24, 40, 120] {
+        let mut view = fixture();
+        view.event(key(KeyCode::Char('d')));
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(
+            footer.contains("n no") && footer.contains("y yes"),
+            "{footer}"
+        );
+        assert!(
+            !footer.contains("new") && !footer.contains("run"),
+            "{footer}"
+        );
+        if width >= 40 {
+            assert!(footer.contains("Enter/Esc no"), "{footer}");
+        }
+        view.event(key(KeyCode::Char('r')));
+        assert!(view.take_request().is_none());
+        view.event(key(KeyCode::Esc));
+        assert!(view.take_request().is_none());
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(footer.contains("Esc back"), "{footer}");
+        assert!(!footer.contains("y yes"), "{footer}");
+    }
+}
+
+#[test]
 fn multiline_cursor_edits_unicode_without_corruption() {
     let mut v = fixture();
     v.event(key(KeyCode::Char('e')));

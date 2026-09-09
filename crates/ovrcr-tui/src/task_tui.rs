@@ -1165,7 +1165,9 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
         status,
     );
-    let footer_text = if view.concurrency_input.is_some() {
+    let footer_text = if view.confirmation.is_some() {
+        "n no  y yes  Enter/Esc no"
+    } else if view.concurrency_input.is_some() {
         "Esc cancel  Enter save  Backspace delete"
     } else {
         footer_text
