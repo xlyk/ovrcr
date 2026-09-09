@@ -1108,3 +1108,90 @@ fn assert_pid_is_gone(pid: u32) {
         Some(libc::ESRCH)
     );
 }
+
+#[test]
+fn compact_zsh_prompt_preserves_config_and_reports_failure() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let cwd = dir.path().join("project");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir(&cwd).unwrap();
+    std::fs::write(home.join(".zshenv"), "export PROMPT_FIXTURE_ENV=loaded\n").unwrap();
+    std::fs::write(home.join(".zshrc"), "alias fixture_alias='printf CONFIG_%s_OK $PROMPT_FIXTURE_ENV'\nPROMPT='UGLY_THEME> '\nRPROMPT='RIGHT_THEME'\n").unwrap();
+    let locale = if cfg!(target_os = "macos") {
+        "en_US.UTF-8"
+    } else {
+        "C.UTF-8"
+    };
+    let shell = dir.path().join("zsh");
+    std::fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\nunset OVRCR_ORIGINAL_ZDOTDIR\nexport HOME='{}' LC_ALL={locale} TERM=xterm-256color\nexec /bin/zsh -d \"$@\"\n",
+            home.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let (tx, rx) = mpsc::sync_channel(64);
+    let session = Session::spawn(
+        SessionId(1),
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "local".into(),
+            label: "zsh".into(),
+            cwd,
+            argv: vec![shell.into_os_string()],
+            hook_env: None,
+        },
+        TerminalSize {
+            rows: 24,
+            cols: 100,
+        },
+        tx,
+    )
+    .unwrap();
+    let dispatcher = dispatch_test_events(session.clone(), rx);
+    // Collect results before asserting so a regression still cleans up its PTY.
+    let prompt_arrived = wait_for_screen(&session, "›", Duration::from_secs(3));
+    let prompt = prompt_arrived
+        && session
+            .terminal
+            .lock()
+            .unwrap()
+            .parser
+            .screen()
+            .contents()
+            .contains("project ›");
+    session.write(b"fixture_alias\r").unwrap();
+    let config = wait_for_screen(&session, "CONFIG_loaded_OK", Duration::from_secs(3));
+    session.write(b"false\r").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut red = false;
+    while Instant::now() < deadline {
+        let terminal = session.terminal.lock().unwrap();
+        let screen = terminal.parser.screen();
+        let (row, col) = screen.cursor_position();
+        if col >= 2 {
+            red = screen.cell(row, col - 2).is_some_and(|cell| {
+                cell.contents() == "›" && cell.fgcolor() == vt100::Color::Idx(1)
+            });
+        }
+        drop(terminal);
+        if red {
+            break;
+        }
+        thread::yield_now();
+    }
+    session.terminate(Duration::from_millis(200)).unwrap();
+    dispatcher.join().unwrap();
+    assert!(
+        prompt,
+        "compact directory prompt missing: {}",
+        session.terminal.lock().unwrap().parser.screen().contents()
+    );
+    assert!(config, "normal zsh environment and aliases did not load");
+    assert!(red, "failed command did not render a red arrow");
+}

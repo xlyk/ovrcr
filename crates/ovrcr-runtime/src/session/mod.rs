@@ -94,6 +94,8 @@ fn wait_for_group_leader(
     }
 }
 
+mod shell_prompt;
+
 #[cfg(test)]
 mod tests;
 
@@ -189,6 +191,8 @@ struct TerminalState {
 }
 
 pub struct Session {
+    // Keep startup files alive until the shell has finished using them.
+    _shell_startup: Option<tempfile::TempDir>,
     summary: SessionSummary,
     state: Mutex<SessionState>,
     state_changed: Condvar,
@@ -346,6 +350,7 @@ impl Session {
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
         command.cwd(spec.cwd);
+        let shell_startup = shell_prompt::configure(&mut command, &spec.argv)?;
         command.env_remove("OVRCR_HOOK_SOCKET");
         command.env_remove("OVRCR_SESSION_ID");
         command.env_remove("OVRCR_HOOK_TOKEN");
@@ -394,6 +399,7 @@ impl Session {
             .unwrap_or_default()
             .as_millis() as u64;
         let session = Arc::new(Self {
+            _shell_startup: shell_startup,
             summary: SessionSummary {
                 id,
                 project: spec.project,

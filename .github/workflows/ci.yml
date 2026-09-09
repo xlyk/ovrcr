@@ -28,6 +28,9 @@ jobs:
         with:
           shared-key: checks
           cache-on-failure: true
+      - name: Install zsh for shell integration tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
       - name: Configure git identity
         run: |
           git config --global user.name "OVRCR CI"
