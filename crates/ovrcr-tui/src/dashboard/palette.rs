@@ -1,7 +1,7 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
-use super::picker::{PathPicker, PickItem, PickList, complete_path, list_path_entries};
+use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -149,6 +149,16 @@ fn visible_indices(fields: &[Field]) -> Vec<usize> {
         .collect()
 }
 
+/// `draw_palette` only holds `&self` and cannot recompute a Path field's
+/// directory listing, so every key handler that edits a Path field's value
+/// or moves its selection must refresh the picker's cache here.
+fn refresh_path_listing(field: &mut Field, roots: &[PathBuf]) {
+    let value = field.value.clone();
+    if let FieldKind::Path(picker) = &mut field.kind {
+        picker.listing(&value, roots);
+    }
+}
+
 fn move_form_field(fields: &[Field], active: &mut usize, backwards: bool) {
     let visible = visible_indices(fields);
     let Some(position) = visible.iter().position(|index| *index == *active) else {
@@ -162,6 +172,26 @@ fn move_form_field(fields: &[Field], active: &mut usize, backwards: bool) {
     if let Some(index) = visible.get(next) {
         *active = *index;
     }
+}
+
+/// A deferred submit replays Enter on a pick list the user never saw, so only
+/// the branch they actually typed may stand; a fuzzy match must be confirmed.
+fn unconfirmed_pick(page: &Page) -> Option<&'static str> {
+    let Page::Form { fields, active, .. } = page else {
+        return None;
+    };
+    let field = fields.get(*active)?;
+    let FieldKind::Pick(list) = &field.kind else {
+        return None;
+    };
+    if field.value.is_empty() {
+        return None;
+    }
+    // Git refs are case-sensitive, so only the exact text the user typed stands.
+    let exact = list
+        .accepted()
+        .is_some_and(|item| item.value == field.value);
+    (!exact).then_some(field.label)
 }
 
 fn accept_pick(field: &mut Field) -> bool {
@@ -292,7 +322,13 @@ impl Dashboard {
                     if fields[3].value.is_empty() {
                         fields[3].value = result.branches.first().cloned().unwrap_or_default();
                     }
-                    list.select_value(&fields[3].value);
+                    if result.branches.contains(&fields[3].value) {
+                        list.select_value(&fields[3].value);
+                    } else {
+                        // Filter to what the user typed instead of silently
+                        // replacing it; an unmatched query accepts nothing.
+                        list.query.clone_from(&fields[3].value);
+                    }
                     if !result.branches.is_empty() {
                         fields[3].kind = FieldKind::Pick(list);
                     }
@@ -314,7 +350,7 @@ impl Dashboard {
     }
 
     // Called by the real client loop, even when there is no keyboard/server input.
-    pub(super) fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
+    pub fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
         let Some(mut palette) = self.palette.take() else {
             return (false, None);
         };
@@ -328,9 +364,17 @@ impl Dashboard {
             } => palette.suggestions.cache.contains_key(&fields[0].value),
             _ => false,
         };
-        let submit = palette.submit_when_ready && ready;
+        let mut submit = palette.submit_when_ready && ready;
+        let mut refused = false;
         if submit {
             palette.submit_when_ready = false;
+            // The hints arrived after the user pressed Enter, so they never saw
+            // this list. Make them confirm anything but what they typed.
+            if let Some(label) = unconfirmed_pick(&palette.page) {
+                palette.error = Some(format!("{label} not found in repository"));
+                submit = false;
+                refused = true;
+            }
         }
         self.palette = Some(palette);
         let request = if submit {
@@ -341,15 +385,21 @@ impl Dashboard {
         } else {
             None
         };
-        (was_loading || submit, request)
+        (was_loading || submit || refused, request)
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
+        let mut page = self.palette_form(Command::RegisterProject);
+        if let Page::Form { fields, .. } = &mut page {
+            for field in fields.iter_mut() {
+                refresh_path_listing(field, &self.settings.picker_roots);
+            }
+        }
         self.palette = Some(Palette {
-            page: self.palette_form(Command::RegisterProject),
+            page,
             ..Palette::new()
         });
         self.mode = InputMode::Browse;
@@ -410,6 +460,7 @@ impl Dashboard {
         palette.insert(text);
         self.refresh_workspace_form(&mut palette);
         self.palette = Some(palette);
+        self.refresh_active_path_listing();
         DashboardAction::Redraw
     }
 
@@ -476,7 +527,26 @@ impl Dashboard {
         entries
     }
 
+    /// Single authority for keeping a Path field's cached listing in sync:
+    /// every `palette_key`/`palette_paste` return path funnels through here
+    /// afterward, so no call site needs its own `refresh_path_listing` call.
+    fn refresh_active_path_listing(&mut self) {
+        let Some(palette) = &mut self.palette else {
+            return;
+        };
+        let Page::Form { fields, active, .. } = &mut palette.page else {
+            return;
+        };
+        refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
+    }
+
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
+        let action = self.palette_key_inner(key);
+        self.refresh_active_path_listing();
+        action
+    }
+
+    fn palette_key_inner(&mut self, key: KeyEvent) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
             // Escape closes even while a request runs; its late response is
@@ -549,7 +619,7 @@ impl Dashboard {
                     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
                 ) =>
             {
-                palette.insert(&ch.to_string())
+                palette.insert(&ch.to_string());
             }
             KeyCode::Backspace => {
                 match &mut palette.page {
@@ -592,7 +662,8 @@ impl Dashboard {
                     match &mut fields[*active].kind {
                         FieldKind::Pick(list) => list.move_selection(delta),
                         FieldKind::Path(picker) => {
-                            let listing = list_path_entries(&value, &self.settings.picker_roots);
+                            let listing =
+                                picker.listing(&value, &self.settings.picker_roots).clone();
                             picker.move_selection(&listing, delta);
                         }
                         FieldKind::Text | FieldKind::Toggle => {}
@@ -626,6 +697,9 @@ impl Dashboard {
                                 FieldKind::Path(picker) => picker.selected,
                                 _ => 0,
                             };
+                            // Nothing to complete (e.g. a leaf directory with
+                            // no children) falls through to the shared Tab
+                            // handling below instead of being a no-op.
                             if let Some(next) = complete_path(
                                 &fields[*active].value,
                                 &self.settings.picker_roots,
@@ -635,11 +709,11 @@ impl Dashboard {
                                 if let FieldKind::Path(picker) = &mut fields[*active].kind {
                                     picker.selected = 0;
                                 }
+                                self.refresh_terminal_form(fields, *name_edited);
+                                self.refresh_project_form(fields, *name_edited, *root_edited);
+                                self.palette = Some(palette);
+                                return action;
                             }
-                            self.refresh_terminal_form(fields, *name_edited);
-                            self.refresh_project_form(fields, *name_edited, *root_edited);
-                            self.palette = Some(palette);
-                            return action;
                         }
                         if matches!(key.code, KeyCode::Tab) && !accept_pick(&mut fields[*active]) {
                             self.palette = Some(palette);
@@ -659,7 +733,9 @@ impl Dashboard {
             }
             KeyCode::Enter => match &mut palette.page {
                 Page::Search { query, selected } => {
-                    if let Some(entry) = self.palette_entries(query).get(*selected) {
+                    let entries = self.palette_entries(query);
+                    *selected = (*selected).min(entries.len().saturating_sub(1));
+                    if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
                             Command::Switch(id) => {
                                 if let Some(request_id) = palette.suggestions.inspect {
@@ -688,6 +764,14 @@ impl Dashboard {
                     root_edited,
                 } => {
                     if !accept_pick(&mut fields[*active]) {
+                        let field = &fields[*active];
+                        if field.required {
+                            // A deferred submit must not wait on a pick that can
+                            // never resolve; say which field went unmatched.
+                            palette.error =
+                                Some(format!("{} not found in repository", field.label));
+                        }
+                        palette.submit_when_ready = false;
                         self.palette = Some(palette);
                         return action;
                     }
@@ -732,8 +816,8 @@ impl Dashboard {
                             },
                             Command::RegisterProject => Request::AddProject {
                                 name: values[1].clone(),
-                                repo: values[0].clone().into(),
-                                workspace_root: values[2].clone().into(),
+                                repo: expand_path(&values[0]),
+                                workspace_root: expand_path(&values[2]),
                             },
                             Command::RemoveWorkspace => Request::RemoveWorkspace {
                                 project: values[0].clone(),
@@ -1126,7 +1210,7 @@ impl Dashboard {
         else {
             return Vec::new();
         };
-        let session = self
+        let workspace = self
             .hierarchy
             .projects
             .iter()
@@ -1136,19 +1220,24 @@ impl Dashboard {
                     .workspaces
                     .iter()
                     .find(|workspace| workspace.name == fields[1].value.trim())
-            })
-            .and_then(|workspace| {
-                workspace.sessions.iter().find(|session| {
-                    session.name == "local"
-                        && session.phase == crate::session::SessionPhase::Running
-                })
+            });
+        let Some(workspace) = workspace else {
+            return Vec::new();
+        };
+        let session = workspace
+            .sessions
+            .iter()
+            .find(|session| {
+                session.name == "local" && session.phase == crate::session::SessionPhase::Running
             })
             .map(|session| session.id);
+        // The workspace is in the hierarchy, so creation finished; the palette
+        // must not stay on "Working…" just because its shell already exited.
+        self.palette = None;
+        self.error = None;
         let Some(session) = session else {
             return Vec::new();
         };
-        self.palette = None;
-        self.error = None;
         let request_id = self.next_request_id();
         let outgoing = self
             .select_request(session, request_id)
@@ -1189,16 +1278,17 @@ impl Dashboard {
                 if entries.is_empty() {
                     lines.push(Line::from("No matching actions"));
                 }
+                let selected = (*selected).min(entries.len().saturating_sub(1));
                 let count = usize::from(body.height.saturating_sub(1) / 2).max(1);
                 let start = selected.saturating_sub(count - 1);
                 for (index, entry) in entries.iter().enumerate().skip(start).take(count) {
                     lines.push(Line::styled(
                         format!(
                             "{} {}",
-                            if index == *selected { "›" } else { " " },
+                            if index == selected { "›" } else { " " },
                             entry.label
                         ),
-                        if index == *selected {
+                        if index == selected {
                             Style::default().bg(MAUVE).fg(CRUST)
                         } else {
                             Style::default().fg(TEXT)
@@ -1288,8 +1378,8 @@ impl Dashboard {
                     }
                     if index == *active
                         && let FieldKind::Path(picker) = &field.kind
+                        && let Some(listing) = picker.cached()
                     {
-                        let listing = list_path_entries(&field.value, &self.settings.picker_roots);
                         let count = 8.min(listing.entries.len());
                         let start = picker.selected.saturating_sub(count.saturating_sub(1));
                         for (offset, item) in

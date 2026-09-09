@@ -1,7 +1,10 @@
+#[path = "support/deadline.rs"]
+mod deadline;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
 
 use anyhow::{Context, Result, bail};
+use deadline::wait_deadline;
 use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::{
     ClientMessage, HierarchySnapshot, Request, Response, ServerMessage, read_frame, write_frame,
@@ -56,7 +59,7 @@ impl AcceptanceFixture {
             server: Some(server),
             managed_pgids: Vec::new(),
         };
-        wait_for_socket(&fixture.socket, Duration::from_secs(3))?;
+        wait_for_socket(&fixture.socket, wait_deadline())?;
         git(&fixture.repo, &["init", "-b", "main"])?;
         git(&fixture.repo, &["config", "user.name", "OVRCR Acceptance"])?;
         git(
@@ -166,8 +169,8 @@ impl AcceptanceFixture {
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
         let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
-        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_read_timeout(Some(wait_deadline()))?;
+        stream.set_write_timeout(Some(wait_deadline()))?;
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -199,8 +202,8 @@ impl AcceptanceFixture {
 
     fn list(&self) -> Result<HierarchySnapshot> {
         let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
-        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+        stream.set_read_timeout(Some(wait_deadline()))?;
+        stream.set_write_timeout(Some(wait_deadline()))?;
         write_frame(
             &mut stream,
             &ClientMessage {
@@ -250,13 +253,13 @@ impl AcceptanceFixture {
             .server
             .take()
             .context("isolated server already stopped")?;
-        let status = wait_std_child(server, Duration::from_secs(3))?;
+        let status = wait_std_child(server, wait_deadline())?;
         if !status.success() {
             bail!("isolated server exited unsuccessfully: {status:?}");
         }
-        wait_for_absent(&self.socket, Duration::from_secs(3))?;
+        wait_for_absent(&self.socket, wait_deadline())?;
         for pgid in pgids {
-            wait_for_group_absent(pgid, Duration::from_secs(3))?;
+            wait_for_group_absent(pgid, wait_deadline())?;
         }
         Ok(())
     }
@@ -450,7 +453,7 @@ impl OuterDashboard {
             reader: Some(reader_handle),
             parser: vt100::Parser::new(size.rows, size.cols, 0),
         };
-        dashboard.wait_for(b"OVRCR", Duration::from_secs(3))?;
+        dashboard.wait_for(b"OVRCR", wait_deadline())?;
         Ok(dashboard)
     }
 
@@ -659,7 +662,7 @@ impl OuterDashboard {
             let mut child = child;
             let _ = sender.send(child.wait());
         });
-        let status = match receiver.recv_timeout(Duration::from_secs(3)) {
+        let status = match receiver.recv_timeout(wait_deadline()) {
             Ok(status) => status?,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 unsafe { libc::kill(pid, libc::SIGKILL) };
@@ -831,7 +834,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     dashboard.send(b"printf 'WORKSPACE_%s\\n' SHELL_OK\r")?;
     dashboard.wait_until(
         |screen| screen.contains("WORKSPACE_SHELL_OK"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     assert!(
         fixture
@@ -932,15 +935,15 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
         },
     )?;
     dashboard.send(b"j")?;
-    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"v")?;
-    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"\rMOUSE_TOKEN\r")?;
-    dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_ACK", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for(b"> waiting", Duration::from_secs(3))?;
+    dashboard.wait_for(b"> waiting", wait_deadline())?;
     dashboard.send(b"\rWAITING_TOKEN\r")?;
-    dashboard.wait_for(b"WAITING_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"WAITING_ACK", wait_deadline())?;
 
     let assert_split_cells =
         |dashboard: &OuterDashboard, area: ratatui::layout::Rect| -> Result<()> {
@@ -965,23 +968,17 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 120, 40))?;
 
     dashboard.resize(30, 100)?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("> waiting 29x26"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| screen.contains("> waiting 29x26"), wait_deadline())?;
     dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard.wait_for(b"SIZE_ACK_26 29", Duration::from_secs(3))?;
+    dashboard.wait_for(b"SIZE_ACK_26 29", wait_deadline())?;
     dashboard.send(b"\x07\t")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("> mouse 30x26"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| screen.contains("> mouse 30x26"), wait_deadline())?;
     dashboard.send(b"\rSIZE_TOKEN\r")?;
-    dashboard.wait_for(b"SIZE_ACK_26 30", Duration::from_secs(3))?;
+    dashboard.wait_for(b"SIZE_ACK_26 30", wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("> mouse 30x26") && screen.contains("BROWSE"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     assert_split_cells(&dashboard, ratatui::layout::Rect::new(0, 0, 100, 30))?;
 
@@ -990,17 +987,30 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
         |screen| {
             screen.contains("split hidden: terminal too small") && screen.contains("> mouse 40x26")
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.resize(40, 120)?;
     dashboard.wait_for_screen(
         |screen| screen.contains("waiting 39x36") && screen.contains("> mouse 40x36"),
-        Duration::from_secs(3),
+        wait_deadline(),
+    )?;
+    // The metadata rows are the dashboard's own parser state. Ask each pane's
+    // shell what the kernel handed its PTY instead of trusting those labels.
+    dashboard.send(b"\rSIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_36 40", wait_deadline())?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for_screen(|screen| screen.contains("> waiting 39x36"), wait_deadline())?;
+    dashboard.send(b"\rSIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_36 39", wait_deadline())?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> mouse 40x36") && screen.contains("BROWSE"),
+        wait_deadline(),
     )?;
     dashboard.send(b"x")?;
     dashboard.wait_for_screen(
         |screen| screen.lines().all(|line| line.chars().nth(79) != Some('│')),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     for line in dashboard.rendered().lines() {
         anyhow::ensure!(
@@ -1025,17 +1035,17 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
         |screen| {
             screen.contains("pid:") && screen.lines().all(|line| line.chars().nth(79) != Some('│'))
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     reattached.send(b"j")?;
-    reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    reattached.wait_for(b"WAITING_READY", wait_deadline())?;
     assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
     assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
 
     reattached.send(b"v")?;
-    reattached.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    reattached.wait_for(b"MOUSE_READY", wait_deadline())?;
     reattached.send(b"\rMOUSE_TOKEN\r")?;
-    reattached.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
+    reattached.wait_for(b"MOUSE_ACK", wait_deadline())?;
     assert_split_cells(&reattached, ratatui::layout::Rect::new(0, 0, 120, 40))?;
     assert_eq!(session_pid(&fixture, "waiting")?, waiting_pid);
     assert_eq!(session_pid(&fixture, "mouse")?, mouse_pid);
@@ -1077,14 +1087,14 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         .id
         .0;
     fixture.managed_pgids = fixture.session_pgids()?;
-    let fifo_deadline = Instant::now() + Duration::from_secs(3);
+    let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
         thread::yield_now();
     }
     if !fifo.exists() {
         bail!("history child did not create its FIFO");
     }
-    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    let ready_deadline = Instant::now() + wait_deadline();
     let mut ready_seen = false;
     while Instant::now() < ready_deadline {
         if fixture
@@ -1111,24 +1121,18 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         },
     )?;
     dashboard
-        .wait_for(b"agent runtime", Duration::from_secs(3))
+        .wait_for(b"agent runtime", wait_deadline())
         .context("history dashboard initial runtime header")?;
     dashboard
-        .wait_for_screen(|screen| screen.contains("history"), Duration::from_secs(3))
+        .wait_for_screen(|screen| screen.contains("history"), wait_deadline())
         .context("history dashboard hierarchy")?;
     dashboard.click_visible_text("history")?;
     dashboard
-        .wait_for_screen(
-            |screen| screen.contains("HISTORY_READY"),
-            Duration::from_secs(3),
-        )
+        .wait_for_screen(|screen| screen.contains("HISTORY_READY"), wait_deadline())
         .context("history dashboard selected session snapshot")?;
     dashboard.send(b"\r")?;
     dashboard
-        .wait_for_screen(
-            |screen| screen.contains("Terminal mode"),
-            Duration::from_secs(3),
-        )
+        .wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())
         .context("history dashboard terminal mode")?;
     dashboard.send(b"\x07")?;
     dashboard
@@ -1138,7 +1142,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
                     && screen.contains("BROWSE")
                     && screen.contains("Space leader  ? help")
             },
-            Duration::from_secs(3),
+            wait_deadline(),
         )
         .context("history dashboard browse mode")?;
     let page_up = b"\x1b[5~";
@@ -1146,7 +1150,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     dashboard
         .wait_for_screen(
             |screen| screen.contains("HISTORY · frozen"),
-            Duration::from_secs(3),
+            wait_deadline(),
         )
         .context("history dashboard frozen history")?;
     let mut old_marker_visible = false;
@@ -1171,8 +1175,8 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     assert!(frozen.contains("HIST_OLD_000"));
     assert!(frozen.contains("HISTORY · frozen"));
 
-    write_fifo_bounded(&fifo, b"LIVE_TOKEN\n", Duration::from_secs(3))?;
-    let live_deadline = Instant::now() + Duration::from_secs(3);
+    write_fifo_bounded(&fifo, b"LIVE_TOKEN\n", wait_deadline())?;
+    let live_deadline = Instant::now() + wait_deadline();
     let mut live_seen = false;
     while Instant::now() < live_deadline {
         if fixture
@@ -1193,7 +1197,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
             |screen| {
                 screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
             },
-            Duration::from_secs(3),
+            wait_deadline(),
         )
         .context("history dashboard frozen history after live output")?;
     let frozen_with_new_output = dashboard.rendered();
@@ -1210,7 +1214,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
             |screen| {
                 screen.contains("HIST_OLD_000") && screen.contains("HISTORY · frozen · new output")
             },
-            Duration::from_secs(3),
+            wait_deadline(),
         )
         .context("history dashboard resized frozen history")?;
     let resized = dashboard.rendered();
@@ -1225,7 +1229,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     dashboard
         .wait_for_screen(
             |screen| screen.contains("HIST_NEW_LIVE_TOKEN"),
-            Duration::from_secs(3),
+            wait_deadline(),
         )
         .context("history dashboard live output after history exit")?;
     dashboard.detach()?;
@@ -1273,14 +1277,14 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         history_id,
         fixture.managed_pgids,
     );
-    let fifo_deadline = Instant::now() + Duration::from_secs(3);
+    let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
         thread::yield_now();
     }
     if !fifo.exists() {
         bail!("historical copy child did not create its FIFO");
     }
-    let ready_deadline = Instant::now() + Duration::from_secs(3);
+    let ready_deadline = Instant::now() + wait_deadline();
     let mut ready_seen = false;
     while Instant::now() < ready_deadline {
         if fixture.read_terminal(history_id)?.contains("INITIAL_READY") {
@@ -1309,26 +1313,20 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         .and_then(|child| child.process_id());
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("historical copy outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
-    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for(b"mouse", wait_deadline())?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
     dashboard.click_visible_text("history-copy")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("INITIAL_READY"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| screen.contains("INITIAL_READY"), wait_deadline())?;
     dashboard.send(b"\r")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("Terminal mode"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| screen.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
 
-    write_fifo_bounded(&fifo, b"GO\n", Duration::from_secs(3))?;
-    let history_done_deadline = Instant::now() + Duration::from_secs(3);
+    write_fifo_bounded(&fifo, b"GO\n", wait_deadline())?;
+    let history_done_deadline = Instant::now() + wait_deadline();
     let mut history_done = false;
     while Instant::now() < history_done_deadline {
         if fixture.read_terminal(history_id)?.contains("HISTORY_DONE") {
@@ -1345,11 +1343,11 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
     dashboard.send(b"\x1b[5~")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY · frozen"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY · frozen · loaded"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\x1b[H")?;
     dashboard.wait_for_screen(
@@ -1359,7 +1357,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
                 && screen.contains("HISTORY  Space leader")
                 && !screen.contains("Waiting for history cell")
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     for row in 1..=15 {
         dashboard.send(b"j")?;
@@ -1370,7 +1368,7 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
                     && screen.contains("HISTORY  Space leader")
                     && !screen.contains("Waiting for history cell")
             },
-            Duration::from_secs(3),
+            wait_deadline(),
         )?;
     }
     for col in 1..=126 {
@@ -1382,43 +1380,43 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
                     && screen.contains("HISTORY  Space leader")
                     && !screen.contains("Waiting for history cell")
             },
-            Duration::from_secs(3),
+            wait_deadline(),
         )?;
     }
     dashboard.send(b"v")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY SELECT  row 16:127"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY SELECT  row 17:127"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     for col in 128..=130 {
         dashboard.send(b"l")?;
         let expected = format!("HISTORY SELECT  row 17:{col}");
-        dashboard.wait_for_screen(|screen| screen.contains(&expected), Duration::from_secs(3))?;
+        dashboard.wait_for_screen(|screen| screen.contains(&expected), wait_deadline())?;
     }
 
     let expected = format!("{}\nROW_016{}", "x".repeat(6), "x".repeat(123));
     let mut expected_osc = Vec::new();
     ovrcr::tui::write_clipboard(&mut expected_osc, &expected)?;
     dashboard.send(b"y")?;
-    dashboard.wait_for_output(&expected_osc, Duration::from_secs(3))?;
+    dashboard.wait_for_output(&expected_osc, wait_deadline())?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Clipboard request sent; paste to verify"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"j")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("HISTORY SELECT  row 18:130"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE  Space leader") && !screen.contains("HISTORY SELECT"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     let detach_result = dashboard.detach();
     eprintln!("historical copy outer dashboard detach: {detach_result:?}");
@@ -1442,25 +1440,25 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for(b"mouse", wait_deadline())?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
     dashboard.send(b"\x1b[<0;5;10M")?;
-    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
-    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"\r")?;
     dashboard.send(b"\x1b[200~PASTE_TOKEN\x1b[201~")?;
     dashboard.send(b"\r")?;
-    dashboard.wait_for(b"PASTE_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"PASTE_ACK", wait_deadline())?;
     dashboard.send(b"INPUT_TOKEN\r")?;
-    dashboard.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"INPUT_ACK", wait_deadline())?;
     let mut latencies = Vec::new();
     for index in 0..20 {
         let token = format!("LATENCY_TOKEN_{index}");
         let needle = format!("ECHO_{token}");
         let started = Instant::now();
         dashboard.send(format!("{token}\r").as_bytes())?;
-        dashboard.wait_for(needle.as_bytes(), Duration::from_secs(3))?;
+        dashboard.wait_for(needle.as_bytes(), wait_deadline())?;
         latencies.push(started.elapsed());
     }
     let mut sorted = latencies.clone();
@@ -1476,13 +1474,13 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "command-to-visible echo exceeded 100ms: {sorted:?}"
     );
     dashboard.send(b"RAW_MODE\r")?;
-    dashboard.wait_for(b"RAW_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"RAW_READY", wait_deadline())?;
     let mut single_key_latencies = Vec::new();
     for byte in b'a'..=b't' {
         let started = Instant::now();
         dashboard.send(&[byte])?;
         let needle = format!("RAW_ACK_{}", byte as char);
-        dashboard.wait_for(needle.as_bytes(), Duration::from_secs(3))?;
+        dashboard.wait_for(needle.as_bytes(), wait_deadline())?;
         single_key_latencies.push(started.elapsed());
     }
     let mut sorted_single_key = single_key_latencies.clone();
@@ -1498,14 +1496,14 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "single-key visible echo exceeded 100ms: {sorted_single_key:?}"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"BROWSE", Duration::from_secs(3))?;
+    dashboard.wait_for(b"BROWSE", wait_deadline())?;
     dashboard.send(b"\x1b[<0;5;10M")?;
-    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"\r")?;
     dashboard.send(b"MOUSE_TOKEN\r")?;
-    dashboard.wait_for(b"MOUSE_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_ACK", wait_deadline())?;
     dashboard.resize(40, 120)?;
-    let readiness_deadline = Instant::now() + Duration::from_secs(3);
+    let readiness_deadline = Instant::now() + wait_deadline();
     let remaining = |deadline: Instant| deadline.saturating_duration_since(Instant::now());
     dashboard.wait_for_screen(
         |screen| screen.contains("Terminal mode  Ctrl-g browse"),
@@ -1537,7 +1535,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         }
     }
     dashboard.send(b"SIZE_TOKEN\r")?;
-    dashboard.wait_for(b"SIZE_ACK_36 80", Duration::from_secs(3))?;
+    dashboard.wait_for(b"SIZE_ACK_36 80", wait_deadline())?;
     let rendered = dashboard.rendered();
     let resize_ack = rendered
         .split("SIZE_ACK_36 ")
@@ -1550,7 +1548,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
         "rendered resized pane geometry changed unexpectedly"
     );
     dashboard.send(b"\x07")?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
     dashboard.detach()?;
 
     let mut reattached = OuterDashboard::start(
@@ -1562,10 +1560,10 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    reattached.wait_for(b"mouse", Duration::from_secs(3))?;
-    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.wait_for(b"mouse", wait_deadline())?;
+    reattached.wait_for(b"agent runtime", wait_deadline())?;
     reattached.send(b"j")?;
-    reattached.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    reattached.wait_for(b"WAITING_READY", wait_deadline())?;
     reattached.detach()?;
     fixture.shutdown()?;
     Ok(())
@@ -1597,18 +1595,15 @@ fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
                 && screen.contains(fixture.config.to_str().unwrap())
                 && screen.contains(fixture.socket.to_str().unwrap())
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"a")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("Repository") && screen.contains("Workspace root"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(
-        |screen| !screen.contains("Repository"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| !screen.contains("Repository"), wait_deadline())?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
@@ -1651,12 +1646,12 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         .and_then(|child| child.process_id());
     let outer_pgid = outer_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
-    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for(b"mouse", wait_deadline())?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
     dashboard.send(b"\x1b[<0;5;10M")?;
-    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
-    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     let waiting_screen = fixture.read_terminal(waiting_id)?;
     assert!(
         waiting_screen.starts_with("WAITING_READY"),
@@ -1671,15 +1666,9 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     );
 
     dashboard.send(b"?")?;
-    dashboard.wait_for_screen(
-        |screen| screen.contains("Which key"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(
-        |screen| !screen.contains("Which key"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| !screen.contains("Which key"), wait_deadline())?;
     dashboard.send(b" n")?;
     dashboard.wait_for_screen(
         |screen| {
@@ -1687,12 +1676,12 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
                 && screen.contains("Agent")
                 && !screen.contains("Which key")
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
         |screen| !screen.contains("Command palette"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b" X")?;
     dashboard.wait_for_screen(
@@ -1700,13 +1689,10 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
             screen.contains("Confirm action")
                 && screen.contains(&format!("waiting (#{})", waiting_id.0))
         },
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\x1b")?;
-    dashboard.wait_for_screen(
-        |screen| !screen.contains("Confirm action"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_for_screen(|screen| !screen.contains("Confirm action"), wait_deadline())?;
     assert_eq!(
         fixture.read_terminal(waiting_id)?,
         waiting_screen,
@@ -1715,14 +1701,14 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
 
     dashboard.send(b"[gv")?;
     dashboard.send(b"lllllly")?;
-    dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", Duration::from_secs(3))?;
+    dashboard.wait_for_output(b"\x1b]52;c;V0FJVElORw==\x1b\\", wait_deadline())?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(
         |screen| screen.contains("BROWSE  Space leader") && !screen.contains("COPY  "),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"\rINPUT_TOKEN\r")?;
-    dashboard.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    dashboard.wait_for(b"INPUT_ACK", wait_deadline())?;
     assert!(
         dashboard.rendered().contains("INPUT_ACK"),
         "input acknowledgement did not reach the outer terminal"
@@ -1752,14 +1738,14 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     eprintln!(
         "copy acceptance reattached dashboard pid/pgid while alive: {reattached_pid:?}/{reattached_pgid:?}"
     );
-    reattached.wait_for(b"mouse", Duration::from_secs(3))?;
-    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.wait_for(b"mouse", wait_deadline())?;
+    reattached.wait_for(b"agent runtime", wait_deadline())?;
     reattached.wait_for_screen(
         |screen| screen.contains("BROWSE  Space leader") && !screen.contains("Terminal mode"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     reattached.send(b"j")?;
-    reattached.wait_for(b"INPUT_ACK", Duration::from_secs(3))?;
+    reattached.wait_for(b"INPUT_ACK", wait_deadline())?;
     let reattached_screen = reattached.rendered();
     assert!(reattached_screen.contains("BROWSE  Space leader"));
     assert!(!reattached_screen.contains("Terminal mode"));
@@ -1768,11 +1754,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     let (ack_row, ack_col) = reattached.find_text_in_rect(pane, "INPUT_ACK")?;
     eprintln!("copy acceptance retained INPUT_ACK pane position: row={ack_row} col={ack_col}");
     reattached.send(b"[")?;
-    reattached.wait_for_screen(|screen| screen.contains("COPY  "), Duration::from_secs(3))?;
+    reattached.wait_for_screen(|screen| screen.contains("COPY  "), wait_deadline())?;
     reattached.send(b"y")?;
     reattached.wait_for_screen(
         |screen| screen.contains("Set an anchor with v"),
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     let mut select_ack = vec![b'g'];
     select_ack.extend(vec![b'j'; usize::from(ack_row)]);
@@ -1781,7 +1767,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     select_ack.extend(vec![b'l'; b"INPUT_ACK".len() - 1]);
     select_ack.push(b'y');
     reattached.send(&select_ack)?;
-    reattached.wait_for_output(b"\x1b]52;c;SU5QVVRfQUNL\x1b\\", Duration::from_secs(3))?;
+    reattached.wait_for_output(b"\x1b]52;c;SU5QVVRfQUNL\x1b\\", wait_deadline())?;
     let detach_result = reattached.detach();
     eprintln!("copy acceptance reattached dashboard detach: {detach_result:?}");
     detach_result?;
@@ -1804,17 +1790,17 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    dashboard.wait_for(b"mouse", Duration::from_secs(3))?;
-    dashboard.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    dashboard.wait_for(b"mouse", wait_deadline())?;
+    dashboard.wait_for(b"agent runtime", wait_deadline())?;
     dashboard.send(b"\x1b[<0;5;10M")?;
-    dashboard.wait_for(b"MOUSE_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
-    dashboard.wait_for(b"WAITING_READY", Duration::from_secs(3))?;
+    dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
     dashboard.send(b"\r\x07")?;
-    dashboard.wait_for(b"BROWSE  Space leader", Duration::from_secs(3))?;
+    dashboard.wait_for(b"BROWSE  Space leader", wait_deadline())?;
 
     dashboard.send(b"p")?;
-    dashboard.wait_for(b"paused", Duration::from_secs(3))?;
+    dashboard.wait_for(b"paused", wait_deadline())?;
     let listed = fixture.list()?;
     let waiting = listed
         .projects
@@ -1835,15 +1821,15 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    reattached.wait_for(b"agent runtime", Duration::from_secs(3))?;
+    reattached.wait_for(b"agent runtime", wait_deadline())?;
     reattached.send(b"j")?;
-    reattached.wait_for(b"paused", Duration::from_secs(3))?;
+    reattached.wait_for(b"paused", wait_deadline())?;
     reattached.send(b"r")?;
-    reattached.wait_for_screen(|screen| !screen.contains("paused"), Duration::from_secs(3))?;
+    reattached.wait_for_screen(|screen| !screen.contains("paused"), wait_deadline())?;
     reattached.send(b"\r")?;
-    reattached.wait_for(b"Terminal mode", Duration::from_secs(3))?;
+    reattached.wait_for(b"Terminal mode", wait_deadline())?;
     reattached.send(b"PAUSE_RESUME_TOKEN\r")?;
-    reattached.wait_for(b"PAUSE_RESUME_ACK", Duration::from_secs(3))?;
+    reattached.wait_for(b"PAUSE_RESUME_ACK", wait_deadline())?;
     reattached.detach()?;
     fixture.shutdown()?;
     Ok(())
@@ -1869,21 +1855,18 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
             pixel_height: 0,
         },
     )?;
-    dashboard.wait_for(b"mouse-protocol", Duration::from_secs(3))?;
+    dashboard.wait_for(b"mouse-protocol", wait_deadline())?;
     dashboard.click_visible_text("  - mouse-protocol")?;
     dashboard.wait_until(
         |screen| screen.contains("MOUSE_FIXTURE_READY"),
         Duration::from_secs(5),
     )?;
-    dashboard.wait_until(|screen| !screen.contains("loading"), Duration::from_secs(3))?;
+    dashboard.wait_until(|screen| !screen.contains("loading"), wait_deadline())?;
     dashboard.send(b"\r")?;
-    dashboard.wait_until(
-        |screen| screen.contains("Terminal mode"),
-        Duration::from_secs(3),
-    )?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(b"E")?;
-    dashboard.wait_for(b"MOUSE_ENABLED", Duration::from_secs(3))?;
-    dashboard.wait_for_mouse_capture(true, Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_ENABLED", wait_deadline())?;
+    dashboard.wait_for_mouse_capture(true, wait_deadline())?;
     let inner = ovrcr::tui::pane_rects(ratatui::layout::Rect::new(0, 0, 100, 30), 1, 0)
         .into_iter()
         .next()
@@ -1893,12 +1876,28 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     dashboard.send(format!("\x1b[<0;{};{}mQ", inner.x + 3, inner.y + 4).as_bytes())?;
     dashboard.wait_for(
         b"MOUSE_CHECK_1:1b5b3c303b333b344d1b5b3c303b333b346d:END",
-        Duration::from_secs(3),
+        wait_deadline(),
     )?;
     dashboard.send(b"D")?;
-    dashboard.wait_for(b"MOUSE_DISABLED", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_DISABLED", wait_deadline())?;
     dashboard.send(format!("\x1b[<0;{};{}MQ", inner.x + 3, inner.y + 4).as_bytes())?;
-    dashboard.wait_for(b"MOUSE_CHECK_2::END", Duration::from_secs(3))?;
+    dashboard.wait_for(b"MOUSE_CHECK_2::END", wait_deadline())?;
+
+    // A plain shell never asks for mouse reports, so the same wheel tick over
+    // its pane has to reach the dashboard's own history instead of the child.
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
+    dashboard.click_visible_text("  - waiting")?;
+    dashboard.wait_until(|screen| screen.contains("WAITING_READY"), wait_deadline())?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
+    dashboard.send(format!("\x1b[<64;{};{}M", inner.x + 3, inner.y + 4).as_bytes())?;
+    dashboard.wait_until(
+        |screen| screen.contains("HISTORY · frozen"),
+        wait_deadline(),
+    )?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())

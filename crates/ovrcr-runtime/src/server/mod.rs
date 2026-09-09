@@ -40,8 +40,8 @@ use dispatch::{
 };
 use outbound::{
     DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
-    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_snapshot, dashboard_try_send,
-    disconnect_dashboard,
+    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_send_owner_with_completion,
+    dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
 pub use startup::{ServerPaths, prepare_socket_directory, run_server};
@@ -49,6 +49,8 @@ use startup::{generate_hook_capability, validate_bound_socket, wake_accept};
 
 #[cfg(test)]
 use connections::handle_shutdown;
+#[cfg(test)]
+use outbound::Enqueue;
 
 #[derive(Debug)]
 struct LifecycleFailure {
@@ -107,6 +109,11 @@ pub struct ServerState {
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
     pub(super) before_view_publish_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Called by the dashboard writer thread just before each socket write, so
+    /// a test can wait for the writer to reach a write it expects to block in
+    /// instead of guessing how long that takes.
+    #[cfg(test)]
+    pub(super) before_dashboard_write_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
 }
 
@@ -241,6 +248,9 @@ impl ServerState {
         self.create_session_locked(request, Some(ready))
     }
 
+    /// Create one session. Every caller holds `mutation_lock`, which is what
+    /// serializes creation, so the duplicate check needs the `sessions` guard
+    /// only once and the spawn runs without it.
     fn create_session_locked(
         &self,
         request: ovrcr_protocol::CreateSessionRequest,
@@ -262,13 +272,16 @@ impl ServerState {
             (workspace.path.clone(), label)
         };
         let id = SessionId(self.next_session_id.fetch_add(1, Ordering::Relaxed));
-        let mut sessions = self.sessions.lock().unwrap();
-        if sessions.values().any(|session| {
-            let summary = session.summary();
-            summary.project == request.project
-                && summary.workspace == request.workspace
-                && summary.name == request.name
-        }) {
+        let duplicate = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.values().any(|session| {
+                let summary = session.summary();
+                summary.project == request.project
+                    && summary.workspace == request.workspace
+                    && summary.name == request.name
+            })
+        };
+        if duplicate {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
                 format!(
@@ -304,14 +317,27 @@ impl ServerState {
             .as_ref()
             .context("server event channel closed")?
             .clone();
-        let session = match ready {
-            Some(ready) => Session::spawn_with_ready(id, spec, size, events, ready),
-            None => Session::spawn(id, spec, size, events),
-        }
-        .context("spawn session")?;
-        let summary = session.summary();
-        sessions.insert(id, session);
-        Ok(summary)
+        // The spawn itself runs without the `sessions` guard: it waits for the
+        // child's process group, and the dispatcher needs that same guard for
+        // every PTY byte it delivers. `spawn_registered` re-takes the guard to
+        // publish the session before the child's reader and waiter start, so
+        // no event of its own can arrive for a session the dispatcher cannot
+        // find yet.
+        let register = |session: &Arc<Session>| {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(id, Arc::clone(session));
+            if let Some(ready) = ready.as_ref() {
+                ready();
+            }
+        };
+        let session = Session::spawn_registered(id, spec, size, events, &register)
+            .inspect_err(|_| {
+                self.sessions.lock().unwrap().remove(&id);
+            })
+            .context("spawn session")?;
+        Ok(session.summary())
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
@@ -390,6 +416,7 @@ impl ServerState {
             events: Mutex::new(Some(events)),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
+            before_dashboard_write_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         })
     }
@@ -500,7 +527,24 @@ impl ServerState {
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
+        // A relative path resolves against the server's working directory, not the caller's, so
+        // `workspaces/demo` would be created and registered somewhere the caller never named.
+        for path in [&repo, &workspace_root] {
+            if !path.is_absolute() {
+                return Err(lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    format!("path must be absolute: {}", path.display()),
+                ));
+            }
+        }
+        // The repository is validated before the workspace root is created, so a repository that
+        // is missing or not its own worktree root leaves no empty directory behind.
+        let repo = git::validate_repo(&repo)?;
+        if !workspace_root.exists() {
+            fs::create_dir_all(&workspace_root)
+                .with_context(|| format!("create workspace root {}", workspace_root.display()))?;
+        }
+        let workspace_root = git::validate_workspace_root(&workspace_root)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         if next.projects.iter().any(|project| project.name == name) {

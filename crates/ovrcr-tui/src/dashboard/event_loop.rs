@@ -55,9 +55,6 @@ pub fn run_dashboard(
     if let Some(parent) = settings_path.parent() {
         dashboard.config_dir = parent.to_path_buf();
     }
-    if let Some(error) = settings_error {
-        dashboard.error = Some(error);
-    }
     dashboard.handle_server_message(initial);
     write_client(
         &mut stream,
@@ -87,6 +84,10 @@ pub fn run_dashboard(
     }
     // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
+    // Applied last: the handshake acknowledgements above clear the banner they do not own.
+    if let Some(error) = settings_error {
+        dashboard.set_error(error);
+    }
 
     let mut guard = TerminalGuard::enter()?;
     let mut mouse_enabled = guard.mouse;
@@ -102,22 +103,7 @@ pub fn run_dashboard(
     thread::Builder::new()
         .name("ovrcr-dashboard-reader".into())
         .spawn(move || read_messages(reader_stream, received, reader_wake))?;
-    let prior_hook = Arc::new(Mutex::new(Some(panic::take_hook())));
-    let hook_prior = Arc::clone(&prior_hook);
-    panic::set_hook(Box::new(move |panic_info| {
-        let mut cleanup = TerminalGuard::with_writer(io::stdout());
-        cleanup.raw = true;
-        cleanup.alternate = true;
-        cleanup.mouse = true;
-        cleanup.cursor_hidden = true;
-        cleanup.bracketed_paste = true;
-        cleanup.restore_before(|| {
-            PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
-            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
-                prior(panic_info);
-            }
-        });
-    }));
+    let prior_hook = install_panic_terminal_restore_hook(io::stdout);
     let result = dashboard_loop(
         &mut terminal,
         &mut stream,
@@ -136,6 +122,48 @@ pub fn run_dashboard(
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
     result
+}
+
+pub(super) type PriorPanicHook =
+    Arc<Mutex<Option<Box<dyn Fn(&panic::PanicHookInfo<'_>) + Sync + Send>>>>;
+
+/// Installs a panic hook that restores the terminal, then returns a handle
+/// the caller uses to reinstall whatever hook was active before this call.
+///
+/// The hook is process-global, but only the thread that installs it (the
+/// dashboard's main loop) owns the terminal. A panic on any other thread —
+/// the socket reader or a task worker — delegates straight to the hook that
+/// was active before installation and never touches the terminal, since the
+/// main loop is still drawing to it.
+pub(super) fn install_panic_terminal_restore_hook<W, F>(make_writer: F) -> PriorPanicHook
+where
+    W: Write + 'static,
+    F: Fn() -> W + Sync + Send + 'static,
+{
+    let installing_thread = thread::current().id();
+    let prior_hook: PriorPanicHook = Arc::new(Mutex::new(Some(panic::take_hook())));
+    let hook_prior = Arc::clone(&prior_hook);
+    panic::set_hook(Box::new(move |panic_info| {
+        if thread::current().id() != installing_thread {
+            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
+                prior(panic_info);
+            }
+            return;
+        }
+        let mut cleanup = TerminalGuard::with_writer(make_writer());
+        cleanup.raw = true;
+        cleanup.alternate = true;
+        cleanup.mouse = true;
+        cleanup.cursor_hidden = true;
+        cleanup.bracketed_paste = true;
+        cleanup.restore_before(|| {
+            PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
+            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
+                prior(panic_info);
+            }
+        });
+    }));
+    prior_hook
 }
 
 // The caller owns the terminal guard and needs the final mouse-capture state.
@@ -197,7 +225,12 @@ fn dashboard_loop<W: Write>(
 
         {
             let now = Instant::now();
-            let idle_wait = next_idle_redraw.saturating_duration_since(now);
+            // A refused view is re-sent by the `emit_view_request` below, so the wait cannot
+            // outlast its backoff deadline.
+            let idle_wait = dashboard
+                .view_retry_deadline()
+                .map_or(next_idle_redraw, |retry| next_idle_redraw.min(retry))
+                .saturating_duration_since(now);
             let frame_wait = next_frame_redraw.saturating_duration_since(now);
             let wait = if pending_redraw && frame_wait < idle_wait {
                 wait_for_dashboard_activity(input_fd, None, frame_wait)?
@@ -354,7 +387,13 @@ pub(super) fn next_dashboard_messages(
             break;
         };
         redraw = true;
-        for request in dashboard.handle_server_message(message) {
+        let requests = dashboard.handle_server_message(message);
+        // A synthetic release targets the session that is focused now; the server rejects it
+        // once the replacement SetView has moved focus, so it must lead the batch.
+        if let Some(cleanup) = dashboard.take_mouse_cleanup() {
+            write_frame(stream, &cleanup)?;
+        }
+        for request in requests {
             write_frame(stream, &request)?;
         }
     }

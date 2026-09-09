@@ -29,8 +29,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          # Reuse the original verify job's dependency cache across lanes.
-          shared-key: verify
+          shared-key: lint
           cache-on-failure: true
       - name: Format
         run: cargo fmt --all -- --check
@@ -41,7 +40,10 @@ jobs:
   tests:
     name: tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # The macOS core lane runs the full --all-features workspace gate,
+    # including the GUI feature and its tests/gui.rs target, and needs more
+    # time for a cold eframe build.
+    timeout-minutes: ${{ matrix.os == 'macos-latest' && matrix.suite == 'core' && 20 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +54,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: verify
+          shared-key: tests
           cache-on-failure: true
       - name: Configure git identity
         run: |
@@ -62,22 +64,3 @@ jobs:
         env:
           SUITE: ${{ matrix.suite }}
         run: bash scripts/ci-tests.sh "$SUITE"
-
-  gui:
-    name: GUI (macos-latest)
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: verify
-          cache-on-failure: true
-      - name: Configure git identity
-        run: |
-          git config --global user.name "OVRCR CI"
-          git config --global user.email "ci@ovrcr.invalid"
-      # Include binary unit tests (native glyphs), not only PTY integration tests.
-      - name: GUI helper tests
-        run: cargo test -p ovrcr --features gui --bin ovrcr-gui --test gui

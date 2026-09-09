@@ -19,7 +19,10 @@ pub struct WorktreeInspection {
     pub dirty: bool,
 }
 
-pub fn validate_project(repo: &Path, workspace_root: &Path) -> Result<(PathBuf, PathBuf)> {
+/// The repository half of [`validate_project`]: the canonical path of `repo`, confirmed to be the
+/// root of its own Git worktree. Separate so a caller that has to create the workspace root can
+/// check the repository first and leave no directory behind when this half fails.
+pub fn validate_repo(repo: &Path) -> Result<PathBuf> {
     let repo = fs::canonicalize(repo)
         .with_context(|| format!("canonicalize Git repository {}", repo.display()))?;
     if !repo.is_dir() {
@@ -45,7 +48,12 @@ pub fn validate_project(repo: &Path, workspace_root: &Path) -> Result<(PathBuf, 
             repo.display()
         );
     }
+    Ok(repo)
+}
 
+/// The workspace-root half of [`validate_project`]: the canonical path of `workspace_root`,
+/// confirmed to be an existing directory.
+pub fn validate_workspace_root(workspace_root: &Path) -> Result<PathBuf> {
     let workspace_root = fs::canonicalize(workspace_root)
         .with_context(|| format!("canonicalize workspace root {}", workspace_root.display()))?;
     if !workspace_root.is_dir() {
@@ -54,7 +62,14 @@ pub fn validate_project(repo: &Path, workspace_root: &Path) -> Result<(PathBuf, 
             workspace_root.display()
         );
     }
-    Ok((repo, workspace_root))
+    Ok(workspace_root)
+}
+
+pub fn validate_project(repo: &Path, workspace_root: &Path) -> Result<(PathBuf, PathBuf)> {
+    Ok((
+        validate_repo(repo)?,
+        validate_workspace_root(workspace_root)?,
+    ))
 }
 
 pub fn create_worktree(

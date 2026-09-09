@@ -583,6 +583,34 @@ fn dispatch_set_view_with_resize(
         .iter()
         .map(|(session, _)| session.current_screen())
         .collect::<Vec<_>>();
+    // Panes were resolved before the resizes, which can block for as long as a
+    // PTY takes, and `remove_session` runs on connection threads. Hold the
+    // session registry from this membership re-check through publication so a
+    // session removed in between cannot be published as a focused pane at a
+    // valid revision and then admit input that only fails at the PTY.
+    let registered = state.sessions.lock().unwrap();
+    if let Some(focused) = view
+        .focused
+        .filter(|focused| !registered.contains_key(focused))
+    {
+        drop(registered);
+        view_error(
+            state,
+            owner,
+            request_id,
+            ErrorCode::NotFound,
+            format!("session {} not found", focused.0),
+        );
+        let _ = completion.send(DispatchCompletion::Complete);
+        return;
+    }
+    // The client still gets one snapshot per pane it asked for; only the
+    // published view drops the panes whose sessions are gone, so neither output
+    // nor input is admitted for them.
+    let mut published = view.clone();
+    published
+        .panes
+        .retain(|pane| registered.contains_key(&pane.session));
     if !snapshot.sink.replace_view(&view, request_id, screens) {
         disconnect_dashboard(state, snapshot);
         let _ = completion.send(DispatchCompletion::Complete);
@@ -604,12 +632,13 @@ fn dispatch_set_view_with_resize(
     if focus_changed {
         current.history.take();
     }
-    *state.view.lock().unwrap() = Some(view.clone());
-    if let Some(focused) = view.focused
-        && let Some(pane) = view.panes.iter().find(|pane| pane.session == focused)
+    *state.view.lock().unwrap() = Some(published.clone());
+    if let Some(focused) = published.focused
+        && let Some(pane) = published.panes.iter().find(|pane| pane.session == focused)
     {
         set_dashboard_geometry(state, owner, pane.size);
     }
+    drop(registered);
     let _ = completion.send(DispatchCompletion::Complete);
 }
 
