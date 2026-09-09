@@ -1111,30 +1111,69 @@ fn typed_existing_branch_survives_hint_arrival() {
     );
 }
 
-#[test]
-fn typed_branch_missing_from_hints_is_refused_not_replaced() {
-    let repo = hint_repository(&[]);
-    let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
-    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+/// Polls the deferred submit until the palette stops waiting on Git, refusing
+/// any request along the way, and returns the rendered palette.
+fn poll_until_deferred_submit_refused(dashboard: &mut Dashboard, why: &str) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let text = loop {
+    loop {
         let (_, request) = dashboard.poll_palette();
-        assert!(
-            request.is_none(),
-            "a branch missing from the repository must not be submitted"
-        );
-        let text = palette_text(&dashboard);
+        assert!(request.is_none(), "{why}");
+        let text = palette_text(dashboard);
+        // Without real branches the field would stay text and submit anyway.
         assert!(!text.contains("enter branch/base manually"), "{text}");
         if !text.contains("Waiting for Git suggestions") {
-            break text;
+            return text;
         }
         assert!(
             std::time::Instant::now() < deadline,
             "Git hints never reached the deferred submit: {text}"
         );
         std::thread::yield_now();
+    }
+}
+
+#[test]
+fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
+    use ovrcr::protocol::BranchRequest;
+    use ovrcr::tui::DashboardAction;
+    let repo = hint_repository(&["release-2-old"]);
+    let mut dashboard = dashboard_fixture();
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+    let text = poll_until_deferred_submit_refused(
+        &mut dashboard,
+        "a branch the user never named must not be submitted",
+    );
+    assert!(text.contains("Create workspace"), "{text}");
+    assert!(text.contains("Branch not found in repository"), "{text}");
+    // The refusal is not a dead end: the filtered list is now on screen, so a
+    // second Enter accepts the near match the user can finally see.
+    assert!(text.contains("release-2-old"), "{text}");
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("confirming the filtered branch must submit");
     };
+    assert_eq!(
+        message.request,
+        Request::CreateWorkspace {
+            project: "consigint".into(),
+            name: "typed-branch".into(),
+            branch: BranchRequest::Existing {
+                branch: "release-2-old".into()
+            },
+        }
+    );
+}
+
+#[test]
+fn typed_branch_missing_from_hints_is_refused_not_replaced() {
+    let repo = hint_repository(&[]);
+    let mut dashboard = dashboard_fixture();
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
+    let text = poll_until_deferred_submit_refused(
+        &mut dashboard,
+        "a branch missing from the repository must not be submitted",
+    );
     assert!(text.contains("Create workspace"), "{text}");
     assert!(text.contains("Branch not found in repository"), "{text}");
     assert!(!text.contains("Working"), "{text}");

@@ -166,6 +166,25 @@ fn move_form_field(fields: &[Field], active: &mut usize, backwards: bool) {
     }
 }
 
+/// A deferred submit replays Enter on a pick list the user never saw, so only
+/// the branch they actually typed may stand; a fuzzy match must be confirmed.
+fn unconfirmed_pick(page: &Page) -> Option<&'static str> {
+    let Page::Form { fields, active, .. } = page else {
+        return None;
+    };
+    let field = fields.get(*active)?;
+    let FieldKind::Pick(list) = &field.kind else {
+        return None;
+    };
+    if field.value.is_empty() {
+        return None;
+    }
+    let exact = list
+        .accepted()
+        .is_some_and(|item| item.value.eq_ignore_ascii_case(&field.value));
+    (!exact).then_some(field.label)
+}
+
 fn accept_pick(field: &mut Field) -> bool {
     let FieldKind::Pick(list) = &field.kind else {
         return true;
@@ -336,9 +355,17 @@ impl Dashboard {
             } => palette.suggestions.cache.contains_key(&fields[0].value),
             _ => false,
         };
-        let submit = palette.submit_when_ready && ready;
+        let mut submit = palette.submit_when_ready && ready;
+        let mut refused = false;
         if submit {
             palette.submit_when_ready = false;
+            // The hints arrived after the user pressed Enter, so they never saw
+            // this list. Make them confirm anything but what they typed.
+            if let Some(label) = unconfirmed_pick(&palette.page) {
+                palette.error = Some(format!("{label} not found in repository"));
+                submit = false;
+                refused = true;
+            }
         }
         self.palette = Some(palette);
         let request = if submit {
@@ -349,7 +376,7 @@ impl Dashboard {
         } else {
             None
         };
-        (was_loading || submit, request)
+        (was_loading || submit || refused, request)
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
