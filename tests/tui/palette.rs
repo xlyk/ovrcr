@@ -6,7 +6,8 @@ use crate::*;
 fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
-    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('w')) else {
+    dashboard.key(KeyCode::Char('p'));
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('n')) else {
         panic!("leader workspace must request repository inspection");
     };
     assert_eq!(message.request, Request::Inspect);
@@ -42,12 +43,13 @@ fn palette_hint_action_ignores_late_inspection_error() {
 }
 
 #[test]
-fn space_then_n_opens_the_terminal_form() {
+fn space_w_n_opens_the_terminal_form() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     let text = palette_text(&dashboard);
     assert!(text.contains("Which key"));
-    assert!(text.contains("Create"));
+    assert!(text.contains("w  Workspace"));
+    dashboard.key(KeyCode::Char('w'));
     dashboard.key(KeyCode::Char('n'));
     let text = palette_text(&dashboard);
     assert!(!text.contains("Which key"));
@@ -60,8 +62,9 @@ fn question_mark_popup_is_browsable() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
     assert!(palette_text(&dashboard).contains("Which key"));
-    dashboard.key(KeyCode::Down);
-    dashboard.key(KeyCode::Down);
+    for _ in 0..4 {
+        dashboard.key(KeyCode::Down);
+    }
     dashboard.key(KeyCode::Enter);
     let text = palette_text(&dashboard);
     assert!(!text.contains("Which key"));
@@ -165,7 +168,7 @@ fn whichkey_scrolled_last_row_remains_clickable_after_resize() {
 fn narrow_popup_moves_description_to_detail_line() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
-    dashboard.key(KeyCode::Down); // workspace creation
+    dashboard.key(KeyCode::Char('p')); // project submenu: workspace creation
     let mut terminal = Terminal::new(TestBackend::new(80, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -179,7 +182,7 @@ fn narrow_popup_moves_description_to_detail_line() {
         .collect();
     let row = lines
         .iter()
-        .position(|line| line.contains("w  Create workspace"))
+        .position(|line| line.contains("n  Create workspace"))
         .unwrap();
     assert!(!lines[row].contains("consigint"));
     let detail = lines
@@ -193,30 +196,37 @@ fn narrow_popup_moves_description_to_detail_line() {
         lines[usize::from(area.bottom() - 2)].contains("opens a form"),
         "full description must reach the last inner popup line"
     );
-    for _ in 0..4 {
-        dashboard.key(KeyCode::Down);
-    }
+    dashboard.key(KeyCode::Backspace);
+    dashboard.panes[0].ready = false;
+    dashboard.key(KeyCode::Char('t'));
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let area = whichkey_test_bounds(terminal.backend().buffer());
-    let resume_row = (area.y + 1..area.bottom() - 1)
+    let focus_row = (area.y + 1..area.bottom() - 1)
         .find(|y| {
             (area.x + 1..area.right() - 1)
                 .map(|x| terminal.backend().buffer()[(x, *y)].symbol())
                 .collect::<String>()
-                .contains("r  Resume")
+                .contains("Enter  Focus")
         })
         .unwrap();
     assert!(
-        terminal.backend().buffer()[(area.x + 1, resume_row)]
+        terminal.backend().buffer()[(area.x + 1, focus_row)]
             .modifier
             .contains(Modifier::DIM)
     );
-    let last: String = (area.x + 1..area.right() - 1)
-        .map(|x| terminal.backend().buffer()[(x, area.bottom() - 2)].symbol())
-        .collect();
-    assert!(last.contains("Resume: not paused"));
+    let detail = (area.y + 1..area.bottom() - 1)
+        .map(|y| {
+            (area.x + 1..area.right() - 1)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(detail.contains("waiting for acknowledged screen"));
 }
 
 #[test]
@@ -322,10 +332,13 @@ fn whichkey_preserves_readiness_and_never_forwards_overlay_input() {
     assert_eq!(dashboard.view_revision, revision);
     assert!(dashboard.panes[0].ready);
     dashboard.key(KeyCode::Char(' '));
-    dashboard.key(KeyCode::Char('r')); // running session: resume is disabled
-    assert!(!palette_text(&dashboard).contains("Which key"));
+    dashboard.key(KeyCode::Char('t'));
+    dashboard.key(KeyCode::Char('r')); // running session: resume is absent
+    assert!(palette_text(&dashboard).contains("Which key"));
+    dashboard.key(KeyCode::Esc);
     assert_eq!(dashboard.mode, InputMode::Browse);
     dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
     dashboard.key(KeyCode::Enter);
     assert_eq!(dashboard.mode, InputMode::Terminal);
     assert_eq!(
@@ -428,8 +441,10 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
 
 #[test]
 fn whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable() {
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
+    let mut dashboard = dashboard_fixture();
+    dashboard.panes[0].ready = false;
     dashboard.key(KeyCode::Char('?'));
+    dashboard.key(KeyCode::Char('t'));
     for _ in 0..6 {
         dashboard.key(KeyCode::Down);
     }
@@ -440,7 +455,10 @@ fn whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable() {
             .unwrap();
     }
     let text = palette_text(&dashboard);
-    assert!(text.contains("no session selected"));
+    assert!(
+        whichkey_menu_text(&dashboard).contains("waiting for acknowledged screen"),
+        "{text}"
+    );
     dashboard.key(KeyCode::Enter);
     assert!(palette_text(&dashboard).contains("Which key"));
     dashboard.key(KeyCode::Esc);
@@ -1153,17 +1171,18 @@ fn n_is_listed_in_the_browse_footer() {
 fn n_is_listed_in_the_hint_table() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
+    dashboard.key(KeyCode::Char('w'));
     let text = palette_text(&dashboard);
     assert!(text.contains("Which key"), "{text}");
     let create = text
         .lines()
-        .skip_while(|line| !line.contains("Create"))
-        .take_while(|line| !line.contains("Session"))
+        .skip_while(|line| !line.contains("Workspace:"))
+        .take_while(|line| !line.contains("Remove workspace"))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
         create.contains("n  Create terminal"),
-        "the Create group must list n: {create}"
+        "the Workspace group must list n: {create}"
     );
     let detail = text
         .lines()
@@ -1394,4 +1413,258 @@ fn palette_escape_cancels_pending_request() {
     });
     assert!(!palette_text(&dashboard).contains("Command palette"));
     assert_eq!(dashboard.error, None);
+}
+
+#[test]
+fn nested_whichkey_terminal_group_waits_for_action_and_backspace_returns() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char(' '));
+    assert_eq!(dashboard.key(KeyCode::Char('t')), DashboardAction::Redraw);
+    assert!(dashboard.tasks.is_none(), "group key must not open tasks");
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Space t"), "{text}");
+    assert!(text.contains("Terminal: review"), "{text}");
+    assert!(text.contains("p  Pause"));
+    assert!(!text.contains("r  Resume"));
+    assert!(text.contains("x  Close terminal"));
+    dashboard.key(KeyCode::Backspace);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("t  Terminal"));
+    assert!(!text.contains("x  Close terminal"));
+    dashboard.key(KeyCode::Char('t'));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('p')) else {
+        panic!("pause must emit a request");
+    };
+    assert_eq!(
+        message.request,
+        Request::PauseSession {
+            session: SessionId(1)
+        }
+    );
+}
+
+#[test]
+fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
+    use ovrcr::tui::DashboardAction;
+    for (group, expected) in [
+        (
+            't',
+            Request::CloseTerminal {
+                session: SessionId(1),
+            },
+        ),
+        (
+            'w',
+            Request::RemoveWorkspace {
+                project: "consigint".into(),
+                name: "auth".into(),
+            },
+        ),
+        (
+            'p',
+            Request::RemoveProject {
+                name: "consigint".into(),
+            },
+        ),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        for confirm in [false, true] {
+            dashboard.key(KeyCode::Char(' '));
+            dashboard.key(KeyCode::Char(group));
+            assert_eq!(dashboard.key(KeyCode::Char('x')), DashboardAction::Redraw);
+            let text = palette_text(&dashboard);
+            assert!(text.contains("Confirm action"), "{group}: {text}");
+            assert!(text.contains("consigint"));
+            if confirm {
+                let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+                    panic!("confirmation must emit removal request");
+                };
+                assert_eq!(message.request, expected);
+            } else {
+                assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::Redraw);
+                assert!(!palette_text(&dashboard).contains("Confirm action"));
+                assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+            }
+        }
+    }
+}
+
+fn whichkey_menu_text(dashboard: &Dashboard) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|f| draw_dashboard_at(f, dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let area = whichkey_test_bounds(buffer);
+    (area.y + 1..area.bottom() - 1)
+        .map(|y| {
+            (area.x + 1..area.right() - 1)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn click_whichkey_text(
+    dashboard: &mut Dashboard,
+    text: &str,
+    sidebar: bool,
+) -> ovrcr::tui::DashboardAction {
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|f| draw_dashboard_at(f, dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let area = if sidebar {
+        Rect::new(0, 1, 35, 37)
+    } else {
+        whichkey_test_bounds(buffer)
+    };
+    let row = (area.y..area.bottom())
+        .find(|y| {
+            (area.x..area.right())
+                .map(|x| buffer[(x, *y)].symbol())
+                .collect::<String>()
+                .contains(text)
+        })
+        .expect("target row must be rendered");
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x + 2,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    )
+}
+
+#[test]
+fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
+    use ovrcr::tui::DashboardAction;
+    for (row, group, expected) in [
+        (
+            "spacelift-agent",
+            'p',
+            Request::RemoveProject {
+                name: "spacelift-agent".into(),
+            },
+        ),
+        (
+            "progress",
+            'w',
+            Request::RemoveWorkspace {
+                project: "spacelift-agent".into(),
+                name: "progress".into(),
+            },
+        ),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        click_whichkey_text(&mut dashboard, row, true);
+        assert_eq!(dashboard.focused_session(), None);
+        dashboard.key(KeyCode::Char(' '));
+        let menu = whichkey_menu_text(&dashboard);
+        assert!(!menu.contains("t  Terminal"), "{menu}");
+        assert!(menu.contains("p  Project"));
+        assert_eq!(menu.contains("w  Workspace"), group == 'w');
+        dashboard.key(KeyCode::Char(group));
+        dashboard.key(KeyCode::Char('x'));
+        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+            panic!("removal must require confirmation");
+        };
+        assert_eq!(message.request, expected);
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: message.request_id,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                message: "still contains terminals".into(),
+            },
+        });
+        assert!(palette_text(&dashboard).contains("still contains terminals"));
+        assert!(palette_text(&dashboard).contains("spacelift-agent"));
+    }
+}
+
+#[test]
+fn nested_whichkey_mouse_and_enter_open_groups_before_running_actions() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('?'));
+    dashboard.key(KeyCode::Enter);
+    assert!(whichkey_menu_text(&dashboard).contains("Terminal: review"));
+    dashboard.key(KeyCode::Backspace);
+    click_whichkey_text(&mut dashboard, "w  Workspace", false);
+    assert!(whichkey_menu_text(&dashboard).contains("Workspace: consigint / auth"));
+    click_whichkey_text(&mut dashboard, "n  Create terminal", false);
+    assert!(palette_text(&dashboard).contains("Agent"));
+    assert!(palette_text(&dashboard).contains("consigint / auth"));
+}
+
+#[test]
+fn nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
+    let mut session = dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+        .find(|s| s.id == SessionId(1))
+        .unwrap()
+        .clone();
+    session.phase = SessionPhase::Paused;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        session,
+    ))));
+    let menu = whichkey_menu_text(&dashboard);
+    assert!(menu.contains("r  Resume"), "{menu}");
+    assert!(!menu.contains("p  Pause"));
+    assert!(!menu.contains("Enter  Focus"));
+    assert_eq!(dashboard.key(KeyCode::Char('p')), DashboardAction::Redraw);
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new_with_kind(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat
+        )),
+        DashboardAction::None
+    );
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+        DashboardAction::Redraw
+    );
+    assert!(whichkey_menu_text(&dashboard).contains("r  Resume"));
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('r')) else {
+        panic!("resume must emit a request");
+    };
+    assert_eq!(
+        message.request,
+        Request::ResumeSession {
+            session: SessionId(1)
+        }
+    );
+}
+
+#[test]
+fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
+    dashboard.key(KeyCode::Char(' '));
+    let menu = whichkey_menu_text(&dashboard);
+    for absent in ["t  Terminal", "w  Workspace", "p  Project"] {
+        assert!(!menu.contains(absent), "{menu}");
+    }
+    dashboard.key(KeyCode::Char('v'));
+    assert!(whichkey_menu_text(&dashboard).contains("Tasks"));
+    dashboard.key(KeyCode::Char('t'));
+    assert!(dashboard.tasks.is_some());
+    dashboard.key(KeyCode::Esc);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('a'));
+    assert!(palette_text(&dashboard).contains("Repository"));
 }

@@ -8,16 +8,9 @@ pub(super) enum HintAction {
     Key(KeyCode),
     Tasks,
     Browse,
-}
-
-impl HintAction {
-    pub(super) fn event(self) -> KeyEvent {
-        match self {
-            Self::Key(code) => KeyEvent::new(code, KeyModifiers::NONE),
-            Self::Tasks => KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
-            Self::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
-        }
-    }
+    Group(char),
+    RemoveWorkspace,
+    RemoveProject,
 }
 
 pub(super) struct KeyHint {
@@ -29,7 +22,7 @@ pub(super) struct KeyHint {
 }
 
 pub(super) struct HintGroup {
-    pub title: &'static str,
+    pub title: String,
     pub hints: Vec<KeyHint>,
 }
 
@@ -65,6 +58,9 @@ impl KeyHint {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return self.key == "Ctrl-g" && key.code == KeyCode::Char('g');
+        }
+        if self.key.len() == 1 {
+            return key.code == KeyCode::Char(self.key.chars().next().unwrap());
         }
         let code = match key.code {
             KeyCode::Left => KeyCode::Char('h'),
@@ -271,19 +267,19 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
         }
         return vec![
             HintGroup {
-                title: "Move",
+                title: "Move".into(),
                 hints: motion,
             },
             HintGroup {
-                title: "Selection",
+                title: "Selection".into(),
                 hints: selection,
             },
             HintGroup {
-                title: "View",
+                title: "View".into(),
                 hints: help(),
             },
             HintGroup {
-                title: "Exit",
+                title: "Exit".into(),
                 hints: vec![
                     hint(
                         "Esc",
@@ -408,12 +404,12 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
     ];
     view.extend(help());
     vec![
-        HintGroup { title: "Create", hints: vec![
+        HintGroup { title: "Create".into(), hints: vec![
             hint("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n')).unless(no_workspace),
             hint("w", "Create workspace", format!("Create a worktree and branch under {project_target} and start its local shell; opens a form"), Char('w')).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")),
             hint("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a')),
         ] },
-        HintGroup { title: "Session", hints: vec![
+        HintGroup { title: "Session".into(), hints: vec![
             hint("Enter", "Focus", format!("Send terminal input to {target}"), Enter).unless(missing.or_else(|| (!running).then_some("session is not running")).or_else(|| (!dashboard.input_is_allowed()).then_some("waiting for acknowledged screen"))),
             hint("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p')).unless(missing.or_else(|| (!running).then_some("not running"))),
             hint("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r')).unless(missing.or_else(|| (!paused).then_some("not paused"))),
@@ -421,8 +417,8 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
             hint("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('[')).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| p.ready)).then_some("waiting for acknowledged screen"))),
             hint("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| p.ready)).then_some("waiting for acknowledged screen"))),
         ] },
-        HintGroup { title: "View", hints: view },
-        HintGroup { title: "Dashboard", hints: vec![
+        HintGroup { title: "View".into(), hints: view },
+        HintGroup { title: "Dashboard".into(), hints: vec![
             hint("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q')),
         ] },
     ]

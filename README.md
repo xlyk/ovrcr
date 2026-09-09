@@ -158,7 +158,7 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | `PageUp` | Open the session's retained history |
 | `t` `Ctrl-t` | Scheduled tasks |
 | `:` | Command palette |
-| `Space` `?` | Key popup: `Space` runs the next key, `?` browses with arrows |
+| `Space` `?` | Contextual key groups; `?` also supports arrows and Enter |
 | `q` | Detach; the server and every session keep running |
 
 The sidebar gives each session three lines — name, label, and elapsed runtime with
@@ -166,9 +166,34 @@ context usage — and marks its reported activity: blank when idle, a braille
 spinner when busy, `?` when waiting for input, `!` on a reported error, and `-`
 until a hook report arrives. Exited rows are dimmed.
 
-`Space` and `?` open the same popup, built from the same hint table that labels the
-palette and footer. Disabled actions stay visible with a reason, such as
-`Resume: not paused`, so the popup also explains why a key will not work.
+`Space` and `?` open a compact popup in the bottom-right corner. In Browse,
+choose a group, then an action. The available groups follow the selected row:
+`t` Terminal, `w` Workspace, `p` Project, and `v` View. A terminal selection also
+exposes its workspace and project. A project selection has no terminal or
+workspace group. `a` Register project and `q` Detach remain available at the top.
+
+| Sequence | Action |
+| --- | --- |
+| `Space t Enter` | Focus the selected running terminal |
+| `Space t p` / `Space t r` | Pause / resume; only the applicable action appears |
+| `Space t c` / `Space t h` | Copy screen / history |
+| `Space t x` | Close the selected terminal, with confirmation |
+| `Space w n` | Create a terminal in the selected workspace |
+| `Space w x` | Remove the selected workspace, with confirmation |
+| `Space p n` | Create a workspace in the selected project |
+| `Space p x` | Unregister the selected project, with confirmation |
+| `Space v t` | Open scheduled tasks |
+
+The popup names the current prefix and target. Backspace returns to the group
+list; Escape closes it. With `?`, arrows browse and Enter opens the highlighted
+group or runs its action. Clicking a row does the same. Invalid keys leave the
+popup open. Actions awaiting a screen acknowledgement stay dimmed with a reason.
+Removal retains the existing safeguards and never deletes the project repository.
+Bare shortcuts in the table above still work without opening the popup.
+
+Copy and History show their own movement and selection actions directly, so
+`Space v` still sets a selection anchor in those modes. Popup actions reuse the
+same hint descriptions and handlers as the command palette and direct shortcuts.
 
 Everything else — full key tables for Copy and History, mouse and scroll
 behaviour, history and clipboard bounds, the palette's forms and path pickers, and

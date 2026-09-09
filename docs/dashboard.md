@@ -37,7 +37,7 @@ first.
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
 | `:` | Open the command palette |
-| `Space` | Show the key popup; the next key runs an enabled action |
+| `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
 | `q` | Detach; the server and every session keep running |
 
@@ -197,18 +197,34 @@ the hook-owned activity state.
 
 ## Key popup
 
-`Space` shows the available keys and the next key runs an enabled action and
-closes the popup, so `Space` then `n` opens the terminal form. Bare hotkeys still
-work. `?` browses the same popup with arrows and `Enter`, and enabled rows are
-clickable. `Esc` closes it. The compact list sits in the bottom-right corner,
-above the footer. The highlighted row's description appears below the keys,
-including the reason for a disabled action, such as `Resume: not paused`. Scroll
-the wheel, or use arrows in help mode, to reveal offscreen rows.
+In Browse, `Space` opens a group list: `t` Terminal, `w` Workspace, `p` Project,
+and `v` View. Only groups relevant to the selected row appear. Terminal rows
+also expose their parent workspace and project. `a` registers a project and
+`q` detaches from the top level, including when the hierarchy is empty.
 
-The popup, the palette's key descriptions, and the enabled-key footer all read
-from one hint table. A new description names the selected target, states the
-consequence, and says whether confirmation follows. Detach explicitly says that
-the server and every session keep running.
+Choose a group, then an action: `Space t x` closes the selected terminal,
+`Space w x` removes its workspace, and `Space p x` unregisters its project.
+Each opens confirmation naming the target. Existing server removal safeguards
+still apply; repositories and workspace branches are retained. `Space w n`
+creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
+Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
+Copy, and `h` for History. Pause/Resume follow the session's current state.
+Bare hotkeys remain unchanged.
+
+The compact popup sits above the footer in the bottom-right corner. Its title
+shows the current prefix, and the submenu heading names the target. Backspace
+returns to the group list; Escape dismisses it. `?` opens the same groups with
+arrow navigation; Enter opens a group or runs the selected action. Enabled rows
+are clickable. Scroll the wheel to reveal offscreen rows. Invalid or unavailable
+keys leave the popup open. Relevant actions that are waiting for screen readiness
+remain dimmed, with the reason in the detail area below the keys.
+
+Copy and History retain their direct movement/selection menus, including
+`Space v` to set an anchor. Terminal input mode has no popup.
+
+Popup actions reuse the hint table's target descriptions and the existing action
+handlers. The palette and direct-key footer retain their original shortcuts.
+
 
 ## Command palette
 

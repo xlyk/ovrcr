@@ -89,11 +89,16 @@ native check.
 
 Return to browse with `Ctrl-g`. Press Space. Confirm a compact bottom-right
 list above the footer, with the surrounding dashboard still visible. Press
-Escape, then `?`. Use arrows to highlight Session actions and confirm the detail
-below the list names the selected session, workspace, and session ID.
-Disabled actions should show a reason instead. Resize the window and scroll to
+`t` and confirm the terminal submenu names the selected session and shows
+`Space t`. Press Backspace and confirm the group list returns. Press Escape,
+then `?`, then Enter to open the Terminal group. Confirm Pause is listed for a
+running session and Resume is absent. Disabled actions should show a reason.
+Press Backspace, then `w`, then `x`; confirm the workspace-removal confirmation
+names the selected workspace. Escape cancels. Repeat with `Space p x` and
+`Space t x`, cancelling both. Click project and workspace sidebar rows and
+confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
-Press Space then `n`; confirm the key popup closes and the terminal form opens.
+Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
 On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
