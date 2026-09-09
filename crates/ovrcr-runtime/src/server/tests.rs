@@ -939,6 +939,116 @@ fn set_view_drops_a_session_removed_before_publication() {
 }
 
 #[test]
+fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
+    let focused_id = SessionId(65);
+    let removed_id = SessionId(66);
+    let (_focused_cwd, focused, focused_events) = spawn_live_test_session(focused_id);
+    let focused_events = apply_test_session_events(Arc::clone(&focused), focused_events);
+    let (_removed_cwd, removed, removed_receiver) = spawn_exiting_test_session(removed_id);
+    let removed_events = apply_test_session_events(Arc::clone(&removed), removed_receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(focused_id, focused.clone()), (removed_id, removed.clone())]);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(removed.summary().phase, SessionPhase::Exited { .. })
+    {
+        thread::yield_now();
+    }
+    assert!(matches!(
+        removed.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_for_hook = Arc::clone(&calls);
+    let hook_state = Arc::downgrade(&state);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            session.resize(size)
+        } else {
+            hook_state
+                .upgrade()
+                .expect("server state outlives the resize hook")
+                .remove_session(removed_id)
+        }
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let focused_pane = PaneTarget {
+        session: focused_id,
+        size: TerminalSize { rows: 25, cols: 81 },
+    };
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 82,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![
+                    focused_pane.clone(),
+                    PaneTarget {
+                        session: removed_id,
+                        size: TerminalSize { rows: 26, cols: 82 },
+                    },
+                ],
+                focused: Some(focused_id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // The client still receives one snapshot per requested pane and the final
+    // acknowledgement, so its readiness rules still complete.
+    for session in [focused_id, removed_id] {
+        assert!(matches!(
+            queued_dashboard_message(&sink),
+            ServerMessage::Response {
+                request_id: 82,
+                response: Response::Screen {
+                    session: queued,
+                    revision: 1,
+                    ..
+                },
+            } if queued == session
+        ));
+    }
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Response {
+            request_id: 82,
+            response: Response::Ok,
+        }
+    ));
+    // The published view omits the removed pane, so neither output nor input is
+    // admitted for it.
+    assert_eq!(
+        state.view.lock().unwrap().clone(),
+        Some(DashboardView {
+            revision: 1,
+            panes: vec![focused_pane],
+            focused: Some(focused_id),
+        })
+    );
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&removed, removed_events).unwrap();
+    cleanup_test_session(&focused, focused_events).unwrap();
+}
+
+#[test]
 fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
     let sink = DashboardSink::new();
     assert!(sink.enqueue_queued(DashboardOutbound {
