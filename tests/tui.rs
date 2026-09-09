@@ -760,6 +760,7 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
 fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() {
     use ovrcr::protocol::{BranchRequest, Request};
     use ovrcr::tui::DashboardAction;
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let cases = [
         (
             "create workspace",
@@ -791,6 +792,15 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                 name: "repo".into(),
                 repo: "/tmp/repo with spaces".into(),
                 workspace_root: "/tmp/worktrees".into(),
+            },
+        ),
+        (
+            "register project",
+            vec!["~/Code/repo/", "repo", "~/worktrees"],
+            Request::AddProject {
+                name: "repo".into(),
+                repo: home.join("Code/repo"),
+                workspace_root: home.join("worktrees"),
             },
         ),
         (

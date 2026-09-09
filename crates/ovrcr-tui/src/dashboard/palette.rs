@@ -1,7 +1,9 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
-use super::picker::{PathPicker, PickItem, PickList, complete_path, list_path_entries};
+use super::picker::{
+    PathPicker, PickItem, PickList, complete_path, expand_path, list_path_entries,
+};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
@@ -732,8 +734,8 @@ impl Dashboard {
                             },
                             Command::RegisterProject => Request::AddProject {
                                 name: values[1].clone(),
-                                repo: values[0].clone().into(),
-                                workspace_root: values[2].clone().into(),
+                                repo: expand_path(&values[0]),
+                                workspace_root: expand_path(&values[2]),
                             },
                             Command::RemoveWorkspace => Request::RemoveWorkspace {
                                 project: values[0].clone(),

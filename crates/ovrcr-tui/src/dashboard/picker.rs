@@ -179,13 +179,18 @@ fn split_input(input: &str) -> (&str, &str) {
 }
 
 fn expand_dir(prefix: &str) -> PathBuf {
-    let trimmed = prefix.trim_end_matches('/');
-    if trimmed.is_empty() || trimmed == "~" {
-        home_dir()
-    } else if let Some(rest) = trimmed.strip_prefix("~/") {
-        home_dir().join(rest)
-    } else {
-        PathBuf::from(trimmed)
+    expand_path(prefix)
+}
+
+pub(crate) fn expand_path(input: &str) -> PathBuf {
+    let trimmed = input.trim().trim_end_matches('/');
+    match trimmed {
+        "" if input.trim().starts_with('/') => PathBuf::from("/"),
+        "" | "~" => home_dir(),
+        _ => match trimmed.strip_prefix("~/") {
+            Some(rest) => home_dir().join(rest),
+            None => PathBuf::from(trimmed),
+        },
     }
 }
 
@@ -239,6 +244,16 @@ mod tests {
             unsafe { std::env::remove_var("HOME") };
         }
         result
+    }
+
+    #[test]
+    fn expand_path_resolves_tilde_and_keeps_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        with_home(dir.path(), || {
+            assert_eq!(expand_path("~/Code/repo/"), dir.path().join("Code/repo"));
+            assert_eq!(expand_path("~"), dir.path().to_path_buf());
+            assert_eq!(expand_path("/tmp/x"), PathBuf::from("/tmp/x"));
+        });
     }
 
     #[test]
