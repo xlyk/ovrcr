@@ -19,7 +19,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn parse_duration(value: &str) -> Result<u64> {
     if !value.is_ascii() || value.len() < 2 {
@@ -417,8 +417,10 @@ impl TasksView {
     }
     fn queue(&mut self, request: TaskRequest) -> bool {
         if self.pending.len() < 16 {
+            if !request.is_read_only() {
+                self.message = "Working…".into();
+            }
             self.pending.push_back(request);
-            self.message = "Working…".into();
             true
         } else {
             self.message = "Please wait for pending task actions".into();
@@ -804,7 +806,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
     );
     let footer_text;
     if let Some(editor) = &view.editor {
-        footer_text = " Tab/Shift-Tab field  Ctrl-a clear  Ctrl-s save  Esc cancel  Enter newline";
+        footer_text = "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline";
         let outer = block(if editor.id.is_some() {
             " Edit task "
         } else {
@@ -926,13 +928,13 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         }
     } else if view.history {
         footer_text =
-            " ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup  Esc tasks";
+            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup";
         let [history, log] = Layout::vertical([
             Constraint::Length((body.height / 3).max(4)),
             Constraint::Min(1),
         ])
         .areas(body);
-        let rows = view
+        let mut rows = view
             .runs
             .iter()
             .enumerate()
@@ -958,6 +960,9 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                 ))
             })
             .collect::<Vec<_>>();
+        if rows.is_empty() {
+            rows.push(Line::raw(" No runs to display. Esc returns to tasks."));
+        }
         frame.render_widget(Paragraph::new(rows).block(block(" Run history ")), history);
         let title = view
             .runs
@@ -1004,7 +1009,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         );
     } else {
         footer_text =
-            " n new  e edit  p pause/resume  r run  h/H history/all  d del  c limit  Esc back";
+            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit";
         let mut rows = vec![Line::raw(
             "   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)",
         )];
@@ -1046,8 +1051,16 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
         status,
     );
+    let mut hints = String::new();
+    for hint in footer_text.split("  ") {
+        let separator = if hints.is_empty() { "" } else { "  " };
+        if hints.width() + separator.len() + hint.width() <= usize::from(footer.width) {
+            hints.push_str(separator);
+            hints.push_str(hint);
+        }
+    }
     frame.render_widget(
-        Paragraph::new(footer_text).style(Style::default().fg(Color::Rgb(166, 173, 200))),
+        Paragraph::new(hints).style(Style::default().fg(Color::Rgb(166, 173, 200))),
         footer,
     );
     if let Some(request) = &view.confirmation {

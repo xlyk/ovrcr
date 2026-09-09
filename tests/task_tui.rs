@@ -465,3 +465,62 @@ fn transcript_wrap_is_cached_between_frames() {
     terminal.draw(|f| draw_tasks(f, &v)).unwrap();
     assert_eq!(v.transcript_wraps(), 2);
 }
+
+#[test]
+fn ux_empty_history_preserves_status_without_stale_working() {
+    let mut view = TasksView::default();
+    view.event(key(KeyCode::Char('h')));
+    let request = view.take_request().unwrap();
+    assert!(matches!(request, TaskRequest::ListRuns(None)));
+    view.receive(&request, Ok(TaskResponse::Runs(vec![])));
+    assert_ne!(view.message, "Working…");
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+    let text = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(text.contains("No runs to display"), "{text}");
+    for status in ["creation refused", "Working…", "Saved"] {
+        view.event(key(KeyCode::Esc));
+        view.message = status.into();
+        view.event(key(KeyCode::Char('h')));
+        let request = view.take_request().unwrap();
+        view.receive(&request, Ok(TaskResponse::Runs(vec![])));
+        assert_eq!(view.message, status);
+    }
+}
+
+#[test]
+fn ux_narrow_task_footer_keeps_escape_and_save_complete() {
+    for width in [40, 60, 80] {
+        let mut view = TasksView::default();
+        view.event(key(KeyCode::Char('n')));
+        let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+        terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+        let footer = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 11)].symbol())
+            .collect::<String>();
+        assert!(footer.contains("Esc cancel"), "{footer}");
+        assert!(footer.contains("Ctrl-s save"), "{footer}");
+        let allowed = [
+            "Esc cancel",
+            "Ctrl-s save",
+            "Tab/Shift-Tab field",
+            "Ctrl-a clear",
+            "Enter newline",
+        ];
+        assert!(
+            footer
+                .trim_end()
+                .split("  ")
+                .all(|hint| allowed.contains(&hint)),
+            "{footer}"
+        );
+        view.event(key(KeyCode::Esc));
+        assert!(view.editor.is_none());
+    }
+}
