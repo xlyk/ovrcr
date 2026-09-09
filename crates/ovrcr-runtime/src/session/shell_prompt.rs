@@ -35,7 +35,12 @@ pub(super) fn configure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
+    use std::{
+        io::Read,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone() {
@@ -54,7 +59,16 @@ mod tests {
             .unwrap();
         command.env("OVRCR_ORIGINAL_ZDOTDIR", &custom);
         command.env("HOME", home.path());
-        // -ic is test-only: run the generated startup files without a live PTY.
+        command.env("TERM", "xterm-256color");
+        command.env(
+            "LC_ALL",
+            if cfg!(target_os = "macos") {
+                "en_US.UTF-8"
+            } else {
+                "C.UTF-8"
+            },
+        );
+        // -ic is test-only: run startup configuration and then exit.
         command.args([
             "-ic",
             "fixture; print -r -- $PROMPT; print -r -- ${+OVRCR_ORIGINAL_ZDOTDIR}",
@@ -69,12 +83,37 @@ mod tests {
             .unwrap();
         let mut child = pair.slave.spawn_command(command).unwrap();
         drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut bytes = [0; 4096];
+            loop {
+                match reader.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        if tx.send(bytes[..count].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => panic!("read zsh fixture output: {error}"),
+                }
+            }
+        });
         let mut output = String::new();
-        pair.master
-            .try_clone_reader()
-            .unwrap()
-            .read_to_string(&mut output)
-            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(bytes) => output.push_str(&String::from_utf8_lossy(&bytes)),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    reader.join().unwrap();
+                    panic!("zsh startup did not exit; output: {output}");
+                }
+            }
+        }
+        reader.join().unwrap();
         assert!(child.wait().unwrap().success());
         assert!(
             output.contains(&format!("loaded:{}", custom.display())),

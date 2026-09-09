@@ -1119,11 +1119,16 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     std::fs::create_dir(&cwd).unwrap();
     std::fs::write(home.join(".zshenv"), "export PROMPT_FIXTURE_ENV=loaded\n").unwrap();
     std::fs::write(home.join(".zshrc"), "alias fixture_alias='printf CONFIG_%s_OK $PROMPT_FIXTURE_ENV'\nPROMPT='UGLY_THEME> '\nRPROMPT='RIGHT_THEME'\n").unwrap();
+    let locale = if cfg!(target_os = "macos") {
+        "en_US.UTF-8"
+    } else {
+        "C.UTF-8"
+    };
     let shell = dir.path().join("zsh");
     std::fs::write(
         &shell,
         format!(
-            "#!/bin/sh\nunset OVRCR_ORIGINAL_ZDOTDIR\nexport HOME='{}'\nexec /bin/zsh \"$@\"\n",
+            "#!/bin/sh\nunset OVRCR_ORIGINAL_ZDOTDIR\nexport HOME='{}' LC_ALL={locale} TERM=xterm-256color\nexec /bin/zsh \"$@\"\n",
             home.display()
         ),
     )
@@ -1182,7 +1187,11 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     }
     session.terminate(Duration::from_millis(200)).unwrap();
     dispatcher.join().unwrap();
-    assert!(prompt, "compact directory prompt missing");
+    assert!(
+        prompt,
+        "compact directory prompt missing: {}",
+        session.terminal.lock().unwrap().parser.screen().contents()
+    );
     assert!(config, "normal zsh environment and aliases did not load");
     assert!(red, "failed command did not render a red arrow");
 }
