@@ -1,7 +1,7 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
 use ovrcr::gui::{
     Demo, Terminal,
-    input::{encode_event, terminal_events},
+    input::{Mouse, encode_event, terminal_events},
 };
 use std::fs;
 use std::sync::Arc;
@@ -432,6 +432,8 @@ struct App {
     fonts: TerminalFonts,
     error: Option<String>,
     closing: bool,
+    // Wheel distance, held button and last motion outlive a single frame.
+    mouse: Mouse,
 }
 
 impl App {
@@ -585,7 +587,8 @@ impl App {
                         {
                             continue;
                         }
-                        let bytes = encode_event(event, &screen, rect, cell, pointer);
+                        let bytes =
+                            encode_event(event, &screen, rect, cell, pointer, &mut self.mouse);
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
                         {
@@ -632,6 +635,7 @@ fn command_palette_opens_when_another_control_has_focus() -> anyhow::Result<()> 
         fonts: TerminalFonts::current_monospace(),
         error: None,
         closing: false,
+        mouse: Mouse::default(),
     };
     for detached in [false, true] {
         if detached {
@@ -865,6 +869,7 @@ fn main() -> eframe::Result {
                 fonts,
                 error: None,
                 closing: false,
+                mouse: Mouse::default(),
             }))
         }),
     )

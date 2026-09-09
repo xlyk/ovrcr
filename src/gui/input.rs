@@ -1,6 +1,48 @@
 use crate::tui::{KeyEncoding, encode_key, encode_mouse, encode_paste};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use eframe::egui::{self, Event, Key};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use eframe::egui::{self, Event, Key, MouseWheelUnit};
+
+/// The mouse state [`encode_event`] carries between events: wheel distance too
+/// small to report yet, the button a drag belongs to, and the last motion
+/// report, so one cell is not reported twice.
+#[derive(Default)]
+pub struct Mouse {
+    carry: egui::Vec2,
+    held: Option<(MouseButton, egui::Modifiers)>,
+    last_motion: Option<MouseEvent>,
+}
+
+impl Mouse {
+    /// The whole wheel steps `delta` travelled as (columns, rows), keeping the
+    /// fraction short of one step so slow trackpad scrolling still covers the
+    /// distance it was given instead of one line per event.
+    fn accumulate(
+        &mut self,
+        delta: egui::Vec2,
+        unit: MouseWheelUnit,
+        cell: egui::Vec2,
+        rows: u16,
+    ) -> (i32, i32) {
+        let steps = match unit {
+            MouseWheelUnit::Point => egui::vec2(delta.x / cell.x, delta.y / cell.y),
+            MouseWheelUnit::Line => delta,
+            MouseWheelUnit::Page => delta * f32::from(rows),
+        };
+        if !steps.is_finite() {
+            return (0, 0);
+        }
+        self.carry += steps;
+        let whole = egui::vec2(self.carry.x.trunc(), self.carry.y.trunc());
+        self.carry -= whole;
+        // One event never scrolls past a screenful, and a nonsense delta must
+        // not spin the UI thread emitting reports.
+        let limit = i32::from(rows.max(1));
+        (
+            (whole.x as i32).clamp(-limit, limit),
+            (whole.y as i32).clamp(-limit, limit),
+        )
+    }
+}
 
 pub fn encode_event(
     event: &Event,
@@ -8,6 +50,7 @@ pub fn encode_event(
     rect: egui::Rect,
     cell: egui::Vec2,
     pointer: egui::Pos2,
+    mouse: &mut Mouse,
 ) -> Vec<u8> {
     match event {
         Event::Text(text) | Event::Ime(egui::ImeEvent::Commit(text)) => text.as_bytes().to_vec(),
@@ -84,86 +127,29 @@ pub fn encode_event(
             pressed,
             modifiers,
         } => {
-            let mode = screen.mouse_protocol_mode();
-            if mode == vt100::MouseProtocolMode::None
-                || (!pressed && mode == vt100::MouseProtocolMode::Press)
-            {
-                return Vec::new();
-            }
-            if !rect.contains(*pos) {
-                return Vec::new();
-            }
-            let col = ((pos.x - rect.min.x) / cell.x).floor() as u16;
-            let row = ((pos.y - rect.min.y) / cell.y).floor() as u16;
-            let (rows, cols) = screen.size();
-            if row >= rows || col >= cols {
-                return Vec::new();
-            }
-            let button = match button {
-                egui::PointerButton::Primary => 0,
-                egui::PointerButton::Middle => 1,
-                egui::PointerButton::Secondary => 2,
-                _ => return Vec::new(),
-            };
-            let modifiers = u16::from(modifiers.shift) * 4
-                + u16::from(modifiers.alt) * 8
-                + u16::from(modifiers.ctrl) * 16;
-            match screen.mouse_protocol_encoding() {
-                vt100::MouseProtocolEncoding::Sgr => format!(
-                    "\x1b[<{};{};{}{}",
-                    button + modifiers,
-                    col + 1,
-                    row + 1,
-                    if *pressed { 'M' } else { 'm' }
-                )
-                .into_bytes(),
-                encoding => {
-                    let code = if *pressed { button } else { 3 } + modifiers;
-                    let values = [code + 32, col + 33, row + 33];
-                    let mut bytes = b"\x1b[M".to_vec();
-                    for value in values {
-                        if encoding == vt100::MouseProtocolEncoding::Utf8 {
-                            let mut buffer = [0; 4];
-                            bytes.extend_from_slice(
-                                char::from_u32(u32::from(value))
-                                    .unwrap()
-                                    .encode_utf8(&mut buffer)
-                                    .as_bytes(),
-                            );
-                        } else if let Ok(value) = u8::try_from(value) {
-                            bytes.push(value);
-                        } else {
-                            return Vec::new();
-                        }
-                    }
-                    bytes
-                }
-            }
-        }
-        Event::MouseWheel {
-            delta, modifiers, ..
-        } => {
-            let Some((column, row)) = pointer_cell(pointer, screen, rect, cell) else {
+            let Some(button) = mouse_button(*button) else {
                 return Vec::new();
             };
-            let kind = if delta.y.abs() >= delta.x.abs() {
-                if delta.y > 0.0 {
-                    MouseEventKind::ScrollUp
-                } else if delta.y < 0.0 {
-                    MouseEventKind::ScrollDown
-                } else {
-                    return Vec::new();
-                }
-            } else if delta.x > 0.0 {
-                MouseEventKind::ScrollRight
-            } else if delta.x < 0.0 {
-                MouseEventKind::ScrollLeft
-            } else {
+            // A button change starts a new gesture, and a release ends its drag
+            // even where the position is not reportable, so a held button never
+            // outlives the gesture it belongs to.
+            mouse.last_motion = None;
+            if !*pressed && mouse.held.is_some_and(|(held, _)| held == button) {
+                mouse.held = None;
+            }
+            let Some((column, row)) = pointer_cell(*pos, screen, rect, cell) else {
                 return Vec::new();
             };
+            if *pressed {
+                mouse.held = Some((button, *modifiers));
+            }
             encode_mouse(
                 MouseEvent {
-                    kind,
+                    kind: if *pressed {
+                        MouseEventKind::Down(button)
+                    } else {
+                        MouseEventKind::Up(button)
+                    },
                     column,
                     row,
                     modifiers: key_modifiers(*modifiers),
@@ -172,6 +158,79 @@ pub fn encode_event(
                 screen.mouse_protocol_encoding(),
             )
             .unwrap_or_default()
+        }
+        // egui reports motion without modifiers or a button, so a drag carries
+        // the ones its press did; free motion carries none.
+        Event::PointerMoved(pos) => {
+            let Some((column, row)) = pointer_cell(*pos, screen, rect, cell) else {
+                return Vec::new();
+            };
+            let (kind, modifiers) = match mouse.held {
+                Some((button, modifiers)) => (MouseEventKind::Drag(button), modifiers),
+                None => (MouseEventKind::Moved, egui::Modifiers::NONE),
+            };
+            let moved = MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: key_modifiers(modifiers),
+            };
+            // Motion arrives per pixel; one cell earns one report.
+            if mouse.last_motion.replace(moved) == Some(moved) {
+                return Vec::new();
+            }
+            encode_mouse(
+                moved,
+                screen.mouse_protocol_mode(),
+                screen.mouse_protocol_encoding(),
+            )
+            .unwrap_or_default()
+        }
+        Event::MouseWheel {
+            unit,
+            delta,
+            modifiers,
+            ..
+        } => {
+            let Some((column, row)) = pointer_cell(pointer, screen, rect, cell) else {
+                return Vec::new();
+            };
+            let (rows, _) = screen.size();
+            let (columns, lines) = mouse.accumulate(*delta, *unit, cell, rows);
+            let mode = screen.mouse_protocol_mode();
+            let encoding = screen.mouse_protocol_encoding();
+            let modifiers = key_modifiers(*modifiers);
+            let mut bytes = Vec::new();
+            for (steps, positive, negative) in [
+                (lines, MouseEventKind::ScrollUp, MouseEventKind::ScrollDown),
+                (
+                    columns,
+                    MouseEventKind::ScrollRight,
+                    MouseEventKind::ScrollLeft,
+                ),
+            ] {
+                if steps == 0 {
+                    continue;
+                }
+                let Some(report) = encode_mouse(
+                    MouseEvent {
+                        kind: if steps > 0 { positive } else { negative },
+                        column,
+                        row,
+                        modifiers,
+                    },
+                    mode,
+                    encoding,
+                ) else {
+                    continue;
+                };
+                // Each whole step is one report, so a long swipe travels as far
+                // as it was pushed.
+                for _ in 0..steps.unsigned_abs() {
+                    bytes.extend_from_slice(&report);
+                }
+            }
+            bytes
         }
         _ => Vec::new(),
     }
@@ -194,6 +253,15 @@ pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
             });
         (!composed).then_some(event)
     })
+}
+
+fn mouse_button(button: egui::PointerButton) -> Option<MouseButton> {
+    match button {
+        egui::PointerButton::Primary => Some(MouseButton::Left),
+        egui::PointerButton::Middle => Some(MouseButton::Middle),
+        egui::PointerButton::Secondary => Some(MouseButton::Right),
+        _ => None,
+    }
 }
 
 fn pointer_cell(
@@ -245,6 +313,7 @@ fn key_modifiers(modifiers: egui::Modifiers) -> KeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::MouseButton;
 
     fn press(key: Key, modifiers: egui::Modifiers) -> Event {
         Event::Key {
@@ -263,7 +332,104 @@ mod tests {
             egui::Rect::NOTHING,
             egui::vec2(8.0, 16.0),
             egui::pos2(0.0, 0.0),
+            &mut Mouse::default(),
         )
+    }
+
+    /// A 24x80 terminal of 8x16 cells with the pointer resting on cell (0, 0).
+    fn encode_pointer(event: &Event, screen: &vt100::Screen, mouse: &mut Mouse) -> Vec<u8> {
+        encode_event(
+            event,
+            screen,
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(640.0, 384.0)),
+            egui::vec2(8.0, 16.0),
+            egui::pos2(4.0, 8.0),
+            mouse,
+        )
+    }
+
+    fn pointer_button(pressed: bool, modifiers: egui::Modifiers) -> Event {
+        Event::PointerButton {
+            pos: egui::pos2(4.0, 8.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn wheel_points_accumulate_into_lines() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1000h\x1b[?1006h");
+        // A trackpad reports point deltas far smaller than a cell, so scroll
+        // distance must follow the pixels travelled, not the event count.
+        // egui's positive y scrolls up, so a downward swipe is negative.
+        let wheel = Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -6.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut mouse = Mouse::default();
+        let reports: Vec<Vec<u8>> = (0..3)
+            .map(|_| encode_pointer(&wheel, parser.screen(), &mut mouse))
+            .collect();
+        assert_eq!(
+            reports,
+            vec![Vec::new(), Vec::new(), b"\x1b[<65;1;1M".to_vec()],
+            "three sixth-of-a-cell deltas are one line, not three"
+        );
+    }
+
+    #[test]
+    fn press_encoding_matches_encode_mouse() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        // X10 reports presses without modifier bits.
+        parser.process(b"\x1b[?9h");
+        let screen = parser.screen();
+        let expected = encode_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::SHIFT,
+            },
+            screen.mouse_protocol_mode(),
+            screen.mouse_protocol_encoding(),
+        );
+        assert_eq!(
+            Some(encode_pointer(
+                &pointer_button(true, egui::Modifiers::SHIFT),
+                screen,
+                &mut Mouse::default()
+            )),
+            expected
+        );
+    }
+
+    #[test]
+    fn drag_is_forwarded_in_button_motion_mode() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1002h\x1b[?1006h");
+        let screen = parser.screen();
+        let mut mouse = Mouse::default();
+        assert_eq!(
+            encode_pointer(
+                &pointer_button(true, egui::Modifiers::NONE),
+                screen,
+                &mut mouse
+            ),
+            b"\x1b[<0;1;1M"
+        );
+        // Motion while the button is held is a drag report, button bit plus 32.
+        assert_eq!(
+            encode_pointer(
+                &Event::PointerMoved(egui::pos2(20.0, 24.0)),
+                screen,
+                &mut mouse
+            ),
+            b"\x1b[<32;3;2M"
+        );
     }
 
     #[test]
