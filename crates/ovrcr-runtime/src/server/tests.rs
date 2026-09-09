@@ -4183,7 +4183,11 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
 }
 
 #[test]
-fn registration_holds_sessions_guard_until_spawn_returns() {
+fn registration_publishes_the_session_before_its_events_can_arrive() {
+    // The session becomes visible to the dispatcher inside the spawn, before
+    // the PTY reader and child waiter start, so a hook report that lands while
+    // the spawn is still in flight is answered rather than rejected. The
+    // sessions guard is not held for the rest of the spawn.
     let root = tempfile::tempdir().unwrap();
     let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
@@ -4275,8 +4279,8 @@ fn registration_holds_sessions_guard_until_spawn_returns() {
     );
     entered.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(
-        state.sessions.try_lock().is_err(),
-        "registration must hold sessions guard while Session::spawn is paused"
+        state.sessions.try_lock().is_ok(),
+        "registration must not hold the sessions guard while Session::spawn is paused"
     );
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut identity_contents = None;
@@ -4353,6 +4357,166 @@ fn registration_holds_sessions_guard_until_spawn_returns() {
     ));
     assert!(dispatcher_finished.load(Ordering::Acquire));
     assert!(bridge_finished.load(Ordering::Acquire));
+}
+
+#[test]
+fn session_output_flows_while_another_session_spawns() {
+    // Creation must not hold the sessions guard across Session::spawn: the
+    // dispatcher takes that same guard for every PTY byte, so a spawn that
+    // stalls waiting for its child's process group would stall the whole
+    // dashboard with it. The gate channel proves the spawn really is in
+    // flight when the output is injected.
+    let root = tempfile::tempdir().unwrap();
+    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "project".into(),
+            repo: root.path().to_path_buf(),
+            workspace_root: root.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                name: "workspace".into(),
+                path: workspace.clone(),
+                branch: "main".into(),
+            }],
+        }],
+    };
+    let socket_path = root.path().join("socket");
+    let _socket_guard = UnixListener::bind(&socket_path).unwrap();
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let live_id = SessionId(900);
+    // The live session shares the server's event channel, so the fixture's
+    // bridge and dispatcher apply its output and exit the way they would for
+    // any session the server created.
+    let live = Session::spawn(
+        live_id,
+        SessionSpec {
+            project: "project".into(),
+            workspace: "workspace".into(),
+            name: "live".into(),
+            label: "sh".into(),
+            cwd: workspace.clone(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "while IFS= read -r line; do :; done".into(),
+            ],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events.clone(),
+    )
+    .unwrap();
+    let state = Arc::new(ServerState {
+        tasks: None,
+        socket: socket_path,
+        registry_path: root.path().join("config.toml"),
+        registry: Mutex::new(registry),
+        sessions: Mutex::new(HashMap::from([(live_id, live.clone())])),
+        view: Mutex::new(Some(DashboardView {
+            revision: 7,
+            panes: vec![PaneTarget {
+                session: live_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            }],
+            focused: Some(live_id),
+        })),
+        dashboard: Mutex::new(Some(sink.clone())),
+        next_session_id: AtomicU64::new(1),
+        mutation_lock: Mutex::new(()),
+        dispatch: dispatch.clone(),
+        shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        dashboard_size: Mutex::new(None),
+        events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        before_view_publish_hook: Mutex::new(None),
+        dashboard_slot: Mutex::new(Some(DashboardSlot {
+            sink: sink.clone(),
+            identity: owner.clone(),
+            stream: server_stream,
+            history: None,
+            next_history_id: 1,
+        })),
+    });
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let bridge_dispatch = dispatch.clone();
+    let bridge = thread::spawn(move || bridge_events(event_receiver, bridge_dispatch));
+    let (gate, entered) = RegistrationGate::new();
+    let ready: Arc<dyn Fn() + Send + Sync> = {
+        let gate = Arc::clone(&gate);
+        Arc::new(move || gate.wait())
+    };
+    let creator_state = Arc::clone(&state);
+    let creator = thread::spawn(move || {
+        creator_state.create_session_with_ready(
+            ovrcr_protocol::CreateSessionRequest {
+                project: "project".into(),
+                workspace: "workspace".into(),
+                name: "slow".into(),
+                label: None,
+                argv: vec![
+                    "sh".into(),
+                    "-c".into(),
+                    "while IFS= read -r line; do :; done".into(),
+                ],
+            },
+            ready,
+        )
+    });
+    let mut cleanup = RegistrationCleanup::new(
+        Arc::clone(&gate),
+        Arc::clone(&state),
+        creator,
+        dispatcher,
+        bridge,
+    );
+    entered.recv_timeout(Duration::from_secs(2)).unwrap();
+    dispatch
+        .try_send(DispatchMessage::Session(SessionEvent::Output {
+            id: live_id,
+            bytes: b"LIVE".to_vec(),
+        }))
+        .unwrap();
+    let delivered = |sink: &DashboardSink| {
+        sink.queue.lock().unwrap().messages.iter().any(|outbound| {
+            matches!(
+                &outbound.message,
+                ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+                    if *session == live_id && *revision == 7 && bytes == b"LIVE"
+            )
+        })
+    };
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while !delivered(&sink) && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(
+        delivered(&sink),
+        "live session output must reach the dashboard while another spawn is pending"
+    );
+    assert!(
+        state.sessions.try_lock().is_ok(),
+        "creation must not hold the sessions guard across Session::spawn"
+    );
+    let screen = live.current_screen();
+    assert!(
+        screen.windows(4).any(|window| window == b"LIVE"),
+        "the dispatcher must also apply the bytes to the session: {}",
+        String::from_utf8_lossy(&screen)
+    );
+    gate.release();
+    let summary = cleanup.join_creator().unwrap();
+    assert_eq!(summary.name, "slow");
+    assert!(state.sessions.lock().unwrap().contains_key(&summary.id));
+    live.terminate(Duration::from_secs(2)).unwrap();
+    state.sessions.lock().unwrap().remove(&live_id);
 }
 
 fn parse_test_capability(value: &str) -> [u8; 32] {

@@ -243,6 +243,9 @@ impl ServerState {
         self.create_session_locked(request, Some(ready))
     }
 
+    /// Create one session. Every caller holds `mutation_lock`, which is what
+    /// serializes creation, so the duplicate check needs the `sessions` guard
+    /// only once and the spawn runs without it.
     fn create_session_locked(
         &self,
         request: ovrcr_protocol::CreateSessionRequest,
@@ -264,13 +267,16 @@ impl ServerState {
             (workspace.path.clone(), label)
         };
         let id = SessionId(self.next_session_id.fetch_add(1, Ordering::Relaxed));
-        let mut sessions = self.sessions.lock().unwrap();
-        if sessions.values().any(|session| {
-            let summary = session.summary();
-            summary.project == request.project
-                && summary.workspace == request.workspace
-                && summary.name == request.name
-        }) {
+        let duplicate = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.values().any(|session| {
+                let summary = session.summary();
+                summary.project == request.project
+                    && summary.workspace == request.workspace
+                    && summary.name == request.name
+            })
+        };
+        if duplicate {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
                 format!(
@@ -306,16 +312,27 @@ impl ServerState {
             .as_ref()
             .context("server event channel closed")?
             .clone();
-        let register = |_: &Arc<Session>| {
+        // The spawn itself runs without the `sessions` guard: it waits for the
+        // child's process group, and the dispatcher needs that same guard for
+        // every PTY byte it delivers. `spawn_registered` re-takes the guard to
+        // publish the session before the child's reader and waiter start, so
+        // no event of its own can arrive for a session the dispatcher cannot
+        // find yet.
+        let register = |session: &Arc<Session>| {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(id, Arc::clone(session));
             if let Some(ready) = ready.as_ref() {
                 ready();
             }
         };
         let session = Session::spawn_registered(id, spec, size, events, &register)
+            .inspect_err(|_| {
+                self.sessions.lock().unwrap().remove(&id);
+            })
             .context("spawn session")?;
-        let summary = session.summary();
-        sessions.insert(id, session);
-        Ok(summary)
+        Ok(session.summary())
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {

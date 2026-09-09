@@ -212,6 +212,9 @@ pub struct Session {
     handles: Mutex<JoinHandles>,
 }
 
+/// Publishes a spawning session where its own events can be dispatched.
+pub(crate) type SessionRegister<'a> = &'a dyn Fn(&Arc<Session>);
+
 /// Test-only control over the group-leader wait in `spawn_internal`.
 ///
 /// `None` in every production spawn, which reads its bound from the
@@ -245,7 +248,7 @@ impl Session {
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
-        register: &dyn Fn(&Arc<Self>),
+        register: SessionRegister<'_>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
@@ -310,7 +313,7 @@ impl Session {
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
-        register: Option<&dyn Fn(&Arc<Self>)>,
+        register: Option<SessionRegister<'_>>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -360,10 +363,7 @@ impl Session {
         };
         #[cfg(unix)]
         let pgid = wait_for_group_leader(pair.master.as_ref(), pid, leader_timeout, leader_probe)
-            .map_err(|error| {
-            kill_and_reap(&mut *child);
-            error
-        })?;
+            .inspect_err(|_| kill_and_reap(&mut *child))?;
         #[cfg(not(unix))]
         let pgid = {
             let _ = pid;
