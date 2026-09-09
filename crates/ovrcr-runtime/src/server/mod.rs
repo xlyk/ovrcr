@@ -416,7 +416,6 @@ impl ServerState {
             events: Mutex::new(Some(events)),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
-            #[cfg(test)]
             before_dashboard_write_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         })
