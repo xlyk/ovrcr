@@ -500,6 +500,10 @@ impl ServerState {
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        if !workspace_root.exists() {
+            fs::create_dir_all(&workspace_root)
+                .with_context(|| format!("create workspace root {}", workspace_root.display()))?;
+        }
         let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();

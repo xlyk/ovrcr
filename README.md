@@ -34,6 +34,8 @@ ovrcr project add consigint /Users/example/Code/consigint \
 ovrcr project list
 ```
 
+The workspace root is created on registration if missing.
+
 Create a workspace from a new branch:
 
 ```sh
@@ -187,7 +189,7 @@ marked `git`. Tab accepts the highlight and appends `/`. Enter keeps the typed
 text and moves on. An empty field lists `picker_roots` from `dashboard.toml`
 (default `~/Code`, `~/src`, and `~` when those exist). Name is the repository
 basename once a path is chosen. Workspace root is `<config dir>/workspaces/<name>`
-until you edit it.
+until you edit it. It is created on registration if missing.
 
 The palette can also switch terminals, create workspaces, close terminals, and
 remove workspaces or projects. Forms prefill from the selected terminal where
