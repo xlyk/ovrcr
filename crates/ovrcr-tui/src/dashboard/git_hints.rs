@@ -89,15 +89,27 @@ fn default_branch(
     deadline: Instant,
     cancelled: &AtomicBool,
 ) -> Result<String> {
+    // A repository whose sole remote is not named `origin` still has a default
+    // branch worth suggesting; with none or several, `origin` stays the guess.
+    let listed = git_output(repo, &["remote"], deadline, cancelled).unwrap_or_default();
+    let mut names = listed
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let remote_name = match (names.next(), names.next()) {
+        (Some(sole), None) => sole.to_owned(),
+        _ => "origin".to_owned(),
+    };
+    let prefix = format!("refs/remotes/{remote_name}/");
     // Git resolves loose/packed refs and .git files in linked worktrees for us.
     let remote = git_output(
         repo,
-        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        &["symbolic-ref", "--quiet", &format!("{prefix}HEAD")],
         deadline,
         cancelled,
     );
     if let Ok(remote) = remote
-        && let Some(branch) = remote.trim().strip_prefix("refs/remotes/origin/")
+        && let Some(branch) = remote.trim().strip_prefix(&prefix)
     {
         return Ok(if branches.iter().any(|local| local == branch) {
             branch.into()
@@ -113,13 +125,18 @@ fn default_branch(
             return Ok(branch.into());
         }
     }
-    git_output(
+    let head = git_output(
         repo,
         &["rev-parse", "--abbrev-ref", "HEAD"],
         deadline,
         cancelled,
-    )
-    .map(|head| head.trim().to_owned())
+    )?;
+    let head = head.trim();
+    // A detached checkout reports the literal `HEAD`, which is not a branch.
+    if head.is_empty() || head == "HEAD" {
+        bail!("No default branch found");
+    }
+    Ok(head.to_owned())
 }
 
 fn git_output(
@@ -299,6 +316,79 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("256 KiB"), "{error}");
         assert!(read_hints(dir.path(), &AtomicBool::new(false)).is_err());
+    }
+
+    #[test]
+    fn detached_head_yields_no_base_suggestion() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        git(repo, &["init", "-b", "trunk"]);
+        git(
+            repo,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        );
+        git(repo, &["checkout", "--detach", "HEAD"]);
+        let error = default_branch(repo).unwrap_err().to_string();
+        assert!(error.contains("default branch"), "{error}");
+    }
+
+    #[test]
+    fn sole_non_origin_remote_provides_the_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        git(repo, &["init", "-b", "work"]);
+        git(
+            repo,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        );
+        git(
+            repo,
+            &[
+                "remote",
+                "add",
+                "upstream",
+                "https://example.invalid/repo.git",
+            ],
+        );
+        git(
+            repo,
+            &["update-ref", "refs/remotes/upstream/release", "HEAD"],
+        );
+        git(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/upstream/HEAD",
+                "refs/remotes/upstream/release",
+            ],
+        );
+        assert_eq!(
+            default_branch(repo).unwrap(),
+            "refs/remotes/upstream/release"
+        );
+        git(
+            repo,
+            &["branch", "release", "refs/remotes/upstream/release"],
+        );
+        assert_eq!(default_branch(repo).unwrap(), "release");
     }
 
     #[test]
