@@ -299,4 +299,21 @@ mod tests {
             .collect();
         assert_eq!(encoded, vec![b"\x1bb".to_vec()]);
     }
+
+    #[test]
+    fn unmodified_letter_keeps_its_text() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        // Without Option the key press encodes nothing and the text is the only
+        // source of the character, so the filter must leave it alone.
+        let events = vec![
+            press(Key::A, egui::Modifiers::NONE),
+            Event::Text("a".to_owned()),
+        ];
+        let encoded: Vec<Vec<u8>> = terminal_events(&events)
+            .map(|event| encode(event, screen))
+            .filter(|bytes| !bytes.is_empty())
+            .collect();
+        assert_eq!(encoded, vec![b"a".to_vec()]);
+    }
 }

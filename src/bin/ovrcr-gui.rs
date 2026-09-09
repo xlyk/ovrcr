@@ -535,7 +535,9 @@ impl App {
                 });
                 // Only a widget that publishes an IME area receives composition and
                 // dead keys; without it the platform never starts one for the terminal.
-                if response.has_focus() {
+                // egui-winit passes `rect` alone to `set_ime_cursor_area`, which macOS
+                // uses to place the candidate panel, so both rects are the cursor cell.
+                if status.is_none() && response.has_focus() {
                     let (row, col) = screen.cursor_position();
                     let cursor = egui::Rect::from_min_size(
                         rect.min + egui::vec2(f32::from(col) * cell.x, f32::from(row) * cell.y),
@@ -544,7 +546,7 @@ impl App {
                     ui.output_mut(|output| {
                         output.ime = Some(egui::output::IMEOutput {
                             purpose: egui::IMEPurpose::Normal,
-                            rect,
+                            rect: cursor,
                             cursor_rect: cursor,
                             should_interrupt_composition: false,
                         });

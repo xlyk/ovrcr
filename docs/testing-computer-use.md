@@ -52,7 +52,18 @@ rtk proxy cat -v
 
 Press Ctrl-Left, Shift-Enter, Alt-Backspace, and Option-b. Confirm `^[[1;5D`,
 `^[[13;2u`, `^[^?`, and `^[b`; Option-b must print the meta form, never the
-composed glyph. Press Ctrl-C, then restore the shell:
+composed glyph.
+
+Then press Option-e, a US-layout dead key, and record exactly what arrives. This
+is an open question, not a known expectation: the helper publishes an IME area, so
+winit's macOS `keyDown:` runs `interpretKeyEvents` first, and a dead key
+(Option-e, `i`, `u`, `n`, or backtick) calls `setMarkedText:` and suppresses the
+`KeyboardInput` event, meaning no `Key::E` reaches the helper. So Option-e may
+start a composition (no bytes, an accent pending) where Option-b sends `^[b`.
+Report which happens, and whether the following key commits an accented character
+into the shell. If dead keys compose, Meta for those five keys needs a decision:
+either the composition is correct for this helper or `option_as_alt` must be set.
+Press Ctrl-C, then restore the shell:
 
 ```sh
 rtk proxy stty sane
@@ -60,17 +71,21 @@ rtk proxy stty sane
 
 At the restored prompt, select a CJK input method and type a composition (with
 Pinyin, `ce` then Space). Confirm only the committed characters reach the command
-line, that no pre-edit letters leak into it, and that the candidate window appears
-over the terminal. Record the input method used.
+line and that no pre-edit letters leak into it. Check the candidate window's
+position against the screenshot: it must sit at the cursor cell, not merely
+somewhere over the terminal, because macOS places that panel from the single rect
+the helper publishes. Record the input method used.
 
 **IME composition: unverified as of 2026-09-08.** This machine enables only the
 U.S. keyboard layout and the Character Palette (`defaults read
 com.apple.HIToolbox AppleEnabledInputSources`), and no desktop computer-use tool
-was available to drive the native window, so the composition and dead-key checks
-above were not run against the helper. The modifier and meta encodings they
-exercise are covered by the unit tests `special_keys_carry_modifiers` and
-`alt_letter_encodes_meta` in `src/gui/input.rs`; an automated egui test cannot
-prove composition, so the IME path still needs this native check.
+was available to drive the native window, so the composition, dead-key, and
+candidate-window checks above were not run against the helper. The modifier and
+meta encodings they exercise are covered by the unit tests
+`special_keys_carry_modifiers`, `alt_letter_encodes_meta`, and
+`unmodified_letter_keeps_its_text` in `src/gui/input.rs`; an automated egui test
+cannot prove composition or panel placement, so the IME path still needs this
+native check.
 
 Return to browse with `Ctrl-g`. Press `?`. Confirm the Session group names the
 selected session, workspace, and session ID in each enabled action's description.
