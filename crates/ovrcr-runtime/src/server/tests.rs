@@ -624,6 +624,181 @@ fn oversized_set_view_returns_invalid_request_without_resizing() {
 }
 
 #[test]
+fn resize_is_rejected_for_a_split_view() {
+    let first_id = SessionId(29);
+    let second_id = SessionId(30);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, _dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    *state.view.lock().unwrap() = Some(DashboardView {
+        revision: 9,
+        panes: vec![
+            PaneTarget {
+                session: first_id,
+                size: TerminalSize { rows: 36, cols: 39 },
+            },
+            PaneTarget {
+                session: second_id,
+                size: TerminalSize { rows: 36, cols: 40 },
+            },
+        ],
+        focused: Some(second_id),
+    });
+    let first_pty = first.master_size().unwrap();
+    let second_pty = second.master_size().unwrap();
+    let mut role = ClientRole::Dashboard;
+    // The focused pane of a split view is still one of two: a singleton Resize
+    // would publish one size for the whole dashboard.
+    let response = handle_request_with_id(
+        &state,
+        &mut role,
+        Request::Resize {
+            session: second_id,
+            size: TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+        },
+        91,
+        Some(&owner),
+    );
+    assert!(
+        matches!(
+            &response,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                message,
+            } if message == "use SetView for split geometry"
+        ),
+        "{response:?}"
+    );
+    let unfocused = handle_request_with_id(
+        &state,
+        &mut role,
+        Request::Resize {
+            session: first_id,
+            size: TerminalSize {
+                rows: 40,
+                cols: 120,
+            },
+        },
+        92,
+        Some(&owner),
+    );
+    assert!(
+        matches!(
+            &unfocused,
+            Response::Error {
+                code: ErrorCode::InvalidRequest,
+                message,
+            } if message == "use SetView for split geometry"
+        ),
+        "{unfocused:?}"
+    );
+    assert_eq!(first.master_size().unwrap(), first_pty);
+    assert_eq!(second.master_size().unwrap(), second_pty);
+    let view = state.view.lock().unwrap().clone().expect("view retained");
+    assert_eq!(view.revision, 9);
+    assert_eq!(view.panes.len(), 2);
+    assert!(sink.queue.lock().unwrap().messages.is_empty());
+    assert!(state.dashboard_slot.lock().unwrap().is_some());
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
+fn set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames() {
+    let first_id = SessionId(31);
+    let second_id = SessionId(32);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let owner = Arc::new(());
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    // Two panes publish two snapshots and one `Ok`; leaving room for two means
+    // the view cannot be published without evicting a queued lifecycle frame.
+    let lifecycle = ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy()));
+    for _ in 0..(DASHBOARD_QUEUE - 2) {
+        assert!(sink.enqueue_queued(DashboardOutbound {
+            message: lifecycle.clone(),
+            completion: None,
+        }));
+    }
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: Arc::clone(&owner),
+            request_id: 93,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![
+                    PaneTarget {
+                        session: first_id,
+                        size: TerminalSize { rows: 36, cols: 39 },
+                    },
+                    PaneTarget {
+                        session: second_id,
+                        size: TerminalSize { rows: 36, cols: 40 },
+                    },
+                ],
+                focused: Some(second_id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(state.dashboard_slot.lock().unwrap().is_none());
+    assert!(state.dashboard.lock().unwrap().is_none());
+    assert!(state.view.lock().unwrap().is_none());
+    assert!(sink.is_closing());
+    assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
+    let queued = sink.queue.lock().unwrap();
+    assert_eq!(queued.messages.len(), DASHBOARD_QUEUE - 2);
+    assert!(
+        queued.messages.iter().all(|outbound| matches!(
+            outbound.message,
+            ServerMessage::Event(ServerEvent::HierarchyChanged(_))
+        )),
+        "the queued lifecycle frames must survive the refused publication"
+    );
+    drop(queued);
+    // Refusing to publish never touches the processes behind the panes.
+    assert_eq!(state.sessions.lock().unwrap().len(), 2);
+    assert!(first.master_size().is_ok());
+    assert!(second.master_size().is_ok());
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
 fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     let first_id = SessionId(26);
     let second_id = SessionId(27);

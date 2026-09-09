@@ -1424,6 +1424,33 @@ fn n_is_listed_in_the_browse_footer() {
 }
 
 #[test]
+fn n_is_listed_in_the_hint_table() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('?'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Which key"), "{text}");
+    let create = text
+        .lines()
+        .skip_while(|line| !line.contains("Create"))
+        .take_while(|line| !line.contains("Session"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        create.contains("n  Create terminal"),
+        "the Create group must list n: {create}"
+    );
+    assert!(
+        create.contains("consigint / auth"),
+        "the n hint must name the workspace it creates in: {create}"
+    );
+    dashboard.key(KeyCode::Enter);
+    let form = palette_text(&dashboard);
+    assert!(!form.contains("Which key"), "{form}");
+    assert!(form.contains("Agent"), "{form}");
+    assert!(form.contains("Workspace"), "{form}");
+}
+
+#[test]
 fn a_opens_project_form_with_roots_and_derives_name_and_root() {
     use ovrcr::tui::DashboardAction;
     let dir = tempfile::tempdir().unwrap();
@@ -10854,6 +10881,77 @@ fn pause_cancels_a_held_mouse_gesture() {
             area,
         ),
         ovrcr::tui::DashboardAction::None
+    );
+    assert!(dashboard.take_mouse_cleanup().is_none());
+}
+
+#[test]
+fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
+    let mut dashboard = dashboard_fixture();
+    let area = dashboard.outer_area;
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = focused_terminal_rect(&dashboard, area);
+    assert_eq!(
+        dashboard.event_action(Event::Mouse(click_in(
+            inner,
+            MouseEventKind::Down(MouseButton::Left),
+            2,
+            3,
+        ))),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4M".to_vec())
+    );
+    assert_eq!(
+        dashboard.event_action(Event::FocusLost),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("losing focus should queue the release of the held button");
+    assert!(
+        matches!(
+            cleanup.request,
+            Request::Input { session, ref bytes }
+                if session == SessionId(1) && bytes == b"\x1b[<0;3;4m"
+        ),
+        "{:?}",
+        cleanup.request
+    );
+    assert!(dashboard.take_mouse_cleanup().is_none());
+    for kind in [
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::ScrollUp,
+    ] {
+        assert_eq!(
+            dashboard.event_action(Event::Mouse(click_in(inner, kind, 4, 5))),
+            ovrcr::tui::DashboardAction::None,
+            "{kind:?} must be dropped while the terminal has no focus"
+        );
+    }
+    assert!(dashboard.take_mouse_cleanup().is_none());
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.event_action(Event::FocusGained),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Mouse(click_in(
+            inner,
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            5,
+        ))),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;5;6M".to_vec())
+    );
+    assert_eq!(
+        dashboard.event_action(Event::Mouse(click_in(
+            inner,
+            MouseEventKind::Up(MouseButton::Left),
+            4,
+            5,
+        ))),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;5;6m".to_vec())
     );
     assert!(dashboard.take_mouse_cleanup().is_none());
 }

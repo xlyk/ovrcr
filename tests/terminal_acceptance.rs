@@ -997,6 +997,22 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
         |screen| screen.contains("waiting 39x36") && screen.contains("> mouse 40x36"),
         Duration::from_secs(3),
     )?;
+    // The metadata rows are the dashboard's own parser state. Ask each pane's
+    // shell what the kernel handed its PTY instead of trusting those labels.
+    dashboard.send(b"\rSIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_36 40", Duration::from_secs(3))?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> waiting 39x36"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(b"\rSIZE_TOKEN\r")?;
+    dashboard.wait_for(b"SIZE_ACK_36 39", Duration::from_secs(3))?;
+    dashboard.send(b"\x07\t")?;
+    dashboard.wait_for_screen(
+        |screen| screen.contains("> mouse 40x36") && screen.contains("BROWSE"),
+        Duration::from_secs(3),
+    )?;
     dashboard.send(b"x")?;
     dashboard.wait_for_screen(
         |screen| screen.lines().all(|line| line.chars().nth(79) != Some('│')),
@@ -1899,6 +1915,25 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     dashboard.wait_for(b"MOUSE_DISABLED", Duration::from_secs(3))?;
     dashboard.send(format!("\x1b[<0;{};{}MQ", inner.x + 3, inner.y + 4).as_bytes())?;
     dashboard.wait_for(b"MOUSE_CHECK_2::END", Duration::from_secs(3))?;
+
+    // A plain shell never asks for mouse reports, so the same wheel tick over
+    // its pane has to reach the dashboard's own history instead of the child.
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), Duration::from_secs(3))?;
+    dashboard.click_visible_text("  - waiting")?;
+    dashboard.wait_until(
+        |screen| screen.contains("WAITING_READY"),
+        Duration::from_secs(5),
+    )?;
+    dashboard.send(b"\r")?;
+    dashboard.wait_until(
+        |screen| screen.contains("Terminal mode"),
+        Duration::from_secs(3),
+    )?;
+    dashboard.send(format!("\x1b[<64;{};{}M", inner.x + 3, inner.y + 4).as_bytes())?;
+    dashboard.wait_until(|screen| screen.contains("HISTORY"), Duration::from_secs(5))?;
+    dashboard.send(b"\x07")?;
+    dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), Duration::from_secs(3))?;
     dashboard.detach()?;
     fixture.shutdown()?;
     Ok(())
