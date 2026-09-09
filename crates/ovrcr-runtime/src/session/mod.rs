@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use ovrcr_protocol::context::{ContextUsageSnapshot, validate_context};
 use ovrcr_protocol::{AgentReport, AgentUpdate, HISTORY_ROWS, HistorySnapshotId};
 use ovrcr_terminal::{encode_paste, history::FrozenHistory, vt100};
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
@@ -29,6 +29,31 @@ const HANGUP_DELAY: Duration = Duration::from_millis(500);
 /// a wedged child can stall session creation.
 const GROUP_LEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Operator override for [`GROUP_LEADER_TIMEOUT`], in whole milliseconds.
+const GROUP_LEADER_TIMEOUT_ENV: &str = "OVRCR_GROUP_LEADER_TIMEOUT_MS";
+
+/// How long this spawn may wait for the child's process group.
+///
+/// Read once per spawn from [`GROUP_LEADER_TIMEOUT_ENV`]. An absent, empty,
+/// or unparsable value keeps [`GROUP_LEADER_TIMEOUT`], so the default bound
+/// is unchanged unless an operator sets the variable deliberately.
+fn group_leader_timeout(raw: Option<&str>) -> Duration {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(GROUP_LEADER_TIMEOUT, Duration::from_millis)
+}
+
+/// Kill and reap a child that never became a usable session.
+///
+/// `kill` only delivers a signal, so without the wait the failed spawn would
+/// leave a zombie this process never collects. `wait` also covers the child
+/// that already died from the signal `kill` sent.
+fn kill_and_reap(child: &mut (dyn Child + Send + Sync)) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// The process group the child leads, once it has created it.
 ///
 /// `spawn_command` returns as soon as the fork completes, while the child
@@ -38,19 +63,32 @@ const GROUP_LEADER_TIMEOUT: Duration = Duration::from_secs(5);
 /// both ways. Poll the terminal, and accept the child's own group id once
 /// `setsid` has run: that group persists while the child is a zombie, so a
 /// command that exits immediately is still attributed correctly.
+///
+/// `probe` is a test seam. `None` in every production spawn; a test passes a
+/// closure that reports whether this poll may consult the child's group, so
+/// the timeout branch can be exercised. `setsid` runs in the child's
+/// `pre_exec`, before any command of ours gets to run, so no real command can
+/// withhold its process group for long enough to reach the deadline.
 #[cfg(unix)]
-fn wait_for_group_leader(master: &dyn MasterPty, pid: u32) -> Result<libc::pid_t> {
+fn wait_for_group_leader(
+    master: &dyn MasterPty,
+    pid: u32,
+    timeout: Duration,
+    probe: Option<&(dyn Fn(libc::pid_t) -> bool + Send + Sync)>,
+) -> Result<libc::pid_t> {
     let pid = libc::pid_t::try_from(pid).context("PTY child PID does not fit a pid_t")?;
-    let deadline = Instant::now() + GROUP_LEADER_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
-        if let Some(pgid) = master.process_group_leader() {
-            return Ok(pgid);
-        }
-        if unsafe { libc::getpgid(pid) } == pid {
-            return Ok(pid);
+        if probe.is_none_or(|probe| probe(pid)) {
+            if let Some(pgid) = master.process_group_leader() {
+                return Ok(pgid);
+            }
+            if unsafe { libc::getpgid(pid) } == pid {
+                return Ok(pid);
+            }
         }
         if Instant::now() >= deadline {
-            bail!("PTY did not provide a process-group leader")
+            bail!("PTY did not provide a process-group leader within {timeout:?}")
         }
         thread::park_timeout(Duration::from_micros(200));
     }
@@ -174,24 +212,62 @@ pub struct Session {
     handles: Mutex<JoinHandles>,
 }
 
+/// Publishes a spawning session where its own events can be dispatched.
+pub(crate) type SessionRegister<'a> = &'a dyn Fn(&Arc<Session>);
+
+/// Test-only control over the group-leader wait in `spawn_internal`.
+///
+/// `None` in every production spawn, which reads its bound from the
+/// environment and consults the real PTY on every poll.
+pub(crate) struct LeaderWaitOverride<'a> {
+    pub(crate) timeout: Duration,
+    pub(crate) probe: &'a (dyn Fn(libc::pid_t) -> bool + Send + Sync),
+}
+
 impl Session {
-    pub fn spawn(
+    /// Spawns a session without publishing it first.
+    ///
+    /// Test-only: every production spawn goes through
+    /// [`Session::spawn_registered`], which publishes the session before its
+    /// PTY reader and child waiter can emit an event the dispatcher cannot yet
+    /// route. A caller here would reintroduce that lost-output race.
+    #[cfg(test)]
+    pub(crate) fn spawn(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, None, None, None, None)
+        Self::spawn_internal(id, spec, size, events, None, None, None, None, None)
     }
 
-    pub(crate) fn spawn_with_ready(
+    /// Spawn a session and publish it through `register` before its PTY
+    /// reader and child waiter start.
+    ///
+    /// The threads that turn PTY bytes and the child's exit into
+    /// `SessionEvent`s start inside the spawn, so a caller that registers the
+    /// session afterwards races its own dispatcher: an event for a session
+    /// the dispatcher cannot find yet is dropped, losing the first output of
+    /// every session. `register` runs on this thread, at the point where the
+    /// session exists but nothing can emit an event for it yet.
+    pub(crate) fn spawn_registered(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
-        ready: Arc<dyn Fn() + Send + Sync>,
+        register: SessionRegister<'_>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, Some(ready), None, None, None)
+        Self::spawn_internal(
+            id,
+            spec,
+            size,
+            events,
+            Some(register),
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
     #[cfg(test)]
@@ -213,6 +289,28 @@ impl Session {
             reap_hook,
             signal_hook,
             signal_result_hook,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spawn_with_leader_wait(
+        id: SessionId,
+        spec: SessionSpec,
+        size: TerminalSize,
+        events: SyncSender<SessionEvent>,
+        leader_wait: LeaderWaitOverride<'_>,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_internal(
+            id,
+            spec,
+            size,
+            events,
+            None,
+            None,
+            None,
+            None,
+            Some(leader_wait),
         )
     }
 
@@ -222,10 +320,11 @@ impl Session {
         spec: SessionSpec,
         size: TerminalSize,
         events: SyncSender<SessionEvent>,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        register: Option<SessionRegister<'_>>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
+        leader_wait: Option<LeaderWaitOverride<'_>>,
     ) -> Result<Arc<Self>> {
         #[cfg(not(test))]
         let _ = &signal_hook;
@@ -258,8 +357,20 @@ impl Session {
         let mut child = pair.slave.spawn_command(command)?;
         let pid = child.process_id().context("PTY child has no process ID")?;
 
+        let (leader_timeout, leader_probe) = match &leader_wait {
+            Some(override_) => (override_.timeout, Some(override_.probe)),
+            None => (
+                group_leader_timeout(
+                    std::env::var_os(GROUP_LEADER_TIMEOUT_ENV)
+                        .as_deref()
+                        .and_then(|value| value.to_str()),
+                ),
+                None,
+            ),
+        };
         #[cfg(unix)]
-        let pgid = wait_for_group_leader(pair.master.as_ref(), pid)?;
+        let pgid = wait_for_group_leader(pair.master.as_ref(), pid, leader_timeout, leader_probe)
+            .inspect_err(|_| kill_and_reap(&mut *child))?;
         #[cfg(not(unix))]
         let pgid = {
             let _ = pid;
@@ -267,7 +378,7 @@ impl Session {
         };
 
         if pgid != pid as libc::pid_t {
-            let _ = child.kill();
+            kill_and_reap(&mut *child);
             bail!("PTY process-group leader does not own the child process");
         }
         verify_group_identity(pgid, false)?;
@@ -329,6 +440,11 @@ impl Session {
             history_capture_hook: Mutex::new(None),
         });
 
+        // Publish the session before anything can emit an event for it.
+        if let Some(register) = register {
+            register(&session);
+        }
+
         let reader_session = Arc::clone(&session);
         let reader_events = events.clone();
         let reader_handle = thread::Builder::new()
@@ -352,9 +468,6 @@ impl Session {
             let mut handles = session.handles.lock().unwrap();
             handles.reader = Some(reader_handle);
             handles.waiter = Some(waiter_handle);
-        }
-        if let Some(ready) = ready {
-            ready();
         }
         Ok(session)
     }

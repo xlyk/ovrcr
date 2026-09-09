@@ -61,7 +61,7 @@ pub fn apply_overrides(
     mut entries: Vec<AgentEntry>,
     overrides: &[AgentOverride],
 ) -> Vec<AgentEntry> {
-    let custom = entries.pop();
+    let mut custom = entries.pop();
     let mut shell = entries.pop();
     for override_agent in overrides {
         let argv = override_agent
@@ -79,6 +79,13 @@ pub fn apply_overrides(
             .is_some_and(|entry| entry.name == override_agent.name)
         {
             if let Some(entry) = shell.as_mut() {
+                entry.argv = argv;
+            }
+        } else if custom
+            .as_ref()
+            .is_some_and(|entry| entry.name == override_agent.name)
+        {
+            if let Some(entry) = custom.as_mut() {
                 entry.argv = argv;
             }
         } else {
@@ -168,5 +175,35 @@ mod tests {
         assert_eq!(overridden[1].name, "codex");
         assert_eq!(overridden[2].name, "shell");
         assert_eq!(overridden[3].name, "Custom");
+    }
+
+    #[test]
+    fn custom_override_replaces_the_custom_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = detect_agents(dir.path().as_os_str(), None);
+
+        let overridden = apply_overrides(
+            agents,
+            &[AgentOverride {
+                name: "Custom".into(),
+                argv: vec!["my-tool".into(), "--flag".into()],
+            }],
+        );
+
+        let customs: Vec<_> = overridden
+            .iter()
+            .filter(|entry| entry.name == "Custom")
+            .collect();
+        assert_eq!(customs.len(), 1);
+        assert_eq!(customs[0].source, AgentSource::Custom);
+        assert_eq!(
+            customs[0].argv,
+            vec![OsString::from("my-tool"), OsString::from("--flag")]
+        );
+        assert!(
+            !overridden
+                .iter()
+                .any(|entry| entry.name == "Custom" && entry.source == AgentSource::Detected)
+        );
     }
 }

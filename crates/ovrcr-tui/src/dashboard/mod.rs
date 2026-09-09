@@ -190,12 +190,17 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    /// Whether the banner in `error` was written by a refused view, which is the only writer a
+    /// successful view completion is allowed to clear. `set_error` releases it.
+    pub(super) error_owned_by_view: bool,
     pub copy: Option<CopySelection>,
     pub copy_notice: Option<String>,
     pub history: Option<HistoryView>,
     pub history_begin_request: Option<PendingHistoryBegin>,
     pub(super) mouse: MouseForwarding,
     pub(super) mouse_focused: bool,
+    /// Pane index whose history a wheel tick asked for while that pane was still loading.
+    pub(super) deferred_history_at_tail: Option<usize>,
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
@@ -210,8 +215,20 @@ pub struct Dashboard {
     pub(super) last_view_request_id: Option<u64>,
     pub(super) pending_view: Option<PendingView>,
     pub(super) requested_view: Option<RequestedView>,
+    /// The view the server refused, with the instant of the refusal. The same view waits out
+    /// `VIEW_RETRY_BACKOFF` before it is re-sent so a repeating failure cannot spin the loop.
+    pub(super) failed_view: Option<(RequestedView, std::time::Instant)>,
     pub(super) force_view_refresh: bool,
-    pub(super) view_request_ids: HashSet<u64>,
+    /// Ids of `SetView` requests still waiting for their final `Ok` or `Error`.
+    pub view_request_ids: HashSet<u64>,
+    /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
+    /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
+    pub(super) error_owning_requests: HashSet<u64>,
+    /// Set when the user changes selection, splits, focuses, or closes a pane, and consumed by the
+    /// next `SetView` those changes produce, which then owns the error banner: a banner written
+    /// before the change describes the state the user just left. A server-driven refresh mints its
+    /// request with this clear, so its success leaves a fresh banner alone.
+    pub(super) pending_user_view_change: bool,
     pub(super) pending_snapshot_sessions: HashSet<SessionId>,
 }
 

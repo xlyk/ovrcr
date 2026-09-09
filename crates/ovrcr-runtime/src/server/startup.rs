@@ -157,6 +157,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         resize_hook: Mutex::new(None),
         #[cfg(test)]
         before_view_publish_hook: Mutex::new(None),
+        #[cfg(test)]
+        before_dashboard_write_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
     });
     task_manager.start(Arc::downgrade(&state));
