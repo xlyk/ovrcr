@@ -68,9 +68,10 @@ mod tests {
                 "C.UTF-8"
             },
         );
-        // -ic is test-only: run startup configuration and then exit.
+        // -d skips host-wide configuration (such as interactive compinit checks).
+        // User startup files still load; -ic runs the fixture and exits.
         command.args([
-            "-ic",
+            "-dic",
             "fixture; print -r -- $PROMPT; print -r -- ${+OVRCR_ORIGINAL_ZDOTDIR}",
         ]);
         let pair = portable_pty::native_pty_system()

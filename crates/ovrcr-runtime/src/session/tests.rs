@@ -1128,7 +1128,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     std::fs::write(
         &shell,
         format!(
-            "#!/bin/sh\nunset OVRCR_ORIGINAL_ZDOTDIR\nexport HOME='{}' LC_ALL={locale} TERM=xterm-256color\nexec /bin/zsh \"$@\"\n",
+            "#!/bin/sh\nunset OVRCR_ORIGINAL_ZDOTDIR\nexport HOME='{}' LC_ALL={locale} TERM=xterm-256color\nexec /bin/zsh -d \"$@\"\n",
             home.display()
         ),
     )
