@@ -138,6 +138,29 @@ restore a PTY after a server crash or reboot.
 
 ## Command palette
 
+Press Space in Browse, Copy, or History to show the available keys. The next
+key runs an enabled action and closes the popup: Space then `n` opens the
+terminal form in Browse. Bare hotkeys still work. Press `?` to browse the
+same popup with arrows and Enter, or click an enabled row. Escape closes it.
+Disabled rows stay visible with a reason. In a narrow window, the highlighted
+row's description appears below the key list; arrows reveal offscreen rows.
+Terminal mode has no popup: press `Ctrl-g` to return to Browse first.
+
+Browse shortcuts include `w` to create a workspace, `a` to register a project,
+`t` (or `Ctrl-t`) for tasks, and `X` to confirm closing a session. Lowercase
+`x` still closes only a split pane; its session keeps running. Space now opens
+the popup in Copy and History; use `v` to set a selection anchor.
+
+The popup, palette key descriptions, and enabled-key footer use one hint
+table. New descriptions must name the selected target, state the consequence,
+and say whether confirmation follows. Disabled actions replace the description
+with a reason, such as “Resume: not paused”. Detach explicitly says that the
+server and every session keep running.
+
+An empty dashboard shows registration, palette, and help shortcuts plus the
+config and socket paths. Clicking an empty workspace shows how to start a
+terminal there and prefills that workspace in the terminal form.
+
 Press `n` in browse mode to create a terminal. From a focused terminal, press
 `Ctrl-g` first. The Agent field lists coding agents found on `PATH` in this
 order: `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `goose`, `amp`,
@@ -218,13 +241,13 @@ lost when the server exits; it is not persisted to disk.
 In Browse mode, press `[` to freeze the selected session's current screen for
 copying. From Terminal mode, press Ctrl-g first. Use arrows or `hjkl` to move,
 Home/`0` and End/`$` for row bounds, and `g`/`G` for screen bounds.
-Press Space or `v` to set an anchor, move to the other end of the range, then
+Press `v` to set an anchor, move to the other end of the range, then
 press `y` or Enter to request a clipboard copy. Both endpoints are included.
 Escape, `q`, or Ctrl-g leaves Copy mode. Live output continues while the
 captured screen stays fixed; resizing the terminal cancels this selection.
 
 To select older output, enter History with PageUp or the wheel. Scroll to a loaded cursor
-and press Space or `v` to anchor it. Movement then extends the range;
+and press `v` to anchor it. Movement then extends the range;
 PageUp/PageDown move by a viewport, Home/End move to row bounds, and
 `g`/`G` move to snapshot bounds. Movement waits when a target cell needs
 loading. Press `y` to load and copy the selected range across history pages.
