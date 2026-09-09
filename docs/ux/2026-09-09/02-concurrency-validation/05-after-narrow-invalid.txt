@@ -1,0 +1,57 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ Scheduled tasks ────────────────────────────────────────────────────────────────────────────┐
+│   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)                                   │
+│ No tasks. Press n to create a task; h to inspect all run history.                           │
+│                                                                                             │
+│                               
+		3 text (settable)  OVRCR  Tasks  │ concurrency: 3                                                                
+		4 text (settable) ┌ Scheduled tasks ────────────────────────────────────────────────────────────────────────────┐
+		5 text (settable) │   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)                                   │
+		6 text (settable) │ No tasks. Press n to create a task; h to inspect all run history.                           │
+		7 text (settable) │                                                                                             │
+		8 text (settable) │                                                                                             │
+		9 text (settable) │                                                                                             │
+		10 text (settable) │                                                                                             │
+		11 text (settable) │                                                                                             │
+		12 text (settable) │                                                                                             │
+		13 text (settable) │                                                                                             │
+		14 text (settable) │                                                                                             │
+		15 text (settable) │                                                                                             │
+		16 text (settable) │                                                                                             │
+		17 text (settable) │                                                                                             │
+		18 text (settable) │                                                                                             │
+		19 text (settable) │                                                                                             │
+		20 text (settable) │                                                                                             │
+		21 text (settable) │                                                                                             │
+		22 text (settable) │                                                                                             │
+		23 text (settable) │                                                                                             │
+		24 text (settable) │                                                                                             │
+		25 text (settable) │                                                                                             │
+		26 text (settable) │                                                                                             │
+		27 text (settable) │                                                                                             │
+		28 text (settable) │                                                                                             │
+		29 text (settable) │                                                                                             │
+		30 text (settable) │                                                                                             │
+		31 text (settable) │                                                                                             │
+		32 text (settable) │                                                                                             │
+		33 text (settable) │                                                                                             │
+		34 text (settable) └─────────────────────────────────────────────────────────────────────────────────────────────┘
+		35 text (settable) Concurrency: 0                                                                                 
+		36 text (settable) Concurrency must be a positive integer                                                         
+		37 text (settable) Esc cancel  Enter save  Backspace delete                                                       
+	38 close button
+	39 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	40 minimize button
+	41 text OVRCR GUI
+42 menu bar
+	43 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                
+┌ Scheduled tasks ────────────────────────────────────────────────────────────────────────────┐
+│   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)                                   │
+│ No tasks. Press n to create a task; h to inspect all run history.                           │
+│                                                                                             │
+│                               

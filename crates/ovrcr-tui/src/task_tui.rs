@@ -861,9 +861,10 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         ),
         area,
     );
-    let [title, body, status, footer] = Layout::vertical([
+    let [title, body, concurrency, status, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
+        Constraint::Length(u16::from(view.concurrency_input.is_some())),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -1155,6 +1156,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
         status,
     );
+    let footer_text = if view.concurrency_input.is_some() {
+        "Esc cancel  Enter save  Backspace delete"
+    } else {
+        footer_text
+    };
     let mut hints = String::new();
     for hint in footer_text.split("  ") {
         let separator = if hints.is_empty() { "" } else { "  " };
@@ -1189,9 +1195,9 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
     }
     if let Some(value) = &view.concurrency_input {
         frame.render_widget(
-            Paragraph::new(format!("Concurrency: {value}  Enter save · Esc cancel"))
+            Paragraph::new(format!("Concurrency: {value}"))
                 .style(Style::default().fg(Color::Rgb(137, 220, 235))),
-            status,
+            concurrency,
         );
     }
 }

@@ -312,6 +312,57 @@ fn pause_resume_manual_run_and_concurrency() {
     v.event(key(KeyCode::Enter));
     assert_eq!(v.take_request(), Some(TaskRequest::Concurrency(Some(5))));
 }
+
+#[test]
+fn invalid_concurrency_shows_error_with_edit_controls_and_recovers() {
+    for width in [40, 80] {
+        for invalid in ["", "0"] {
+            let mut view = TasksView::default();
+            view.event(key(KeyCode::Char('c')));
+            for ch in invalid.chars() {
+                view.event(key(KeyCode::Char(ch)));
+            }
+            view.event(key(KeyCode::Enter));
+            assert!(view.take_request().is_none());
+            assert_eq!(view.concurrency, 3);
+            let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
+            terminal.draw(|f| draw_tasks(f, &view)).unwrap();
+            let rows = (0..12)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                rows.iter().any(|row| row.contains("positive integer")),
+                "{rows:?}"
+            );
+            assert!(
+                rows.iter().any(|row| row.contains("Concurrency:")),
+                "{rows:?}"
+            );
+            assert!(rows[11].contains("Esc cancel"), "{rows:?}");
+            assert!(rows[11].contains("Enter save"), "{rows:?}");
+
+            view.event(key(KeyCode::Backspace));
+            view.event(key(KeyCode::Char('5')));
+            view.event(key(KeyCode::Enter));
+            assert_eq!(view.take_request(), Some(TaskRequest::Concurrency(Some(5))));
+            assert_eq!(view.concurrency, 3, "wait for the server acknowledgement");
+            view.receive(
+                &TaskRequest::Concurrency(Some(5)),
+                Ok(TaskResponse::Concurrency(5)),
+            );
+            assert_eq!(view.concurrency, 5);
+
+            view.event(key(KeyCode::Char('c')));
+            assert!(!view.event(key(KeyCode::Esc)), "cancel stays in tasks");
+            assert!(view.take_request().is_none());
+            assert_eq!(view.concurrency, 5);
+        }
+    }
+}
 #[test]
 fn multiline_cursor_edits_unicode_without_corruption() {
     let mut v = fixture();
