@@ -1,0 +1,57 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                          
+▼ 󰉋 consigint                          │  local 43x35  pid: 39258  elapsed: 0m     │> review auth handoff 44x35  pid: 39524     
+  ▼ auth-handoff                       │───────────────────────────────────────────│────────────────────────────────────────────
+  - local                              │compinit:527: no such file or directory: /U│╭─ grok / grok-4.6 ────────────────────
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                          
+		4 text (settable) ▼ 󰉋 consigint                          │  local 43x35  pid: 39258  elapsed: 0m     │> review auth handoff 44x35  pid: 39524     
+		5 text (settable)   ▼ auth-handoff                       │───────────────────────────────────────────│────────────────────────────────────────────
+		6 text (settable)   - local                              │compinit:527: no such file or directory: /U│╭─ grok / grok-4.6 ─────────────────────────
+		7 text (settable)      ├ terminal                        │╭─  /private/v/f/j/h/T/ovrcr-gui-6Cgdt5/wo││ fixture: authentication handoff review    
+		8 text (settable)      └ run 0m  ctx —                   │╰─ rtk proxy printf '\nUX10_LEFT_%s\n' 'OUT│╰───────────────────────────────────────────
+		9 text (settable)   - review auth handoff                │                                           │                                            
+		10 text (settable)      ├ grok / grok-4.6                 │UX10_LEFT_OUTPUT                           │✓ deterministic local transcript ready      
+		11 text (settable)      └ run 0m  ctx —                   │                                           │sh-3.2$ rtk proxy printf '\nUX10_RIGHT_%s\n'
+		12 text (settable)                                        │╭─  /private/v/f/j/h/T/ovrcr-g/w/c/auth-ha│                                            
+		13 text (settable)   ▼ worktree-lifecycle                 │ndoff   gui-consigint-auth-handoff      │UX10_RIGHT_OUTPUT                           
+		14 text (settable)   - local                              │╰─                                      ─╯ │sh-3.2$ rtk proxy stty size                 
+		15 text (settable)      ├ terminal                        │                                           │57 63                                       
+		16 text (settable)      └ run 0m  ctx —                   │                                           │sh-3.2$ rtk proxy stty size                 
+		17 text (settable)   - implement lifecycle cleanup        │                                           │35 44                                       
+		18 text (settable)      ├ claude / sonnet-4               │                                           │sh-3.2$                                     
+		19 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		20 text (settable)   - review websocket shutdown          │                                           │                                            
+		21 text (settable)      ├ codex / gpt-5.4                 │                                           │                                            
+		22 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		23 text (settable)   - plan snapshot restore              │                                           │                                            
+		24 text (settable)      ├ pi / grok-4.6                   │                                           │                                            
+		25 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		26 text (settable)                                        │                                           │                                            
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │                                           │                                            
+		28 text (settable)   ▼ pipeline-progress-v2               │                                           │                                            
+		29 text (settable)   - local                              │                                           │                                            
+		30 text (settable)      ├ terminal                        │                                           │                                            
+		31 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		32 text (settable)   - build pipeline progress            │                                           │                                            
+		33 text (settable)      ├ claude / opus-4                 │                                           │                                            
+		34 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		35 text (settable)                                        │                                           │                                            
+		36 text (settable)   ▼ scope-quality                      │                                           │                                            
+		37 text (settable)   - local                              │                                           │                                            
+		38 text (settable)      ├ terminal                        │                                           │                                            
+		39 text (settable)      └ run 0m  ctx —                   │                                           │                                            
+		40 text (settable)   - review scope quality               │                                           │                                            
+		41 text (settable) Terminal mode  Ctrl-g browse                                                                                                    
+	42 close button
+	43 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	44 minimize button
+	45 text OVRCR GUI
+46 menu bar
+	47 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                          
+▼ 󰉋 consigint                          │  local 43x35  pid: 39258  elapsed: 0m     │> review auth handoff 44x35  pid: 39524     
+  ▼ auth-handoff                       │───────────────────────────────────────────│────────────────────────────────────────────
+  - local                              │compinit:527: no such file or directory: /U│╭─ grok / grok-4.6 ────────────────────
