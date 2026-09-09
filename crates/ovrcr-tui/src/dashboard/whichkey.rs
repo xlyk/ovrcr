@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 pub(super) struct WhichKey {
     pub pending_leader: bool,
     pub browsing: Option<usize>,
+    pub group: Option<char>,
 }
 
 struct PopupRow {
@@ -57,7 +58,11 @@ fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayo
     let mut entries = Vec::new();
     let mut index = 0;
     for group in groups {
-        entries.push((None, group.title.to_owned(), 1));
+        entries.push((
+            None,
+            group.title.to_owned(),
+            paragraph(&group.title).line_count(inner_width).max(1) as u16,
+        ));
         for hint in &group.hints {
             let text = row_text(hint);
             let height = paragraph(&text).line_count(inner_width).max(1) as u16;
@@ -127,6 +132,121 @@ fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayo
 }
 
 impl Dashboard {
+    fn whichkey_hints(&self) -> Vec<HintGroup> {
+        let groups = key_hints(self);
+        if self.mode != InputMode::Browse {
+            return groups;
+        }
+        let (project, workspace) = self.creation_context();
+        let session = self
+            .focused_session()
+            .and_then(|id| super::state::find_session(self, id));
+        let group = self.whichkey.as_ref().and_then(|popup| popup.group);
+        let title = match group {
+            Some('t') => session.map(|s| format!("Terminal: {} (#{})", s.name, s.id.0)),
+            Some('w') if !workspace.is_empty() => {
+                Some(format!("Workspace: {project} / {workspace}"))
+            }
+            Some('p') if !project.is_empty() => Some(format!("Project: {project}")),
+            Some('v') => Some("View".into()),
+            _ => None,
+        };
+        let mut hints = Vec::new();
+        if let Some(title) = title {
+            for mut hint in groups.into_iter().flat_map(|g| g.hints) {
+                let key = match (group, hint.action) {
+                    (Some('t'), HintAction::Key(KeyCode::Enter))
+                        if session
+                            .is_some_and(|s| s.phase == ovrcr_protocol::SessionPhase::Running) =>
+                    {
+                        "Enter"
+                    }
+                    (Some('t'), HintAction::Key(KeyCode::Char('p' | 'r'))) if hint.enabled => {
+                        hint.key
+                    }
+                    (Some('t'), HintAction::Key(KeyCode::Char('X'))) => "x",
+                    (Some('t'), HintAction::Key(KeyCode::Char('['))) => "c",
+                    (Some('t'), HintAction::Key(KeyCode::PageUp)) => "h",
+                    (Some('w'), HintAction::Key(KeyCode::Char('n'))) => "n",
+                    (Some('p'), HintAction::Key(KeyCode::Char('w'))) => "n",
+                    (Some('p'), HintAction::Key(KeyCode::Char('a'))) => "a",
+                    (Some('v'), HintAction::Tasks) => "t/Ctrl-t",
+                    (Some('v'), HintAction::Key(KeyCode::Char(':' | 'j' | 'k'))) => hint.key,
+                    (Some('v'), HintAction::Key(KeyCode::Char('v' | 'x') | KeyCode::Tab))
+                        if hint.enabled =>
+                    {
+                        hint.key
+                    }
+                    _ => continue,
+                };
+                hint.key = key;
+                hints.push(hint);
+            }
+            let removal = match group {
+                Some('w') => Some((
+                    "Remove workspace",
+                    HintAction::RemoveWorkspace,
+                    format!(
+                        "Remove {project} / {workspace}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
+                    ),
+                )),
+                Some('p') => Some((
+                    "Remove project",
+                    HintAction::RemoveProject,
+                    format!("Unregister {project}; asks for confirmation. Keeps the repository."),
+                )),
+                _ => None,
+            };
+            if let Some((name, action, description)) = removal {
+                hints.push(KeyHint {
+                    key: "x",
+                    name,
+                    action,
+                    description,
+                    enabled: true,
+                });
+            }
+            return vec![HintGroup { title, hints }];
+        }
+        for (key, name, target, available) in [
+            (
+                "t",
+                "Terminal",
+                session.map(|s| s.name.clone()).unwrap_or_default(),
+                session.is_some(),
+            ),
+            (
+                "w",
+                "Workspace",
+                format!("{project} / {workspace}"),
+                !workspace.is_empty(),
+            ),
+            ("p", "Project", project.clone(), !project.is_empty()),
+            ("v", "View", "dashboard".into(), true),
+        ] {
+            if available {
+                hints.push(KeyHint {
+                    key,
+                    name,
+                    description: format!("Show actions for {target}"),
+                    enabled: true,
+                    action: HintAction::Group(key.chars().next().unwrap()),
+                });
+            }
+        }
+        // Registration remains reachable even before a project exists.
+        hints.extend(
+            groups
+                .into_iter()
+                .flat_map(|g| g.hints)
+                .filter(|hint| matches!(hint.action, HintAction::Key(KeyCode::Char('a' | 'q')))),
+        );
+        vec![HintGroup {
+            title: "Groups".into(),
+            hints,
+        }]
+    }
+
     pub(super) fn whichkey_key(&mut self, key: KeyEvent) -> Option<DashboardAction> {
         if self.whichkey.is_none() {
             if self.mode == InputMode::Terminal
@@ -141,6 +261,7 @@ impl Dashboard {
             self.whichkey = Some(WhichKey {
                 pending_leader: key.code == KeyCode::Char(' '),
                 browsing: Some(0),
+                group: None,
             });
             return Some(DashboardAction::Redraw);
         }
@@ -151,7 +272,13 @@ impl Dashboard {
             self.whichkey = None;
             return Some(DashboardAction::Redraw);
         }
-        let groups = key_hints(self);
+        if key.code == KeyCode::Backspace && key.kind == KeyEventKind::Press {
+            let popup = self.whichkey.as_mut().unwrap();
+            popup.group = None;
+            popup.browsing = Some(0);
+            return Some(DashboardAction::Redraw);
+        }
+        let groups = self.whichkey_hints();
         let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
         let popup = self.whichkey.as_mut().unwrap();
         if !popup.pending_leader
@@ -177,18 +304,31 @@ impl Dashboard {
             hints.iter().copied().find(|h| h.matches(key))
         };
         let action = chosen.filter(|h| h.enabled).map(|h| h.action);
-        if popup.pending_leader || action.is_some() {
-            self.whichkey = None;
-        }
         Some(action.map_or(DashboardAction::Redraw, |action| self.run_hint(action)))
     }
 
     pub(super) fn run_hint(&mut self, action: HintAction) -> DashboardAction {
-        self.key_action(action.event())
+        if let HintAction::Group(group) = action {
+            if let Some(popup) = &mut self.whichkey {
+                popup.group = Some(group);
+                popup.browsing = Some(0);
+            }
+            return DashboardAction::Redraw;
+        }
+        self.whichkey = None;
+        let event = match action {
+            HintAction::Key(code) => KeyEvent::new(code, KeyModifiers::NONE),
+            HintAction::Tasks => KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            HintAction::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            HintAction::RemoveWorkspace => return self.open_remove_context(true),
+            HintAction::RemoveProject => return self.open_remove_context(false),
+            HintAction::Group(_) => unreachable!(),
+        };
+        self.key_action(event)
     }
 
     pub(super) fn whichkey_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        let groups = key_hints(self);
+        let groups = self.whichkey_hints();
         let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
         let selected = self.whichkey.as_ref().and_then(|p| p.browsing).unwrap_or(0);
         let layout = popup_layout(area, &groups, selected);
@@ -216,7 +356,6 @@ impl Dashboard {
         {
             let hint = hints[index];
             if hint.enabled {
-                self.whichkey = None;
                 return self.run_hint(hint.action);
             }
             let popup = self.whichkey.as_mut().unwrap();
@@ -230,7 +369,7 @@ impl Dashboard {
         let Some(popup) = &self.whichkey else {
             return;
         };
-        let groups = key_hints(self);
+        let groups = self.whichkey_hints();
         let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
         let selected = popup
             .browsing
@@ -240,12 +379,11 @@ impl Dashboard {
         frame.render_widget(Clear, layout.area);
         frame.render_widget(
             Block::bordered()
-                .title(if popup.pending_leader {
-                    " Which key · next key runs "
-                } else {
-                    " Which key · Enter/click runs "
+                .title(match popup.group {
+                    Some(group) => format!(" Which key · Space {group} "),
+                    None => " Which key · Space ".into(),
                 })
-                .title_bottom(" Esc close · wheel scroll ")
+                .title_bottom(" Esc close · Backspace up ")
                 .style(Style::default().bg(CRUST).fg(TEXT))
                 .border_style(Style::default().fg(MAUVE)),
             layout.area,

@@ -1669,7 +1669,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     dashboard.wait_for_screen(|screen| screen.contains("Which key"), wait_deadline())?;
     dashboard.send(b"\x1b")?;
     dashboard.wait_for_screen(|screen| !screen.contains("Which key"), wait_deadline())?;
-    dashboard.send(b" n")?;
+    dashboard.send(b" wn")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Create terminal")
@@ -1683,7 +1683,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
         |screen| !screen.contains("Command palette"),
         wait_deadline(),
     )?;
-    dashboard.send(b" X")?;
+    dashboard.send(b" tx")?;
     dashboard.wait_for_screen(
         |screen| {
             screen.contains("Confirm action")

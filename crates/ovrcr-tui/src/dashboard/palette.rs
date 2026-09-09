@@ -425,6 +425,27 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn open_remove_context(&mut self, workspace: bool) -> DashboardAction {
+        let (project, name) = self.creation_context();
+        if project.is_empty() || (workspace && name.is_empty()) {
+            return DashboardAction::None;
+        }
+        if let Some(begin) = self.history_begin_request.as_mut() {
+            begin.cancelled = true;
+        }
+        let request = if workspace {
+            Request::RemoveWorkspace { project, name }
+        } else {
+            Request::RemoveProject { name: project }
+        };
+        self.palette = Some(Palette {
+            page: removal_confirmation(request),
+            ..Palette::new()
+        });
+        self.mode = InputMode::Browse;
+        DashboardAction::Redraw
+    }
+
     fn command_page(&self, command: Command) -> Page {
         if let Command::CloseTerminal(id) = command {
             let session = find_session(self, id).expect("close target exists");
@@ -829,17 +850,7 @@ impl Dashboard {
                             _ => unreachable!(),
                         };
                         if matches!(command, Command::RemoveWorkspace | Command::RemoveProject) {
-                            let target = match command {
-                                Command::RemoveWorkspace => format!(
-                                    "Remove workspace {} / {}. Remove its clean worktree; keep the branch.",
-                                    values[0], values[1]
-                                ),
-                                _ => format!(
-                                    "Unregister project {}. Keep the repository.",
-                                    values[0]
-                                ),
-                            };
-                            palette.page = Page::Confirm { request, target };
+                            palette.page = removal_confirmation(request);
                         } else {
                             action = self.palette_submit(&mut palette, request);
                         }
@@ -1503,4 +1514,17 @@ fn split_workspace(value: &str) -> (String, String) {
         .split_once(" / ")
         .map(|(project, workspace)| (project.to_string(), workspace.to_string()))
         .unwrap_or_else(|| (value.to_string(), String::new()))
+}
+
+fn removal_confirmation(request: Request) -> Page {
+    let target = match &request {
+        Request::RemoveWorkspace { project, name } => format!(
+            "Remove workspace {project} / {name}. Remove its clean worktree; keep the branch."
+        ),
+        Request::RemoveProject { name } => {
+            format!("Unregister project {name}. Keep the repository.")
+        }
+        _ => unreachable!("only workspace/project removal uses this confirmation"),
+    };
+    Page::Confirm { request, target }
 }
