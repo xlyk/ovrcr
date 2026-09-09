@@ -235,7 +235,7 @@ fn empty_hierarchy_shows_start_screen() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Welcome to OVRCR"));
     assert!(text.contains("a  Register project"));
-    assert!(text.contains(":  Command palette"));
+    assert!(text.contains(":  Search"));
     assert!(text.contains("?  Help"));
     assert!(text.contains("Config:"));
     assert!(text.contains("Socket:"));
@@ -510,7 +510,11 @@ fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
         .is_none()
     );
     assert!(palette_text(&dashboard).contains("Create terminal"));
-    assert!(!palette_text(&dashboard).contains("Register project"));
+    assert!(
+        !palette_text(&dashboard)
+            .lines()
+            .any(|line| line.contains("│") && line.contains("Register project"))
+    );
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     assert!(palette_text(&dashboard).contains("consigint"));
     dashboard.key(KeyCode::Tab);
@@ -973,7 +977,12 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         ServerEvent::HierarchyChanged(hierarchy),
     ));
     let text = palette_text(&dashboard);
-    assert!(!text.contains("Create workspace"), "{text}");
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.contains("│") && line.contains("Create workspace")),
+        "{text}"
+    );
     assert!(!text.contains("Working"), "{text}");
     assert!(!outgoing.iter().any(
         |message| matches!(&message.request, Request::SetView { view } if view.focused == Some(SessionId(99)))
@@ -1044,7 +1053,11 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     )));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
-    assert!(!palette_text(&dashboard).contains("Create workspace"));
+    assert!(
+        !palette_text(&dashboard)
+            .lines()
+            .any(|line| line.contains("│") && line.contains("Create workspace"))
+    );
 }
 
 #[test]
@@ -1164,7 +1177,7 @@ fn n_is_listed_in_the_browse_footer() {
                 .collect::<String>()
         })
         .collect();
-    assert!(text.contains("? help  n "), "{text}");
+    assert!(text.contains("n Create terminal"), "{text}");
 }
 
 #[test]
@@ -1667,4 +1680,100 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('a'));
     assert!(palette_text(&dashboard).contains("Repository"));
+}
+
+#[test]
+fn ux_browse_footer_names_actions_and_respects_availability() {
+    let mut dashboard = dashboard_fixture();
+    let text = rendered_footer(&dashboard, 120);
+    for label in ["? Help", "Enter Focus", "n Create terminal", ": Search"] {
+        assert!(text.contains(label), "missing {label}: {text}");
+    }
+    for width in [20, 40, 80, 120] {
+        let text = rendered_footer(&dashboard, width);
+        assert!(text.starts_with("BROWSE  ? Help"), "{text}");
+        assert!(!text.ends_with("Enter"), "partial action: {text}");
+    }
+    dashboard.panes[dashboard.focused_pane].ready = false;
+    assert!(!rendered_footer(&dashboard, 120).contains("Enter Focus"));
+    dashboard.hierarchy.projects.clear();
+    let text = rendered_footer(&dashboard, 80);
+    assert!(text.contains("a Register project"), "{text}");
+    assert!(!text.contains("n Create terminal"), "{text}");
+}
+
+#[test]
+fn ux_search_keeps_session_identity_and_filters_complete_context() {
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "local");
+    for width in [40, 80, 120] {
+        let rows = rendered_rows(&dashboard, width, 24);
+        for id in [3, 4, 5] {
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains(&format!("local (#{id})"))),
+                "{rows:?}"
+            );
+        }
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("Project: spacelift-agent")),
+            "{rows:?}"
+        );
+    }
+    dashboard.key(KeyCode::Down);
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(4)));
+    for query in ["spacelift-agent", "progress", "#3"] {
+        palette_search(&mut dashboard, query);
+        dashboard.key(KeyCode::Enter);
+        assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+    }
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].name = "界🙂".repeat(50);
+    palette_search(&mut dashboard, "#3");
+    for width in [40, 80, 120] {
+        let rows = rendered_rows(&dashboard, width, 24);
+        let row = rows
+            .iter()
+            .find(|row| row.contains("(#3)"))
+            .expect("visible ID");
+        assert!(row.contains("… (#3)"), "{row}");
+        assert!(row.contains('界'), "{row}");
+        assert!(row.trim_end().ends_with('│'), "border clipped: {row}");
+    }
+    dashboard.event_action(Event::Paste("zzzz".into()));
+    let rows = rendered_rows(&dashboard, 80, 24);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("No matching actions or terminals")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Backspace delete")),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn ux_forms_put_task_name_in_border_and_keep_active_field_visible() {
+    for (key, title) in [
+        ('n', "Create terminal"),
+        ('w', "Create workspace"),
+        ('a', "Register project"),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.key(KeyCode::Char(key));
+        for (width, height) in [(40, 12), (80, 24)] {
+            let rows = rendered_rows(&dashboard, width, height);
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains('┌') && row.contains(title)),
+                "{rows:?}"
+            );
+            assert!(
+                rows.iter().any(|row| row.contains('›')),
+                "active field missing: {rows:?}"
+            );
+        }
+    }
 }

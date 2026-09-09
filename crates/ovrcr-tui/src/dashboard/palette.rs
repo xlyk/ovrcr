@@ -2,7 +2,7 @@ use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
 use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
-use super::render::{CRUST, MAUVE, MUTED, PEACH, TEXT};
+use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{BranchRequest, ClientMessage, CreateSessionRequest, Request, Response};
@@ -1272,8 +1272,19 @@ impl Dashboard {
             height,
         );
         frame.render_widget(Clear, area);
+        let title = match &palette.page {
+            Page::Search { .. } => "Command palette",
+            Page::Form { command, .. } => match command {
+                Command::CreateTerminal => "Create terminal",
+                Command::CreateWorkspace => "Create workspace",
+                Command::RegisterProject => "Register project",
+                Command::RemoveWorkspace => "Remove workspace",
+                _ => "Remove project",
+            },
+            Page::Confirm { .. } => "Confirm action",
+        };
         let block = Block::bordered()
-            .title(" Command palette ")
+            .title(format!(" {title} "))
             .border_style(Style::default().fg(MAUVE))
             .style(Style::default().bg(CRUST).fg(TEXT));
         let inner = block.inner(area);
@@ -1287,18 +1298,31 @@ impl Dashboard {
                 lines.push(Line::from(format!("Search: {query}▏")));
                 let entries = self.palette_entries(query);
                 if entries.is_empty() {
-                    lines.push(Line::from("No matching actions"));
+                    lines.push(Line::from("No matching actions or terminals"));
                 }
                 let selected = (*selected).min(entries.len().saturating_sub(1));
                 let count = usize::from(body.height.saturating_sub(1) / 2).max(1);
                 let start = selected.saturating_sub(count - 1);
                 for (index, entry) in entries.iter().enumerate().skip(start).take(count) {
+                    let available = usize::from(body.width.saturating_sub(2));
+                    let label = if let Command::Switch(id) = entry.command
+                        && let Some(session) = find_session(self, id)
+                    {
+                        let suffix = format!(" (#{})", id.0);
+                        if available >= suffix.len() {
+                            format!(
+                                "{}{}",
+                                clip_text(&session.name, available - suffix.len()),
+                                suffix
+                            )
+                        } else {
+                            clip_text(&format!("#{}", id.0), available)
+                        }
+                    } else {
+                        clip_text(&entry.label, available)
+                    };
                     lines.push(Line::styled(
-                        format!(
-                            "{} {}",
-                            if index == selected { "›" } else { " " },
-                            entry.label
-                        ),
+                        format!("{} {}", if index == selected { "›" } else { " " }, label),
                         if index == selected {
                             Style::default().bg(MAUVE).fg(CRUST)
                         } else {
@@ -1315,20 +1339,7 @@ impl Dashboard {
                     }
                 }
             }
-            Page::Form {
-                command,
-                fields,
-                active,
-                ..
-            } => {
-                let title = match command {
-                    Command::CreateTerminal => "Create terminal",
-                    Command::CreateWorkspace => "Create workspace",
-                    Command::RegisterProject => "Register project",
-                    Command::RemoveWorkspace => "Remove workspace",
-                    _ => "Remove project",
-                };
-                lines.push(Line::from(title));
+            Page::Form { fields, active, .. } => {
                 for (index, field) in fields.iter().enumerate() {
                     if field.hidden {
                         continue;
@@ -1336,7 +1347,7 @@ impl Dashboard {
                     if index == *active {
                         focus_line = lines.len() + 1;
                     }
-                    lines.push(Line::styled(field.label, Style::default().fg(MUTED)));
+                    lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT)));
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
                             &list.query
@@ -1416,7 +1427,6 @@ impl Dashboard {
                 }
             }
             Page::Confirm { target, .. } => {
-                lines.push(Line::from("Confirm action"));
                 lines.push(Line::from(target.clone()));
             }
         }
@@ -1432,19 +1442,39 @@ impl Dashboard {
             },
             body,
         );
-        let selected_hint = if let Page::Search { query, selected } = &palette.page {
-            self.palette_entries(query)
-                .get(*selected)
-                .and_then(|entry| self.command_hint(&entry.command))
+        let detail = if let Page::Search { query, selected } = &palette.page {
+            let entries = self.palette_entries(query);
+            let selected = (*selected).min(entries.len().saturating_sub(1));
+            entries
+                .get(selected)
+                .map(|entry| {
+                    if let Command::Switch(id) = entry.command
+                        && let Some(session) = find_session(self, id)
+                    {
+                        format!(
+                            "{}\n{}\n↑/↓ select · Enter focus · Esc close",
+                            clip_text(
+                                &format!("Project: {}", session.project),
+                                usize::from(inner.width)
+                            ),
+                            clip_text(
+                                &format!("Workspace: {}", session.workspace),
+                                usize::from(inner.width)
+                            )
+                        )
+                    } else if let Some(hint) = self.command_hint(&entry.command) {
+                        format!(
+                            "{} — {}\n↑/↓ select · Enter continue · Esc cancel",
+                            hint.key, hint.description
+                        )
+                    } else {
+                        "↑/↓ select · Enter continue · Esc cancel".into()
+                    }
+                })
+                .or_else(|| Some("Edit search · Backspace delete · Esc close".into()))
         } else {
             None
         };
-        let detail = selected_hint.map(|hint| {
-            format!(
-                "{} — {}\n↑/↓ select · Enter continue · Esc cancel",
-                hint.key, hint.description
-            )
-        });
         let status = if palette.pending.is_some() {
             "Working…"
         } else if let Some(error) = &palette.error {
@@ -1474,7 +1504,7 @@ impl Dashboard {
                 .style(Style::default().fg(if palette.error.is_some() {
                     PEACH
                 } else {
-                    MUTED
+                    SUBTEXT
                 })),
             Rect::new(inner.x, inner.y + body.height, inner.width, footer_height),
         );

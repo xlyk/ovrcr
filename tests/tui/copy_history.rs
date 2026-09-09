@@ -496,9 +496,13 @@ fn copy_render_tiny_pane_and_footer() {
     let footer = (0..120)
         .map(|col| buffer[(col, 39)].symbol())
         .collect::<String>();
-    assert!(footer.starts_with("COPY  Space leader  ? help"));
-    assert!(footer.contains(" h j k l "));
-    assert!(footer.contains(" v y Enter Esc q Ctrl-g"));
+    assert!(footer.starts_with("COPY  ? Help  Esc Back"));
+    assert!(
+        ["h Move left", "j Move down", "k Move up", "l Move right"]
+            .iter()
+            .all(|hint| footer.contains(hint))
+    );
+    assert!(footer.contains("v Select  y Copy"));
     let rendered_layout = sidebar_and_metadata(buffer);
     assert_eq!(rendered_layout, initial_layout);
     assert!(initial_layout[0].contains("pid: 111  elapsed: 0m"));
@@ -4262,4 +4266,38 @@ fn history_waits_for_coalesced_focus_view_before_capture() {
         dashboard.history_begin_request.as_ref().unwrap().session,
         captured_session
     );
+}
+
+#[test]
+fn ux_history_footer_names_the_actual_escape_action() {
+    let range = HistoryCopyRange {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        anchor: HistoryCopyPoint { row: 0, col: 0 },
+        cursor: HistoryCopyPoint { row: 1, col: 1 },
+    };
+    let mut dashboard = dashboard_with_history_copy(range);
+    for width in [40, 80, 120] {
+        let text = rendered_footer(&dashboard, width);
+        assert!(text.contains("Esc Cancel copy"), "{text}");
+        assert!(!text.contains("y Copy"), "{text}");
+    }
+    dashboard.key(KeyCode::Esc);
+    assert!(dashboard.history.as_ref().unwrap().anchor.is_some());
+    dashboard.copy_notice = None;
+    for width in [40, 80, 120] {
+        let text = rendered_footer(&dashboard, width);
+        assert!(text.contains("Esc Back"), "{text}");
+    }
+    assert!(rendered_footer(&dashboard, 120).contains("y Copy"));
+    dashboard.history.as_mut().unwrap().anchor = None;
+    assert!(rendered_footer(&dashboard, 80).contains("v Select"));
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    let mut copy = copy_ready_dashboard();
+    copy.key(KeyCode::Char('['));
+    let text = rendered_footer(&copy, 120);
+    for label in ["COPY", "Esc Back", "v Select", "y Copy"] {
+        assert!(text.contains(label), "{text}");
+    }
 }

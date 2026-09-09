@@ -149,8 +149,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
         !browse_footer.split_whitespace().any(|key| key == "v"),
         "split is disabled when already split"
     );
-    assert!(browse_footer.contains("Tab x"));
-    assert!(browse_footer.contains("Space leader  ? help"));
+    assert!(browse_footer.contains("Tab Next pane  x Close pane"));
+    assert!(browse_footer.contains("? Help"));
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
 
     let mut output = Vec::new();
@@ -363,7 +363,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     let footer = (0..80)
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
-    assert!(footer.contains("split hidden: terminal too small"));
+    assert!(footer.contains("split hidden"));
 
     let mut ordinary = dashboard_fixture();
     ordinary.mode = ovrcr::tui::InputMode::Browse;
@@ -383,7 +383,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
             .any(|key| matches!(key, "Tab" | "x")),
         "pane switch and close need a split"
     );
-    assert!(ordinary_footer.contains("Space leader  ? help"));
+    assert!(ordinary_footer.contains("? Help"));
 
     dashboard.mode = ovrcr::tui::InputMode::Browse;
     let backend = TestBackend::new(80, 24);
@@ -395,7 +395,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
     assert!(browse_footer.contains("BROWSE"));
-    assert!(browse_footer.contains("split hidden: terminal too small"));
+    assert!(browse_footer.contains("split hidden"));
 
     dashboard.key(KeyCode::Char('['));
     let backend = TestBackend::new(80, 24);
@@ -407,8 +407,8 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .map(|x| terminal.backend().buffer()[(x, 23)].symbol())
         .collect::<String>();
     assert!(copy_footer.contains("COPY"));
-    assert!(copy_footer.contains("split hidden: terminal too small"));
-    assert!(copy_footer.contains("Space leader  ? help"));
+    assert!(copy_footer.contains("split hidden"));
+    assert!(copy_footer.contains("? Help"));
     // At this width, the popup is the discoverable source for the full table.
     dashboard.key(KeyCode::Char('?'));
     let copy_help = palette_text(&dashboard);
@@ -427,7 +427,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         .collect::<String>();
     assert!(history_footer.contains("HISTORY"));
     assert!(history_footer.contains("Waiting"));
-    assert!(history_footer.contains("split hidden: terminal too small"));
+    assert!(history_footer.contains("split hidden"));
     dashboard.key(KeyCode::Char('?'));
     for _ in 0..30 {
         dashboard.key(KeyCode::Down);
@@ -2822,4 +2822,39 @@ fn split_preserves_history_copy_and_paused_input() {
         dashboard.error.as_deref(),
         Some("Session paused; press r to resume")
     );
+}
+
+#[test]
+fn ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes() {
+    for (width, height) in [(80, 24), (60, 20), (40, 12)] {
+        for split in [false, true] {
+            let mut dashboard = dashboard_fixture();
+            if split {
+                assert!(dashboard.split_pane());
+            }
+            let area = Rect::new(0, 0, width, height);
+            let request = dashboard.view_request(area, 2000).unwrap().unwrap();
+            let Request::SetView { view } = &request.request else {
+                panic!("view request")
+            };
+            assert_eq!(
+                view.panes.len(),
+                1,
+                "narrow split must show its focused pane"
+            );
+            for pane in &view.panes {
+                assert!(pane.size.rows > 0 && pane.size.cols > 0);
+            }
+            acknowledge_all_view_targets(&mut dashboard, request);
+            let rows = rendered_rows(&dashboard, width, height);
+            assert!(
+                rows.last().unwrap().contains("? Help"),
+                "{width} split={split}: {rows:?}"
+            );
+            assert!(dashboard.panes[dashboard.focused_pane].ready);
+            let before = dashboard.focused_session();
+            dashboard.key(KeyCode::Char('j'));
+            assert_ne!(dashboard.focused_session(), before);
+        }
+    }
 }

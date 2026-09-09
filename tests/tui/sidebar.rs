@@ -53,12 +53,8 @@ fn dashboard_layout() {
             .any(|row| row.contains("pid: 111  elapsed: 0m"))
     );
     assert!(rendered.iter().any(|row| row.contains("ctx —")));
-    assert!(rendered.iter().any(|row| row.contains(" j k q")));
-    assert!(
-        rendered
-            .iter()
-            .any(|row| row.contains("Space leader  ? help"))
-    );
+    assert!(rendered.iter().any(|row| row.contains("q Detach")));
+    assert!(rendered.iter().any(|row| row.contains("? Help")));
     assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
     assert_eq!(buffer[(39, 10)].symbol(), "│");
     assert_eq!(buffer[(39, 1)].symbol(), "│");
@@ -108,8 +104,8 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     assert_eq!(row(18).trim_end(), "▼ 󰉋 spacelift-agent");
     assert_eq!(row(19).trim_end(), "  ▼ progress");
     assert_eq!(buffer[(2, 18)].fg, Color::Rgb(137, 220, 235));
-    assert_eq!(buffer[(7, 12)].fg, Color::Rgb(118, 123, 146));
-    assert_eq!(buffer[(7, 13)].fg, Color::Rgb(92, 96, 116));
+    assert_eq!(buffer[(7, 12)].fg, Color::Rgb(166, 173, 200));
+    assert_eq!(buffer[(7, 13)].fg, Color::Rgb(166, 173, 200));
     for gap in [9, 17] {
         assert_eq!(
             dashboard.mouse_action(
@@ -492,7 +488,7 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
 
     assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     assert!(buffer[(4, 6)].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[(7, 7)].fg, Color::Rgb(173, 127, 104));
+    assert_eq!(buffer[(7, 7)].fg, Color::Rgb(250, 179, 135));
     assert_eq!(buffer[(7, 15)].fg, Color::Rgb(144, 150, 175));
 }
 
@@ -729,4 +725,25 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(rendered.contains("session-50"));
+}
+
+#[test]
+fn ux_live_metadata_is_readable_and_preserves_selection() {
+    let dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    // The first local shell is unselected; its runtime row is row 5.
+    let color = buffer[(8, 5)].fg;
+    let Color::Rgb(r, g, b) = color else {
+        panic!("expected RGB metadata: {color:?}")
+    };
+    assert!(
+        r >= 160 && g >= 160 && b >= 160,
+        "faint metadata: {color:?}"
+    );
+    // The selected review still uses the original selected-row background.
+    assert_eq!(buffer[(8, 6)].bg, Color::Rgb(203, 166, 247));
 }

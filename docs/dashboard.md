@@ -6,7 +6,10 @@ the full contract.
 
 ## Modes
 
-The dashboard has four input modes. The footer names the current one.
+The dashboard has four input modes. The footer names the current one and shows
+a prioritized set of enabled shortcuts with action names. Hints that do not fit
+remain available through `?` or `Space`. History shows `Esc Cancel copy` while
+a copy is pending and `Esc Back` otherwise.
 
 | Mode | Entered by | Leaves with |
 | --- | --- | --- |
@@ -227,6 +230,11 @@ handlers. The palette and direct-key footer retain their original shortcuts.
 
 
 ## Command palette
+
+Terminal search rows show the session name and ID. The selected result shows
+its project and workspace below the list. Long text ends with an ellipsis;
+filtering still searches the full identity. Creation forms use their task name
+as the window title.
 
 `:` in Browse, or `Ctrl-g` then `:` from a terminal, opens the palette. If the
 dashboard has detached it reconnects first. Type to filter actions or to search a
