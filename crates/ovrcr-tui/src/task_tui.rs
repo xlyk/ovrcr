@@ -1,7 +1,9 @@
 //! Dedicated scheduled-task interface. Network work stays outside the input/render loop.
 use crate::TaskRequestFn;
+use crate::dashboard::picker::PickList;
 use anyhow::{Context, Result, bail};
 use crossterm::event::{Event, KeyCode, KeyModifiers};
+use ovrcr_protocol::HierarchySnapshot;
 use ovrcr_protocol::task::{
     Run, RunId, Schedule, Task, TaskId, TaskRequest, TaskResponse, TaskSpec, TaskTarget,
 };
@@ -146,6 +148,7 @@ const LABELS: [&str; 12] = [
     "Prompt",
 ];
 pub struct TaskEditor {
+    projects: PickList,
     id: Option<TaskId>,
     submitted: Option<TaskRequest>,
     fields: Vec<String>,
@@ -153,7 +156,7 @@ pub struct TaskEditor {
     cursor: usize,
 }
 impl TaskEditor {
-    fn new(task: Option<&Task>) -> Self {
+    fn new(task: Option<&Task>, mut projects: PickList) -> Self {
         let mut fields = vec![
             "".into(),
             "scratch".into(),
@@ -204,8 +207,17 @@ impl TaskEditor {
                 }
             }
         }
+        if task.is_some() {
+            projects.select_value(&fields[2]);
+        } else {
+            fields[2] = projects
+                .accepted()
+                .map(|item| item.value.clone())
+                .unwrap_or_default();
+        }
         let cursor = fields[0].len();
         Self {
+            projects,
             id: task.map(|t| t.id),
             submitted: None,
             fields,
@@ -215,6 +227,9 @@ impl TaskEditor {
     }
     fn spec(&self) -> Result<TaskSpec> {
         let f = &self.fields;
+        if f[1].trim() == "git" && !self.projects.items.iter().any(|item| item.value == f[2]) {
+            bail!("Select an available project");
+        }
         let target = match f[1].trim() {
             "scratch" => TaskTarget::Scratch,
             "git" => TaskTarget::Git {
@@ -249,7 +264,50 @@ impl TaskEditor {
         spec.validate()?;
         Ok(spec)
     }
+    fn accept_project(&mut self) -> bool {
+        let Some(item) = self.projects.accepted() else {
+            return false;
+        };
+        self.fields[2] = item.value.clone();
+        self.cursor = self.fields[2].len();
+        true
+    }
+
     fn edit(&mut self, event: Event) {
+        if self.field == 2 {
+            match &event {
+                Event::Paste(text) => self.projects.on_insert(&text.replace(['\r', '\n'], " ")),
+                Event::Key(key) => match key.code {
+                    KeyCode::Up => self.projects.move_selection(-1),
+                    KeyCode::Down => self.projects.move_selection(1),
+                    KeyCode::Backspace => self.projects.on_backspace(),
+                    KeyCode::Char('a' | 'u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.projects.query.clear();
+                        self.projects.selected = 0;
+                    }
+                    KeyCode::Char(c)
+                        if !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        self.projects.on_insert(&c.to_string())
+                    }
+                    KeyCode::Tab | KeyCode::Enter => {
+                        if self.accept_project() || self.fields[1].trim() != "git" {
+                            self.field = 3;
+                            self.cursor = self.fields[3].len();
+                        }
+                    }
+                    KeyCode::BackTab => {
+                        self.field = 1;
+                        self.cursor = self.fields[1].len();
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            return;
+        }
         let text = &mut self.fields[self.field];
         match event {
             Event::Paste(value) => {
@@ -341,6 +399,7 @@ impl TaskEditor {
 }
 
 pub struct TasksView {
+    projects: PickList,
     pub tasks: Vec<Task>,
     pub runs: Vec<Run>,
     pub concurrency: usize,
@@ -367,6 +426,7 @@ struct WrapCache {
 impl Default for TasksView {
     fn default() -> Self {
         Self {
+            projects: PickList::new(vec![]),
             tasks: vec![],
             runs: vec![],
             concurrency: 3,
@@ -387,6 +447,13 @@ impl Default for TasksView {
     }
 }
 impl TasksView {
+    pub fn with_projects(hierarchy: &HierarchySnapshot, preferred: &str) -> Self {
+        Self {
+            projects: PickList::projects(hierarchy, preferred),
+            ..Self::default()
+        }
+    }
+
     /// How many times the transcript was re-wrapped; frames with an unchanged
     /// transcript and width reuse the previous wrap.
     pub fn transcript_wraps(&self) -> u64 {
@@ -460,6 +527,13 @@ impl TasksView {
                     return false;
                 }
                 if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if editor.field == 2
+                        && editor.fields[1].trim() == "git"
+                        && !editor.accept_project()
+                    {
+                        self.message = "Select an available project".into();
+                        return false;
+                    }
                     match editor.spec() {
                         Ok(spec) => {
                             let request = editor.id.map_or_else(
@@ -518,10 +592,12 @@ impl TasksView {
             }
             KeyCode::Esc | KeyCode::Char('q') => return true,
             KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Char('n') if !self.history => self.editor = Some(TaskEditor::new(None)),
+            KeyCode::Char('n') if !self.history => {
+                self.editor = Some(TaskEditor::new(None, self.projects.clone()))
+            }
             KeyCode::Char('e') if !self.history => {
                 if let Some(task) = self.tasks.get(self.selected) {
-                    self.editor = Some(TaskEditor::new(Some(task)));
+                    self.editor = Some(TaskEditor::new(Some(task), self.projects.clone()));
                 }
             }
             KeyCode::Char('c') if !self.history => self.concurrency_input = Some(String::new()),
@@ -806,7 +882,11 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
     );
     let footer_text;
     if let Some(editor) = &view.editor {
-        footer_text = "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline";
+        footer_text = if editor.field == 2 {
+            "Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear"
+        } else {
+            "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline"
+        };
         let outer = block(if editor.id.is_some() {
             " Edit task "
         } else {
@@ -836,7 +916,31 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             let rect = Rect::new(inner.x, y, inner.width, height);
             let selected = editor.field == i;
             let marker = if selected { ">" } else { " " };
-            if i == 11 {
+            if i == 2 && selected {
+                let value = if editor.projects.query.is_empty() {
+                    &editor.fields[2]
+                } else {
+                    &editor.projects.query
+                };
+                frame.render_widget(Paragraph::new(format!("› Project: {value}▏")), rect);
+                let count = inner.bottom().saturating_sub(y + 1).min(8) as usize;
+                if count > 0 {
+                    let (lines, selected) = editor.projects.lines(count);
+                    let height = lines.len() as u16;
+                    frame.render_widget(
+                        Paragraph::new(lines),
+                        Rect::new(inner.x, y + 1, inner.width, height),
+                    );
+                    frame.set_cursor_position((
+                        inner
+                            .x
+                            .saturating_add(2)
+                            .min(inner.right().saturating_sub(1)),
+                        y + 1 + selected as u16,
+                    ));
+                    y += height;
+                }
+            } else if i == 11 {
                 let prefix = format!("{marker} Prompt: ");
                 let lines = editor.fields[i].split('\n').collect::<Vec<_>>();
                 let cursor_line = if selected {

@@ -5,7 +5,7 @@ mod git_hints;
 mod hints;
 mod input;
 mod palette;
-mod picker;
+pub(crate) mod picker;
 mod render;
 mod settings;
 mod state;
