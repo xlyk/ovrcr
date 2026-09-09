@@ -306,11 +306,13 @@ impl ServerState {
             .as_ref()
             .context("server event channel closed")?
             .clone();
-        let session = match ready {
-            Some(ready) => Session::spawn_with_ready(id, spec, size, events, ready),
-            None => Session::spawn(id, spec, size, events),
-        }
-        .context("spawn session")?;
+        let register = |_: &Arc<Session>| {
+            if let Some(ready) = ready.as_ref() {
+                ready();
+            }
+        };
+        let session = Session::spawn_registered(id, spec, size, events, &register)
+            .context("spawn session")?;
         let summary = session.summary();
         sessions.insert(id, session);
         Ok(summary)

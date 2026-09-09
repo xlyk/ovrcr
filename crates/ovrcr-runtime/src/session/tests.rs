@@ -1008,6 +1008,81 @@ fn agent_report_order_receipt_accepts_repeated_values() {
     assert!(order.accept(Some(1)).is_err());
 }
 
+#[test]
+fn group_leader_timeout_override_keeps_the_default_bound() {
+    assert_eq!(group_leader_timeout(None), GROUP_LEADER_TIMEOUT);
+    assert_eq!(group_leader_timeout(Some("")), GROUP_LEADER_TIMEOUT);
+    assert_eq!(group_leader_timeout(Some("   ")), GROUP_LEADER_TIMEOUT);
+    assert_eq!(group_leader_timeout(Some("soon")), GROUP_LEADER_TIMEOUT);
+    assert_eq!(group_leader_timeout(Some("-5")), GROUP_LEADER_TIMEOUT);
+    assert_eq!(
+        group_leader_timeout(Some(" 250 ")),
+        Duration::from_millis(250)
+    );
+}
+
+#[test]
+fn group_leader_timeout_kills_the_child() {
+    // `portable_pty` calls `setsid` in the child's `pre_exec`, before our
+    // command runs, so no real command can withhold its process group long
+    // enough to reach the deadline. The probe stands in for that child and
+    // nothing else is simulated: a live PTY child, the real poll loop against
+    // the override bound, the real kill, and the kernel's own answer to
+    // `kill(pid, 0)`.
+    let dir = tempfile::tempdir().unwrap();
+    let (events, _events_receiver) = mpsc::sync_channel(64);
+    let (observed, observed_pid) = mpsc::sync_channel(1);
+    let probe = move |pid: libc::pid_t| {
+        let _ = observed.try_send(pid);
+        false
+    };
+    let started = Instant::now();
+    let spawned = Session::spawn_with_leader_wait(
+        SessionId(70),
+        SessionSpec {
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "wedged".into(),
+            label: "sh".into(),
+            cwd: dir.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "while IFS= read -r line; do :; done".into(),
+            ],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+        LeaderWaitOverride {
+            timeout: Duration::from_millis(200),
+            probe: &probe,
+        },
+    );
+    let Err(error) = spawned else {
+        panic!("spawn must fail when the child never leads a process group");
+    };
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_millis(200),
+        "spawn must poll for the whole override bound, waited {waited:?}"
+    );
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("did not provide a process-group leader"),
+        "{message}"
+    );
+    assert!(message.contains("200ms"), "{message}");
+    let pid = observed_pid
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the group-leader poll must have observed the child PID") as u32;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while pid_exists(pid) && Instant::now() < deadline {
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert_pid_is_gone(pid);
+}
+
 fn extract_tagged_pid(screen: &[u8], tag: &[u8]) -> Option<u32> {
     let start = screen.windows(tag.len()).position(|window| window == tag)? + tag.len();
     let digits = screen[start..]
