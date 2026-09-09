@@ -1,6 +1,6 @@
 # UX Review Improvements Implementation Plan
 
-> **Execution:** Use the executing-plans workflow sequentially. Finish the first visible checkpoint before expanding the work. This document authorizes planning only; implementation begins after the user requests it.
+> **Execution:** Use the executing-plans workflow sequentially. Finish the first visible checkpoint before expanding the work. The user authorized implementation on 2026-09-09.
 
 **Goal:** Address the issues in the twelve-screenshot UX review while preserving OVRCR’s dense terminal interface.
 
@@ -39,10 +39,10 @@
 
 The local remote-tracking history contains `0e05cd8` and merge `37e0df2`. Its popup uses short rows, a selected description, a bottom-right anchor, a maximum width of 48 cells and a maximum height of 30 rows. Existing tests assert that cells outside the popup remain unchanged. This addresses the screenshot’s design complaint in source, but has not been visually verified in this task.
 
-- [ ] Refresh and record the implementation baseline. Reconcile each issue against that source so completed changes are not duplicated.
-- [ ] Run the existing compact-popup cases: `rtk proxy cargo test -p ovrcr --test tui whichkey`. Confirm a nonzero executed count.
-- [ ] Launch the isolated native GUI using the repository computer-use guide. Capture the popup at a normal window size and inspect arrow navigation, selected descriptions, disabled reasons and the final reachable action.
-- [ ] Mark this issue verified if the popup leaves session context visible and navigation works. If it fails, record the specific failure before proposing any correction; do not replace the existing popup implementation wholesale.
+- [x] Refresh and record the implementation baseline. Reconcile each issue against that source so completed changes are not duplicated.
+- [x] Run the existing compact-popup cases: `rtk proxy cargo test -p ovrcr --test tui whichkey`. Confirm a nonzero executed count.
+- [x] Launch the isolated native GUI using the repository computer-use guide. Capture the popup at a normal window size and inspect arrow navigation, selected descriptions, disabled reasons and the final reachable action.
+- [x] Mark this issue verified if the popup leaves session context visible and navigation works. If it fails, record the specific failure before proposing any correction; do not replace the existing popup implementation wholesale.
 
 ## 2. Make Browse and History actions understandable from the footer
 
@@ -52,12 +52,12 @@ The local remote-tracking history contains `0e05cd8` and merge `37e0df2`. Its po
 
 **Existing interfaces:** `key_hints(&Dashboard) -> Vec<HintGroup>` determines action semantics; `footer(&Dashboard, u16) -> String` formats hints; `draw_dashboard_at` composes mode, selection and error information.
 
-- [ ] Add a regression through the real dashboard renderer showing that a usable Browse footer contains named actions rather than a sequence of bare letters. Retain existing key availability assertions.
-- [ ] Change footer formatting to use complete `key + name` tokens drawn from enabled hints. Prioritize mode and `? Help`, then Enter/Focus, n/Create terminal and colon/Search in Browse. In Copy/History prioritize Escape’s current action, selection, copy and movement. Fit whole tokens by Unicode display width; omit lower-priority tokens rather than cutting labels.
-- [ ] Keep the existing Terminal footer. At widths too small for ordinary hints, preserve a clipped mode label; at widths that fit mode plus help, preserve both. Keep all omitted actions available through the popup.
-- [ ] Derive History escape wording from the same state that controls the existing handler: cancel a pending copy, clear an active selection, or leave History as applicable. Do not implement new Escape behavior. Have the shared hint name reflect that state so help and footer agree.
-- [ ] Account for selection/status prefixes before asking `footer` to fill the remaining width. Avoid the existing pattern where the renderer prepends more text after the footer has consumed the width budget. Errors and clipboard notices still take precedence.
-- [ ] Assert Browse, empty dashboard, Copy, History without selection, History with selection, and pending copy at representative widths of 20, 40, 80 and 120 cells. Include a nonready pane so a disabled action is not advertised. Verify that rendered text stays within the available cells and existing input behavior is unchanged.
+- [x] Add a regression through the real dashboard renderer showing that a usable Browse footer contains named actions rather than a sequence of bare letters. Retain existing key availability assertions.
+- [x] Change footer formatting to use complete `key + name` tokens drawn from enabled hints. Prioritize mode and `? Help`, then Enter/Focus and pane navigation in Browse; Create terminal and Search follow when space permits. In Copy/History prioritize Escape’s current action, selection, copy and movement. Fit whole tokens by Unicode display width; omit lower-priority tokens rather than cutting labels.
+- [x] Keep the existing Terminal footer. At widths too small for ordinary hints, preserve a clipped mode label; at widths that fit mode plus help, preserve both. Keep all omitted actions available through the popup.
+- [x] Derive History escape wording from the same state that controls the existing handler: cancel a pending copy or leave History as applicable (the existing handler does not clear an anchor separately). Do not implement new Escape behavior. Have the shared hint name reflect that state so help and footer agree.
+- [x] Account for selection/status prefixes before asking `footer` to fill the remaining width. Avoid the existing pattern where the renderer prepends more text after the footer has consumed the width budget. Errors and clipboard notices still take precedence.
+- [x] Assert Browse, empty dashboard, Copy, History without selection, History with selection, and pending copy at representative widths of 20, 40, 80 and 120 cells. Include a nonready pane so a disabled action is not advertised. Verify that rendered text stays within the available cells and existing input behavior is unchanged.
 
 **First visible checkpoint:** Capture three screenshots on the updated implementation: compact help, Browse footer and History selection footer. Present them with a short comparison before continuing to search and forms. This keeps useful feedback early.
 
@@ -69,12 +69,12 @@ The local remote-tracking history contains `0e05cd8` and merge `37e0df2`. Its po
 
 **Existing interfaces:** `Entry { label, command }`, `Command::Switch(SessionId)`, `palette_entries`, `draw_palette`, and the existing selected-index clamping. The selected command remains the authoritative target.
 
-- [ ] Add two sessions with the same name in different workspaces to the existing palette fixture. Search by session, project, workspace and ID. Verify the selected command still routes to the expected session.
-- [ ] Keep complete searchable identity in `Entry.label`; shorten only the displayed `Command::Switch` row. Format the visible row as `session name (#ID)`, reserving width for the ID and adding an ellipsis to an overlong name using existing cell-width helpers. Remove the repeated “Switch terminal” prefix from displayed rows.
-- [ ] Resolve the selected session by its ID and use the existing detail area for project/workspace context. Preserve action descriptions for non-session entries. Wrap detail text within the available area and show an explicit ellipsis if it cannot fit; do not promise unlimited path visibility in a tiny fixed popup. Ensure ID remains visible whenever the row is wide enough to hold it.
-- [ ] Replace the empty notice with `No matching actions or terminals`. Show `Edit search · Backspace delete · Esc close`; do not advertise Ctrl-u unless the search handler already supports it. Avoid adding a new editing shortcut to solve a wording issue.
-- [ ] Test CJK/emoji and long names at 40, 80 and 120 cells; inspect buffer cells at the right border. Assert duplicate-name IDs are distinguishable, filtering still uses full identity, shrinking result sets keeps selection valid, and Enter chooses the intended session.
-- [ ] Capture populated and empty search at the same GUI size as the review. The pass criterion is readable distinguishing identity, explicit truncation where unavoidable, and accurate no-match wording.
+- [x] Add two sessions with the same name in different workspaces to the existing palette fixture. Search by session, project, workspace and ID. Verify the selected command still routes to the expected session.
+- [x] Keep complete searchable identity in `Entry.label`; shorten only the displayed `Command::Switch` row. Format the visible row as `session name (#ID)`, reserving width for the ID and adding an ellipsis to an overlong name using existing cell-width helpers. Remove the repeated “Switch terminal” prefix from displayed rows.
+- [x] Resolve the selected session by its ID and use the existing detail area for project/workspace context. Preserve action descriptions for non-session entries. Use separate Project and Workspace detail lines with explicit ellipsis if either cannot fit; do not promise unlimited path visibility in a tiny fixed popup. Ensure ID remains visible whenever the row is wide enough to hold it.
+- [x] Replace the empty notice with `No matching actions or terminals`. Show `Edit search · Backspace delete · Esc close`; do not advertise Ctrl-u unless the search handler already supports it. Avoid adding a new editing shortcut to solve a wording issue.
+- [x] Test CJK/emoji and long names at 40, 80 and 120 cells; inspect buffer cells at the right border. Assert duplicate-name IDs are distinguishable, filtering still uses full identity, shrinking result sets keeps selection valid, and Enter chooses the intended session.
+- [x] Capture populated and empty search at the same GUI size as the review. The pass criterion is readable distinguishing identity, explicit truncation where unavoidable, and accurate no-match wording.
 
 ## 4. Clarify form titles and increase secondary-text contrast
 
@@ -82,11 +82,11 @@ The local remote-tracking history contains `0e05cd8` and merge `37e0df2`. Its po
 
 **Tests:** `tests/tui/palette.rs`, `tests/tui/sidebar.rs`.
 
-- [ ] Move the existing form-title match into the border-title decision: Search remains `Command palette`; forms use their existing task names; confirmation uses `Confirm action`. Remove the duplicate body title and adjust the focus-line accounting accordingly. Do not change form field order, defaults, submission or cancellation.
-- [ ] Add one secondary-text color near the existing renderer colors, initially `Color::Rgb(166, 173, 200)`. Use it for form labels, ordinary form instructions and unselected runtime/context metadata. Leave borders and disabled actions on their existing styles.
-- [ ] Remove the extra `faded(..., 65)` treatment from live unselected model labels while retaining their existing label colors. Do not globally brighten `MUTED`, which also styles separators and disabled controls. Preserve selected rows and exited-session dimming.
-- [ ] Verify through rendered buffers that the three creation forms have task titles, the active field/cursor remains visible at 40×12, and validation/error text keeps its priority. Preserve the existing request/default assertions rather than rewriting them as title-only tests.
-- [ ] Inspect screenshots of an unselected sidebar and one form. Compare normal, selected and exited rows. Accept the color only if metadata is readable while session names remain more prominent; adjust this single color if needed. Do not claim accessibility conformance from style assertions.
+- [x] Move the existing form-title match into the border-title decision: Search remains `Command palette`; forms use their existing task names; confirmation uses `Confirm action`. Remove the duplicate body title and adjust the focus-line accounting accordingly. Do not change form field order, defaults, submission or cancellation.
+- [x] Reuse the existing `SUBTEXT` color, `Color::Rgb(166, 173, 200)`. Use it for form labels, ordinary form instructions and unselected runtime/context metadata. Leave borders and disabled actions on their existing styles.
+- [x] Remove the extra `faded(..., 65)` treatment from live unselected model labels while retaining their existing label colors. Do not globally brighten `MUTED`, which also styles separators and disabled controls. Preserve selected rows and exited-session dimming.
+- [x] Verify through rendered buffers that the three creation forms have task titles, the active field/cursor remains visible at 40×12, and validation/error text keeps its priority. Preserve the existing request/default assertions rather than rewriting them as title-only tests.
+- [x] Inspect screenshots of an unselected sidebar and one form. Compare normal, selected and exited rows. Accept the color only if metadata is readable while session names remain more prominent; adjust this single color if needed. Do not claim accessibility conformance from style assertions.
 
 ## 5. Resolve the narrow-layout hypothesis with a bounded check
 
@@ -94,9 +94,9 @@ The local remote-tracking history contains `0e05cd8` and merge `37e0df2`. Its po
 
 The current sidebar width is already capped by both `DEFAULT_SIDEBAR_WIDTH` and half the available width. The screenshot alone does not establish a geometry defect. A narrower sidebar would trade terminal space against session-name visibility.
 
-- [ ] Inspect 80×24, 60×20 and 40×12 layouts using the same selected session, first with one pane and then with a split. Verify sidebar navigation, focused-pane visibility, essential footer text and narrow split fallback.
-- [ ] If these work, record the concern as evaluated with no change required. Do not add collapse controls or responsive settings just because the sidebar occupies more of a small window.
-- [ ] If a required action or focused pane becomes inaccessible, retain the failing screenshot and add the smallest assertion through the actual shared geometry. Define the specific width-allocation correction from that failure before editing. Rendering, subscriptions, cursor placement and hit testing must continue to consume the same layout; never send zero PTY dimensions.
+- [x] Inspect 80×24, 60×20 and 40×12 layouts using the same selected session, first with one pane and then with a split. Verify sidebar navigation, focused-pane visibility, essential footer text and narrow split fallback.
+- [x] If these work, record the concern as evaluated with no change required. Do not add collapse controls or responsive settings just because the sidebar occupies more of a small window.
+- [x] If a required action or focused pane becomes inaccessible, retain the failing screenshot and add the smallest assertion through the actual shared geometry. Define the specific width-allocation correction from that failure before editing. Rendering, subscriptions, cursor placement and hit testing must continue to consume the same layout; never send zero PTY dimensions.
 
 ## Verification and delivery
 
@@ -131,3 +131,18 @@ Update the existing UX diary entry and add a dated implementation follow-up to t
 - Regression evidence includes behavioral RED for footer, search/form/contrast and narrow split footer. The first narrow test attempt was a compile error from a private method; the corrected attempt failed behaviorally before the fix. Older literal-footer/color assertions were migrated without dropping lifecycle/request checks.
 - Affected TUI integration suite: 159 passed. Final workspace gates, independent review and final native captures pending at this checkpoint.
 - Evidence: `/private/tmp/ovrcr-ux-implementation-evidence/`. Original screenshots and review remain unchanged except for dated follow-ups.
+
+## Final native and review checkpoint — 2026-09-09
+
+- Eight final native screenshots plus accessibility state captured from production commit `6f5dd90`. Project registration inspected separately. [Implementation screenshot review](/private/tmp/ovrcr-ux-implementation-evidence/review.md).
+- Actual shell input produced a separate red `UX_FINAL_OK` line with wide glyphs. All three owned GUI launchers exited 0; recorded process groups, GUI/server processes, directories and sockets were absent after cleanup.
+- Independent review found two ineffective form-dismissal assertions; corrected with visible-title preconditions and task-title absence checks. Review confirmed lifecycle and exact OSC output assertions remain intact.
+- Full-suite failures exposed old terminal footer waits and a GUI creation wait using the old generic form title. Corrected these test expectations without production changes in `bbe0e0c` and `e3b2107`; retained failed logs. Focused terminal acceptance: 9 passed, 1 helper ignored. Focused GUI: 6 passed. Final full workspace result is recorded below when complete.
+- Test-only corrections leave final native screenshots applicable to the production code. Linux GUI, native clipboard delivery and real provider restoration remain unverified. No push, PR or merge performed.
+
+### Completed verification
+
+- Final behavioral revision `e3b21070eea0dc27dfcc0c6d5ac290f42812df35`: workspace all-target/all-feature suite passed, 494 tests with 6 existing ignored cases across 21 binaries. Ignored cases: three fixture helpers, one memory measurement and two installed-Pi cases.
+- TUI integration 159 passed; owning library 37 passed. Workspace compilation, Clippy with warnings denied, formatting and diff checks passed.
+- Independent review cleared implementation and test corrections. No remaining blocking findings. Full evidence, failed attempts and eight final screenshots: [implementation review](/private/tmp/ovrcr-ux-implementation-evidence/review.md).
+- All review issues are addressed or evaluated as recorded above. Documentation-only closeout follows the tested code revision. Branch and isolated checkout remain available for integration.
