@@ -155,25 +155,27 @@ pub fn encode_event(
                 mouse.held = Some((button, down));
                 return report(down, screen);
             }
+            // Nothing is held when the press landed on a GUI control rather than the
+            // terminal, and the child must not see an `Up` without its `Down`. The
+            // dashboard drops the same release.
+            let Some((_, last)) = mouse.held.take_if(|(held, _)| *held == button) else {
+                return Vec::new();
+            };
             // A release off the terminal still ends its drag, at the cell the
             // gesture last reported, or the child app keeps a selection live.
-            let held = mouse.held.take_if(|(held, _)| *held == button);
-            let release = at
-                .map(|(column, row)| MouseEvent {
+            let release = at.map_or(
+                MouseEvent {
+                    kind: MouseEventKind::Up(button),
+                    ..last
+                },
+                |(column, row)| MouseEvent {
                     kind: MouseEventKind::Up(button),
                     column,
                     row,
                     modifiers: key_modifiers(*modifiers),
-                })
-                .or_else(|| {
-                    held.map(|(_, last)| MouseEvent {
-                        kind: MouseEventKind::Up(button),
-                        ..last
-                    })
-                });
-            release
-                .map(|event| report(event, screen))
-                .unwrap_or_default()
+                },
+            );
+            report(release, screen)
         }
         // egui reports motion without modifiers or a button, so a drag carries
         // the ones its press did; free motion carries none.
@@ -497,6 +499,32 @@ mod tests {
                 &mut mouse
             ),
             b"\x1b[<32;3;2M"
+        );
+    }
+
+    #[test]
+    fn release_with_nothing_held_reports_nothing() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1002h\x1b[?1006h");
+        let screen = parser.screen();
+        let mut mouse = Mouse::default();
+        // The press landed on a GUI control outside the terminal, so nothing is held.
+        assert_eq!(
+            encode_pointer(
+                &pointer_button(egui::pos2(-10.0, -10.0), true, egui::Modifiers::NONE),
+                screen,
+                &mut mouse
+            ),
+            Vec::<u8>::new()
+        );
+        // Releasing over the terminal must not hand the child an `Up` without a `Down`.
+        assert_eq!(
+            encode_pointer(
+                &pointer_button(egui::pos2(4.0, 8.0), false, egui::Modifiers::NONE),
+                screen,
+                &mut mouse
+            ),
+            Vec::<u8>::new()
         );
     }
 
