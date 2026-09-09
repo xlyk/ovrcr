@@ -1,808 +1,438 @@
 # OVRCR
 
-OVRCR is a small terminal multiplexer for one user running many command line
-agent sessions. It groups sessions by registered Git project and workspace,
-keeps their PTYs alive while the dashboard detaches, and reconstructs the
-current screen when it reconnects.
+A terminal multiplexer for one person running many coding-agent sessions, grouped
+by Git project and worktree.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## What it is
+
+Running several coding agents at once means several long-lived terminals, each on
+its own branch, each in a state you cannot see from the others. OVRCR gives those
+terminals a shared home: you register a Git repository, create a workspace (a Git
+worktree on its own branch), and start sessions inside it. A single server owns
+every PTY, so the dashboard can detach and reattach without killing anything, and
+the same sessions can be driven from a script.
+
+Two things shape the design. OVRCR's unit of organisation is a registered project
+and its worktree workspaces, not a bare window list, so creating a workspace
+creates the branch, the worktree, and its `local` shell together. And OVRCR never
+guesses what an agent is doing: activity and context usage come from provider
+hooks that report explicitly, so a quiet terminal is not called idle.
+
+It is a synchronous Rust program — blocking I/O and threads, no async runtime —
+supporting one server, one attached dashboard, and a tested workload of 50
+sessions.
+
+## Features
+
+- Sessions grouped by registered Git project and worktree workspace, created and
+  removed with guards that refuse to touch a dirty or unregistered worktree.
+- One or two side-by-side panes, with separate Browse, Terminal, Copy, and
+  History input modes.
+- PTYs and child process groups survive dashboard detach; reattaching rebuilds
+  the current screen from the running session.
+- 512 rows of retained scrollback per session, with keyboard selection and
+  clipboard copy over OSC52.
+- Pause and resume a session's process group with SIGSTOP and SIGCONT.
+- Per-session agent activity and context occupancy, reported by provider hooks
+  (Claude Code adapters included).
+- Mouse forwarding to applications that request a tracking mode.
+- A scriptable CLI that creates, sends to, reads, and closes terminals, with
+  `--json` on every resource command.
+- Scheduled Pi agent tasks that run in fresh worktrees, with a login service.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [The dashboard](#the-dashboard)
+- [The CLI](#the-cli)
+- [Agent activity and context](#agent-activity-and-context)
+- [Scheduled tasks](#scheduled-tasks)
+- [Configuration and environment](#configuration-and-environment)
+- [Upgrading a running server](#upgrading-a-running-server)
+- [Troubleshooting](#troubleshooting)
+- [How it works](#how-it-works)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Roadmap and limits](#roadmap-and-limits)
+- [License](#license)
+
+## Requirements
+
+- macOS or Linux.
+- Rust 1.95 or newer (the workspace is edition 2024; the optional GUI helper's
+  `eframe` sets the 1.95 floor).
+- Git, for projects and workspaces.
+- Optional: [Pi](docs/scheduled-tasks.md) if you want scheduled tasks.
 
 ## Install
 
-OVRCR targets macOS and Linux and requires Rust 1.95 or newer. Build the
-binary with:
+No published package yet — build from source:
 
 ```sh
-rtk proxy cargo build -p ovrcr --release
-rtk proxy install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
+git clone https://github.com/xlyk/ovrcr.git
+cd ovrcr
+cargo build -p ovrcr --release
+install -m 755 target/release/ovrcr ~/.local/bin/ovrcr
 ```
 
-The server uses `$XDG_RUNTIME_DIR` on Linux and `$TMPDIR` on macOS for its
-private Unix socket. Set `OVRCR_SOCKET` and `OVRCR_CONFIG` when running an
-isolated instance or a test fixture. OVRCR creates a missing socket directory
-with mode 700 and refuses to start when an existing one is a symlink or is
-owned by another user. It never changes the permissions of a directory it did
-not create; the socket file itself is always mode 700, which is what gates
-connections, so other users cannot reach the server even from a shared
-directory.
-
-## Register a project
-
-OVRCR manages only registered repositories and workspaces it created:
+Check the result, including the wire protocol version a client and server must
+agree on:
 
 ```sh
-ovrcr project add consigint /Users/example/Code/consigint \
-  --workspace-root /Users/example/Code/workspaces/consigint
-ovrcr project list
+$ ovrcr --version
+ovrcr 0.1.0 (protocol 3)
 ```
 
-The workspace root is created on registration if missing.
+## Quickstart
 
-Create a workspace from a new branch:
+Register a repository and tell OVRCR where to put its worktrees. OVRCR manages
+only registered repositories and workspaces it created, and creates the workspace
+root on registration if it is missing:
+
+```sh
+ovrcr project add consigint ~/Code/consigint \
+  --workspace-root ~/Code/workspaces/consigint
+```
+
+Create a workspace. The first form cuts a new branch and requires `--base`; the
+second reuses an existing branch and rejects `--base`. Either way OVRCR creates
+the worktree and starts the workspace's `local` shell session:
 
 ```sh
 ovrcr workspace create --project consigint --name cleanup \
   --new-branch feature/cleanup --base main
-```
 
-Or use an existing branch:
-
-```sh
 ovrcr workspace create --project consigint --name cleanup \
   --branch feature/cleanup
 ```
 
-The first form requires `--base`; the second rejects it. Workspace creation
-also starts the workspace's `local` shell session.
-
-## Start sessions
-
-Launch an agent at the workspace root:
+Start an agent at the workspace root. With no command after `--`, OVRCR launches
+`$SHELL`; `--label TEXT` sets the sidebar label:
 
 ```sh
-ovrcr new --project consigint --workspace cleanup --name "review cleanup" \
-  -- codex
+ovrcr new --project consigint --workspace cleanup --name "review cleanup" -- codex
 ```
 
-Use `--label TEXT` to change the sidebar label. With no command after `--`,
-OVRCR launches `$SHELL`.
-
-Run `ovrcr` with no subcommand to open the dashboard. Browse mode uses `j`,
-`k`, and the arrow keys to select sessions; Enter enters terminal mode; `q`
-detaches. Terminal mode sends keyboard and bracketed-paste input to the
-focused PTY. Press Ctrl-g to return to browse mode. Mouse clicks select and
-collapse sidebar rows while browsing. In Terminal mode, mouse events reach the
-focused live pane only when that application has requested a tracking mode
-(X10, 1000, 1002, or 1003). Enabling SGR encoding alone does not forward
-anything. Coordinates are pane cells; clicks outside the pane are ignored, not
-clamped. Held buttons are released on the previous session before Ctrl-g, a
-selection change, or a resize. In Browse mode, or in Terminal mode when the
-focused application has not requested tracking, wheel-up over a pane opens
-History at the captured tail. Further wheel ticks move one row; wheel-down at
-the newest row returns to the live pane. History stays closed while an
-application is on the alternate screen. The dashboard shows one terminal or two
-side-by-side panes and the current `ctx —` field. Sidebar sessions use three
-lines: the session name, its label, and elapsed runtime with context usage. Context usage
-shows `-` until a provider reports it (see Context usage reporting below). The
-selected session is highlighted across all three lines; clicking any of those
-lines selects it.
-
-To view two sessions side by side, press `v` in Browse mode. It opens the
-next different visible session in a second pane. Tab or Shift-Tab changes
-the focused pane; clicking inside a terminal while browsing also focuses it.
-Sidebar navigation replaces the focused pane's session. Selecting the session
-already shown in the other pane moves focus there.
-
-Press Enter to send keyboard and paste input to the focused terminal. Ctrl-g
-returns to Browse mode, where `x` closes the focused pane and expands the
-survivor. Closing a pane leaves its session running. If the window becomes
-too narrow for both panes, only the focused pane is shown; widening it restores
-both. Detaching with `q` also leaves sessions running. A new attachment starts
-with one pane; press `v` to open the second again.
-
-Unknown sessions show `-` until a hook report is accepted. Idle sessions leave
-their status slot blank; busy sessions animate the braille spinner, waiting
-sessions show `?`, and reported errors show `!`. Exited sessions leave the slot
-blank and are dimmed. The selected metadata line shows `pid: closed` after the
-managed process exits. Live selected metadata labels the same observation as
-`agent unknown`, `agent idle`, `agent busy`, `agent waiting input`, or
-`agent error`; paused sessions retain their last label and add `paused`, while
-exited sessions omit the live activity label. Terminal output, elapsed silence,
-keyboard input, and process liveness do not imply that an agent is busy or idle.
-In Browse mode, press `p` to pause the selected live session or `r` to resume
-it. The server is authoritative for the phase, so a paused row is shown only
-after the server's session refresh is applied. Enter on a paused row stays in Browse
-mode and reports that `r` will resume it. Keyboard input, bracketed paste, and
-CLI terminal sends are rejected while a session is paused; Ctrl-g remains
-available in Terminal mode so you can return to Browse and resume it.
-Pause records successful signal delivery to the original process group; it does
-not synchronously confirm that every group member has stopped. Input admitted
-before pause may finish writing or execute after resume, and output already
-buffered before pause may appear after pause.
-Pause/resume is a process lifecycle control separate from agent activity. It
-does not declare an agent idle, cancel remote agent work, or replace the
-hook-owned activity state.
-
-Modified keys are forwarded with xterm modifier parameters, and Shift+Enter is
-forwarded as the CSI-u sequence `ESC [ 13 ; 2 u` so agents that support it
-insert a newline instead of submitting. Terminals without the kitty keyboard
-protocol report Shift+Enter as plain Enter, so the dashboard cannot tell them
-apart there.
-
-Dashboard output is delivered through a bounded queue so a detached or slow
-dashboard can reattach and refresh the current screen. Output backlog is
-coalesced into a per-session refresh when necessary; control responses and
-lifecycle events are preserved, and the dashboard disconnects if the queue
-cannot accept one of those messages.
-
-Detaching leaves the server, PTYs, and child process groups running. Run
-`ovrcr` again to reattach and rebuild the selected terminal from its current
-screen. Reattach works while the original dashboard is gone; the MVP does not
-restore a PTY after a server crash or reboot.
-
-## Command palette
-
-Press Space in Browse, Copy, or History to show the available keys. The next
-key runs an enabled action and closes the popup: Space then `n` opens the
-terminal form in Browse. Bare hotkeys still work. Press `?` to browse the
-same popup with arrows and Enter, or click an enabled row. Escape closes it.
-Disabled rows stay visible with a reason. In a narrow window, the highlighted
-row's description appears below the key list; arrows reveal offscreen rows.
-Terminal mode has no popup: press `Ctrl-g` to return to Browse first.
-
-Browse shortcuts include `w` to create a workspace, `a` to register a project,
-`t` (or `Ctrl-t`) for tasks, and `X` to confirm closing a session. Lowercase
-`x` still closes only a split pane; its session keeps running. Space now opens
-the popup in Copy and History; use `v` to set a selection anchor.
-
-The popup, palette key descriptions, and enabled-key footer use one hint
-table. New descriptions must name the selected target, state the consequence,
-and say whether confirmation follows. Disabled actions replace the description
-with a reason, such as “Resume: not paused”. Detach explicitly says that the
-server and every session keep running.
-
-An empty dashboard shows registration, palette, and help shortcuts plus the
-config and socket paths. Clicking an empty workspace shows how to start a
-terminal there and prefills that workspace in the terminal form.
-
-Press `n` in browse mode to create a terminal. From a focused terminal, press
-`Ctrl-g` first. The Agent field lists coding agents found on `PATH` in this
-order: `claude`, `codex`, `gemini`, `aider`, `opencode`, `pi`, `goose`, `amp`,
-`cursor-agent`. `shell` (`$SHELL`, or `/bin/sh` when unset) is always last
-before Custom. Workspace lists `project / workspace` pairs and defaults to the
-selected session. Name defaults to `local` when the agent is `shell` and that
-name is free in the workspace; otherwise it is `<agent>-1`, `<agent>-2`, and
-so on. Custom shows a Command field that runs through `/bin/sh -lc`. After the
-session starts, typing goes to it immediately.
-
-Press `:` in browse mode, or `Ctrl-g` then `:` from a terminal, to open the
-command palette. `Cmd-K` opens the popup anywhere in the GUI window and moves
-keyboard focus into it. If the dashboard has detached, it reconnects first.
-Type to filter actions or search a terminal by its project, workspace, and
-name. The Create terminal entry is labeled `Create terminal (n)`. Register
-project is `Register project (a)`. Use the arrow keys to select a result,
-Enter to continue, and Escape to cancel.
-
-Press `a` in browse mode to register a project. Repository and Workspace root
-are path pickers: the list is one directory of children, directories only,
-filtered by fuzzy subsequence on the last path segment. Hidden names stay
-hidden unless that segment starts with `.`. Git checkouts sort first and are
-marked `git`. Tab accepts the highlight and appends `/`. Enter keeps the typed
-text and moves on. An empty field lists `picker_roots` from `dashboard.toml`
-(default `~/Code`, `~/src`, and `~` when those exist). Name is the repository
-basename once a path is chosen. Workspace root is `<config dir>/workspaces/<name>`
-until you edit it. It is created on registration if missing.
-
-The palette can also switch terminals, create workspaces, close terminals, and
-remove workspaces or projects. Forms prefill from the selected terminal where
-that applies. On a pick list, Up/Down move the highlight and Tab or Enter
-accepts. On a text field, Tab or the arrow keys move between fields; Enter
-advances and submits at the last field. Ctrl-u clears a field; Backspace
-deletes its last character.
-
-Press `w` in browse mode, type a workspace name, and press Enter to create
-and select its `local` shell. The palette also lists `Create workspace (w)`.
-Project defaults to the selected terminal's project. Name has initial focus;
-Tab and Shift-Tab reach the other fields. On Branch mode, Space or Left/Right
-switches between `new` and `existing`. New branches start as `feature/<name>`
-and follow Name until you edit Branch. Existing mode lists local branches
-and hides Base.
-
-Base defaults to the repository's `origin/HEAD` target, then `main`, `master`,
-or the current HEAD. A remote-only default uses its full Git ref as Base.
-Git suggestions load in the background, are cached per project until the
-palette closes, and time out after two seconds. A footer
-note explains failures; Branch and Base then accept free text. Enter waits
-for pending suggestions before submitting. Project registration takes the
-repository and workspace-root paths.
-
-Dashboard settings live in `dashboard.toml` beside `config.toml`. Override the
-path with `OVRCR_DASHBOARD_CONFIG`. Do not put these keys in `config.toml`; the
-server rewrites that file and drops unknown tables. A missing file uses
-defaults. A parse error shows in the footer and also uses defaults. An
-`[[agents]]` row whose name matches a detected agent replaces its argv; a new
-name is inserted before `shell`:
-
-```toml
-branch_prefix = "feature/" # Prefix for new workspace branches
-picker_roots = ["~/Code", "~/src", "~"]
-
-[[agents]]
-name = "claude"
-argv = ["claude", "--verbose"]
-```
-
-Close and remove actions show their target and require confirmation. Existing
-server safeguards still apply: workspaces must have no terminal records and
-a clean worktree before removal. Errors remain in the palette, with form
-values retained. Input stays in the palette while it is open.
-
-### Historical scrollback
-
-In Browse mode, select a session and press PageUp, or scroll the wheel up over
-the pane, to open its retained output.
-History starts as a frozen snapshot, so live PTY output does not move the rows
-under review. The footer marks new live output while the snapshot is open.
-Use Up/Down or `k`/`j` for one row, PageUp/PageDown for one viewport, Home/End
-for the oldest or newest captured row, and Left/Right or `h`/`l` to move across
-wide rows. With no copy request in progress, press Escape, `q`, or Ctrl-g to
-close history and return to Browse. Enter and paste do not send input while
-reading history.
-
-The server keeps at most 512 physical history rows per session. New output
-evicts the oldest rows after that bound; it does not create a second retained
-copy for each finite burst. Eviction can leave a wrapped continuation after the
-beginning of its logical line is gone; retained rows preserve their original
-physical widths. Exited session records keep their retained rows until the
-record is removed. A dashboard connection owns at most one frozen
-snapshot, and its client cache keeps at most sixteen bounded pages. History
-pages contain at most 16 rows by 128 columns and are limited to the existing
-128 KiB response bound.
-
-History rows keep the terminal geometry and wrapping captured when the snapshot
-was made. Resizing the live terminal changes the history viewport, but does not
-reflow or rewrite captured rows; use horizontal navigation to reveal columns
-captured outside the viewport. The history view is capped at 64 rows by 256
-columns inside a larger pane. Alternate-screen applications do not provide a
-history transcript. Retained history lives in memory with the session and is
-lost when the server exits; it is not persisted to disk.
-
-### Keyboard copy
-In Browse mode, press `[` to freeze the selected session's current screen for
-copying. From Terminal mode, press Ctrl-g first. Use arrows or `hjkl` to move,
-Home/`0` and End/`$` for row bounds, and `g`/`G` for screen bounds.
-Press `v` to set an anchor, move to the other end of the range, then
-press `y` or Enter to request a clipboard copy. Both endpoints are included.
-Escape, `q`, or Ctrl-g leaves Copy mode. Live output continues while the
-captured screen stays fixed; resizing the terminal cancels this selection.
-
-To select older output, enter History with PageUp or the wheel. Scroll to a loaded cursor
-and press `v` to anchor it. Movement then extends the range;
-PageUp/PageDown move by a viewport, Home/End move to row bounds, and
-`g`/`G` move to snapshot bounds. Movement waits when a target cell needs
-loading. Press `y` to load and copy the selected range across history pages.
-Escape cancels an in-progress copy and retains the selection; another Escape
-leaves History. `q` or Ctrl-g leaves immediately. History selections retain
-the snapshot's original row widths when the live terminal is resized.
-
-Clipboard requests use OSC52 and require permission from the host terminal,
-including any intervening multiplexer. The limit is 65,536 UTF-8 bytes.
-The notice `Clipboard request sent; paste to verify` confirms the request
-was written, so verify it by pasting in the destination application.
-Terminals that disable or lack OSC52 can ignore the request silently.
-Selections remain available after clipboard or size errors. Soft-wrapped rows
-join without added newlines; hard line breaks, explicit spaces, and stored
-Unicode text are preserved.
-
-## Control terminals from scripts
-
-The `project`, `workspace`, and `terminal` groups also accept the plural names
-`projects`, `workspaces`, and `terminals`. `project create` aliases `project add`;
-`project delete` and `workspace delete` alias their guarded `remove` commands.
+Open the dashboard:
 
 ```sh
-ovrcr project list
-ovrcr project get consigint
+ovrcr
+```
+
+`j`/`k` select a session, `Enter` starts typing into it, `Ctrl-g` returns to
+Browse, and `q` detaches and leaves everything running. Press `Space` at any time
+to see the keys that apply right now.
+
+## The dashboard
+
+`ovrcr` with no subcommand attaches the dashboard, starting a server if none is
+running. Four input modes, named in the footer:
+
+| Mode | Enter | Leave |
+| --- | --- | --- |
+| Browse | default, or `Ctrl-g` | `q` detaches |
+| Terminal | `Enter` on a running session | `Ctrl-g` |
+| Copy | `[` | `Esc`, `q`, `Ctrl-g` |
+| History | `PageUp`, or wheel up over a pane | `Esc`, `q`, `Ctrl-g` |
+
+Terminal mode forwards keyboard and bracketed-paste input to the focused PTY and
+intercepts only `Ctrl-g`. The keys below are Browse mode:
+
+| Key | Action |
+| --- | --- |
+| `j` `k` Down Up | Select the next or previous visible session |
+| `Enter` | Type into the focused pane's session |
+| `v` | Open a second pane with the next different session |
+| `Tab` `Shift-Tab` | Focus the other pane |
+| `x` | Close the focused pane; its session keeps running |
+| `n` | Create a terminal |
+| `w` | Create a workspace |
+| `a` | Register a project |
+| `X` | Close the selected terminal, with confirmation |
+| `p` `r` | Pause or resume the selected session |
+| `[` | Freeze the current screen for copying |
+| `PageUp` | Open the session's retained history |
+| `t` `Ctrl-t` | Scheduled tasks |
+| `:` | Command palette |
+| `Space` `?` | Key popup: `Space` runs the next key, `?` browses with arrows |
+| `q` | Detach; the server and every session keep running |
+
+The sidebar gives each session three lines — name, label, and elapsed runtime with
+context usage — and marks its reported activity: blank when idle, a braille
+spinner when busy, `?` when waiting for input, `!` on a reported error, and `-`
+until a hook report arrives. Exited rows are dimmed.
+
+`Space` and `?` open the same popup, built from the same hint table that labels the
+palette and footer. Disabled actions stay visible with a reason, such as
+`Resume: not paused`, so the popup also explains why a key will not work.
+
+Everything else — full key tables for Copy and History, mouse and scroll
+behaviour, history and clipboard bounds, the palette's forms and path pickers, and
+`dashboard.toml` settings — is in the
+[dashboard reference](docs/dashboard.md).
+
+## The CLI
+
+The dashboard is optional. Every session is reachable from a script, and names and
+terminal IDs are always explicit — no command infers a target from the current
+directory.
+
+```sh
+ovrcr list                                        # whole hierarchy
+ovrcr project list                                # projects only
 ovrcr workspace list --project consigint
-ovrcr workspace get --project consigint --name cleanup
 ovrcr terminal list --project consigint --workspace cleanup
-```
 
-`project list` shows projects only. `ovrcr list` retains the complete hierarchy.
-Terminal lists include running sessions and retained exited records. A workspace
-filter requires `--project`. Names and terminal IDs are explicit; commands do
-not infer a target from the current directory.
-
-Read commands do not start a server. When the server is absent, project and
-workspace queries read the persisted registry and terminal lists are empty.
-Reading or controlling a missing terminal returns an error. Removal and kill
-commands (`project remove`, `workspace remove`, `terminal kill`, `terminal
-remove`, `kill`, `session remove`) also never start a server: with no server
-running they fail with "OVRCR server is not running", because there is nothing
-to remove. Only `new`, `terminal create`, `project add`, `workspace create`,
-and the dashboard start one on demand. Every request is bounded: an ordinary
-request fails after 30 seconds without a response, and kill, close, and
-shutdown after 60 seconds.
-
-### Launch, send, read, and close
-
-This example starts with an existing registered repository and creates a clean
-worktree. Replace the repository and workspace-root paths with your own:
-
-```sh
-ovrcr project add example /path/to/repo --workspace-root /path/to/workspaces
-ovrcr workspace create --project example --name cli-demo \
-  --new-branch feature/cli-demo --base main
-terminal_id=$(ovrcr terminal create --project example --workspace cli-demo \
+id=$(ovrcr terminal create --project consigint --workspace cleanup \
   --name shell -- /bin/sh)
-ovrcr terminal send "$terminal_id" --text "printf 'hello from CLI\\n'"
-ovrcr terminal read "$terminal_id"
-ovrcr terminal read "$terminal_id" --max-lines 5
-ovrcr terminal close "$terminal_id"
-# Workspace creation also started a terminal named local. Find and close it:
-ovrcr terminal list --project example --workspace cli-demo
-ovrcr terminal close LOCAL_TERMINAL_ID
-ovrcr workspace remove --project example --name cli-demo
-ovrcr project remove example
+ovrcr terminal send "$id" --text "cargo test"
+ovrcr terminal read "$id" --max-lines 20
+ovrcr terminal close "$id"
 ```
 
-Arguments after `--` are passed directly to the executable. With no executable,
-`terminal create` launches `$SHELL`. Sessions start at the workspace root.
+Add `--json` to any resource command for machine-readable output; the mode is
+always explicit and is never turned on automatically in CI or an agent
+environment.
 
-`terminal send` respects bracketed-paste mode and then sends Enter. Add
-`--no-submit` to omit that final Enter. Embedded newlines remain part of the
-text, so a program without bracketed-paste support may process those newlines
-as input. A successful send means the input was written; it does not establish
-program readiness or completion. A read immediately after send can therefore
-show the earlier screen; read again to observe subsequent output.
+Three behaviours worth knowing before scripting against it:
 
-`terminal read` returns plain text from the current active screen, including
-an exited terminal's retained final screen. `--max-lines N` selects the last N
-text lines and requires a positive number. It does not expose scrollback.
-CLI reads and sends do not select or resize the dashboard terminal.
+- `send` respects bracketed-paste mode and then sends Enter, which `--no-submit`
+  omits. A successful send means the bytes were written, not that the program was
+  ready or finished. `read` returns the current screen, so a read straight after a
+  send can show the earlier one; read again.
+- Read commands never start a server. With no server running, project and
+  workspace queries fall back to the persisted registry and terminal lists are
+  empty. Only `new`, `terminal create`, `project add`, `workspace create`, and the
+  dashboard start one on demand.
+- Requests are bounded: 30 seconds for an ordinary request, 60 for `kill`,
+  `close`, and `shutdown`.
 
-`terminal close` stops the whole process group, waits for cleanup, and removes
-its record. Cleanup failure leaves the record available. To retain the final
-screen, use `terminal kill ID`, then `terminal remove ID` when finished.
-The legacy `kill ID` and `session remove ID` commands remain available.
-
-### JSON output
-
-Add `--json` to resource commands for machine-readable output. The mode is
-explicit and is not selected automatically in CI or an agent environment.
+Stopping things:
 
 ```sh
-ovrcr project list --json
-ovrcr workspace get --project consigint --name cleanup --json
-ovrcr terminal list --project consigint --json
-ovrcr terminal read 7 --json
+ovrcr pause ID          # SIGSTOP the session's process group
+ovrcr resume ID         # SIGCONT it
+ovrcr kill ID           # stop it, keep the final screen
+ovrcr session remove ID # drop the exited record
+ovrcr shutdown          # stop an empty server; --kill also stops sessions
 ```
 
-Resource lists return arrays. `ovrcr list --json` returns the legacy hierarchy as
-an array of projects with nested `workspaces`, each containing `terminals`.
-Get commands and terminal creation return objects. Other
-successful mutations return `{"ok":true}`. Project records include `name`,
-`repo`, `workspace_root`, and `workspace_count`; workspace records include
-`project`, `name`, `path`, `branch`, and `terminal_count`. Terminal records use
-numeric `id`, `phase` (`running`, `paused`, or `exited`), and nullable `exit_code` and
-`exit_signal`, alongside ownership, label, PID, start time, and `activity`.
-Activity is one of `unknown`, `idle`, `busy`, `waiting_input`, or `error` and
-is the latest accepted provider observation. Capability and hook transport
-fields are never included. Screen reads return `id`, `rows`, `cols`, and
-`text`. Terminal records also include `context_usage` and `context_stale`; the
-legacy `ovrcr list --json` hierarchy and default human-readable list keep their
-existing shape.
+The [CLI reference](docs/cli-reference.md) has the full command list and aliases,
+JSON record shapes, removal guards, the exact signal sequence `kill` uses, and a
+copy-pasteable transcript against a disposable repository.
 
-Runtime errors exit 1 and, with `--json`, write an
-`{"error":{"code":"NotFound","message":"…"}}` object to stderr. Successful
-results go to stdout. Argument errors retain normal help diagnostics and exit
-2, including with `--json`.
+## Agent activity and context
 
-### Agent hook reporting
-
-Managed sessions receive `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
-`OVRCR_HOOK_TOKEN` in their child environment. A provider hook can report an
-explicit activity state with:
+Managed sessions inherit `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
+`OVRCR_HOOK_TOKEN`. A provider hook uses them to report state:
 
 ```sh
 ovrcr report activity --state busy --sequence 1
-ovrcr report activity --state waiting-input --sequence 2
-ovrcr report activity --state idle --sequence 3
+ovrcr report context --stdin-json < context.json
 ```
 
-The report command requires those inherited identity variables, uses only the
-inherited hook socket, and has a one-second total deadline. Successful reports
-are silent, including with `--json`. The accepted states are `unknown`, `idle`,
-`busy`, `waiting-input`, and `error`. OVRCR retains the last accepted report in
-memory and exposes that observation after dashboard detach and reconnect.
-Receipt-order reports are accepted in arrival order; omitting `--sequence`
-selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects
-sequenced mode, which must advance its session sequence; the two modes cannot
-mix, and sequence counters cannot restart between turns. This provides ordering
-checks, without causal ordering, exactly-once delivery, health claims, retries,
-or an implicit timeout meaning for provider work.
+OVRCR keeps the last accepted report in memory and shows it across detach and
+reconnect. Accepted activity states are `unknown`, `idle`, `busy`,
+`waiting-input`, and `error`. Context reports replace the whole stored sample and
+go stale after five minutes, which the dashboard marks with a trailing `~`
+(`25%~`).
 
-Claude Code command hooks can translate supported hook events into activity
-reports. Add these entries manually to the existing `~/.claude/settings.json`;
-retain unrelated settings and handlers. If `ovrcr` is not on the provider's
-`PATH`, replace it with the installed absolute OVRCR path.
+`ovrcr report claude` and `ovrcr report claude-context` are ready-made adapters for
+Claude Code's hooks and status line. OVRCR never edits provider settings: you add
+the handlers yourself.
 
-```json
-{
-  "hooks": {
-    "SessionStart": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "PreToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "PermissionRequest": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "PostToolUse": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "PostToolUseFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "Stop": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "StopFailure": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}],
-    "SessionEnd": [{"hooks":[{"type":"command","command":"ovrcr report claude --stdin-json","timeout":2}]}]
-  }
-}
-```
+See [agent reporting](docs/agent-reporting.md) for the adapters' event mapping,
+the report schema and validation rules, sequencing guarantees, and the
+`ovrcr session context` inspection command.
 
-The adapter reads only the provider JSON on standard input. It maps
-`SessionStart` and `Stop` to `idle`, prompt and tool events to `busy`,
-`PermissionRequest` to `waiting-input`, `StopFailure` to `error`, and
-`SessionEnd` to `unknown`. Events containing `agent_id`, unknown events, and
-notifications are ignored. Malformed input, an unavailable server, and report
-timeouts are fail-open and produce no stdout; add `--verbose` for a bounded
-diagnostic on stderr. A successful adapter invocation means only that its
-local report attempt was handled; it does not approve a provider operation or
-claim that a callback was delivered exactly once.
-These are OVRCR's default observations rather than an upstream provider
-state-machine guarantee. `Stop` is a last observation, so a later callback can
-report that execution continued.
-
-### Context usage reporting
-
-Context reports are complete replacements for the stored context sample. A
-generic report has this shape; every accepted report replaces the model,
-conversation, usage, capacity, and receipt timestamp from the previous sample:
-
-```json
-{
-  "source": "generic",
-  "model": "agent-model",
-  "conversation": "conversation-id",
-  "used_tokens": 25000,
-  "capacity_tokens": 200000
-}
-```
-
-Send it from a managed session with:
-
-```sh
-rtk proxy ovrcr report context --stdin-json < context.json
-```
-
-The fields other than `source` are optional. Send `null` or omit a field to
-clear that value in the replacement. Unknown keys, negative or fractional
-counts, zero capacity, empty or overlong identifiers, and control characters
-are rejected. The accepted `source` values are `generic` and
-`claude_code_statusline`.
-
-Each context stream has its own ordering state, independent of activity. The
-first report without `--sequence` selects receipt order for the entire PTY
-lifetime; later unsequenced reports are accepted in arrival order. The first
-sequenced report must use a positive value, and later values must increase
-strictly. A stream cannot switch between receipt and sequenced modes or restart
-its counter between turns. An unsequenced adapter, including the Claude
-status-line adapter, can prove only receipt order. OVRCR cannot infer provider
-causality when callbacks race or arrive late, so do not combine independent
-agent roots in one PTY.
-
-Before any report is accepted, the session's context is unknown: the dashboard
-shows `ctx —`, and inspection returns `context_usage: null` with `stale: null`.
-An accepted report whose usage or capacity is unknown remains a stored sample,
-but the dashboard still shows `ctx —`; a later complete report replaces it.
-Context is source-reported current occupancy. For Claude status-line input,
-OVRCR uses
-`context_window.current_usage.input_tokens`,
-`cache_creation_input_tokens`, and `cache_read_input_tokens` when all three are
-present, and sums those counters as `used_tokens`. It does not use output
-tokens, a provider percentage, a model-name capacity fallback, or
-`total_input_tokens` as a cumulative billing counter.
-
-Samples are kept in memory with their receipt time. Freshness is advisory and
-uses the wall clock: a clock earlier than the receipt marks the sample stale,
-and wall-clock changes may shorten or extend its apparent freshness. A sample
-is fresh while its receipt age is under five minutes; at five minutes or more,
-or as soon as its session exits, the dashboard appends `~` to its value (for
-example, `25%~`). The same state appears as `stale: true` in inspection and
-`context_stale: true` in terminal inventory. A server restart loses the live
-sample.
-
-Inspect one session without starting a server:
-
-```sh
-rtk proxy ovrcr session context SESSION_ID
-```
-
-The command always emits bare JSON, including `session`, `context_usage` with
-the replacement report and `received_unix_ms`, and `stale`:
-
-```json
-{
-  "session": 7,
-  "context_usage": {
-    "report": {
-      "source": "generic",
-      "model": "agent-model",
-      "conversation": "conversation-id",
-      "used_tokens": 25000,
-      "capacity_tokens": 200000
-    },
-    "received_unix_ms": 1770000000000
-  },
-  "stale": false
-}
-```
-
-Claude Code can provide status-line context through its status-line command.
-Apply this manually in a disposable Claude configuration and preserve any
-existing status-line setting; OVRCR never edits provider settings
-automatically.
-The adapter prints `ctx N%` only after the report is accepted. Invalid input,
-unavailable transport, and a rejected report return a nonzero error, unlike the
-fail-open Claude activity adapter above.
-
-```json
-{"statusLine":{"type":"command","command":"rtk proxy ovrcr report claude-context --stdin-json"}}
-```
-
-See the [Claude Code status-line configuration](https://code.claude.com/docs/en/statusline#manually-configure-a-status-line)
-for the provider setting.
-
-Start each root provider process as its own managed session so its inherited
-capability identifies the correct PTY:
-
-```sh
-ovrcr new --project demo --workspace hooks --name agent -- claude
-```
-
-Do not share one OVRCR PTY between independent agent roots. To uninstall,
-remove only these handlers from the existing settings file and restart the
-agent session. OVRCR does not install or modify provider settings.
-
-### Upgrading a running server
-
-The new control commands require the updated server binary. An already-running
-server continues running its original version after a rebuild. Close its
-terminals and run `ovrcr shutdown`, then launch the updated binary. If you
-intend to stop all sessions together, the existing `ovrcr shutdown --kill`
-command does that. The CLI never stops an old server automatically or restores
-its lost PTYs. The project/workspace registry requires no migration.
-
-## Scheduled Pi tasks
+## Scheduled tasks
 
 OVRCR can run scheduled Pi agents in fresh Git worktrees or scratch directories.
 Task definitions, run history, and transcripts are persistent. The scheduler uses
 three concurrent slots by default and gives each run a one-hour timeout.
 
-See [Schedule agent tasks](docs/scheduled-tasks.md) for CLI commands, background
+See [scheduled tasks](docs/scheduled-tasks.md) for the CLI commands, background
 service installation, scheduling rules, and retained-work cleanup.
 
-## Session lifecycle
+## Configuration and environment
 
-List sessions, stop a process group, and remove an exited record:
+| Path | Default |
+| --- | --- |
+| Registry / config | `~/Library/Application Support/ovrcr/config.toml` on macOS, `$XDG_CONFIG_HOME/ovrcr/config.toml` (usually `~/.config/ovrcr`) on Linux |
+| Dashboard settings | `dashboard.toml` beside `config.toml` |
+| Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
+| Server log | `server.log` beside the socket |
 
-```sh
-ovrcr list
-ovrcr pause SESSION_ID
-ovrcr resume SESSION_ID
-ovrcr kill SESSION_ID
-ovrcr session remove SESSION_ID
+The server writes `config.toml` itself and drops tables it does not know, so
+dashboard settings belong in `dashboard.toml` only.
+
+| Variable | Effect |
+| --- | --- |
+| `OVRCR_CONFIG` | Registry path; selects an isolated instance |
+| `OVRCR_SOCKET` | Server socket path; selects an isolated server |
+| `OVRCR_DASHBOARD_CONFIG` | `dashboard.toml` path |
+
+Set `OVRCR_CONFIG` and `OVRCR_SOCKET` together for a test fixture or a second
+instance. OVRCR creates a missing socket directory with mode 700 and refuses to
+start when an existing one is a symlink or owned by another user. It never changes
+the permissions of a directory it did not create. The socket file itself is always
+mode 700, and that is what gates connections, so other users cannot reach the
+server even from a shared directory.
+
+These are read by the binary but exist for the integration suite and unusual
+deployments; ordinary use needs none of them:
+
+| Variable | Effect |
+| --- | --- |
+| `OVRCR_SERVER_EXECUTABLE` | The binary a command runs as `server` when it starts one on demand (default: the running executable) |
+| `OVRCR_KILL_GRACE_MS` | The server's grace period before SIGKILL for kill, close, and `shutdown --kill` (default 5000) |
+| `OVRCR_REQUEST_TIMEOUT_MS` | The client's bound on one request round trip (default 30000, or 60000 for kill, close, and shutdown) |
+| `OVRCR_ENV_FILE` | An environment file the server loads before starting; the installed service points it at the file given to `service install` |
+| `OVRCR_PI_EXECUTABLE` | The Pi binary used by scheduled tasks |
+
+## Upgrading a running server
+
+A running server keeps its original version after you rebuild, and the client
+refuses to talk to a mismatched wire protocol, for example:
+
+```
+protocol version mismatch: the server speaks version 2 but this client speaks
+version 3; stop the old server with `ovrcr shutdown --kill` (or restart the
+installed service) and retry
 ```
 
-`pause ID` sends SIGSTOP to the process group owned by that session and to any
-job-control subgroup attached to its terminal; `resume ID` sends SIGCONT to
-the same groups. Both commands require a live,
-managed session and leave the session record in place. While paused, the server
-rejects input admission until `resume ID` succeeds.
-
-`kill` signals every process group attached to the session's terminal: the
-managed process group and any job-control subgroup an interactive shell
-started. It sends SIGTERM and SIGCONT first so handlers can run, sends SIGHUP
-to any group still present half a second later, and uses SIGKILL after the
-five-second grace period when members remain. SIGHUP is what a closed
-terminal window delivers and is the only signal interactive shells honour, so
-`local` shells exit within about half a second instead of waiting out the
-grace period; a program that needs longer than that to finish its SIGTERM
-handling must also handle SIGHUP. Processes that detach from the terminal
-with `setsid` are outside the session and are not signalled. A stopped group
-is resumed with SIGCONT during cleanup so its handlers and waiters can run;
-OVRCR then waits for the final PTY output, reader and child-waiter completion,
-and group disappearance before reporting successful cleanup. A session stays in
-the hierarchy after exit until `session remove` is requested, so its final
-screen remains available.
-
-Pause and termination target the original process group established for the
-OVRCR-owned PTY. OVRCR cannot adopt a process launched through another terminal
-or PTY, and it does not promise to freeze descendants that move into another
-group or to pause remote work or services. External job control can change
-membership or stopped state, and the inherited PID/PGID reuse race remains a
-limit of the ownership check; this is not a process-identity sandbox.
-
-Workspace removal is guarded. Every session must be stopped and removed, the
-worktree must have a clean Git status, its canonical path must match the
-registry, and Git's worktree list must agree with the registry:
-
-```sh
-ovrcr workspace remove --project consigint --name cleanup
-ovrcr project remove consigint
-```
-
-Removal uses ordinary `git worktree remove` and preserves the branch. OVRCR
-never removes a repository or an unregistered worktree. If the worktree
-directory was deleted outside OVRCR, removal instead runs `git worktree prune`,
-but only after Git itself lists the registered path and branch as prunable,
-and then drops the registry record.
-
-## Shutdown
-
-An empty server can be stopped with:
-
-```sh
-ovrcr shutdown
-```
-
-This refuses while sessions remain. `ovrcr shutdown --kill` terminates every
-managed process group and then stops the server.
+Close its terminals and run `ovrcr shutdown`, then launch the updated binary. Use
+`ovrcr shutdown --kill` if you intend to stop all sessions together. The CLI never
+stops an old server automatically and never restores its lost PTYs. The
+project/workspace registry needs no migration.
 
 ## Troubleshooting
 
-### Test hooks and advanced variables
+A server that a command started in the background writes its output to
+`server.log` beside the socket. When startup fails, the command reports the exit
+status and the last lines of that log, which is where a corrupt registry, an
+unusable socket directory, or a damaged task store shows up. Run `ovrcr server` in
+the foreground to watch the same output live.
 
-These variables are read by the binary but exist for the integration suite
-and unusual deployments; ordinary use needs none of them.
+Compare a client against a long-running server with `ovrcr --version`, which
+prints both the package and the protocol version.
 
-- `OVRCR_SERVER_EXECUTABLE`: the binary a command runs as `server` when it
-  starts one on demand (default: the running executable).
-- `OVRCR_KILL_GRACE_MS`: the server's grace period before SIGKILL for kill,
-  close, and `shutdown --kill` (default 5000).
-- `OVRCR_REQUEST_TIMEOUT_MS`: the client's bound on one request round trip
-  (default 30000, or 60000 for kill, close, and shutdown).
-- `OVRCR_ENV_FILE`: an environment file the server loads before starting;
-  the installed service points it at the file given to `service install`.
-- `OVRCR_PI_EXECUTABLE`: the Pi binary used by scheduled tasks (see
-  `docs/scheduled-tasks.md`).
+## How it works
 
-A server that a command started automatically writes its output to
-`server.log` beside the socket, so with the default paths that is
-`$XDG_RUNTIME_DIR/ovrcr/server.log` on Linux and `$TMPDIR/ovrcr-UID/ovrcr/server.log`
-on macOS. When startup fails, the command reports the exit status and the
-last lines of that log; a corrupt registry, an unusable socket directory, or
-a damaged task store shows up there. Run `ovrcr server` in the foreground to
-see the same output live. `ovrcr --version` prints the package version so a
-client and a long-running server can be compared after an upgrade.
+A single server process owns everything with state: the registry, the Git
+worktrees, the PTYs, and the sessions. Clients — the dashboard and every CLI
+command — connect over a private Unix socket and speak a versioned binary
+protocol. The server is authoritative: a dashboard renders what the server has
+confirmed rather than predicting it, which is why a paused row appears only after
+a session refresh and why input is revoked the moment focus or geometry changes.
 
-## Disposable repository transcript
+There is no async runtime. A synchronous dispatcher reads frames, a single writer
+owns each socket, and per-session threads pump PTY output into bounded queues. When
+a queue cannot keep up, output is coalesced into a per-session screen refresh;
+control responses and lifecycle events are never dropped, and the dashboard is
+disconnected explicitly if one of those cannot be delivered.
 
-The following transcript uses an isolated temporary repository, config, and
-socket. The trap stops the disposable server and removes the fixture:
+The Cargo workspace has five packages:
+
+| Package | Owns |
+| --- | --- |
+| `ovrcr-protocol` | Shared wire types, validation, and framing |
+| `ovrcr-terminal` | Terminal parsing, encoding, and screen/history primitives |
+| `ovrcr-runtime` | The server, PTY and session ownership, registry persistence, Git worktrees, task execution |
+| `ovrcr-tui` | Dashboard state, input routing, rendering, task UI |
+| `ovrcr` (root) | CLI and client, reporting, service integration, optional GUI helper |
+
+`ovrcr-runtime` and `ovrcr-tui` both depend on the protocol and terminal
+primitives and never on each other; the root package composes them and keeps its
+facades thin.
+
+[`AGENTS.md`](AGENTS.md) states the invariants a change has to preserve —
+ownership and lock order, the spawn/registration boundary, input-permission rules,
+and the evidence each kind of claim requires. Read it before editing, rather than
+inferring the rules from this summary.
+
+## Development
+
+`just` with no arguments lists every recipe:
 
 ```sh
-$ d=$(mktemp -d)
-$ export OVRCR_CONFIG="$d/config.toml"
-$ export OVRCR_SOCKET="$d/server.sock"
-$ trap 'if [ -e "$OVRCR_SOCKET" ]; then ovrcr shutdown --kill >/dev/null 2>&1 & p=$!; i=0; while kill -0 "$p" 2>/dev/null && [ "$i" -lt 150 ]; do sleep 0.1; i=$((i + 1)); done; status=0; if kill -0 "$p" 2>/dev/null; then kill -KILL "$p" 2>/dev/null || true; wait "$p" 2>/dev/null || true; status=124; else wait "$p"; status=$?; fi; if [ "$status" -ne 0 ] || [ -e "$OVRCR_SOCKET" ]; then echo "cleanup failed; preserving $d" >&2; exit 1; fi; fi; rm -rf "$d"' EXIT
-$ git -C "$d" init -b main
-$ git -C "$d" config user.name OVRCR
-$ git -C "$d" config user.email ovrcr@example.invalid
-$ printf 'fixture\n' > "$d/README"
-$ git -C "$d" add README && git -C "$d" commit -m initial
-$ mkdir -p "$d/workspaces"
-$ ovrcr project add fixture "$d" --workspace-root "$d/workspaces"
-$ ovrcr workspace create --project fixture --name demo \
-    --new-branch feature/demo --base main
-$ agent_id=$(ovrcr new --project fixture --workspace demo --name agent -- sh)
-$ local_id=$(ovrcr list | awk '$1 == "session" && $3 == "local" { print $2; exit }')
-$ printf 'created agent session %s and local session %s\n' "$agent_id" "$local_id"
-$ ovrcr list
-project fixture
-  workspace demo
-    session $local_id local
-    session $agent_id agent
-$ ovrcr
-# select agent, press Enter, then Ctrl-g and q
-$ ovrcr
-# the agent's current screen is still present; press q
-$ ovrcr kill "$agent_id"
-$ ovrcr session remove "$agent_id"
-$ ovrcr kill "$local_id"
-$ ovrcr session remove "$local_id"
-$ ovrcr workspace remove --project fixture --name demo
-$ ovrcr project remove fixture
-$ ovrcr shutdown
-$ test ! -e "$OVRCR_SOCKET"
+just verify    # fmt-check, check, lint, test
+just run       # cargo run -p ovrcr --
+just restart   # stop a leftover local server, then start the dashboard
+```
+
+Or with Cargo directly — always name the package, since the workspace has five:
+
+```sh
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features
+cargo run -p ovrcr --
+```
+
+While iterating, run the owning package's tests instead:
+
+```sh
+cargo test -p ovrcr-tui --lib
+cargo test -p ovrcr --test tui
 ```
 
 The headless PTY wrapper exercises rendered terminal state, input and paste,
 resize, mouse selection, detach, reattach, and bounded cleanup:
 
 ```sh
-rtk proxy cargo test -p ovrcr --test terminal_acceptance -- --nocapture
+cargo test -p ovrcr --test terminal_acceptance -- --nocapture
 ```
 
-## Test in a GUI window (macOS)
+Give every live fixture its own `OVRCR_CONFIG`, `OVRCR_SOCKET`, and temporary
+workspace, so a test cannot reach your real server.
 
-Agents: follow the [computer-use testing guide](docs/testing-computer-use.md) for the smoke check and cleanup evidence.
+CI runs on ubuntu-latest and macos-latest: format and clippy, then three test
+suites (`core`, `lifecycle`, `tasks`, split by `scripts/ci-tests.sh`), plus the GUI
+helper's targets on macOS.
 
-Run the optional development helper with `just` and `rtk`:
+For changes to the dashboard or terminal handling, the
+[macOS GUI helper](docs/gui-helper.md) runs the real dashboard in a native window
+against a disposable demo server. Agents doing that check should follow the
+[computer-use testing guide](docs/testing-computer-use.md).
 
-```sh
-rtk proxy just gui
-```
+## Contributing
 
-This builds `target/OVRCR GUI.app` and opens the real dashboard inside a
-terminal window. Each launch creates temporary repositories, configuration,
-socket, and server with two projects, four workspaces, and ten shell sessions.
-The agent/model labels and example output are demo fixtures; all sessions run
-local shells. It inherits your shell environment while overriding the demo paths
-and terminal capabilities. The helper uses an installed JetBrains Mono Nerd Font
-Mono when available, with a monospace fallback.
+Issues and pull requests are welcome at
+[github.com/xlyk/ovrcr](https://github.com/xlyk/ovrcr).
 
-Click the terminal to focus it. Select a session and press Enter, then type
-commands or paste with Cmd-V. Ctrl-g returns to browse mode,
-where sidebar clicks select sessions and `q` detaches. Click **Restart dashboard**
-to reattach to the same demo. Resizing the window resizes the selected session.
+Before you write code, read [`AGENTS.md`](AGENTS.md). It is the contributor guide
+for this repository — crate boundaries, the ownership and lifecycle invariants, how
+much testing evidence a change needs, and how to report it. Work on a branch, keep
+unrelated cleanup out of the diff, and run `just verify` before opening a pull
+request. Coding agents have extra rules there, including an `rtk` prefix on every
+shell command; the commands in this README are written plain for humans.
 
-Computer-use tools can address the app as `dev.ovrcr.gui` or by its bundle path.
-The accessibility tree exposes the terminal and its individual screen rows.
-Closing the window stops the demo server and sessions and removes the temporary
-fixture. A cleanup failure reports the retained fixture path. Changes made in
-the demo are disposable; the helper does not open your normal ovrcr instance.
+A pull request should state the problem, the behaviour change, the exact commands
+you ran to verify it, and anything still unverified.
 
-The GUI dependency is enabled only by the `gui` feature. Ordinary builds and
-`cargo run` still use the CLI. To run the helper's focused tests:
+## Roadmap and limits
 
-```sh
-rtk proxy cargo test -p ovrcr --features gui --test gui
-```
+Shipped: split panes, historical scrollback, keyboard copy mode, pause and resume,
+agent activity hooks, context usage accounting, and mouse forwarding.
 
-## Workspace development
+Not shipped, with priorities and dates undecided:
 
-OVRCR is a Cargo workspace with five packages. `ovrcr` is the application
-package and owns the CLI entry point, client/report transport helpers, and the
-optional GUI. `ovrcr-protocol` owns shared wire, registry, session, and context
-types. `ovrcr-terminal` owns VT100 screen and paste handling. `ovrcr-runtime`
-owns configuration, Git worktrees, PTYs, sessions, and the synchronous server.
-`ovrcr-tui` owns dashboard state, input, rendering, and terminal lifecycle.
-The application depends on the internal packages; runtime and TUI depend on
-protocol and terminal and never depend on each other.
-
-Workspace checks and tests run every package and target:
-
-```sh
-rtk proxy cargo check --workspace --all-targets
-rtk proxy cargo test --workspace --all-targets --all-features
-rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
-```
-
-Run the application package explicitly when using Cargo directly:
-
-```sh
-rtk proxy cargo run -p ovrcr --
-rtk proxy cargo build -p ovrcr --release
-```
-
-## Feature roadmap
-
-Future additions, with priorities and release dates still to be decided:
-
-- [ ] Split panes to view multiple sessions side by side.
-- [x] Historical scrollback to revisit output beyond the current screen.
-- [x] Copy mode to select and copy terminal output with the keyboard.
-- [x] Pause and resume controls for sessions.
-- [x] Agent hooks to report agent-specific activity and status.
-- [x] Context usage accounting for agent sessions.
-- [x] Mouse forwarding to applications running inside a terminal.
-- [ ] Multiple dashboards connected to the same server. **Deferred.**
 - [ ] Session restore after a server crash or reboot, including saved session
-  metadata, new PTYs, and agent conversation resumption where supported.
+      metadata, new PTYs, and agent conversation resumption where supported.
+- [ ] Multiple dashboards connected to one server. **Deferred.**
 
-The current release supports one dashboard at the tested 50-session scale
-using blocking I/O and threads. It retains each session's current terminal
-screen and keeps live PTYs and session metadata in memory. Reattach connects
-to a surviving PTY; a server crash or reboot loses those live sessions.
+Know the current limits before relying on it: one server and one attached
+dashboard, a workload tested at 50 sessions, and live PTYs plus retained history
+held in memory. Detaching and reattaching connects to a surviving PTY, but a server
+crash or reboot loses those sessions — reattaching successfully is never evidence
+of crash recovery.
+
+## License
+
+OVRCR is released under the MIT license. See [`LICENSE`](LICENSE) for the full
+text.
