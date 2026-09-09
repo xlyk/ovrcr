@@ -4391,6 +4391,19 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         focused: Some(id),
     });
 
+    // Hold the real exit event after the child has been reaped. This test
+    // exercises a delayed dispatcher, not a race with process-group signals.
+    session.write(b"exit\r").unwrap();
+    let mut pending = Vec::new();
+    loop {
+        let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        let exited = matches!(event, SessionEvent::Exited { .. });
+        pending.push(event);
+        if exited {
+            break;
+        }
+    }
+
     let error = state
         .close_terminal(id, Duration::from_millis(20))
         .unwrap_err();
@@ -4411,13 +4424,8 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         Some(id)
     );
 
-    loop {
-        let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
-        let exited = matches!(event, SessionEvent::Exited { .. });
+    for event in pending {
         session.apply_event(event);
-        if exited {
-            break;
-        }
     }
     state.close_terminal(id, Duration::from_millis(20)).unwrap();
     assert!(!state.sessions.lock().unwrap().contains_key(&id));
