@@ -328,6 +328,97 @@ fn question_mark_popup_is_browsable() {
 }
 
 #[test]
+fn whichkey_compact_corner_preserves_the_surrounding_dashboard() {
+    for (width, height) in [(80, 40), (160, 60)] {
+        let mut dashboard = dashboard_fixture();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| draw_dashboard_at(f, &dashboard, 0))
+            .unwrap();
+        let before = terminal.backend().buffer().clone();
+        dashboard.key(KeyCode::Char(' '));
+        terminal
+            .draw(|f| draw_dashboard_at(f, &dashboard, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let area = whichkey_test_bounds(buffer);
+        assert!(
+            area.width <= 48,
+            "menu must leave room for the dashboard: {area:?}"
+        );
+        assert!(area.height <= 30, "menu height must be bounded: {area:?}");
+        assert_eq!(area.right(), width - 2);
+        assert_eq!(area.bottom(), height - 2);
+        for y in 0..height {
+            for x in 0..width {
+                if !area.contains(Position::new(x, y)) {
+                    assert_eq!(
+                        buffer[(x, y)],
+                        before[(x, y)],
+                        "background changed at {x},{y}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn whichkey_test_bounds(buffer: &ratatui::buffer::Buffer) -> Rect {
+    let corner = |symbol: &str| {
+        (0..buffer.area.height)
+            .find_map(|y| {
+                (0..buffer.area.width).find_map(|x| {
+                    let cell = &buffer[(x, y)];
+                    (cell.symbol() == symbol && cell.fg == Color::Rgb(203, 166, 247))
+                        .then_some((x, y))
+                })
+            })
+            .expect("popup border must be visible")
+    };
+    let (x, y) = corner("┌");
+    let (right, bottom) = corner("┘");
+    Rect::new(x, y, right - x + 1, bottom - y + 1)
+}
+
+#[test]
+fn whichkey_scrolled_last_row_remains_clickable_after_resize() {
+    for (width, height) in [(80, 40), (40, 16), (20, 12), (20, 8)] {
+        let mut dashboard = dashboard_fixture();
+        dashboard.key(KeyCode::Char(' '));
+        for _ in 0..40 {
+            dashboard.mouse_action(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: width - 4,
+                    row: height - 4,
+                    modifiers: KeyModifiers::NONE,
+                },
+                Rect::new(0, 0, width, height),
+            );
+        }
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| draw_dashboard_at(f, &dashboard, 0))
+            .unwrap();
+        let cursor = terminal.backend().cursor_position();
+        assert_eq!(
+            terminal.backend().buffer()[(cursor.x, cursor.y)].symbol(),
+            "q"
+        );
+        let action = dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: cursor.x,
+                row: cursor.y,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, width, height),
+        );
+        assert_eq!(action, ovrcr::tui::DashboardAction::Detach);
+    }
+}
+
+#[test]
 fn narrow_popup_moves_description_to_detail_line() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('?'));
@@ -354,8 +445,9 @@ fn narrow_popup_moves_description_to_detail_line() {
         .unwrap();
     assert!(detail > row);
     assert!(lines[detail..].join("\n").contains("consigint"));
+    let area = whichkey_test_bounds(terminal.backend().buffer());
     assert!(
-        lines[37].contains("opens a form"),
+        lines[usize::from(area.bottom() - 2)].contains("opens a form"),
         "full description must reach the last inner popup line"
     );
     for _ in 0..4 {
@@ -364,21 +456,22 @@ fn narrow_popup_moves_description_to_detail_line() {
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let resume_row = (2..37)
+    let area = whichkey_test_bounds(terminal.backend().buffer());
+    let resume_row = (area.y + 1..area.bottom() - 1)
         .find(|y| {
-            (3..77)
+            (area.x + 1..area.right() - 1)
                 .map(|x| terminal.backend().buffer()[(x, *y)].symbol())
                 .collect::<String>()
                 .contains("r  Resume")
         })
         .unwrap();
     assert!(
-        terminal.backend().buffer()[(3, resume_row)]
+        terminal.backend().buffer()[(area.x + 1, resume_row)]
             .modifier
             .contains(Modifier::DIM)
     );
-    let last: String = (3..77)
-        .map(|x| terminal.backend().buffer()[(x, 37)].symbol())
+    let last: String = (area.x + 1..area.right() - 1)
+        .map(|x| terminal.backend().buffer()[(x, area.bottom() - 2)].symbol())
         .collect();
     assert!(last.contains("Resume: not paused"));
 }
@@ -539,7 +632,12 @@ fn whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture() {
         .unwrap();
     let cursor = terminal.backend().cursor_position();
     // Popup first motion row begins after its border and Move heading.
-    assert_eq!(cursor, Position::new(3, 3));
+    let area = whichkey_test_bounds(terminal.backend().buffer());
+    assert_eq!(cursor, Position::new(area.x + 1, area.y + 2));
+    assert_eq!(
+        terminal.backend().buffer()[(cursor.x, cursor.y)].symbol(),
+        "h"
+    );
 }
 
 #[test]

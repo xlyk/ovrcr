@@ -1,6 +1,6 @@
 use super::hints::{HintAction, HintGroup, KeyHint, key_hints};
 use super::input::is_browse_key;
-use super::render::{CRUST, MAUVE, MUTED, TEXT};
+use super::render::{CRUST, MAUVE, MUTED, SKY, TEXT};
 use super::{Dashboard, DashboardAction, InputMode};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -8,6 +8,7 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 pub(super) struct WhichKey {
@@ -31,30 +32,59 @@ fn paragraph(text: &str) -> Paragraph<'_> {
     Paragraph::new(text).wrap(Wrap { trim: false })
 }
 
-fn row_text(hint: &KeyHint, narrow: bool) -> String {
-    if narrow {
-        format!("{}  {}", hint.key, hint.name)
-    } else {
-        format!("{}  {} — {}", hint.key, hint.name, hint.description)
-    }
+fn row_text(hint: &KeyHint) -> String {
+    format!("{}  {}", hint.key, hint.name)
 }
 
-// Rendering and mouse hit testing use exactly the same wrapped row geometry.
+// Rendering and mouse hit testing share the compact, wrapped row geometry.
 fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayout {
+    let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+    let width = hints
+        .iter()
+        .map(|hint| Line::from(row_text(hint)).width())
+        .max()
+        .unwrap_or(0)
+        .clamp(36, 46) as u16
+        + 2;
+    let width = width.min(outer.width.saturating_sub(4));
+    let inner_width = width.saturating_sub(2);
+    let max_height = outer.height.saturating_sub(4).min(30);
+    let description = hints.get(selected).map_or("", |h| h.description.as_str());
+    let detail_height = (paragraph(description).line_count(inner_width) as u16)
+        .max(1)
+        .min(max_height.saturating_sub(2) / 2)
+        .min(max_height.saturating_sub(4));
+    let mut entries = Vec::new();
+    let mut index = 0;
+    for group in groups {
+        entries.push((None, group.title.to_owned(), 1));
+        for hint in &group.hints {
+            let text = row_text(hint);
+            let height = paragraph(&text).line_count(inner_width).max(1) as u16;
+            entries.push((Some(index), text, height));
+            index += 1;
+        }
+    }
+    let content_height: u16 = entries.iter().map(|(_, _, height)| height).sum();
+    let height = content_height
+        .saturating_add(detail_height)
+        .saturating_add(3)
+        .min(max_height);
     let area = Rect::new(
-        outer.x + outer.width.min(4) / 2,
-        outer.y + outer.height.min(2) / 2,
-        outer.width.saturating_sub(4),
-        outer.height.saturating_sub(2),
+        outer
+            .right()
+            .saturating_sub(2)
+            .saturating_sub(width)
+            .max(outer.x),
+        outer
+            .bottom()
+            .saturating_sub(2)
+            .saturating_sub(height)
+            .max(outer.y),
+        width,
+        height,
     );
     let inner = Block::bordered().inner(area);
-    let narrow = area.width < 100;
-    let columns = !groups.is_empty() && usize::from(inner.width) >= groups.len() * 60;
-    let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
-    let description = hints.get(selected).map_or("", |h| h.description.as_str());
-    let detail_height = (paragraph(description).line_count(inner.width) as u16)
-        .max(1)
-        .min(inner.height / 2);
     let detail = Rect::new(
         inner.x,
         inner.bottom().saturating_sub(detail_height),
@@ -62,56 +92,36 @@ fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayo
         detail_height,
     );
     let body_height = inner.height.saturating_sub(detail_height).saturating_sub(1);
-    let column_width = if columns {
-        inner.width / groups.len() as u16
-    } else {
-        inner.width
-    };
-    let mut logical: Vec<Vec<(Option<usize>, String, u16)>> =
-        vec![Vec::new(); if columns { groups.len() } else { 1 }];
-    let mut index = 0;
-    for (group_index, group) in groups.iter().enumerate() {
-        let column = if columns { group_index } else { 0 };
-        logical[column].push((None, group.title.into(), 1));
-        for hint in &group.hints {
-            let text = row_text(hint, narrow);
-            let height = paragraph(&text)
-                .line_count(column_width)
-                .max(1)
-                .min(u16::MAX as usize) as u16;
-            logical[column].push((Some(index), text, height));
-            index += 1;
+    let mut end = 0u16;
+    let mut start = 0u16;
+    for (index, _, height) in &entries {
+        if *index == Some(selected) {
+            // Keep the start of even a taller-than-viewport row visible.
+            start = end
+                .saturating_add(*height)
+                .saturating_sub(body_height)
+                .min(end);
         }
+        end = end.saturating_add(*height);
     }
+    let mut offset = 0u16;
     let mut rows = Vec::new();
-    for (column, entries) in logical.into_iter().enumerate() {
-        let mut end = 0usize;
-        let mut selected_end = 0usize;
-        for (index, _, height) in &entries {
-            end += usize::from(*height);
-            if *index == Some(selected) {
-                selected_end = end;
-            }
+    for (index, text, height) in entries {
+        let row_start = offset;
+        offset = offset.saturating_add(height);
+        if row_start < start || row_start >= start.saturating_add(body_height) {
+            continue;
         }
-        let start = selected_end.saturating_sub(usize::from(body_height));
-        let mut offset = 0usize;
-        for (index, text, height) in entries {
-            let row_start = offset;
-            offset += usize::from(height);
-            if row_start < start || row_start >= start + usize::from(body_height) {
-                continue;
-            }
-            rows.push(PopupRow {
-                index,
-                text,
-                area: Rect::new(
-                    inner.x + column as u16 * column_width,
-                    inner.y + (row_start - start) as u16,
-                    column_width,
-                    height.min(body_height.saturating_sub((row_start - start) as u16)),
-                ),
-            });
-        }
+        rows.push(PopupRow {
+            index,
+            text,
+            area: Rect::new(
+                inner.x,
+                inner.y + row_start - start,
+                inner.width,
+                height.min(body_height.saturating_sub(row_start - start)),
+            ),
+        });
     }
     PopupLayout { area, rows, detail }
 }
@@ -231,10 +241,11 @@ impl Dashboard {
         frame.render_widget(
             Block::bordered()
                 .title(if popup.pending_leader {
-                    " Which key · next key runs · Esc closes "
+                    " Which key · next key runs "
                 } else {
-                    " Which key · arrows browse · Enter/click runs · Esc closes "
+                    " Which key · Enter/click runs "
                 })
+                .title_bottom(" Esc close · wheel scroll ")
                 .style(Style::default().bg(CRUST).fg(TEXT))
                 .border_style(Style::default().fg(MAUVE)),
             layout.area,
@@ -257,7 +268,26 @@ impl Dashboard {
                     style
                 }
             };
-            frame.render_widget(paragraph(&row.text).style(style), row.area);
+            let text = if let Some(index) = row.index {
+                let (key, label) = row.text.split_at(hints[index].key.len());
+                Line::from(vec![
+                    Span::styled(
+                        key,
+                        if index == selected || !hints[index].enabled {
+                            style
+                        } else {
+                            style.fg(SKY)
+                        },
+                    ),
+                    Span::raw(label),
+                ])
+            } else {
+                Line::from(row.text)
+            };
+            frame.render_widget(
+                Paragraph::new(text).wrap(Wrap { trim: false }).style(style),
+                row.area,
+            );
         }
         if let Some(hint) = hints.get(selected) {
             frame.render_widget(

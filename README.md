@@ -142,8 +142,10 @@ Press Space in Browse, Copy, or History to show the available keys. The next
 key runs an enabled action and closes the popup: Space then `n` opens the
 terminal form in Browse. Bare hotkeys still work. Press `?` to browse the
 same popup with arrows and Enter, or click an enabled row. Escape closes it.
-Disabled rows stay visible with a reason. In a narrow window, the highlighted
-row's description appears below the key list; arrows reveal offscreen rows.
+The compact list sits in the bottom-right corner, above the footer. The
+highlighted row's description appears below the keys, including the reason
+for a disabled action. Scroll the wheel, or use arrows in help mode, to reveal
+offscreen rows.
 Terminal mode has no popup: press `Ctrl-g` to return to Browse first.
 
 Browse shortcuts include `w` to create a workspace, `a` to register a project,
