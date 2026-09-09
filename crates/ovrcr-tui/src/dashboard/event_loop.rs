@@ -41,6 +41,7 @@ pub fn run_dashboard(
     mut stream: UnixStream,
     task_request: TaskRequestFn,
     settings_path: PathBuf,
+    configuration_paths: (PathBuf, PathBuf),
 ) -> Result<()> {
     let size = terminal_size()?;
     let pane_size = pane_size(size);
@@ -48,6 +49,7 @@ pub fn run_dashboard(
     let initial = read_server(&mut stream)?;
     dashboard_hello_result(&initial)?;
     let mut dashboard = Dashboard::new(pane_size);
+    dashboard.configuration_paths = Some(configuration_paths);
     let (settings, settings_error) = load_dashboard_settings(&settings_path);
     dashboard.settings = settings;
     if let Some(error) = settings_error {

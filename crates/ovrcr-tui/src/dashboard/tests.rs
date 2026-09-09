@@ -25,6 +25,71 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[test]
+fn hints_name_targets_and_explain_disabled_session_actions() {
+    use crate::protocol::{
+        AgentActivity, ProjectSummary, SessionPhase, SessionSummary, WorkspaceSummary,
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "consigint".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "consigint".into(),
+            name: "auth-handoff".into(),
+            path: "/tmp/auth-handoff".into(),
+            sessions: vec![SessionSummary {
+                id: SessionId(12),
+                project: "consigint".into(),
+                workspace: "auth-handoff".into(),
+                name: "agent".into(),
+                label: "shell".into(),
+                pid: None,
+                started_unix_ms: 0,
+                phase: SessionPhase::Running,
+                activity: AgentActivity::Unknown,
+                context_usage: None,
+            }],
+        }],
+    });
+    dashboard.select_session(SessionId(12));
+    let groups = super::hints::key_hints(&dashboard);
+    let workspace = groups
+        .iter()
+        .flat_map(|g| &g.hints)
+        .find(|h| h.key == "w")
+        .unwrap();
+    assert!(workspace.description.contains("consigint"));
+    let session = groups.iter().find(|g| g.title == "Session").unwrap();
+    let close = session.hints.iter().find(|h| h.key == "X").unwrap();
+    assert!(close.description.contains("agent (#12)"));
+    assert!(close.description.contains("auth-handoff"));
+    assert!(close.description.contains("confirmation"));
+    let resume = session.hints.iter().find(|h| h.key == "r").unwrap();
+    assert!(!resume.enabled);
+    assert!(resume.description.contains("not paused"));
+    assert!(
+        session
+            .hints
+            .iter()
+            .filter(|h| h.enabled)
+            .all(|h| h.description.contains("agent (#12)"))
+    );
+    dashboard.panes[0].session = None;
+    let groups = super::hints::key_hints(&dashboard);
+    assert!(
+        groups
+            .iter()
+            .find(|g| g.title == "Session")
+            .unwrap()
+            .hints
+            .iter()
+            .all(|h| !h.enabled && h.description.contains("no session selected"))
+    );
+}
+
+#[test]
 fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
     let refusal = ServerMessage::Response {
         request_id: 1,
