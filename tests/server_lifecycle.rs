@@ -1,3 +1,7 @@
+#[path = "support/deadline.rs"]
+mod deadline;
+
+use deadline::wait_deadline;
 use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
@@ -3343,7 +3347,7 @@ fn wait_exited_and_assert_terminal_contains(
     session: SessionId,
     markers: &[&str],
 ) {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + wait_deadline();
     loop {
         let response = request_with_timeout(
             &fixture.socket,
@@ -5567,7 +5571,7 @@ impl ControlFixture {
         }
     }
     fn wait_exited(&self, id: SessionId) {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + wait_deadline();
         while Instant::now() < deadline {
             let response = if self.request_timeout.is_some() {
                 request_with_timeout(&self.socket, 1, Request::List, Duration::from_millis(250))

@@ -1,6 +1,10 @@
+#[path = "support/deadline.rs"]
+mod deadline;
+
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use deadline::wait_deadline;
 use ovrcr::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
 use ovrcr::protocol::{
     ClientMessage, ErrorCode, HierarchySnapshot, HistoryCell, HistoryColor, HistoryOpened,
@@ -953,7 +957,7 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
             sessions: vec![],
         },
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + wait_deadline();
     loop {
         dashboard.event_action(Event::Paste(String::new()));
         if palette_text(&dashboard).contains("topic") {

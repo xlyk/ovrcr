@@ -109,6 +109,11 @@ pub struct ServerState {
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
     pub(super) before_view_publish_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Called by the dashboard writer thread just before each socket write, so
+    /// a test can wait for the writer to reach a write it expects to block in
+    /// instead of guessing how long that takes.
+    #[cfg(test)]
+    pub(super) before_dashboard_write_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
 }
 
@@ -411,6 +416,8 @@ impl ServerState {
             events: Mutex::new(Some(events)),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
+            #[cfg(test)]
+            before_dashboard_write_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         })
     }

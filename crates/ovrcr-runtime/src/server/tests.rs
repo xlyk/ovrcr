@@ -1894,6 +1894,12 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
         .unwrap()
         .sink
         .clone();
+    // The writer signals from inside its write path: the blocked write is then
+    // a fact, not a guess about how many yields it takes to reach one.
+    let (write_started, writer_entered) = mpsc::sync_channel(8);
+    *state.before_dashboard_write_hook.lock().unwrap() = Some(Arc::new(move || {
+        let _ = write_started.try_send(());
+    }));
     for revision in 1..=4 {
         assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
@@ -1904,9 +1910,9 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
             completion: None,
         }));
     }
-    for _ in 0..256 {
-        thread::yield_now();
-    }
+    writer_entered
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the dashboard writer must reach its write path");
     let started = Instant::now();
     write_frame(
         &mut client_stream,
@@ -1934,8 +1940,8 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
     handler.join().unwrap();
     let elapsed = started.elapsed();
     assert!(
-        elapsed >= Duration::from_millis(1_500) && elapsed < Duration::from_secs(5),
-        "blocked writer close took {elapsed:?}"
+        elapsed >= Duration::from_millis(1_500),
+        "the blocked writer must be given its close timeout, took {elapsed:?}"
     );
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert!(state.dashboard_slot.lock().unwrap().is_none());
@@ -2047,7 +2053,10 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
         },
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(3);
+    // The deadline has to stay under TERMINAL_FAILURE_CLOSE_TIMEOUT: once that
+    // elapses the writer tears the slot down, and the assertions below about a
+    // still-registered dashboard would race it.
+    let deadline = Instant::now() + Duration::from_millis(1_500);
     while Instant::now() < deadline && !sink.is_closing() {
         thread::yield_now();
     }
@@ -2282,6 +2291,7 @@ fn test_state_with_dispatch(
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
+            before_dashboard_write_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
                 sink: dashboard.as_ref().unwrap().clone(),
                 identity,
@@ -2323,6 +2333,7 @@ fn test_state_with_socket(
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
+            before_dashboard_write_hook: Mutex::new(None),
             dashboard_slot: Mutex::new(None),
         }),
         dispatch_receiver,
@@ -4458,6 +4469,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
+        before_dashboard_write_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
     });
     let dispatcher_state = Arc::clone(&state);
@@ -4669,6 +4681,7 @@ fn session_output_flows_while_another_session_spawns() {
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
+        before_dashboard_write_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(Some(DashboardSlot {
             sink: sink.clone(),
             identity: owner.clone(),

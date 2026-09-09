@@ -152,6 +152,15 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                                 false,
                             ),
                         };
+                        #[cfg(test)]
+                        if let Some(hook) = writer_state
+                            .before_dashboard_write_hook
+                            .lock()
+                            .unwrap()
+                            .clone()
+                        {
+                            hook();
+                        }
                         let result = match output.as_mut() {
                             Some(stream) => {
                                 write_frame(stream, &message).map_err(|error| error.to_string())

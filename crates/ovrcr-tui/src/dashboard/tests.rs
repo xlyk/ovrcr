@@ -25,7 +25,7 @@ use std::panic;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[test]
 fn hints_name_targets_and_explain_disabled_session_actions() {
@@ -403,21 +403,27 @@ fn dashboard_output_wake_interrupts_idle_wait() {
     let (wake_receiver, mut wake_sender) = UnixStream::pair().unwrap();
     wake_receiver.set_nonblocking(true).unwrap();
     wake_sender.set_nonblocking(true).unwrap();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
+    // The waker passes the barrier only as this thread goes into the wait, and
+    // the idle timeout is far longer than the wake needs: returning with output
+    // ready can then only be the wake, never the timeout, so the test reads no
+    // clock at all.
+    let gate = Arc::new(std::sync::Barrier::new(2));
+    let waker_gate = Arc::clone(&gate);
+    let waker = thread::spawn(move || {
+        waker_gate.wait();
         wake_sender.write_all(&[1]).unwrap();
     });
 
-    let started = Instant::now();
+    gate.wait();
     let activity = super::event_loop::wait_for_dashboard_activity(
         -1,
         Some(&wake_receiver),
-        Duration::from_millis(500),
+        Duration::from_secs(5),
     )
     .unwrap();
+    waker.join().unwrap();
     assert!(activity.server_ready);
     assert!(!activity.input_ready);
-    assert!(started.elapsed() < Duration::from_millis(250));
 }
 
 #[test]
