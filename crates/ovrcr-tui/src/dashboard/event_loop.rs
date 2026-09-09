@@ -103,22 +103,7 @@ pub fn run_dashboard(
     thread::Builder::new()
         .name("ovrcr-dashboard-reader".into())
         .spawn(move || read_messages(reader_stream, received, reader_wake))?;
-    let prior_hook = Arc::new(Mutex::new(Some(panic::take_hook())));
-    let hook_prior = Arc::clone(&prior_hook);
-    panic::set_hook(Box::new(move |panic_info| {
-        let mut cleanup = TerminalGuard::with_writer(io::stdout());
-        cleanup.raw = true;
-        cleanup.alternate = true;
-        cleanup.mouse = true;
-        cleanup.cursor_hidden = true;
-        cleanup.bracketed_paste = true;
-        cleanup.restore_before(|| {
-            PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
-            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
-                prior(panic_info);
-            }
-        });
-    }));
+    let prior_hook = install_panic_terminal_restore_hook(io::stdout);
     let result = dashboard_loop(
         &mut terminal,
         &mut stream,
@@ -137,6 +122,48 @@ pub fn run_dashboard(
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
     result
+}
+
+pub(super) type PriorPanicHook =
+    Arc<Mutex<Option<Box<dyn Fn(&panic::PanicHookInfo<'_>) + Sync + Send>>>>;
+
+/// Installs a panic hook that restores the terminal, then returns a handle
+/// the caller uses to reinstall whatever hook was active before this call.
+///
+/// The hook is process-global, but only the thread that installs it (the
+/// dashboard's main loop) owns the terminal. A panic on any other thread —
+/// the socket reader or a task worker — delegates straight to the hook that
+/// was active before installation and never touches the terminal, since the
+/// main loop is still drawing to it.
+pub(super) fn install_panic_terminal_restore_hook<W, F>(make_writer: F) -> PriorPanicHook
+where
+    W: Write + 'static,
+    F: Fn() -> W + Sync + Send + 'static,
+{
+    let installing_thread = thread::current().id();
+    let prior_hook: PriorPanicHook = Arc::new(Mutex::new(Some(panic::take_hook())));
+    let hook_prior = Arc::clone(&prior_hook);
+    panic::set_hook(Box::new(move |panic_info| {
+        if thread::current().id() != installing_thread {
+            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
+                prior(panic_info);
+            }
+            return;
+        }
+        let mut cleanup = TerminalGuard::with_writer(make_writer());
+        cleanup.raw = true;
+        cleanup.alternate = true;
+        cleanup.mouse = true;
+        cleanup.cursor_hidden = true;
+        cleanup.bracketed_paste = true;
+        cleanup.restore_before(|| {
+            PANIC_TERMINAL_RESTORED.with(|restored| restored.set(true));
+            if let Some(prior) = hook_prior.lock().ok().and_then(|mut hooks| hooks.take()) {
+                prior(panic_info);
+            }
+        });
+    }));
+    prior_hook
 }
 
 // The caller owns the terminal guard and needs the final mouse-capture state.

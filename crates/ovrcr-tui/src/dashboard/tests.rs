@@ -1,11 +1,12 @@
 use super::copy::{CopyMotion, CopyPoint, CopySelection};
 use super::event_loop::{
     dashboard_hello_result, dashboard_message_channel, drain_dashboard_input_then_emit_with,
-    drain_ready_dashboard_input, emit_pending_history_copy, next_dashboard_message,
+    drain_ready_dashboard_input, emit_pending_history_copy, install_panic_terminal_restore_hook,
+    next_dashboard_message,
 };
 use super::{
     Dashboard, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange, HistoryCursor,
-    HistoryView, InputMode,
+    HistoryView, InputMode, PANIC_TERMINAL_RESTORED,
 };
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
@@ -20,7 +21,9 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::panic;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1091,4 +1094,74 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         "a deferral dropped by the removal must not open history later, got {completed:?}"
     );
     assert!(dashboard.history.is_none());
+}
+
+#[derive(Clone)]
+struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
+
+impl Write for RecordingWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// The panic hook is process-global, so tests that install one must serialize
+// with any other test in this binary that also touches it.
+static PANIC_HOOK_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn panic_hook_ignores_non_main_threads() {
+    let _serialize = PANIC_HOOK_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let writer_bytes = Arc::clone(&bytes);
+    let prior_hook =
+        install_panic_terminal_restore_hook(move || RecordingWriter(Arc::clone(&writer_bytes)));
+
+    // A panic on a background thread (the dashboard reader or a task
+    // worker, in production) must not touch the terminal: the main loop is
+    // still drawing to it.
+    let background = thread::spawn(|| {
+        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            panic!("background thread panic must not restore the terminal");
+        }));
+    });
+    background
+        .join()
+        .expect("the background thread must not itself panic");
+    assert!(
+        bytes.lock().unwrap().is_empty(),
+        "a non-main-thread panic wrote to the terminal writer"
+    );
+
+    // A panic on the thread that installed the hook (the main loop) must
+    // restore the terminal.
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        panic!("installing thread panic must restore the terminal");
+    }));
+    let restored = bytes.lock().unwrap().clone();
+    for sequence in [b"\x1b[?1049l".as_slice(), b"\x1b[?25h".as_slice()] {
+        assert!(
+            restored
+                .windows(sequence.len())
+                .any(|window| window == sequence),
+            "the installing thread's panic did not emit {sequence:?}, got {restored:?}"
+        );
+    }
+
+    // Leave no trace for other tests in this binary: reinstall whatever
+    // hook was active before this test, and clear the thread-local flag the
+    // hook set on this thread.
+    let _ = panic::take_hook();
+    if let Some(prior) = prior_hook.lock().unwrap().take() {
+        panic::set_hook(prior);
+    }
+    PANIC_TERMINAL_RESTORED.with(|restored| restored.set(false));
 }
