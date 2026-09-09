@@ -36,6 +36,9 @@ pub fn encode_event(
                     return vec![control];
                 }
             }
+            if let Some(meta) = meta_key(*key, *modifiers) {
+                return meta.to_vec();
+            }
             let code = match key {
                 Key::ArrowUp => KeyCode::Up,
                 Key::ArrowDown => KeyCode::Down,
@@ -68,7 +71,7 @@ pub fn encode_event(
                 _ => return Vec::new(),
             };
             match encode_key(
-                KeyEvent::new(code, KeyModifiers::NONE),
+                KeyEvent::new(code, key_modifiers(*modifiers)),
                 screen.application_cursor(),
             ) {
                 KeyEncoding::Bytes(bytes) => bytes,
@@ -174,6 +177,25 @@ pub fn encode_event(
     }
 }
 
+/// The events of one frame that the terminal should receive.
+///
+/// macOS composes Option with a letter into a glyph egui delivers as `Text`
+/// right after the `Key` press. [`encode_event`] answers that press with the
+/// meta form, so forwarding the composed text as well would type twice.
+pub fn terminal_events(events: &[Event]) -> impl Iterator<Item = &Event> {
+    events.iter().enumerate().filter_map(|(index, event)| {
+        let composed = matches!(event, Event::Text(_))
+            && index.checked_sub(1).is_some_and(|previous| {
+                matches!(
+                    &events[previous],
+                    Event::Key { key, pressed: true, modifiers, .. }
+                        if meta_key(*key, *modifiers).is_some()
+                )
+            });
+        (!composed).then_some(event)
+    })
+}
+
 fn pointer_cell(
     pos: egui::Pos2,
     screen: &vt100::Screen,
@@ -189,6 +211,23 @@ fn pointer_cell(
     (row < rows && column < cols).then_some((column, row))
 }
 
+/// The meta encoding for Option with a single-character key, which macOS
+/// otherwise composes into a glyph (Option-B becomes the integral sign).
+/// Control and Command take precedence, as the arms above them do.
+fn meta_key(key: Key, modifiers: egui::Modifiers) -> Option<[u8; 2]> {
+    let &[byte] = key.name().as_bytes() else {
+        return None;
+    };
+    (modifiers.alt && !modifiers.ctrl && !modifiers.mac_cmd).then_some([
+        0x1b,
+        if modifiers.shift {
+            byte
+        } else {
+            byte.to_ascii_lowercase()
+        },
+    ])
+}
+
 fn key_modifiers(modifiers: egui::Modifiers) -> KeyModifiers {
     let mut bits = KeyModifiers::NONE;
     if modifiers.shift {
@@ -201,4 +240,63 @@ fn key_modifiers(modifiers: egui::Modifiers) -> KeyModifiers {
         bits |= KeyModifiers::CONTROL;
     }
     bits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(key: Key, modifiers: egui::Modifiers) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn encode(event: &Event, screen: &vt100::Screen) -> Vec<u8> {
+        encode_event(
+            event,
+            screen,
+            egui::Rect::NOTHING,
+            egui::vec2(8.0, 16.0),
+            egui::pos2(0.0, 0.0),
+        )
+    }
+
+    #[test]
+    fn special_keys_carry_modifiers() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        assert_eq!(
+            encode(&press(Key::ArrowUp, egui::Modifiers::CTRL), screen),
+            b"\x1b[1;5A"
+        );
+        assert_eq!(
+            encode(&press(Key::Enter, egui::Modifiers::SHIFT), screen),
+            b"\x1b[13;2u"
+        );
+        assert_eq!(
+            encode(&press(Key::Backspace, egui::Modifiers::ALT), screen),
+            b"\x1b\x7f"
+        );
+    }
+
+    #[test]
+    fn alt_letter_encodes_meta() {
+        let parser = vt100::Parser::new(24, 80, 0);
+        let screen = parser.screen();
+        // macOS composes Option-B into the glyph egui delivers as `Text`
+        // immediately after the key press; only the meta form may reach the PTY.
+        let events = vec![
+            press(Key::B, egui::Modifiers::ALT),
+            Event::Text("\u{222b}".to_owned()),
+        ];
+        let encoded: Vec<Vec<u8>> = terminal_events(&events)
+            .map(|event| encode(event, screen))
+            .collect();
+        assert_eq!(encoded, vec![b"\x1bb".to_vec()]);
+    }
 }

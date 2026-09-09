@@ -1,5 +1,8 @@
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke};
-use ovrcr::gui::{Demo, Terminal, input::encode_event};
+use ovrcr::gui::{
+    Demo, Terminal,
+    input::{encode_event, terminal_events},
+};
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -530,6 +533,23 @@ impl App {
                     node.set_label("OVRCR terminal");
                     node.set_value(screen.contents());
                 });
+                // Only a widget that publishes an IME area receives composition and
+                // dead keys; without it the platform never starts one for the terminal.
+                if response.has_focus() {
+                    let (row, col) = screen.cursor_position();
+                    let cursor = egui::Rect::from_min_size(
+                        rect.min + egui::vec2(f32::from(col) * cell.x, f32::from(row) * cell.y),
+                        cell,
+                    );
+                    ui.output_mut(|output| {
+                        output.ime = Some(egui::output::IMEOutput {
+                            purpose: egui::IMEPurpose::Normal,
+                            rect,
+                            cursor_rect: cursor,
+                            should_interrupt_composition: false,
+                        });
+                    });
+                }
                 paint_terminal(ui, rect, cell, &self.fonts, &screen);
                 // Individual rows avoid accessibility clients truncating one large text value.
                 for (row, text) in screen.rows(0, cols).enumerate() {
@@ -553,7 +573,8 @@ impl App {
                             .or(input.pointer.latest_pos())
                             .unwrap_or(rect.min)
                     });
-                    for event in ui.input(|input| input.events.clone()) {
+                    let events = ui.input(|input| input.events.clone());
+                    for event in terminal_events(&events) {
                         if !response.has_focus()
                             && !matches!(
                                 event,
@@ -562,7 +583,7 @@ impl App {
                         {
                             continue;
                         }
-                        let bytes = encode_event(&event, &screen, rect, cell, pointer);
+                        let bytes = encode_event(event, &screen, rect, cell, pointer);
                         if !bytes.is_empty()
                             && let Err(error) = terminal.send(&bytes)
                         {
