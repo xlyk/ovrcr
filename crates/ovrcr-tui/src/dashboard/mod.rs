@@ -190,6 +190,9 @@ pub struct Dashboard {
     pub collapsed_projects: HashSet<String>,
     pub collapsed_workspaces: HashSet<(String, String)>,
     pub error: Option<String>,
+    /// Whether the banner in `error` was written by a refused view, which is the only writer a
+    /// successful view completion is allowed to clear. `set_error` releases it.
+    pub(super) error_owned_by_view: bool,
     pub copy: Option<CopySelection>,
     pub copy_notice: Option<String>,
     pub history: Option<HistoryView>,

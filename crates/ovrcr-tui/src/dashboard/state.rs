@@ -553,6 +553,7 @@ impl Dashboard {
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
             error: None,
+            error_owned_by_view: false,
             copy: None,
             copy_notice: None,
             history: None,
@@ -580,6 +581,13 @@ impl Dashboard {
             error_owning_requests: HashSet::new(),
             pending_snapshot_sessions: HashSet::new(),
         }
+    }
+
+    /// Shows `message` in the error banner. A refused view is the only writer whose banner a
+    /// later view completion clears, so every other writer comes through here and releases it.
+    pub(super) fn set_error(&mut self, message: impl Into<String>) {
+        self.error = Some(message.into());
+        self.error_owned_by_view = false;
     }
 
     pub fn focused_session(&self) -> Option<SessionId> {
@@ -617,14 +625,14 @@ impl Dashboard {
         let Some(current_index) =
             current.and_then(|id| sessions.iter().position(|candidate| *candidate == id))
         else {
-            self.error = Some("No other visible session to split".into());
+            self.set_error("No other visible session to split");
             return false;
         };
         let Some(session) = (1..sessions.len())
             .map(|offset| sessions[(current_index + offset) % sessions.len()])
             .next()
         else {
-            self.error = Some("No other visible session to split".into());
+            self.set_error("No other visible session to split");
             return false;
         };
         self.mark_pending_parser_discarded();
@@ -1163,13 +1171,13 @@ impl Dashboard {
             begin.cancelled = true;
         }
         let Some(session) = self.focused_session() else {
-            self.error = Some("Waiting for terminal screen".into());
+            self.set_error("Waiting for terminal screen");
             return DashboardAction::Redraw;
         };
         if !self.focused_pane().is_some_and(|pane| pane.ready)
             || find_session(self, session).is_none()
         {
-            self.error = Some("Waiting for terminal screen".into());
+            self.set_error("Waiting for terminal screen");
             return DashboardAction::Redraw;
         }
         self.error = None;
@@ -1303,7 +1311,7 @@ impl Dashboard {
         }
         // A coalesced focus change would invalidate a capture opened before SetView.
         if !self.focused_pane().is_some_and(|pane| pane.ready) {
-            self.error = Some("Pane is loading; retry history".into());
+            self.set_error("Pane is loading; retry history");
             return DashboardAction::Redraw;
         }
         self.history_page_error = false;
@@ -1641,9 +1649,9 @@ impl Dashboard {
                 {
                     resolve_error = Some(error);
                 }
-                if resolve_error.is_some() {
+                if let Some(error) = resolve_error.as_ref().map(ToString::to_string) {
                     self.history_page_error = true;
-                    self.error = resolve_error.as_ref().map(ToString::to_string);
+                    self.set_error(error);
                     return None;
                 } else if view.cursor_target.is_some() {
                     (HistoryPagePurpose::Cursor, view.cursor_page_needed()?)
@@ -1711,13 +1719,13 @@ impl Dashboard {
         let Some(request) = request else {
             if let Some(error) = resolve_error {
                 self.history_page_error = true;
-                self.error = Some(error.to_string());
+                self.set_error(error.to_string());
             }
             return None;
         };
         if let Some(error) = resolve_error {
             self.history_page_error = true;
-            self.error = Some(error.to_string());
+            self.set_error(error.to_string());
             return None;
         }
         let (purpose, start_row, start_col, rows, cols, session, snapshot) = request;
@@ -2188,11 +2196,11 @@ impl Dashboard {
 
     fn pause_request(&mut self, paused: bool) -> DashboardAction {
         let Some(session) = self.focused_session().and_then(|id| find_session(self, id)) else {
-            self.error = Some("No session selected".into());
+            self.set_error("No session selected");
             return DashboardAction::Redraw;
         };
         if matches!(session.phase, SessionPhase::Exited { .. }) {
-            self.error = Some("Session exited".into());
+            self.set_error("Session exited");
             return DashboardAction::Redraw;
         }
         let session = session.id;
@@ -2305,7 +2313,12 @@ impl Dashboard {
                         }
                         self.requested_view = Some(pending.view);
                         self.failed_view = None;
-                        self.error = None;
+                        // A server-driven refresh completes the same way a user's selection does,
+                        // so only the banner a refused view wrote is cleared here.
+                        if self.error_owned_by_view {
+                            self.error = None;
+                            self.error_owned_by_view = false;
+                        }
                         if let Some(request) = self.take_deferred_history_request() {
                             outgoing.push(request);
                         }
@@ -2323,6 +2336,7 @@ impl Dashboard {
                     // handshake, and a synthetic mouse release leave a fresh error in place.
                     if owns_error && !self.history_page_error {
                         self.error = None;
+                        self.error_owned_by_view = false;
                     }
                 }
                 Response::CreatedSession(_)
@@ -2354,7 +2368,7 @@ impl Dashboard {
                         (Some(_), Some(Ok((_opened, None)))) => {}
                         (Some(_), Some(Err(error))) => {
                             self.history_page_error = true;
-                            self.error = Some(error.to_string());
+                            self.set_error(error.to_string());
                             if let Some(view) = self.history.as_mut() {
                                 view.copy_job = None;
                                 view.copy_completion = None;
@@ -2424,7 +2438,9 @@ impl Dashboard {
                         }
                     }
                     if matched_view || !was_view_request {
-                        self.error = Some(format!("{code:?}: {message}"));
+                        self.set_error(format!("{code:?}: {message}"));
+                        // Only a refused view hands the banner to the next view completion.
+                        self.error_owned_by_view = matched_view;
                     }
                     if matched_history && self.copy.is_none() {
                         self.mode = if self.history.is_some() {
@@ -2527,7 +2543,7 @@ impl Dashboard {
                         && let Err(error) = view.resolve_cursor(size)
                     {
                         self.history_page_error = true;
-                        self.error = Some(error.to_string());
+                        self.set_error(error.to_string());
                     }
                 }
             }
@@ -2734,7 +2750,7 @@ impl Dashboard {
     }
 
     fn refuse_input(&mut self) -> DashboardAction {
-        self.error = Some(match self.selected_phase() {
+        let refusal: String = match self.selected_phase() {
             Some(SessionPhase::Paused) => "Session paused; press r to resume".into(),
             Some(SessionPhase::Exited { .. }) => "Session exited".into(),
             None => "No session selected".into(),
@@ -2742,7 +2758,8 @@ impl Dashboard {
                 "Pane is loading; retry input".into()
             }
             Some(SessionPhase::Running) => return DashboardAction::None,
-        });
+        };
+        self.set_error(refusal);
         DashboardAction::Redraw
     }
 

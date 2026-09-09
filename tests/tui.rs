@@ -9591,6 +9591,67 @@ fn view_request_ids_are_released_on_final_response() {
 }
 
 #[test]
+fn split_error_survives_a_screen_dirty_refresh() {
+    let mut dashboard = dashboard_fixture();
+    let session = dashboard.focused_session().unwrap();
+    for project in &mut dashboard.hierarchy.projects {
+        for workspace in &mut project.workspaces {
+            workspace
+                .sessions
+                .retain(|session| session.id == SessionId(1));
+        }
+    }
+    assert_eq!(
+        dashboard.key(KeyCode::Char('v')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("No other visible session to split")
+    );
+    // The server, not the user, asks for this view; its success owns no banner.
+    let mut dirty =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+            session,
+            revision: dashboard.view_revision,
+        }));
+    assert_eq!(dirty.len(), 1);
+    let refresh = dirty
+        .pop()
+        .expect("a dirty screen should re-request the view");
+    acknowledge_view_request(&mut dashboard, refresh);
+    assert_eq!(
+        dashboard.error.as_deref(),
+        Some("No other visible session to split"),
+        "a server-driven refresh must not clear a fresh error"
+    );
+
+    // A refused view does own its banner, so the view that succeeds clears it.
+    let refused = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 810)
+        .unwrap()
+        .expect("new geometry should request a view");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: refused.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "view refused".into(),
+        },
+    });
+    assert_eq!(dashboard.error.as_deref(), Some("Conflict: view refused"));
+    std::thread::sleep(PAST_VIEW_RETRY_BACKOFF);
+    let retry = dashboard
+        .view_request(Rect::new(0, 0, 120, 40), 811)
+        .unwrap()
+        .expect("the refused view must be retried once the backoff elapses");
+    acknowledge_all_view_targets(&mut dashboard, retry);
+    assert!(
+        dashboard.error.is_none(),
+        "a view failure banner is cleared by the view that succeeds"
+    );
+}
+
+#[test]
 fn settings_error_survives_the_geometry_ack() {
     let mut dashboard = dashboard_fixture();
     dashboard.error = Some("settings: invalid TOML at line 3".into());

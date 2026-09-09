@@ -86,7 +86,7 @@ pub fn run_dashboard(
     dashboard.next_request_id = 4;
     // Applied last: the handshake acknowledgements above clear the banner they do not own.
     if let Some(error) = settings_error {
-        dashboard.error = Some(error);
+        dashboard.set_error(error);
     }
 
     let mut guard = TerminalGuard::enter()?;
