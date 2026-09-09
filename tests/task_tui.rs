@@ -841,6 +841,9 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
     v.receive(&expected, Err("retry".into()));
     v.event(key(KeyCode::Tab));
     v.event(key(KeyCode::Tab));
+    v.event(key(KeyCode::Tab));
+    assert_eq!(v.message, "retry", "acceptance must retain server errors");
+    v.event(key(KeyCode::BackTab));
     v.event(Event::Paste("missing".into()));
     v.event(ctrl('s'));
     assert!(v.take_request().is_none());
@@ -852,6 +855,11 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
         terminal.draw(|f| draw_tasks(f, v)).unwrap();
     }
     v.event(key(KeyCode::Enter));
+    assert!(
+        v.message.is_empty(),
+        "valid acceptance clears the picker error"
+    );
+    assert!(v.take_request().is_none());
     v.event(ctrl('s'));
     assert_eq!(v.take_request(), Some(expected));
 }

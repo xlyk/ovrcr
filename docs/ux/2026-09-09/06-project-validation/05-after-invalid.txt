@@ -1,0 +1,74 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value:  OVRCR  Tasks  │ concurrency: 3                                                                                                                                       
+┌ New task ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Name: Project selection review                                                                                                                                    │
+│  Target (
+		3 text (settable)  OVRCR  Tasks  │ concurrency: 3                                                                                                                                       
+		4 text (settable) ┌ New task ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+		5 text (settable) │  Name: Project selection review                                                                                                                                    │
+		6 text (settable) │  Target (scratch/git): git                                                                                                                                         │
+		7 text (settable) │› Project: no-such-project▏                                                                                                                                         │
+		8 text (settable) │    No matches                                                                                                                                                      │
+		9 text (settable) │  Remote: origin                                                                                                                                                    │
+		10 text (settable) │  Branch: main                                                                                                                                                      │
+		11 text (settable) │  Schedule (interval/cron/once): interval                                                                                                                           │
+		12 text (settable) │  When (duration/cron/RFC3339): 1h                                                                                                                                  │
+		13 text (settable) │  Timezone: UTC                                                                                                                                                     │
+		14 text (settable) │  Model:                                                                                                                                                            │
+		15 text (settable) │  Thinking: off                                                                                                                                                     │
+		16 text (settable) │  Timeout: 1h                                                                                                                                                       │
+		17 text (settable) │  Prompt:                                                                                                                                                           │
+		18 text (settable) │                                                                                                                                                                    │
+		19 text (settable) │                                                                                                                                                                    │
+		20 text (settable) │                                                                                                                                                                    │
+		21 text (settable) │                                                                                                                                                                    │
+		22 text (settable) │                                                                                                                                                                    │
+		23 text (settable) │                                                                                                                                                                    │
+		24 text (settable) │                                                                                                                                                                    │
+		25 text (settable) │                                                                                                                                                                    │
+		26 text (settable) │                                                                                                                                                                    │
+		27 text (settable) │                                                                                                                                                                    │
+		28 text (settable) │                                                                                                                                                                    │
+		29 text (settable) │                                                                                                                                                                    │
+		30 text (settable) │                                                                                                                                                                    │
+		31 text (settable) │                                                                                                                                                                    │
+		32 text (settable) │                                                                                                                                                                    │
+		33 text (settable) │                                                                                                                                                                    │
+		34 text (settable) │                                                                                                                                                                    │
+		35 text (settable) │                                                                                                                                                                    │
+		36 text (settable) │                                                                                                                                                                    │
+		37 text (settable) │                                                                                                                                                                    │
+		38 text (settable) │                                                                                                                                                                    │
+		39 text (settable) │                                                                                                                                                                    │
+		40 text (settable) │                                                                                                                                                                    │
+		41 text (settable) │                                                                                                                                                                    │
+		42 text (settable) │                                                                                                                                                                    │
+		43 text (settable) │                                                                                                                                                                    │
+		44 text (settable) │                                                                                                                                                                    │
+		45 text (settable) │                                                                                                                                                                    │
+		46 text (settable) │                                                                                                                                                                    │
+		47 text (settable) │                                                                                                                                                                    │
+		48 text (settable) │                                                                                                                                                                    │
+		49 text (settable) │                                                                                                                                                                    │
+		50 text (settable) │                                                                                                                                                                    │
+		51 text (settable) │                                                                                                                                                                    │
+		52 text (settable) │                                                                                                                                                                    │
+		53 text (settable) │                                                                                                                                                                    │
+		54 text (settable) │                                                                                                                                                                    │
+		55 text (settable) │                                                                                                                                                                    │
+		56 text (settable) │                                                                                                                                                                    │
+		57 text (settable) │                                                                                                                                                                    │
+		58 text (settable) │                                                                                                                                                                    │
+		59 text (settable) │                                                                                                                                                                    │
+		60 text (settable) │                                                                                                                                                                    │
+		61 text (settable) └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+		62 text (settable) Select an available project                                                                                                                                           
+		63 text (settable) Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear                                                                                     
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI

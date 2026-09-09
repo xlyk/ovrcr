@@ -552,7 +552,11 @@ impl TasksView {
                     return false;
                 }
             }
+            let was_project = editor.field == 2;
             editor.edit(event);
+            if was_project && editor.field == 3 && self.message == "Select an available project" {
+                self.message.clear();
+            }
             return false;
         }
         let Event::Key(key) = event else {
