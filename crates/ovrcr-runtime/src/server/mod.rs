@@ -527,11 +527,24 @@ impl ServerState {
     pub fn add_project(&self, name: String, repo: PathBuf, workspace_root: PathBuf) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
+        // A relative path resolves against the server's working directory, not the caller's, so
+        // `workspaces/demo` would be created and registered somewhere the caller never named.
+        for path in [&repo, &workspace_root] {
+            if !path.is_absolute() {
+                return Err(lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    format!("path must be absolute: {}", path.display()),
+                ));
+            }
+        }
+        // The repository is validated before the workspace root is created, so a repository that
+        // is missing or not its own worktree root leaves no empty directory behind.
+        let repo = git::validate_repo(&repo)?;
         if !workspace_root.exists() {
             fs::create_dir_all(&workspace_root)
                 .with_context(|| format!("create workspace root {}", workspace_root.display()))?;
         }
-        let (repo, workspace_root) = git::validate_project(&repo, &workspace_root)?;
+        let workspace_root = git::validate_workspace_root(&workspace_root)?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         if next.projects.iter().any(|project| project.name == name) {
