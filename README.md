@@ -111,7 +111,9 @@ ovrcr workspace create --project consigint --name cleanup \
 ```
 
 Start an agent at the workspace root. With no command after `--`, OVRCR launches
-`$SHELL`; `--label TEXT` sets the sidebar label:
+`$SHELL`; `--label TEXT` sets the sidebar label. Bare zsh sessions load your
+normal configuration, then use a compact `directory ›` prompt with a red arrow
+after a failed command. Explicit commands and other shells are unchanged:
 
 ```sh
 ovrcr new --project consigint --workspace cleanup --name "review cleanup" -- codex
