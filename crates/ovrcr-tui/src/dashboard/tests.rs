@@ -956,3 +956,140 @@ fn mouse_release_precedes_the_replacement_view_request() {
         second.request
     );
 }
+
+#[test]
+fn hierarchy_removal_clears_a_parked_wheel_deferral() {
+    use crate::protocol::{
+        AgentActivity, HierarchySnapshot, ProjectSummary, SessionPhase, SessionSummary,
+        WorkspaceSummary,
+    };
+    use crossterm::event::MouseEventKind;
+    let summary = |id: u64| SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "session".into(),
+        label: "zsh".into(),
+        pid: Some(100 + u32::try_from(id).unwrap()),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+    };
+    let hierarchy = |ids: &[u64]| HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids.iter().copied().map(summary).collect(),
+            }],
+        }],
+    };
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
+    second.session = Some(SessionId(2));
+    dashboard.panes.push(second);
+    dashboard.focused_pane = 0;
+    let request = dashboard
+        .view_request(area, 11)
+        .unwrap()
+        .expect("two pane view should request both snapshots");
+    let request_id = request.request_id;
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    let unfocused = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("unfocused pane rect")
+        .terminal;
+    let wheel = crossterm::event::MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: unfocused.x + 2,
+        row: unfocused.y + 3,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        dashboard.mouse_action(wheel, area),
+        super::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(
+        dashboard.deferred_history_at_tail,
+        Some(1),
+        "the wheel tick should park against the pane it focused"
+    );
+
+    // Session A leaves. The survivor keeps focus, so `invalidate_view_readiness` never runs,
+    // but `retain` shifts B from pane 1 to pane 0 and `focused_pane` follows it.
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 12,
+        response: Response::Hierarchy(hierarchy(&[2])),
+    });
+    assert_eq!(dashboard.panes.len(), 1);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(
+        dashboard.deferred_history_at_tail, None,
+        "removing a pane reshuffles indices, so the removal must clear the parked deferral itself"
+    );
+
+    let replacement = outgoing
+        .iter()
+        .find_map(|message| match &message.request {
+            Request::SetView { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("removal should emit a replacement view");
+    let Request::SetView { ref view } = replacement.request else {
+        panic!("expected SetView request");
+    };
+    for pane in &view.panes {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: replacement.request_id,
+            response: Response::Screen {
+                session: pane.session,
+                revision: view.revision,
+                size: pane.size,
+                bytes: Vec::new(),
+            },
+        });
+    }
+    let completed = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: replacement.request_id,
+        response: Response::Ok,
+    });
+    assert!(
+        !completed
+            .iter()
+            .any(|message| matches!(message.request, Request::HistoryBegin { .. })),
+        "a deferral dropped by the removal must not open history later, got {completed:?}"
+    );
+    assert!(dashboard.history.is_none());
+}

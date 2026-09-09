@@ -2590,6 +2590,11 @@ impl Dashboard {
             .any(|pane| pane.session.is_some_and(|id| !existing.contains(&id)));
         if removed {
             self.mark_pending_parser_discarded();
+            // `retain` below shifts pane indices and `focused_pane` follows them, so a parked
+            // wheel deferral no longer names the pane the user scrolled. A surviving focused
+            // session skips `invalidate_view_readiness`, so clear it here rather than leaning on
+            // the downstream focus guard.
+            self.deferred_history_at_tail = None;
             let focused_survives = focused_before.is_some_and(|id| existing.contains(&id));
             self.panes
                 .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
