@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Coarse CI groups: new integration test files fall into core unless classified
-# below. On macOS, the core suite runs the full --all-features workspace gate
-# in one shot instead of the per-target loop; that also covers the GUI
-# feature and its tests/gui.rs integration test, since the GUI feature has no
-# Linux backend and does not run there.
+# Coarse CI groups: new integration test targets fall into core unless
+# classified below. A target is either tests/<name>.rs or a tests/<name>/main.rs
+# directory, which is how tests/tui is laid out. On macOS, the core suite runs
+# the full --all-features workspace gate in one shot instead of the per-target
+# loop; that also covers the GUI feature and its tests/gui.rs integration test,
+# since the GUI feature has no Linux backend and does not run there.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
@@ -24,9 +25,18 @@ case "$suite" in
 esac
 
 targets=()
-for path in tests/*.rs; do
-  name=${path##*/}
-  name=${name%.rs}
+for path in tests/*.rs tests/*/main.rs; do
+  [[ -e "$path" ]] || continue
+  case "$path" in
+    */main.rs)
+      name=${path%/main.rs}
+      name=${name##*/}
+      ;;
+    *)
+      name=${path##*/}
+      name=${name%.rs}
+      ;;
+  esac
   case "$name" in
     gui) continue ;;
     server_lifecycle|terminal_acceptance) group=lifecycle ;;
