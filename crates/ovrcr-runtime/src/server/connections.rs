@@ -70,17 +70,21 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         if matches!(message.request, Request::DashboardHello) {
             if writer.is_some() {
                 let (completion, result) = mpsc::sync_channel(1);
-                if dashboard_send(
-                    &state,
-                    response_message(
-                        message.request_id,
-                        error_response(
-                            ErrorCode::Conflict,
-                            "dashboard is already registered on this connection",
+                let queued = ownership.as_ref().is_some_and(|owned| {
+                    dashboard_send_owner_with_completion(
+                        &state,
+                        &owned.identity,
+                        response_message(
+                            message.request_id,
+                            error_response(
+                                ErrorCode::Conflict,
+                                "dashboard is already registered on this connection",
+                            ),
                         ),
-                    ),
-                    Some(completion),
-                ) {
+                        Some(completion),
+                    )
+                });
+                if queued {
                     let _ = result.recv();
                 }
                 break;
@@ -181,8 +185,9 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 Ok(handle) => writer = Some(handle),
                 Err(_) => break,
             }
-            dashboard_try_send(
+            dashboard_send_owner(
                 &state,
+                &identity,
                 response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
             );
             continue;
@@ -226,22 +231,29 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 } else if !deferred_view {
                     if successful_shutdown {
                         let (completion, result) = mpsc::sync_channel(1);
-                        let queued = dashboard_send(
-                            &state,
-                            response_message(message.request_id, response),
-                            Some(completion),
-                        );
+                        let queued = ownership.as_ref().is_some_and(|owned| {
+                            dashboard_send_owner_with_completion(
+                                &state,
+                                &owned.identity,
+                                response_message(message.request_id, response),
+                                Some(completion),
+                            )
+                        });
                         let delivered =
                             queued && result.recv().is_ok_and(|write_result| write_result.is_ok());
                         (delivered, true)
                     } else {
-                        (
-                            dashboard_try_send(
+                        // A response belongs to the dashboard that asked. A
+                        // replacement owner must never receive an evicted
+                        // connection's late answer under its own request id.
+                        let delivered = ownership.as_ref().is_some_and(|owned| {
+                            dashboard_send_owner(
                                 &state,
+                                &owned.identity,
                                 response_message(message.request_id, response),
-                            ),
-                            false,
-                        )
+                            )
+                        });
+                        (delivered, false)
                     }
                 } else if matches!(response, Response::Ok) {
                     (true, false)
@@ -584,9 +596,15 @@ pub(super) fn handle_request_with_id(
                     "DashboardGeometry requires a dashboard connection",
                 );
             }
+            let Some(owner) = owner else {
+                return error_response(ErrorCode::Conflict, "dashboard is disconnected");
+            };
             let _mutation = state.mutation_lock.lock().unwrap();
-            if let Some(snapshot) = dashboard_snapshot(state) {
-                set_dashboard_geometry(state, &snapshot.identity, size);
+            // Geometry belongs to the dashboard that reported it. A request
+            // that waited out a mutation must not resize a replacement owner's
+            // panes, or the next session spawns with the wrong size.
+            if dashboard_owner_matches(state, owner) {
+                set_dashboard_geometry(state, owner, size);
                 Response::Ok
             } else {
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")

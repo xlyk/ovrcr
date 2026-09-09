@@ -51,6 +51,18 @@ pub(super) enum DashboardDelivery {
     Dirty { revision: u64, session: SessionId },
 }
 
+/// Outcome of offering one message to a dashboard queue.
+///
+/// `Draining` is not a disconnect. The terminal frame path marks the queue
+/// closing so the writer can still flush that final frame; anything offered in
+/// the meantime is dropped with the socket left open. Only `Closed` means the
+/// connection can no longer deliver and must be torn down.
+pub(super) enum Enqueue {
+    Queued,
+    Draining,
+    Closed,
+}
+
 impl DashboardSink {
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -65,10 +77,13 @@ impl DashboardSink {
         })
     }
 
-    pub(super) fn enqueue(&self, outbound: DashboardOutbound) -> bool {
+    pub(super) fn enqueue(&self, outbound: DashboardOutbound) -> Enqueue {
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed || queue.closing {
-            return false;
+        if queue.closed {
+            return Enqueue::Closed;
+        }
+        if queue.closing {
+            return Enqueue::Draining;
         }
         if let ServerMessage::Event(ServerEvent::Output {
             session, revision, ..
@@ -76,7 +91,7 @@ impl DashboardSink {
         {
             let key = (*revision, *session);
             if queue.dirty.contains_key(&key) {
-                return true;
+                return Enqueue::Queued;
             }
             if queue.messages.len() == DASHBOARD_QUEUE {
                 queue.messages.retain(|queued| {
@@ -91,7 +106,7 @@ impl DashboardSink {
                 });
                 queue.dirty.insert(key, DirtyState::Pending);
                 self.wake.notify_one();
-                return true;
+                return Enqueue::Queued;
             }
         } else if queue.messages.len() == DASHBOARD_QUEUE {
             // Queued output is not evidence of a stalled dashboard: the
@@ -102,12 +117,19 @@ impl DashboardSink {
             if queue.messages.len() == DASHBOARD_QUEUE {
                 queue.closed = true;
                 self.wake.notify_all();
-                return false;
+                return Enqueue::Closed;
             }
         }
         queue.messages.push_back(outbound);
         self.wake.notify_one();
-        true
+        Enqueue::Queued
+    }
+
+    /// Boolean view of [`Self::enqueue`] for fixtures that only assert whether
+    /// a message was queued. It delegates rather than repeating the rules.
+    #[cfg(test)]
+    pub(super) fn enqueue_queued(&self, outbound: DashboardOutbound) -> bool {
+        matches!(self.enqueue(outbound), Enqueue::Queued)
     }
 
     pub(super) fn replace_view(
@@ -171,10 +193,15 @@ impl DashboardSink {
         true
     }
 
-    pub(super) fn enqueue_terminal(&self, outbound: DashboardOutbound) -> bool {
+    pub(super) fn enqueue_terminal(&self, outbound: DashboardOutbound) -> Enqueue {
         let mut queue = self.queue.lock().unwrap();
-        if queue.closed || queue.closing {
-            return false;
+        if queue.closed {
+            return Enqueue::Closed;
+        }
+        if queue.closing {
+            // A terminal frame is already queued; the writer closes this
+            // connection once it has flushed that one.
+            return Enqueue::Draining;
         }
         queue.closing = true;
         let too_large =
@@ -191,11 +218,11 @@ impl DashboardSink {
             queue.closed = true;
             queue.terminal = None;
             self.wake.notify_all();
-            return false;
+            return Enqueue::Closed;
         }
         queue.terminal = Some(outbound);
         self.wake.notify_one();
-        true
+        Enqueue::Queued
     }
 
     pub(super) fn next(&self) -> Option<DashboardDelivery> {
@@ -275,14 +302,32 @@ pub(super) fn dashboard_send(
     let Some(snapshot) = dashboard_snapshot(state) else {
         return false;
     };
-    if !snapshot.sink.enqueue(DashboardOutbound {
-        message,
-        completion,
-    }) {
-        disconnect_dashboard(state, snapshot);
-        return false;
+    queue_for_snapshot(
+        state,
+        snapshot,
+        DashboardOutbound {
+            message,
+            completion,
+        },
+    )
+}
+
+/// Queue one message on an already resolved dashboard, disconnecting only when
+/// the queue is closed. A draining queue still owes its client a terminal
+/// frame, so the socket must stay open for the writer to flush it.
+fn queue_for_snapshot(
+    state: &ServerState,
+    snapshot: DashboardSnapshot,
+    outbound: DashboardOutbound,
+) -> bool {
+    match snapshot.sink.enqueue(outbound) {
+        Enqueue::Queued => true,
+        Enqueue::Draining => false,
+        Enqueue::Closed => {
+            disconnect_dashboard(state, snapshot);
+            false
+        }
     }
-    true
 }
 
 pub(super) fn dashboard_snapshot(state: &ServerState) -> Option<DashboardSnapshot> {
@@ -309,20 +354,32 @@ pub(super) fn dashboard_send_owner(
     owner: &Arc<()>,
     message: ServerMessage,
 ) -> bool {
+    dashboard_send_owner_with_completion(state, owner, message, None)
+}
+
+/// Send to `owner` only, reporting the write result on `completion`.
+///
+/// Callers that must wait for the frame to reach the socket still have to prove
+/// the dashboard they answer is the one that asked.
+pub(super) fn dashboard_send_owner_with_completion(
+    state: &ServerState,
+    owner: &Arc<()>,
+    message: ServerMessage,
+    completion: Option<SyncSender<Result<(), String>>>,
+) -> bool {
     let Some(snapshot) =
         dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
     else {
         return false;
     };
-    if snapshot.sink.enqueue(DashboardOutbound {
-        message,
-        completion: None,
-    }) {
-        true
-    } else {
-        disconnect_dashboard(state, snapshot);
-        false
-    }
+    queue_for_snapshot(
+        state,
+        snapshot,
+        DashboardOutbound {
+            message,
+            completion,
+        },
+    )
 }
 
 pub(super) fn dashboard_send_owner_terminal(
@@ -336,14 +393,16 @@ pub(super) fn dashboard_send_owner_terminal(
     else {
         return false;
     };
-    if snapshot.sink.enqueue_terminal(DashboardOutbound {
+    match snapshot.sink.enqueue_terminal(DashboardOutbound {
         message,
         completion,
     }) {
-        true
-    } else {
-        disconnect_dashboard(state, snapshot);
-        false
+        Enqueue::Queued => true,
+        Enqueue::Draining => false,
+        Enqueue::Closed => {
+            disconnect_dashboard(state, snapshot);
+            false
+        }
     }
 }
 

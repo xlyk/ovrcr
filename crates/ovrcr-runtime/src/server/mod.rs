@@ -40,8 +40,8 @@ use dispatch::{
 };
 use outbound::{
     DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
-    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_snapshot, dashboard_try_send,
-    disconnect_dashboard,
+    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_send_owner_with_completion,
+    dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
 pub use startup::{ServerPaths, prepare_socket_directory, run_server};
@@ -49,6 +49,8 @@ use startup::{generate_hook_capability, validate_bound_socket, wake_accept};
 
 #[cfg(test)]
 use connections::handle_shutdown;
+#[cfg(test)]
+use outbound::Enqueue;
 
 #[derive(Debug)]
 struct LifecycleFailure {

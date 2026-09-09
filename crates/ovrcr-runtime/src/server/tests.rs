@@ -50,7 +50,7 @@ fn split_delivery_snapshots_precede_increments() {
     let left = SessionId(1);
     let right = SessionId(2);
     for session in [left, right] {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session,
                 revision: 1,
@@ -74,7 +74,7 @@ fn split_delivery_snapshots_precede_increments() {
         focused: Some(right),
     };
     assert!(sink.replace_view(&view, 10, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Event(ServerEvent::Output {
             session: right,
             revision: 2,
@@ -118,7 +118,7 @@ fn split_delivery_snapshots_precede_increments() {
 
     let sink = DashboardSink::new();
     for _ in 0..62 {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Response {
                 request_id: 1,
                 response: Response::Ok,
@@ -136,7 +136,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
     let first = SessionId(1);
     let second = SessionId(2);
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Response {
                 request_id: 1,
                 response: Response::Ok,
@@ -149,7 +149,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         (second, b"second".as_slice()),
         (SessionId(3), b"interleaved".as_slice()),
     ] {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session,
                 revision: 1,
@@ -158,7 +158,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
             completion: None,
         }));
     }
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Event(ServerEvent::Output {
             session: first,
             revision: 1,
@@ -166,7 +166,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         }),
         completion: None,
     }));
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Event(ServerEvent::Output {
             session: second,
             revision: 1,
@@ -174,7 +174,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         }),
         completion: None,
     }));
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Event(ServerEvent::Output {
             session: second,
             revision: 1,
@@ -183,7 +183,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         completion: None,
     }));
     for _ in 0..2 {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Response {
                 request_id: 3,
                 response: Response::Ok,
@@ -264,7 +264,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         sink.dirty_sent(revision, session);
     }
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Response {
                 request_id: 2,
                 response: Response::Ok,
@@ -273,7 +273,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         }));
     }
     for session in [first, second] {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session,
                 revision: 2,
@@ -851,9 +851,97 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
 }
 
 #[test]
+fn set_view_drops_a_session_removed_before_publication() {
+    let id = SessionId(63);
+    let (_cwd, session, receiver) = spawn_exiting_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    state.sessions.lock().unwrap().insert(id, session.clone());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(session.summary().phase, SessionPhase::Exited { .. })
+    {
+        thread::yield_now();
+    }
+    assert!(matches!(
+        session.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    // Remove the focused session between pane resolution and publication: the
+    // resize seam is the window a slow PTY leaves open for a concurrent
+    // RemoveSession on a connection thread.
+    let hook_state = Arc::downgrade(&state);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |_, _| {
+        hook_state
+            .upgrade()
+            .expect("server state outlives the resize hook")
+            .remove_session(id)
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 80,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![PaneTarget {
+                    session: id,
+                    size: TerminalSize { rows: 25, cols: 81 },
+                }],
+                focused: Some(id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Response {
+            request_id: 80,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            },
+        }
+    ));
+    assert!(sink.queue.lock().unwrap().messages.is_empty());
+    assert!(state.view.lock().unwrap().is_none());
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                session: id,
+                bytes: b"stale".to_vec(),
+            },
+            81,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
 fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
     let sink = DashboardSink::new();
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Response {
             request_id: 1,
             response: Response::Ok,
@@ -861,24 +949,42 @@ fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
         completion: None,
     }));
     let (completion, result) = mpsc::sync_channel(1);
-    assert!(sink.enqueue_terminal(DashboardOutbound {
-        message: ServerMessage::Response {
-            request_id: 2,
-            response: Response::Error {
-                code: ErrorCode::PartialFailure,
-                message: "resize failed".into(),
+    assert!(matches!(
+        sink.enqueue_terminal(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 2,
+                response: Response::Error {
+                    code: ErrorCode::PartialFailure,
+                    message: "resize failed".into(),
+                },
             },
-        },
-        completion: Some(completion),
-    }));
+            completion: Some(completion),
+        }),
+        Enqueue::Queued
+    ));
     assert!(sink.is_closing());
-    assert!(!sink.enqueue(DashboardOutbound {
-        message: ServerMessage::Response {
-            request_id: 3,
-            response: Response::Ok,
-        },
-        completion: None,
-    }));
+    // A closing queue drains rather than closing: the message is dropped, but
+    // the socket stays open so the writer can flush the terminal frame.
+    assert!(matches!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 3,
+                response: Response::Ok,
+            },
+            completion: None,
+        }),
+        Enqueue::Draining
+    ));
+    assert!(matches!(
+        sink.enqueue_terminal(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 4,
+                response: Response::Ok,
+            },
+            completion: None,
+        }),
+        Enqueue::Draining
+    ));
     assert!(matches!(
         sink.next(),
         Some(DashboardDelivery::Message(DashboardOutbound {
@@ -1446,7 +1552,7 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
         .sink
         .clone();
     for revision in 1..=4 {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session: first_id,
                 revision,
@@ -1494,6 +1600,153 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
     let _ = client_stream.shutdown(Shutdown::Both);
+    cleanup_test_session(&second, second_events).unwrap();
+    cleanup_test_session(&first, first_events).unwrap();
+}
+
+#[test]
+fn terminal_frame_survives_a_concurrent_lifecycle_event() {
+    let first_id = SessionId(61);
+    let second_id = SessionId(62);
+    let (_first_cwd, first, first_events) = spawn_live_test_session(first_id);
+    let first_events = apply_test_session_events(Arc::clone(&first), first_events);
+    let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
+    let second_events = apply_test_session_events(Arc::clone(&second), second_events);
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    state
+        .sessions
+        .lock()
+        .unwrap()
+        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_for_hook = Arc::clone(&calls);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            session.resize(size)
+        } else {
+            Err(anyhow::anyhow!("second resize failed"))
+        }
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
+    let send_buffer = 1_i32;
+    let result = unsafe {
+        libc::setsockopt(
+            server_stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            (&send_buffer as *const i32).cast(),
+            std::mem::size_of_val(&send_buffer) as libc::socklen_t,
+        )
+    };
+    assert_eq!(result, 0);
+    let handler_state = Arc::clone(&state);
+    let handler = thread::spawn(move || handle_connection(handler_state, server_stream));
+    exchange_preamble(&mut client_stream).unwrap();
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 71,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 71,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let sink = state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .sink
+        .clone();
+    // A frame larger than the socket buffer parks the writer while this client
+    // is not reading, so the terminal frame stays queued behind it. Keep it
+    // small enough to drain well inside the handler's close timeout.
+    assert!(sink.enqueue_queued(DashboardOutbound {
+        message: response_message(
+            72,
+            Response::TerminalText {
+                session: first_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+                text: "x".repeat(32 * 1024),
+            },
+        ),
+        completion: None,
+    }));
+    write_frame(
+        &mut client_stream,
+        &ClientMessage {
+            request_id: 73,
+            request: Request::SetView {
+                view: DashboardView {
+                    revision: 1,
+                    panes: vec![
+                        PaneTarget {
+                            session: first_id,
+                            size: TerminalSize { rows: 25, cols: 81 },
+                        },
+                        PaneTarget {
+                            session: second_id,
+                            size: TerminalSize { rows: 26, cols: 82 },
+                        },
+                    ],
+                    focused: Some(second_id),
+                },
+            },
+        },
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline && !sink.is_closing() {
+        thread::yield_now();
+    }
+    assert!(
+        sink.is_closing(),
+        "partial resize did not queue the terminal frame"
+    );
+    // The lifecycle event must be dropped while the sink drains. Treating it as
+    // a disconnect shuts the socket down before the writer flushes the
+    // terminal frame, and the client sees a bare EOF instead of the error.
+    assert!(!dashboard_try_send(
+        &state,
+        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
+    ));
+    assert!(state.dashboard_slot.lock().unwrap().is_some());
+    client_stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 72,
+            response: Response::TerminalText { .. },
+        }
+    ));
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut client_stream).unwrap(),
+        ServerMessage::Response {
+            request_id: 73,
+            response: Response::Error {
+                code: ErrorCode::PartialFailure,
+                ..
+            },
+        }
+    ));
+    assert_eq!(client_stream.read(&mut [0_u8; 1]).unwrap(), 0);
+    assert!(join_test_thread_bounded(handler, Duration::from_secs(5)));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(state.dashboard_slot.lock().unwrap().is_none());
+    assert!(state.view.lock().unwrap().is_none());
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
     cleanup_test_session(&second, second_events).unwrap();
     cleanup_test_session(&first, first_events).unwrap();
 }
@@ -2455,7 +2708,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let mut queue_filled = true;
     if parser_was_held {
         for _ in 0..DASHBOARD_QUEUE {
-            if !sink.enqueue(DashboardOutbound {
+            if !sink.enqueue_queued(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
                     projects: Vec::new(),
                 })),
@@ -2621,7 +2874,7 @@ fn dashboard_overflow_closes_affected_connection() {
         .unwrap();
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
                 projects: Vec::new()
             },)),
@@ -2649,7 +2902,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     // into a dirty marker rather than evict a dashboard that is keeping up.
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session: SessionId(2),
                 revision: 7,
@@ -2658,7 +2911,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
             completion: None,
         }));
     }
-    assert!(sink.enqueue(DashboardOutbound {
+    assert!(sink.enqueue_queued(DashboardOutbound {
         message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
             projects: Vec::new()
         })),
@@ -2677,19 +2930,22 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     ));
     // Messages that cannot be coalesced still evict once they fill the queue.
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue(DashboardOutbound {
+        assert!(sink.enqueue_queued(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
                 projects: Vec::new()
             })),
             completion: None,
         }));
     }
-    assert!(!sink.enqueue(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-            projects: Vec::new()
-        })),
-        completion: None,
-    }));
+    assert!(matches!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            })),
+            completion: None,
+        }),
+        Enqueue::Closed
+    ));
 }
 
 #[test]
@@ -2720,6 +2976,237 @@ fn dashboard_overflow_does_not_clear_replacement_slot() {
 
     assert!(state.dashboard.lock().unwrap().is_some());
     assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+}
+
+#[test]
+fn late_response_does_not_reach_a_replacement_dashboard() {
+    let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
+    let (first_server, mut first_client) = UnixStream::pair().unwrap();
+    let first_state = Arc::clone(&state);
+    let first_handler = thread::spawn(move || handle_connection(first_state, first_server));
+    exchange_preamble(&mut first_client).unwrap();
+    write_frame(
+        &mut first_client,
+        &ClientMessage {
+            request_id: 90,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut first_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 90,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let first_snapshot = dashboard_snapshot(&state).expect("first dashboard slot");
+    // The report handler blocks until the dispatcher answers, and this test is
+    // the dispatcher, so the response cannot be written before the slot changes.
+    write_frame(
+        &mut first_client,
+        &ClientMessage {
+            request_id: 91,
+            request: Request::AgentReport(AgentReport {
+                session: SessionId(64),
+                capability: [0_u8; 32],
+                sequence: None,
+                update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+            }),
+        },
+    )
+    .unwrap();
+    let queued = dispatch_receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("agent report reached the dispatcher");
+    let DispatchMessage::AgentReport {
+        completion: report_completion,
+        ..
+    } = queued
+    else {
+        panic!("expected an agent report dispatch");
+    };
+    disconnect_dashboard(&state, first_snapshot);
+    let (second_server, mut second_client) = UnixStream::pair().unwrap();
+    let second_state = Arc::clone(&state);
+    let second_handler = thread::spawn(move || handle_connection(second_state, second_server));
+    exchange_preamble(&mut second_client).unwrap();
+    write_frame(
+        &mut second_client,
+        &ClientMessage {
+            request_id: 92,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut second_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 92,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    report_completion.send(Response::Ok).unwrap();
+    assert!(join_test_thread_bounded(
+        first_handler,
+        Duration::from_secs(5)
+    ));
+    write_frame(
+        &mut second_client,
+        &ClientMessage {
+            request_id: 93,
+            request: Request::List,
+        },
+    )
+    .unwrap();
+    second_client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    // The evicted dashboard's response must not arrive here, so the next frame
+    // is the replacement's own answer.
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut second_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 93,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let _ = second_client.shutdown(Shutdown::Both);
+    assert!(join_test_thread_bounded(
+        second_handler,
+        Duration::from_secs(5)
+    ));
+}
+
+#[test]
+fn stale_geometry_does_not_overwrite_replacement_size() {
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    let (first_server, mut first_client) = UnixStream::pair().unwrap();
+    let first_state = Arc::clone(&state);
+    let first_handler = thread::spawn(move || handle_connection(first_state, first_server));
+    exchange_preamble(&mut first_client).unwrap();
+    write_frame(
+        &mut first_client,
+        &ClientMessage {
+            request_id: 95,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut first_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 95,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    // Hold the mutation lock so the geometry request cannot be applied until
+    // the slot already belongs to the replacement.
+    let mutation = state.mutation_lock.lock().unwrap();
+    write_frame(
+        &mut first_client,
+        &ClientMessage {
+            request_id: 96,
+            request: Request::DashboardGeometry {
+                size: TerminalSize { rows: 11, cols: 41 },
+            },
+        },
+    )
+    .unwrap();
+    // Half-close so the handler parses the queued request and then reads EOF.
+    first_client.shutdown(Shutdown::Write).unwrap();
+    // Release the slot the way a cleanup on another thread would, but without
+    // closing the socket: the already parsed request must still be answered by
+    // the real handler after the replacement takes the slot.
+    let evicted = state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .take()
+        .expect("first dashboard slot");
+    *state.dashboard.lock().unwrap() = None;
+    *state.view.lock().unwrap() = None;
+    drop(evicted);
+    let (second_server, mut second_client) = UnixStream::pair().unwrap();
+    let second_state = Arc::clone(&state);
+    let second_handler = thread::spawn(move || handle_connection(second_state, second_server));
+    exchange_preamble(&mut second_client).unwrap();
+    write_frame(
+        &mut second_client,
+        &ClientMessage {
+            request_id: 97,
+            request: Request::DashboardHello,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut second_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 97,
+            response: Response::Hierarchy(_),
+        }
+    ));
+    let second_identity = state
+        .dashboard_slot
+        .lock()
+        .unwrap()
+        .as_ref()
+        .expect("replacement dashboard slot")
+        .identity
+        .clone();
+    set_dashboard_geometry(
+        &state,
+        &second_identity,
+        TerminalSize { rows: 27, cols: 83 },
+    );
+    drop(mutation);
+    assert!(join_test_thread_bounded(
+        first_handler,
+        Duration::from_secs(5)
+    ));
+    let geometry = state
+        .dashboard_size
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|geometry| (geometry.size, Arc::clone(&geometry.owner)));
+    let (size, owner) = geometry.expect("replacement geometry");
+    assert_eq!(size, TerminalSize { rows: 27, cols: 83 });
+    assert!(Arc::ptr_eq(&owner, &second_identity));
+    write_frame(
+        &mut second_client,
+        &ClientMessage {
+            request_id: 98,
+            request: Request::DashboardGeometry {
+                size: TerminalSize { rows: 19, cols: 71 },
+            },
+        },
+    )
+    .unwrap();
+    second_client
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    assert!(matches!(
+        read_frame::<ServerMessage>(&mut second_client).unwrap(),
+        ServerMessage::Response {
+            request_id: 98,
+            response: Response::Ok,
+        }
+    ));
+    assert_eq!(
+        state
+            .dashboard_size
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|geometry| geometry.size),
+        Some(TerminalSize { rows: 19, cols: 71 })
+    );
+    let _ = second_client.shutdown(Shutdown::Both);
+    assert!(join_test_thread_bounded(
+        second_handler,
+        Duration::from_secs(5)
+    ));
 }
 
 #[test]
