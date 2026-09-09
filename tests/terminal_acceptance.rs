@@ -1892,7 +1892,10 @@ fn mouse_forwarding_outer_pty_round_trip() -> Result<()> {
     dashboard.send(b"\r")?;
     dashboard.wait_until(|screen| screen.contains("Terminal mode"), wait_deadline())?;
     dashboard.send(format!("\x1b[<64;{};{}M", inner.x + 3, inner.y + 4).as_bytes())?;
-    dashboard.wait_until(|screen| screen.contains("HISTORY"), wait_deadline())?;
+    dashboard.wait_until(
+        |screen| screen.contains("HISTORY · frozen"),
+        wait_deadline(),
+    )?;
     dashboard.send(b"\x07")?;
     dashboard.wait_for_screen(|screen| screen.contains("BROWSE"), wait_deadline())?;
     dashboard.detach()?;
