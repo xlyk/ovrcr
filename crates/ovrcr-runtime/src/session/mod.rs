@@ -225,7 +225,14 @@ pub(crate) struct LeaderWaitOverride<'a> {
 }
 
 impl Session {
-    pub fn spawn(
+    /// Spawns a session without publishing it first.
+    ///
+    /// Test-only: every production spawn goes through
+    /// [`Session::spawn_registered`], which publishes the session before its
+    /// PTY reader and child waiter can emit an event the dispatcher cannot yet
+    /// route. A caller here would reintroduce that lost-output race.
+    #[cfg(test)]
+    pub(crate) fn spawn(
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
