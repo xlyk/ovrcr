@@ -96,7 +96,15 @@ fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
 }
 #[test]
 fn create_and_edit_every_field_and_multiline_prompt_in_terminal() {
-    let mut v = TasksView::default();
+    let mut v = TasksView::with_projects(
+        &HierarchySnapshot {
+            projects: vec![ProjectSummary {
+                name: "ovrcr".into(),
+                workspaces: vec![],
+            }],
+        },
+        "ovrcr",
+    );
     v.event(key(KeyCode::Char('n')));
     let values = [
         "review",
@@ -464,4 +472,113 @@ fn transcript_wrap_is_cached_between_frames() {
     v.transcript.append(b"more\n", 2, false);
     terminal.draw(|f| draw_tasks(f, &v)).unwrap();
     assert_eq!(v.transcript_wraps(), 2);
+}
+
+#[test]
+fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
+    let mut d = ready_dashboard();
+    d.hierarchy.projects.push(ProjectSummary {
+        name: "ovrcr".into(),
+        workspaces: vec![],
+    });
+    d.ctrl('t');
+    d.event_action(key(KeyCode::Char('n')));
+    for value in ["review", "git"] {
+        d.event_action(ctrl('a'));
+        d.event_action(Event::Paste(value.into()));
+        d.event_action(key(KeyCode::Tab));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal
+        .draw(|f| draw_tasks(f, d.tasks.as_ref().unwrap()))
+        .unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(
+        rendered.contains("ovrcr"),
+        "project options must be shown: {rendered}"
+    );
+    d.event_action(Event::Paste("ovr".into()));
+    d.event_action(key(KeyCode::Enter));
+    for value in [
+        "origin",
+        "main",
+        "interval",
+        "1h",
+        "UTC",
+        "provider/model",
+        "off",
+        "1h",
+        "prompt",
+    ] {
+        d.event_action(ctrl('a'));
+        d.event_action(Event::Paste(value.into()));
+        d.event_action(key(KeyCode::Tab));
+    }
+    d.event_action(ctrl('s'));
+    let Some(TaskRequest::Create(spec)) = d.tasks.as_mut().unwrap().take_request() else {
+        panic!("save task");
+    };
+    assert_eq!(
+        spec.target,
+        TaskTarget::Git {
+            project: "ovrcr".into(),
+            remote: "origin".into(),
+            branch: "main".into()
+        }
+    );
+}
+
+#[test]
+fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
+    let mut d = ready_dashboard();
+    d.hierarchy.projects.push(ProjectSummary {
+        name: "other".into(),
+        workspaces: vec![],
+    });
+    d.ctrl('t');
+    let v = d.tasks.as_mut().unwrap();
+    let mut task_spec = spec();
+    task_spec.target = TaskTarget::Git {
+        project: "other".into(),
+        remote: "origin".into(),
+        branch: "main".into(),
+    };
+    v.receive(
+        &TaskRequest::ListTasks,
+        Ok(TaskResponse::Tasks(vec![Task {
+            id: TaskId(8),
+            spec: task_spec.clone(),
+            enabled: true,
+            next_due_at: None,
+        }])),
+    );
+    v.event(key(KeyCode::Char('e')));
+    v.event(ctrl('s'));
+    let expected = TaskRequest::Update {
+        id: TaskId(8),
+        spec: task_spec,
+    };
+    assert_eq!(v.take_request(), Some(expected.clone()));
+    v.receive(&expected, Err("retry".into()));
+    v.event(key(KeyCode::Tab));
+    v.event(key(KeyCode::Tab));
+    v.event(Event::Paste("missing".into()));
+    v.event(ctrl('s'));
+    assert!(v.take_request().is_none());
+    assert!(v.message.contains("Select an available project"));
+    v.event(ctrl('u'));
+    v.event(key(KeyCode::Down));
+    for (width, height) in [(100, 30), (40, 12), (12, 5), (1, 1)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| draw_tasks(f, v)).unwrap();
+    }
+    v.event(key(KeyCode::Enter));
+    v.event(ctrl('s'));
+    assert_eq!(v.take_request(), Some(expected));
 }
