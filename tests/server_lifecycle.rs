@@ -1171,6 +1171,10 @@ fn startup_stale_socket_is_recovered() {
 
 #[test]
 fn startup_concurrent_attempts_leave_one_server() {
+    // Held until the variables are removed again: every sibling that points the
+    // CLI at its own socket takes this lock, and a parallel test that spawns a
+    // child would otherwise inherit this fixture's socket.
+    let env_guard = env_lock();
     let fixture = ServerFixture::new();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
@@ -1216,6 +1220,7 @@ fn startup_concurrent_attempts_leave_one_server() {
         std::env::remove_var("OVRCR_SOCKET");
         std::env::remove_var("OVRCR_CONFIG");
     }
+    drop(env_guard);
     let deadline = Instant::now() + Duration::from_secs(2);
     while fixture.paths.socket.exists() && Instant::now() < deadline {
         thread::park_timeout(Duration::from_millis(5));
