@@ -413,6 +413,74 @@ fn empty_task_views_only_hint_actions_with_available_targets() {
         assert!(footer(&view, 120).contains(available));
     }
 }
+
+#[test]
+fn task_confirmations_honor_default_no_and_case_insensitive_answers() {
+    for cleanup in [false, true] {
+        for answer in [
+            KeyCode::Enter,
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+            KeyCode::Esc,
+            KeyCode::Char('y'),
+            KeyCode::Char('Y'),
+        ] {
+            let mut view = fixture();
+            let expected = if cleanup {
+                let mut store = TaskStore::default();
+                let task = store.create(spec(), 0).unwrap();
+                let run = store.enqueue(task.id, RunTrigger::Manual, 1).unwrap();
+                let id = run.id;
+                view.event(key(KeyCode::Char('h')));
+                let request = view.take_request().unwrap();
+                view.receive(&request, Ok(TaskResponse::Runs(vec![run])));
+                assert!(matches!(
+                    view.take_request(),
+                    Some(TaskRequest::ReadLog { .. })
+                ));
+                TaskRequest::Clean {
+                    id,
+                    confirmed: true,
+                }
+            } else {
+                TaskRequest::Delete(TaskId(1))
+            };
+            let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
+            let mut confirmation_visible = |view: &TasksView| {
+                terminal.draw(|f| draw_tasks(f, view)).unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|c| c.symbol())
+                    .collect::<String>()
+                    .contains("[y/N]")
+            };
+            view.event(key(KeyCode::Char('d')));
+            assert!(
+                confirmation_visible(&view),
+                "confirmation must be visible first"
+            );
+            assert!(view.take_request().is_none());
+            assert!(!view.event(key(answer)), "confirmation stays in task UI");
+            assert!(
+                !confirmation_visible(&view),
+                "answer {answer:?}, cleanup={cleanup}"
+            );
+            if matches!(answer, KeyCode::Char('y' | 'Y')) {
+                assert_eq!(view.take_request(), Some(expected));
+            } else {
+                assert!(view.take_request().is_none(), "No must not mutate");
+            }
+            assert_eq!(
+                view.tasks.len(),
+                1,
+                "no mutation before server acknowledgement"
+            );
+        }
+    }
+}
 #[test]
 fn multiline_cursor_edits_unicode_without_corruption() {
     let mut v = fixture();

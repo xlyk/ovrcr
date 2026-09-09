@@ -559,10 +559,13 @@ impl TasksView {
             return false;
         };
         if self.confirmation.is_some() {
-            if key.code == KeyCode::Char('y') {
+            if matches!(key.code, KeyCode::Char('y' | 'Y')) {
                 let request = self.confirmation.take().unwrap();
                 self.queue(request);
-            } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('n')) {
+            } else if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n' | 'N')
+            ) {
                 self.confirmation = None;
             }
             return false;
