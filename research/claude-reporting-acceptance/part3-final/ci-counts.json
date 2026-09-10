@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "passed": 642,
+    "failed": 0,
+    "ignored": 13,
+    "result_lines": 29
+  },
+  "linux": {
+    "passed": 616,
+    "failed": 0,
+    "ignored": 13,
+    "result_lines": 28
+  }
+}

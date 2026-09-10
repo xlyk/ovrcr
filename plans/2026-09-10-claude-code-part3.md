@@ -251,3 +251,19 @@ rtk proxy git diff --check
 The plan is fully implemented only when all intended transitions, accounting coverage/finality, confirmed activity, and required reliability/resource evidence pass their stated gates. Completing research with a negative finding is useful progress, but it is not the missing feature.
 
 If a provider primitive is absent, the next decision is explicit: obtain a supported upstream source, investigate a separately certified newer version, or ask the user to approve a narrower reporting contract. An OVRCR-owned conversation control or different provider execution model requires its own agreed design. No heuristic fallback, execution-model replacement, or release-scope reduction is implicit in this plan.
+
+## Execution disposition, 2026-09-10
+
+User authorized implementation and isolated 2.1.268 native login use. PR #55 was externally marked ready during execution; that current state supersedes this plan's historical draft instruction. Merge/release remain unauthorized.
+
+- [x] Task 1: real crash/exec proofs, cleanup corrections, independent review, macOS/Linux execution.
+- [x] Task 2: exact 2.1.268 compatibility implemented, reviewed and accepted through native GUI. Historical intermittent CLI failures retained; later full parallel suites pass without changed timing.
+- [x] Task 3 enabled subset: 2.1.268 `-r` canonical UUID has separate grammar/runtime tests, native argv/history proof and independent review. Other forms and their unexecuted picker/background matrices remain open.
+- [ ] Task 4: no certified independent foreground transition intent; implementation remains disabled.
+- [ ] Task 5: no complete category/replacement contract; recognized root accounting remains Partial.
+- [ ] Task 6: no final-source boundary; Complete remains disabled.
+- [ ] Task 7: no post-decision settled-turn guarantee; Confirmed remains disabled and the full proposed native matrix is unverified.
+- [ ] Task 8 full resource guarantee: native null and child API cases captured; allocation inventory and reviewed bounded Linux memory fixture pass, but universal/maximally simultaneous/platform proof and old Docker cleanup remain open.
+- [ ] Task 9 full milestone delivery: implemented subset has native/local/hosted evidence and independent unit reviews; full milestone remains blocked by the above dependencies.
+
+See [current requirement disposition](../research/claude-reporting-acceptance/remaining-matrix.md), [integrated evidence](../research/claude-reporting-acceptance/part3-integrated/README.md), and [verification](../research/claude-reporting-acceptance/part3-final/README.md). Older per-step unchecked boxes are the original execution checklist; this dated disposition identifies completed clauses without marking mixed or unsupported tasks complete.

@@ -1,0 +1,1674 @@
+linux	Set up job	﻿2026-09-10T23:41:39.1253071Z Current runner version: '2.337.0'
+linux	Set up job	2026-09-10T23:41:39.1278776Z ##[group]Runner Image Provisioner
+linux	Set up job	2026-09-10T23:41:39.1279781Z Hosted Compute Agent
+linux	Set up job	2026-09-10T23:41:39.1280628Z Version: 20260828.587
+linux	Set up job	2026-09-10T23:41:39.1281382Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+linux	Set up job	2026-09-10T23:41:39.1282264Z Build Date: 2026-08-28T16:44:25Z
+linux	Set up job	2026-09-10T23:41:39.1283069Z Worker ID: {38b3698b-b18f-4b2f-b1de-92f238615336}
+linux	Set up job	2026-09-10T23:41:39.1283920Z Azure Region: centralus
+linux	Set up job	2026-09-10T23:41:39.1284665Z ##[endgroup]
+linux	Set up job	2026-09-10T23:41:39.1286468Z ##[group]Operating System
+linux	Set up job	2026-09-10T23:41:39.1287303Z Ubuntu
+linux	Set up job	2026-09-10T23:41:39.1287915Z 24.04.5
+linux	Set up job	2026-09-10T23:41:39.1288760Z LTS
+linux	Set up job	2026-09-10T23:41:39.1289426Z ##[endgroup]
+linux	Set up job	2026-09-10T23:41:39.1290048Z ##[group]Runner Image
+linux	Set up job	2026-09-10T23:41:39.1290710Z Image: ubuntu-24.04
+linux	Set up job	2026-09-10T23:41:39.1291408Z Version: 20260907.300.1
+linux	Set up job	2026-09-10T23:41:39.1292630Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+linux	Set up job	2026-09-10T23:41:39.1294756Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+linux	Set up job	2026-09-10T23:41:39.1295856Z ##[endgroup]
+linux	Set up job	2026-09-10T23:41:39.1297306Z ##[group]GITHUB_TOKEN Permissions
+linux	Set up job	2026-09-10T23:41:39.1299833Z Contents: read
+linux	Set up job	2026-09-10T23:41:39.1300701Z Metadata: read
+linux	Set up job	2026-09-10T23:41:39.1301343Z Packages: read
+linux	Set up job	2026-09-10T23:41:39.1302062Z ##[endgroup]
+linux	Set up job	2026-09-10T23:41:39.1304413Z Secret source: Actions
+linux	Set up job	2026-09-10T23:41:39.1305574Z Cache mode: write
+linux	Set up job	2026-09-10T23:41:39.1306382Z Prepare workflow directory
+linux	Set up job	2026-09-10T23:41:39.1805106Z Prepare all required actions
+linux	Set up job	2026-09-10T23:41:39.1924153Z Getting action download info
+linux	Set up job	2026-09-10T23:41:39.5127330Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+linux	Set up job	2026-09-10T23:41:39.6464087Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:6bed0761d98439e5a578e2877258200ad565ba87)
+linux	Set up job	2026-09-10T23:41:39.7922931Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+linux	Set up job	2026-09-10T23:41:40.3677226Z Complete job name: linux
+linux	Run actions/checkout@v4	﻿2026-09-10T23:41:40.4228565Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4235548Z ##[group]Run actions/checkout@v4
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4236202Z with:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4236869Z   repository: xlyk/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4240623Z   token: ***
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4241060Z   ssh-strict: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4241496Z   ssh-user: git
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4241940Z   persist-credentials: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4242427Z   clean: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4242876Z   sparse-checkout-cone-mode: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4243370Z   fetch-depth: 1
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4243775Z   fetch-tags: false
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4244234Z   show-progress: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4244712Z   lfs: false
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4245164Z   submodules: false
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4245648Z   set-safe-directory: true
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4246176Z   allow-unsafe-pr-checkout: false
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4246859Z env:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4247260Z   CARGO_TERM_COLOR: always
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4247743Z   SHELL: /bin/bash
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.4248157Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5219300Z Syncing repository: xlyk/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5221696Z ##[group]Getting Git version info
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5222556Z Working directory is '/home/runner/work/ovrcr/ovrcr'
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5226477Z [command]/usr/bin/git version
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5331730Z git version 2.55.0
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5403198Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5413069Z Temporarily overriding HOME='/home/runner/work/_temp/eaf60cbf-7f97-4ffe-94f7-117047857b0a' before making global git config changes
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5415174Z Adding repository directory to the temporary git global config as a safe directory
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5417388Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ovrcr/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5421255Z Deleting the contents of '/home/runner/work/ovrcr/ovrcr'
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5423119Z ##[group]Initializing the repository
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5424381Z [command]/usr/bin/git init /home/runner/work/ovrcr/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5460396Z hint: Using 'master' as the name for the initial branch. This default branch name
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5476490Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5484848Z hint: to use in all of your new repositories, which will suppress this warning,
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5486243Z hint: call:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5486925Z hint:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5487764Z hint: 	git config --global init.defaultBranch <name>
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5488846Z hint:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5489729Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5491093Z hint: 'development'. The just-created branch can be renamed via this command:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5492152Z hint:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5492833Z hint: 	git branch -m <name>
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5493590Z hint:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5494572Z hint: Disable this message with "git config set advice.defaultBranchName false"
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5496101Z Initialized empty Git repository in /home/runner/work/ovrcr/ovrcr/.git/
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5498756Z [command]/usr/bin/git remote add origin https://github.com/xlyk/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5560106Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5570219Z ##[group]Disabling automatic garbage collection
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5580400Z [command]/usr/bin/git config --local gc.auto 0
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5636641Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5650101Z ##[group]Setting up auth
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5651424Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.5654915Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6020890Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6067788Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6290725Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6316460Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6473317Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6499496Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6501100Z ##[group]Fetching the repository
+linux	Run actions/checkout@v4	2026-09-10T23:41:40.6508157Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +3538b2807f2e08e887fb82e9fbf970304a0500c0:refs/remotes/pull/55/merge
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7737267Z From https://github.com/xlyk/ovrcr
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7748875Z  * [new ref]         3538b2807f2e08e887fb82e9fbf970304a0500c0 -> pull/55/merge
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7753314Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7754876Z ##[group]Determining the checkout info
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7756268Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7757075Z [command]/usr/bin/git sparse-checkout disable
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7797209Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7829445Z ##[group]Checking out the ref
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.7831828Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/55/merge
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8513870Z Note: switching to 'refs/remotes/pull/55/merge'.
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8515266Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8516507Z You are in 'detached HEAD' state. You can look around, make experimental
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8519859Z changes and commit them, and you can discard any commits you make in this
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8522596Z state without impacting any branches by switching back to a branch.
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8524211Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8525184Z If you want to create a new branch to retain commits you create, you may
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8527393Z do so (now or later) by using -c with the switch command. Example:
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8529006Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8529821Z   git switch -c <new-branch-name>
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8531045Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8531846Z Or undo this operation with:
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8533322Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8534139Z   git switch -
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8535117Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8536451Z Turn off this advice by setting config variable advice.detachedHead to false
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8538278Z 
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8540534Z HEAD is now at 3538b28 Merge 8166712186a1d1a199111a2ba0c0b844132918e1 into c4ee88e9906ca6aa7ee95dc6aad06ed7053b6dc1
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8547284Z ##[endgroup]
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8565570Z [command]/usr/bin/git log -1 --format=%H
+linux	Run actions/checkout@v4	2026-09-10T23:41:41.8586009Z 3538b2807f2e08e887fb82e9fbf970304a0500c0
+linux	Run dtolnay/rust-toolchain@stable	﻿2026-09-10T23:41:41.9106639Z ##[group]Run dtolnay/rust-toolchain@stable
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9107756Z with:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9108699Z   components: rustfmt, clippy
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9109698Z   toolchain: stable
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9110531Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9111314Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9112197Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9112996Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9187725Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9294837Z ##[group]Run if [[ -z $toolchain ]]; then
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9296060Z ^[[36;1mif [[ -z $toolchain ]]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9297728Z ^[[36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9299656Z ^[[36;1m  echo "'toolchain' is a required input" >&2^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9300768Z ^[[36;1m  exit 1^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9301917Z ^[[36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9303356Z ^[[36;1m  if [[ Linux == macOS ]]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9305034Z ^[[36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9306701Z ^[[36;1m  else^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9308041Z ^[[36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9309664Z ^[[36;1m  fi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9310732Z ^[[36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9312452Z ^[[36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9314017Z ^[[36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9315765Z ^[[36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9317433Z ^[[36;1melse^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9318351Z ^[[36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9319805Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9345970Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9347161Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9347922Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9348895Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9349703Z   toolchain: stable
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9350493Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9452547Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=26]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9467502Z ##[start-action display=Construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9514836Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9516967Z ^[[36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9519181Z ^[[36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9520844Z ^[[36;1mecho "downgrade=" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9541440Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9542609Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9543465Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9544675Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9545485Z   targets: 
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9546250Z   components: rustfmt, clippy
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9547131Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9614404Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=14]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9620462Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9658952Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9660543Z ^[[36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9680415Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9681739Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9682490Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9683357Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9684120Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9738053Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=11]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9744149Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9790424Z ##[group]Run if ! command -v rustup &>/dev/null; then
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9791663Z ^[[36;1mif ! command -v rustup &>/dev/null; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9793946Z ^[[36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9796251Z ^[[36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9797272Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9815557Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9816748Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9817529Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9818545Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9819388Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9820265Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9871924Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=12]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9877545Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9890134Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9903123Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9941329Z ##[group]Run rustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9943761Z ^[[36;1mrustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9963336Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9964443Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9965152Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9965963Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9966746Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9967655Z   RUSTUP_PERMIT_COPY_RENAME: 1
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:41.9968718Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.1180143Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6163918Z info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6599655Z info: component clippy is up to date
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6600601Z info: component rustfmt is up to date
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6605564Z 
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6671424Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6672411Z 
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6691640Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=678]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6696436Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6716624Z ##[group]Run rustup default stable
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6716951Z ^[[36;1mrustup default stable^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6736329Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6736682Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6736917Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6737174Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6737434Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6737710Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6805483Z info: using existing install for stable-x86_64-unknown-linux-gnu
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6816856Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6817294Z 
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6879677Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6880377Z 
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6889631Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=19]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6891885Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6911816Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6912572Z ^[[36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6913178Z ^[[36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6913662Z ^[[36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6930587Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6930962Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6931206Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6931474Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6931721Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.6932000Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7587389Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=69]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7589877Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7610555Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7610973Z ^[[36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7611320Z ^[[36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7611620Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7627777Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7628145Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7628569Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7628983Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7629260Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7629528Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7713248Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=12]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7715455Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7774748Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7775142Z ^[[36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7775488Z ^[[36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7775786Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7791103Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7791455Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7791687Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7791946Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7792192Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7792474Z   CARGO_INCREMENTAL: 0
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7792714Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7903175Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=18]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7905296Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7924290Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7924804Z ^[[36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7925441Z ^[[36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7926096Z ^[[36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7926659Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7927165Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7927634Z ^[[36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7928152Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7929135Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7929498Z ^[[36;1m  fi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7929720Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7944585Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7944931Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7945167Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7945422Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7945693Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7945963Z   CARGO_INCREMENTAL: 0
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.7946203Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8172796Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=26]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8174996Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8194899Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8195591Z ^[[36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8196153Z ^[[36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8196590Z ^[[36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8196906Z ^[[36;1mfi^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8212630Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8213104Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8213399Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8213730Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8214045Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8214421Z   CARGO_INCREMENTAL: 0
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8214739Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8919564Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=74]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8922753Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8940921Z ##[group]Run rustc +stable --version --verbose
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8941289Z ^[[36;1mrustc +stable --version --verbose^[[0m
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8956381Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8956740Z env:
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8956968Z   CARGO_TERM_COLOR: always
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8957223Z   SHELL: /bin/bash
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8957465Z   CARGO_HOME: /home/runner/.cargo
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8957744Z   CARGO_INCREMENTAL: 0
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.8957980Z ##[endgroup]
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9419289Z rustc 1.98.1 (48a229cea 2026-09-01)
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9422711Z binary: rustc
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9423178Z commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9423760Z commit-date: 2026-09-01
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9439678Z host: x86_64-unknown-linux-gnu
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9442700Z release: 1.98.1
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9443438Z LLVM version: 22.1.8
+linux	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:42.9450059Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=52]
+linux	Run Swatinem/rust-cache@v2	﻿2026-09-10T23:41:42.9561675Z ##[group]Run Swatinem/rust-cache@v2
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9562062Z with:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9562349Z   shared-key: linux-headless
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9562723Z   cache-on-failure: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9563030Z   prefix-key: v0-rust
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9563324Z   add-job-id-key: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9563645Z   add-rust-environment-hash-key: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9563982Z   cache-targets: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9564283Z   cache-all-crates: false
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9564617Z   cache-workspace-crates: false
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9564926Z   save-if: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9565212Z   cache-provider: github
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9565539Z   cache-bin: true
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9565829Z   lookup-only: false
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9566132Z   cmd-format: {0}
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9566399Z env:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9566676Z   CARGO_TERM_COLOR: always
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9566983Z   SHELL: /bin/bash
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9567294Z   CARGO_HOME: /home/runner/.cargo
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9567624Z   CARGO_INCREMENTAL: 0
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:42.9567996Z ##[endgroup]
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3698086Z ##[group]Cache Configuration
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3699079Z Cache Provider:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3699829Z     github
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3700449Z Workspaces:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3701006Z     /home/runner/work/ovrcr/ovrcr
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3701625Z Cache Paths:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3702167Z     /home/runner/.cargo/bin
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3702805Z     /home/runner/.cargo/.crates.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3703471Z     /home/runner/.cargo/.crates2.json
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3704141Z     /home/runner/.cargo/registry
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3704758Z     /home/runner/.cargo/git
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3705370Z     /home/runner/work/ovrcr/ovrcr/target
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3705936Z Restore Key:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3706578Z     v0-rust-linux-headless-Linux-x64-6ff13d87
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3707250Z Cache Key:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3707871Z     v0-rust-linux-headless-Linux-x64-6ff13d87-29fb430f
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3708824Z .. Prefix:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3709376Z   - v0-rust-linux-headless-Linux-x64
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3710137Z .. Environment considered:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3710714Z   - Rust Versions:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3711424Z     - 1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3712179Z   - CARGO_HOME
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3712702Z   - CARGO_INCREMENTAL
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3713311Z   - CARGO_TERM_COLOR
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3713850Z .. Lockfiles considered:
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3714464Z   - /home/runner/work/ovrcr/ovrcr/Cargo.lock
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3715134Z   - /home/runner/work/ovrcr/ovrcr/Cargo.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3715911Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol/Cargo.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3716786Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime/Cargo.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3717610Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal/Cargo.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3718625Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui/Cargo.toml
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3719671Z ##[endgroup]
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3720050Z 
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.3720389Z ... Restoring cache ...
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:43.5057007Z Cache hit for: v0-rust-linux-headless-Linux-x64-6ff13d87-29fb430f
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:44.6639586Z Received 104857600 of 265209244 (39.5%), 100.0 MBs/sec
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:45.5670324Z Received 265209244 of 265209244 (100.0%), 132.9 MBs/sec
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:45.5671335Z Cache Size: ~253 MB (265209244 B)
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:45.5737850Z [command]/usr/bin/tar -xf /home/runner/work/_temp/1b92225d-18d4-4f9a-8a04-5ad61cc07724/cache.tzst -P -C /home/runner/work/ovrcr/ovrcr --use-compress-program unzstd
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:51.9029690Z Cache restored successfully
+linux	Run Swatinem/rust-cache@v2	2026-09-10T23:41:51.9118829Z Restored from cache key "v0-rust-linux-headless-Linux-x64-6ff13d87-29fb430f" full match: true.
+linux	Install shell test dependency	﻿2026-09-10T23:41:51.9209007Z ##[group]Run sudo apt-get update && sudo apt-get install -y zsh
+linux	Install shell test dependency	2026-09-10T23:41:51.9209478Z ^[[36;1msudo apt-get update && sudo apt-get install -y zsh^[[0m
+linux	Install shell test dependency	2026-09-10T23:41:51.9235084Z shell: /usr/bin/bash -e {0}
+linux	Install shell test dependency	2026-09-10T23:41:51.9235504Z env:
+linux	Install shell test dependency	2026-09-10T23:41:51.9235908Z   CARGO_TERM_COLOR: always
+linux	Install shell test dependency	2026-09-10T23:41:51.9236354Z   SHELL: /bin/bash
+linux	Install shell test dependency	2026-09-10T23:41:51.9236824Z   CARGO_HOME: /home/runner/.cargo
+linux	Install shell test dependency	2026-09-10T23:41:51.9237172Z   CARGO_INCREMENTAL: 0
+linux	Install shell test dependency	2026-09-10T23:41:51.9237511Z   CACHE_ON_FAILURE: true
+linux	Install shell test dependency	2026-09-10T23:41:51.9237969Z ##[endgroup]
+linux	Install shell test dependency	2026-09-10T23:41:52.3129527Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+linux	Install shell test dependency	2026-09-10T23:41:52.3560520Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+linux	Install shell test dependency	2026-09-10T23:41:52.3729999Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+linux	Install shell test dependency	2026-09-10T23:41:52.3738113Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.3961064Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.4229564Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.4418654Z Get:7 https://dl.google.com/linux/chrome-stable/deb stable InRelease [2548 B]
+linux	Install shell test dependency	2026-09-10T23:41:52.4678047Z Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [411 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.5068166Z Get:9 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [460 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.5708341Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1262 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.5836153Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [292 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.5959258Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [180 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.6399199Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1690 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.6895980Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [388 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.7139837Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1540 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.8581717Z Get:27 https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages [1412 B]
+linux	Install shell test dependency	2026-09-10T23:41:52.9260144Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [353 kB]
+linux	Install shell test dependency	2026-09-10T23:41:52.9931818Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+linux	Install shell test dependency	2026-09-10T23:41:53.0269223Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [5784 B]
+linux	Install shell test dependency	2026-09-10T23:41:53.0594335Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [12.6 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.1579674Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1006 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.1679843Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [213 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.1693817Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [46.4 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.2503287Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1206 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.2741406Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [76.2 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.3379297Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1445 kB]
+linux	Install shell test dependency	2026-09-10T23:41:53.3923575Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [336 kB]
+linux	Install shell test dependency	2026-09-10T23:41:58.6740569Z Fetched 11.3 MB in 1s (8560 kB/s)
+linux	Install shell test dependency	2026-09-10T23:41:59.3030076Z Reading package lists...
+linux	Install shell test dependency	2026-09-10T23:41:59.5014726Z Reading package lists...
+linux	Install shell test dependency	2026-09-10T23:41:59.6044049Z Building dependency tree...
+linux	Install shell test dependency	2026-09-10T23:41:59.6049898Z Reading state information...
+linux	Install shell test dependency	2026-09-10T23:41:59.7315289Z The following additional packages will be installed:
+linux	Install shell test dependency	2026-09-10T23:41:59.7316846Z   zsh-common
+linux	Install shell test dependency	2026-09-10T23:41:59.7321722Z Suggested packages:
+linux	Install shell test dependency	2026-09-10T23:41:59.7322181Z   zsh-doc
+linux	Install shell test dependency	2026-09-10T23:41:59.8251613Z The following NEW packages will be installed:
+linux	Install shell test dependency	2026-09-10T23:41:59.8252470Z   zsh zsh-common
+linux	Install shell test dependency	2026-09-10T23:41:59.8391845Z 0 upgraded, 2 newly installed, 0 to remove and 50 not upgraded.
+linux	Install shell test dependency	2026-09-10T23:41:59.8392641Z Need to get 4985 kB of archives.
+linux	Install shell test dependency	2026-09-10T23:41:59.8393411Z After this operation, 19.1 MB of additional disk space will be used.
+linux	Install shell test dependency	2026-09-10T23:41:59.8394323Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+linux	Install shell test dependency	2026-09-10T23:41:59.9121745Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh-common all 5.9-6ubuntu2 [4173 kB]
+linux	Install shell test dependency	2026-09-10T23:42:00.0529451Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh amd64 5.9-6ubuntu2 [812 kB]
+linux	Install shell test dependency	2026-09-10T23:42:00.3142734Z Fetched 4985 kB in 0s (22.1 MB/s)
+linux	Install shell test dependency	2026-09-10T23:42:00.3394314Z Selecting previously unselected package zsh-common.
+linux	Install shell test dependency	2026-09-10T23:42:00.3547557Z (Reading database ... 
+linux	Install shell test dependency	2026-09-10T23:42:00.3548280Z (Reading database ... 5%
+linux	Install shell test dependency	2026-09-10T23:42:00.3549166Z (Reading database ... 10%
+linux	Install shell test dependency	2026-09-10T23:42:00.3549804Z (Reading database ... 15%
+linux	Install shell test dependency	2026-09-10T23:42:00.3550478Z (Reading database ... 20%
+linux	Install shell test dependency	2026-09-10T23:42:00.3551006Z (Reading database ... 25%
+linux	Install shell test dependency	2026-09-10T23:42:00.3551606Z (Reading database ... 30%
+linux	Install shell test dependency	2026-09-10T23:42:00.3552166Z (Reading database ... 35%
+linux	Install shell test dependency	2026-09-10T23:42:00.3552822Z (Reading database ... 40%
+linux	Install shell test dependency	2026-09-10T23:42:00.3553344Z (Reading database ... 45%
+linux	Install shell test dependency	2026-09-10T23:42:00.3553887Z (Reading database ... 50%
+linux	Install shell test dependency	2026-09-10T23:42:00.3590803Z (Reading database ... 55%
+linux	Install shell test dependency	2026-09-10T23:42:00.4864558Z (Reading database ... 60%
+linux	Install shell test dependency	2026-09-10T23:42:00.6887776Z (Reading database ... 65%
+linux	Install shell test dependency	2026-09-10T23:42:00.8819796Z (Reading database ... 70%
+linux	Install shell test dependency	2026-09-10T23:42:01.0811374Z (Reading database ... 75%
+linux	Install shell test dependency	2026-09-10T23:42:01.2413644Z (Reading database ... 80%
+linux	Install shell test dependency	2026-09-10T23:42:01.4912947Z (Reading database ... 85%
+linux	Install shell test dependency	2026-09-10T23:42:01.7341574Z (Reading database ... 90%
+linux	Install shell test dependency	2026-09-10T23:42:01.9451317Z (Reading database ... 95%
+linux	Install shell test dependency	2026-09-10T23:42:01.9452167Z (Reading database ... 100%
+linux	Install shell test dependency	2026-09-10T23:42:01.9453062Z (Reading database ... 201818 files and directories currently installed.)
+linux	Install shell test dependency	2026-09-10T23:42:01.9489372Z Preparing to unpack .../zsh-common_5.9-6ubuntu2_all.deb ...
+linux	Install shell test dependency	2026-09-10T23:42:02.3036260Z Unpacking zsh-common (5.9-6ubuntu2) ...
+linux	Install shell test dependency	2026-09-10T23:42:03.8849706Z Selecting previously unselected package zsh.
+linux	Install shell test dependency	2026-09-10T23:42:03.8955362Z Preparing to unpack .../zsh_5.9-6ubuntu2_amd64.deb ...
+linux	Install shell test dependency	2026-09-10T23:42:03.9005873Z Unpacking zsh (5.9-6ubuntu2) ...
+linux	Install shell test dependency	2026-09-10T23:42:03.9733520Z Setting up zsh-common (5.9-6ubuntu2) ...
+linux	Install shell test dependency	2026-09-10T23:42:03.9883994Z Setting up zsh (5.9-6ubuntu2) ...
+linux	Install shell test dependency	2026-09-10T23:42:03.9965295Z Processing triggers for debianutils (5.17build1) ...
+linux	Install shell test dependency	2026-09-10T23:42:04.2157797Z Processing triggers for man-db (2.12.0-4build2) ...
+linux	Install shell test dependency	2026-09-10T23:42:04.2179995Z Not building database; man-db/auto-update is not 'true'.
+linux	Install shell test dependency	2026-09-10T23:42:04.7059170Z 
+linux	Install shell test dependency	2026-09-10T23:42:04.7059896Z Running kernel seems to be up-to-date.
+linux	Install shell test dependency	2026-09-10T23:42:04.7069840Z 
+linux	Install shell test dependency	2026-09-10T23:42:04.7070398Z No services need to be restarted.
+linux	Install shell test dependency	2026-09-10T23:42:04.7070822Z 
+linux	Install shell test dependency	2026-09-10T23:42:04.7071224Z No containers need to be restarted.
+linux	Install shell test dependency	2026-09-10T23:42:04.7071570Z 
+linux	Install shell test dependency	2026-09-10T23:42:04.7071880Z No user sessions are running outdated binaries.
+linux	Install shell test dependency	2026-09-10T23:42:04.7072324Z 
+linux	Install shell test dependency	2026-09-10T23:42:04.7072674Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+linux	Configure fixture Git identity	﻿2026-09-10T23:42:05.3397751Z ##[group]Run git config --global user.name "OVRCR CI"
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3398181Z ^[[36;1mgit config --global user.name "OVRCR CI"^[[0m
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3398824Z ^[[36;1mgit config --global user.email "ci@ovrcr.invalid"^[[0m
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3419904Z shell: /usr/bin/bash -e {0}
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3420269Z env:
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3420518Z   CARGO_TERM_COLOR: always
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3420860Z   SHELL: /bin/bash
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3421133Z   CARGO_HOME: /home/runner/.cargo
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3421476Z   CARGO_INCREMENTAL: 0
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3421865Z   CACHE_ON_FAILURE: true
+linux	Configure fixture Git identity	2026-09-10T23:42:05.3422130Z ##[endgroup]
+linux	Format	﻿2026-09-10T23:42:05.3503827Z ##[group]Run cargo fmt --all -- --check
+linux	Format	2026-09-10T23:42:05.3504183Z ^[[36;1mcargo fmt --all -- --check^[[0m
+linux	Format	2026-09-10T23:42:05.3521354Z shell: /usr/bin/bash -e {0}
+linux	Format	2026-09-10T23:42:05.3521664Z env:
+linux	Format	2026-09-10T23:42:05.3521957Z   CARGO_TERM_COLOR: always
+linux	Format	2026-09-10T23:42:05.3522230Z   SHELL: /bin/bash
+linux	Format	2026-09-10T23:42:05.3522502Z   CARGO_HOME: /home/runner/.cargo
+linux	Format	2026-09-10T23:42:05.3522817Z   CARGO_INCREMENTAL: 0
+linux	Format	2026-09-10T23:42:05.3523112Z   CACHE_ON_FAILURE: true
+linux	Format	2026-09-10T23:42:05.3523396Z ##[endgroup]
+linux	Lint	﻿2026-09-10T23:42:07.4500739Z ##[group]Run cargo clippy --workspace --all-targets -- -D warnings
+linux	Lint	2026-09-10T23:42:07.4501483Z ^[[36;1mcargo clippy --workspace --all-targets -- -D warnings^[[0m
+linux	Lint	2026-09-10T23:42:07.4526685Z shell: /usr/bin/bash -e {0}
+linux	Lint	2026-09-10T23:42:07.4527017Z env:
+linux	Lint	2026-09-10T23:42:07.4527330Z   CARGO_TERM_COLOR: always
+linux	Lint	2026-09-10T23:42:07.4527780Z   SHELL: /bin/bash
+linux	Lint	2026-09-10T23:42:07.4528135Z   CARGO_HOME: /home/runner/.cargo
+linux	Lint	2026-09-10T23:42:07.4528735Z   CARGO_INCREMENTAL: 0
+linux	Lint	2026-09-10T23:42:07.4529165Z   CACHE_ON_FAILURE: true
+linux	Lint	2026-09-10T23:42:07.4529595Z ##[endgroup]
+linux	Lint	2026-09-10T23:42:08.1431440Z ^[[1m^[[92m    Updating^[[0m crates.io index
+linux	Lint	2026-09-10T23:42:08.8064725Z ^[[1m^[[92m    Checking^[[0m ovrcr-protocol v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+linux	Lint	2026-09-10T23:42:13.1078932Z ^[[1m^[[92m    Checking^[[0m ovrcr-terminal v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+linux	Lint	2026-09-10T23:42:13.1710653Z ^[[1m^[[92m    Checking^[[0m ovrcr-runtime v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+linux	Lint	2026-09-10T23:42:13.1949886Z ^[[1m^[[92m    Checking^[[0m ovrcr-tui v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+linux	Lint	2026-09-10T23:42:14.2589730Z ^[[1m^[[92m    Checking^[[0m ovrcr v0.1.0 (/home/runner/work/ovrcr/ovrcr)
+linux	Lint	2026-09-10T23:42:19.2373097Z ^[[1m^[[92m    Finished^[[0m `dev` profile [unoptimized + debuginfo] target(s) in 11.70s
+linux	Test	﻿2026-09-10T23:42:19.3859730Z ##[group]Run cargo test --workspace --all-targets
+linux	Test	2026-09-10T23:42:19.3860464Z ^[[36;1mcargo test --workspace --all-targets^[[0m
+linux	Test	2026-09-10T23:42:19.3888722Z shell: /usr/bin/bash -e {0}
+linux	Test	2026-09-10T23:42:19.3889204Z env:
+linux	Test	2026-09-10T23:42:19.3889548Z   CARGO_TERM_COLOR: always
+linux	Test	2026-09-10T23:42:19.3890034Z   SHELL: /bin/bash
+linux	Test	2026-09-10T23:42:19.3890441Z   CARGO_HOME: /home/runner/.cargo
+linux	Test	2026-09-10T23:42:19.3890897Z   CARGO_INCREMENTAL: 0
+linux	Test	2026-09-10T23:42:19.3891275Z   CACHE_ON_FAILURE: true
+linux	Test	2026-09-10T23:42:19.3891642Z ##[endgroup]
+linux	Test	2026-09-10T23:42:19.7339579Z ^[[1m^[[92m   Compiling^[[0m ovrcr-protocol v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+linux	Test	2026-09-10T23:42:21.8477461Z ^[[1m^[[92m   Compiling^[[0m ovrcr-terminal v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+linux	Test	2026-09-10T23:42:22.0000198Z ^[[1m^[[92m   Compiling^[[0m ovrcr-runtime v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+linux	Test	2026-09-10T23:42:24.6684752Z ^[[1m^[[92m   Compiling^[[0m ovrcr-tui v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+linux	Test	2026-09-10T23:42:28.0561456Z ^[[1m^[[92m   Compiling^[[0m ovrcr v0.1.0 (/home/runner/work/ovrcr/ovrcr)
+linux	Test	2026-09-10T23:42:50.4693462Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 31.01s
+linux	Test	2026-09-10T23:42:50.4844215Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr-c1bca079511f85b8)
+linux	Test	2026-09-10T23:42:50.4854095Z 
+linux	Test	2026-09-10T23:42:50.4855173Z running 26 tests
+linux	Test	2026-09-10T23:42:50.4875175Z test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+linux	Test	2026-09-10T23:42:50.4876835Z test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+linux	Test	2026-09-10T23:42:50.4878011Z test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+linux	Test	2026-09-10T23:42:50.5175558Z test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+linux	Test	2026-09-10T23:42:50.5353337Z test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+linux	Test	2026-09-10T23:42:50.5474790Z test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+linux	Test	2026-09-10T23:42:50.5476284Z test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+linux	Test	2026-09-10T23:42:50.5618211Z POST_EXIT_DRAIN_NATIVE_OUTPUT
+linux	Test	2026-09-10T23:42:50.5662632Z test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+linux	Test	2026-09-10T23:42:50.5666324Z test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+linux	Test	2026-09-10T23:42:50.5672575Z test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+linux	Test	2026-09-10T23:42:50.5673713Z test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+linux	Test	2026-09-10T23:42:50.5674707Z test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+linux	Test	2026-09-10T23:42:50.5675697Z test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+linux	Test	2026-09-10T23:42:50.5676777Z test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+linux	Test	2026-09-10T23:42:50.5677851Z test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+linux	Test	2026-09-10T23:42:50.5679281Z test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+linux	Test	2026-09-10T23:42:50.5680554Z test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+linux	Test	2026-09-10T23:42:50.5936903Z test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+linux	Test	2026-09-10T23:42:50.5941804Z test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+linux	Test	2026-09-10T23:42:50.5945214Z test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+linux	Test	2026-09-10T23:42:50.5950591Z test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+linux	Test	2026-09-10T23:42:50.5952090Z test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+linux	Test	2026-09-10T23:42:50.5953194Z test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+linux	Test	2026-09-10T23:42:50.5954090Z test report::tests::agent_hook_claude_maps_supported_events ... ok
+linux	Test	2026-09-10T23:42:50.5955000Z test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+linux	Test	2026-09-10T23:42:50.9874134Z test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+linux	Test	2026-09-10T23:42:50.9875052Z 
+linux	Test	2026-09-10T23:42:50.9875583Z test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+linux	Test	2026-09-10T23:42:50.9877716Z 
+linux	Test	2026-09-10T23:42:50.9887025Z ^[[1m^[[92m     Running^[[0m unittests src/main.rs (target/debug/deps/ovrcr-62d428c3f490433e)
+linux	Test	2026-09-10T23:42:50.9894214Z 
+linux	Test	2026-09-10T23:42:50.9894620Z running 0 tests
+linux	Test	2026-09-10T23:42:50.9895035Z 
+linux	Test	2026-09-10T23:42:50.9895482Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Test	2026-09-10T23:42:50.9896918Z ^[[1m^[[92m     Running^[[0m tests/agent_setup.rs (target/debug/deps/agent_setup-044b0d4df178cdc7)
+linux	Test	2026-09-10T23:42:50.9897514Z 
+linux	Test	2026-09-10T23:42:50.9906404Z 
+linux	Test	2026-09-10T23:42:50.9919330Z running 7 tests
+linux	Test	2026-09-10T23:42:50.9985937Z test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+linux	Test	2026-09-10T23:42:51.0169180Z test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+linux	Test	2026-09-10T23:42:51.0593508Z test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+linux	Test	2026-09-10T23:42:51.0661943Z test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+linux	Test	2026-09-10T23:42:51.0747678Z test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+linux	Test	2026-09-10T23:42:51.1079230Z test setup_quotes_actual_executable_path ... ok
+linux	Test	2026-09-10T23:42:55.0995794Z test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+linux	Test	2026-09-10T23:42:55.0996632Z 
+linux	Test	2026-09-10T23:42:55.0997092Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.11s
+linux	Test	2026-09-10T23:42:55.0999586Z 
+linux	Test	2026-09-10T23:42:55.1017196Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting.rs (target/debug/deps/claude_reporting-d239948c3e0e6308)
+linux	Test	2026-09-10T23:42:55.1026238Z 
+linux	Test	2026-09-10T23:42:55.1059230Z running 15 tests
+linux	Test	2026-09-10T23:42:55.1110274Z test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+linux	Test	2026-09-10T23:42:55.1138305Z test collector_differing_duplicate_freezes_before_replacement ... ok
+linux	Test	2026-09-10T23:42:55.1213263Z test collector_drop_is_bounded_for_a_stalled_helper ... ok
+linux	Test	2026-09-10T23:42:55.1223596Z test collector_cancel_reaps_an_exited_group_before_confirming_absence ... ok
+linux	Test	2026-09-10T23:42:55.1259982Z test collector_expired_deadline_transfers_reaping_ownership ... ok
+linux	Test	2026-09-10T23:42:55.1279428Z test collector_launch_clears_inherited_environment ... ok
+linux	Test	2026-09-10T23:42:55.1302753Z test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+linux	Test	2026-09-10T23:42:55.1944532Z test collector_missing_file_retries_same_path_and_truncation_preserves_watermark ... ok
+linux	Test	2026-09-10T23:42:58.0924236Z test collector_production_byte_cap_freezes_before_identity_cap ... ok
+linux	Test	2026-09-10T23:42:58.3651439Z test collector_raw_record_limit_preserves_prefix ... ok
+linux	Test	2026-09-10T23:42:58.3738050Z test collector_reads_only_one_chunk_and_excludes_sidechains ... ok
+linux	Test	2026-09-10T23:42:58.3819436Z test collector_rejects_oversized_configuration_before_spawn ... ok
+linux	Test	2026-09-10T23:42:58.3913571Z test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+linux	Test	2026-09-10T23:42:58.4039349Z test collector_stalled_helper_is_nonblocking_and_owned_group_cleanup_is_bounded ... ok
+linux	Test	2026-09-10T23:42:58.5340002Z test collector_production_identity_cap_freezes_later_unique_usage ... ok
+linux	Test	2026-09-10T23:42:58.5358762Z 
+linux	Test	2026-09-10T23:42:58.5373385Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-10e4774639803dd7)
+linux	Test	2026-09-10T23:42:58.5374501Z ^[[1m^[[92m     Running^[[0m tests/cli.rs (target/debug/deps/cli-626b8aba980bde45)
+linux	Test	2026-09-10T23:42:58.5375316Z test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.43s
+linux	Test	2026-09-10T23:42:58.5388895Z 
+linux	Test	2026-09-10T23:42:58.5408986Z 
+linux	Test	2026-09-10T23:42:58.5418062Z running 2 tests
+linux	Test	2026-09-10T23:42:58.5419323Z test fifty_collector_raw_index_and_sequential_json_high_water ... ignored, isolated Linux runner only: 50 collectors at raw/index limits
+linux	Test	2026-09-10T23:42:58.5420704Z test fifty_session_reporting_capacity ... ignored, 50 real PTYs/helpers, production indices, 60 seconds; run explicitly alone
+linux	Test	2026-09-10T23:42:58.5421518Z 
+linux	Test	2026-09-10T23:42:58.5422003Z test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Test	2026-09-10T23:42:58.5422425Z 
+linux	Test	2026-09-10T23:42:58.5422465Z 
+linux	Test	2026-09-10T23:42:58.5422604Z running 29 tests
+linux	Test	2026-09-10T23:42:59.2474937Z test agent_hook_cli_reaches_managed_session ... ok
+linux	Test	2026-09-10T23:42:59.2499481Z test agent_hook_cli_requires_identity_without_starting_server ... ok
+linux	Test	2026-09-10T23:42:59.5449963Z test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+linux	Test	2026-09-10T23:42:59.5706028Z test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+linux	Test	2026-09-10T23:42:59.5874506Z test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+linux	Test	2026-09-10T23:42:59.6641482Z test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+linux	Test	2026-09-10T23:42:59.6801275Z test claude_doctor_reports_exact_version_and_version_specific_resume_forms ... ok
+linux	Test	2026-09-10T23:43:01.6941830Z test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+linux	Test	2026-09-10T23:43:01.7122776Z test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+linux	Test	2026-09-10T23:43:01.7182051Z test claude_statusline_renders_default_without_reporting_server ... ok
+linux	Test	2026-09-10T23:43:02.2614326Z test agent_hook_cli_timeout_is_bounded ... ok
+linux	Test	2026-09-10T23:43:02.4290157Z test context_helper_invalid_input_has_no_effect ... ok
+linux	Test	2026-09-10T23:43:03.1418769Z test context_helper_reports_from_managed_pty ... ok
+linux	Test	2026-09-10T23:43:03.1447891Z test context_inspect_missing_session_fails ... ok
+linux	Test	2026-09-10T23:43:03.2729338Z test context_helper_missing_server_does_not_start_one ... ok
+linux	Test	2026-09-10T23:43:03.2750193Z test malformed_offline_registry_is_reported_without_replacing_it ... ok
+linux	Test	2026-09-10T23:43:03.2852069Z test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+linux	Test	2026-09-10T23:43:03.3172759Z test mutations_do_not_start_a_server ... ok
+linux	Test	2026-09-10T23:43:03.3195216Z test new_and_existing_branch_flags_are_exclusive ... ok
+linux	Test	2026-09-10T23:43:03.3381090Z test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+linux	Test	2026-09-10T23:43:03.3402823Z test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+linux	Test	2026-09-10T23:43:03.3480237Z test pause_resume_cli_requires_id ... ok
+linux	Test	2026-09-10T23:43:03.9020241Z test context_inspect_reports_unknown_and_sample ... ok
+linux	Test	2026-09-10T23:43:03.9137420Z test resource_aliases_are_visible_and_parse_as_commands ... ok
+linux	Test	2026-09-10T23:43:03.9191808Z test runtime_errors_include_the_cause_chain ... ok
+linux	Test	2026-09-10T23:43:03.9213194Z Initialized empty Git repository in /tmp/.tmpYjIbDY/repo/.git/
+linux	Test	2026-09-10T23:43:03.9279096Z [main (root-commit) 3e2e101] initial
+linux	Test	2026-09-10T23:43:03.9279840Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:03.9281698Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:04.5941396Z test session_command_keeps_arguments_after_separator ... ok
+linux	Test	2026-09-10T23:43:04.5967352Z test terminal_workspace_filter_requires_project ... ok
+linux	Test	2026-09-10T23:43:04.6021257Z test version_flag_prints_package_version ... ok
+linux	Test	2026-09-10T23:43:06.3503770Z test requests_time_out_against_a_wedged_server ... ok
+linux	Test	2026-09-10T23:43:06.3504415Z 
+linux	Test	2026-09-10T23:43:06.3505248Z test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.81s
+linux	Test	2026-09-10T23:43:06.3509556Z ^[[1m^[[92m     Running^[[0m tests/git_lifecycle.rs (target/debug/deps/git_lifecycle-919816b21ce92e19)
+linux	Test	2026-09-10T23:43:06.3509971Z 
+linux	Test	2026-09-10T23:43:06.3533604Z 
+linux	Test	2026-09-10T23:43:06.3547141Z running 17 tests
+linux	Test	2026-09-10T23:43:06.3572474Z Initialized empty Git repository in /tmp/.tmpnKDuec/repo/.git/
+linux	Test	2026-09-10T23:43:06.3579080Z Initialized empty Git repository in /tmp/.tmpc0X6iZ/repo/.git/
+linux	Test	2026-09-10T23:43:06.3641793Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.3645741Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.3646174Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.3687564Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.3688070Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.3688959Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.4730869Z test add_project_creates_a_missing_workspace_root ... ok
+linux	Test	2026-09-10T23:43:06.4745527Z test add_project_leaves_no_workspace_root_when_the_repository_is_invalid ... ok
+linux	Test	2026-09-10T23:43:06.4755987Z Initialized empty Git repository in /tmp/.tmp4c80M9/repo/.git/
+linux	Test	2026-09-10T23:43:06.4771307Z Initialized empty Git repository in /tmp/.tmpJR2zyX/repo/.git/
+linux	Test	2026-09-10T23:43:06.4840242Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.4841939Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.4842613Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.4882343Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.4885102Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.4885678Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.5041407Z test creates_new_and_existing_branch_worktrees ... ok
+linux	Test	2026-09-10T23:43:06.5060480Z Initialized empty Git repository in /tmp/.tmpBrn53y/repo/.git/
+linux	Test	2026-09-10T23:43:06.5123416Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.5129298Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.5129894Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.5271674Z test inspects_clean_and_dirty_worktrees ... ok
+linux	Test	2026-09-10T23:43:06.5294042Z Initialized empty Git repository in /tmp/.tmpkgMCEM/repo/.git/
+linux	Test	2026-09-10T23:43:06.5357259Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.5357854Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.5359864Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.5457325Z test refuses_registry_and_git_path_disagreement ... ok
+linux	Test	2026-09-10T23:43:06.5478074Z Initialized empty Git repository in /tmp/.tmpwEegcs/repo/.git/
+linux	Test	2026-09-10T23:43:06.5542161Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.5542647Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.5543107Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.5722352Z test refuses_symlink_substitution_without_touching_either_worktree ... ok
+linux	Test	2026-09-10T23:43:06.5740965Z Initialized empty Git repository in /tmp/.tmphFZxNU/repo/.git/
+linux	Test	2026-09-10T23:43:06.5801324Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.5804819Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.5805470Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.5814455Z Preparing worktree (new branch 'feature/shared')
+linux	Test	2026-09-10T23:43:06.5844957Z HEAD is now at 6e18672 initial
+linux	Test	2026-09-10T23:43:06.5919354Z test add_project_refuses_relative_paths_without_creating_anything ... ok
+linux	Test	2026-09-10T23:43:06.5939281Z Initialized empty Git repository in /tmp/.tmp4ysCBx/repo/.git/
+linux	Test	2026-09-10T23:43:06.5999295Z test refuses_to_remove_branch_checked_out_elsewhere ... ok
+linux	Test	2026-09-10T23:43:06.6009326Z Initialized empty Git repository in /tmp/.tmpXHsAsU/repo/.git/
+linux	Test	2026-09-10T23:43:06.6022178Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6022862Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6023451Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6083578Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6087125Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6087837Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6100861Z Preparing worktree (new branch 'feature/outside')
+linux	Test	2026-09-10T23:43:06.6143536Z HEAD is now at 6e18672 initial
+linux	Test	2026-09-10T23:43:06.6177464Z test refuses_to_remove_unregistered_matching_worktree ... ok
+linux	Test	2026-09-10T23:43:06.6196546Z Initialized empty Git repository in /tmp/.tmprIc41x/repo/.git/
+linux	Test	2026-09-10T23:43:06.6210659Z test refuses_to_remove_worktree_outside_registered_root ... ok
+linux	Test	2026-09-10T23:43:06.6237857Z Initialized empty Git repository in /tmp/.tmp4g7sUJ/repo/.git/
+linux	Test	2026-09-10T23:43:06.6296934Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6299492Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6300090Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6322343Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6359185Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6369099Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6489880Z test refuses_to_remove_worktree_with_tracked_changes ... ok
+linux	Test	2026-09-10T23:43:06.6500238Z test refuses_to_remove_worktree_with_untracked_files ... ok
+linux	Test	2026-09-10T23:43:06.6509544Z Initialized empty Git repository in /tmp/.tmprbHgQ5/repo/.git/
+linux	Test	2026-09-10T23:43:06.6562404Z Initialized empty Git repository in /tmp/.tmpHKL7HI/repo/.git/
+linux	Test	2026-09-10T23:43:06.6602219Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6602840Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6603368Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6635719Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6636429Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6637006Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6637561Z test rejects_existing_worktree_destination ... ok
+linux	Test	2026-09-10T23:43:06.6675476Z Initialized empty Git repository in /tmp/.tmpSG7DGF/repo/.git/
+linux	Test	2026-09-10T23:43:06.6751512Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6753687Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6754640Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6764186Z test rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation ... ok
+linux	Test	2026-09-10T23:43:06.6774281Z test rejects_workspace_path_traversal_before_git ... ok
+linux	Test	2026-09-10T23:43:06.6792503Z Initialized empty Git repository in /tmp/.tmpFaI6Br/repo/.git/
+linux	Test	2026-09-10T23:43:06.6809092Z Initialized empty Git repository in /tmp/.tmpxVyvMe/repo/.git/
+linux	Test	2026-09-10T23:43:06.6877513Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6885727Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6886388Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.6904036Z [main (root-commit) 6e18672] initial
+linux	Test	2026-09-10T23:43:06.6906485Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:06.6907101Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:06.7100962Z test removes_clean_registered_worktree_and_preserves_branch ... ok
+linux	Test	2026-09-10T23:43:06.7134254Z test removes_workspace_whose_directory_is_gone ... ok
+linux	Test	2026-09-10T23:43:06.7134744Z 
+linux	Test	2026-09-10T23:43:06.7135181Z test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+linux	Test	2026-09-10T23:43:06.7135945Z 
+linux	Test	2026-09-10T23:43:06.7138031Z ^[[1m^[[92m     Running^[[0m tests/gui.rs (target/debug/deps/gui-d42af708b634e17c)
+linux	Test	2026-09-10T23:43:06.7146008Z 
+linux	Test	2026-09-10T23:43:06.7146381Z running 0 tests
+linux	Test	2026-09-10T23:43:06.7146785Z 
+linux	Test	2026-09-10T23:43:06.7147218Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Test	2026-09-10T23:43:06.7148550Z ^[[1m^[[92m     Running^[[0m tests/resource_cli.rs (target/debug/deps/resource_cli-d10bf9b7b1c690ad)
+linux	Test	2026-09-10T23:43:06.7149169Z 
+linux	Test	2026-09-10T23:43:06.7156195Z 
+linux	Test	2026-09-10T23:43:06.7156583Z running 6 tests
+linux	Test	2026-09-10T23:43:07.3901614Z test agent_hook_resource_inventory_reports_activity ... ok
+linux	Test	2026-09-10T23:43:07.4247973Z test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... ok
+linux	Test	2026-09-10T23:43:07.4319022Z test context_resource_inventory_matches_inspection ... ok
+linux	Test	2026-09-10T23:43:08.0957273Z test remove_project_reports_workspaces_remain ... ok
+linux	Test	2026-09-10T23:43:08.1281484Z test pause_resume_resource_cli_preserves_input_and_close_contract ... ok
+linux	Test	2026-09-10T23:43:08.8103130Z test terminal_cli_drives_real_session_and_preserves_workspace_removal_guards ... ok
+linux	Test	2026-09-10T23:43:08.8104295Z 
+linux	Test	2026-09-10T23:43:08.8104822Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+linux	Test	2026-09-10T23:43:08.8106064Z ^[[1m^[[92m     Running^[[0m tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-a8f2d7ca4d6824bc)
+linux	Test	2026-09-10T23:43:08.8109098Z 
+linux	Test	2026-09-10T23:43:08.8121690Z 
+linux	Test	2026-09-10T23:43:08.8122171Z running 79 tests
+linux	Test	2026-09-10T23:43:08.8146065Z Initialized empty Git repository in /tmp/.tmpO6G9yv/repo/.git/
+linux	Test	2026-09-10T23:43:08.8147547Z Initialized empty Git repository in /tmp/.tmpTkYBQ5/repo/.git/
+linux	Test	2026-09-10T23:43:08.8226453Z [main (root-commit) f84633c] initial
+linux	Test	2026-09-10T23:43:08.8228682Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:08.8229360Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:08.8230060Z [main (root-commit) f84633c] initial
+linux	Test	2026-09-10T23:43:08.8230563Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:08.8231085Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:09.8529282Z test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+linux	Test	2026-09-10T23:43:09.8548536Z Initialized empty Git repository in /tmp/.tmpjt2okt/repo/.git/
+linux	Test	2026-09-10T23:43:09.8614026Z [main (root-commit) 8d4e9f1] initial
+linux	Test	2026-09-10T23:43:09.8616324Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:09.8616946Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:09.9214788Z test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+linux	Test	2026-09-10T23:43:09.9247587Z Initialized empty Git repository in /tmp/.tmpaEhpKv/repo/.git/
+linux	Test	2026-09-10T23:43:09.9317591Z [main (root-commit) 8d4e9f1] initial
+linux	Test	2026-09-10T23:43:09.9318330Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:09.9318914Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:11.6909123Z test agent_admission_failed_bind_status_disconnects_watch ... ok
+linux	Test	2026-09-10T23:43:11.6928628Z Initialized empty Git repository in /tmp/.tmp5juGQ1/repo/.git/
+linux	Test	2026-09-10T23:43:11.6996693Z [main (root-commit) 92bd72f] initial
+linux	Test	2026-09-10T23:43:11.6999227Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:11.7000372Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:11.7581522Z test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+linux	Test	2026-09-10T23:43:11.7602300Z Initialized empty Git repository in /tmp/.tmpj3IiVV/repo/.git/
+linux	Test	2026-09-10T23:43:11.7692141Z [main (root-commit) 92bd72f] initial
+linux	Test	2026-09-10T23:43:11.7693670Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:11.7694321Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:13.5740164Z test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+linux	Test	2026-09-10T23:43:13.5741467Z test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+linux	Test	2026-09-10T23:43:13.7017036Z test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+linux	Test	2026-09-10T23:43:13.7523280Z Initialized empty Git repository in /tmp/.tmp7DOgGi/repo/.git/
+linux	Test	2026-09-10T23:43:13.7557054Z Initialized empty Git repository in /tmp/.tmpdJTcyu/repo/.git/
+linux	Test	2026-09-10T23:43:13.7601850Z [main (root-commit) 3eda18e] initial
+linux	Test	2026-09-10T23:43:13.7602683Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:13.7603254Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:13.7631149Z [main (root-commit) 3eda18e] initial
+linux	Test	2026-09-10T23:43:13.7631879Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:13.7632575Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:14.8645501Z test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+linux	Test	2026-09-10T23:43:14.8666148Z Initialized empty Git repository in /tmp/.tmpL9SADR/repo/.git/
+linux	Test	2026-09-10T23:43:14.8730992Z [main (root-commit) 5699d36] initial
+linux	Test	2026-09-10T23:43:14.8733390Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:14.8734048Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:14.8903181Z test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+linux	Test	2026-09-10T23:43:14.9817779Z test agent_hook_capability_and_exit_are_enforced ... ok
+linux	Test	2026-09-10T23:43:14.9834853Z Initialized empty Git repository in /tmp/.tmptnFByz/repo/.git/
+linux	Test	2026-09-10T23:43:14.9897279Z [main (root-commit) 5699d36] initial
+linux	Test	2026-09-10T23:43:14.9898176Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:14.9898954Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:15.0986493Z test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+linux	Test	2026-09-10T23:43:15.1021902Z Initialized empty Git repository in /tmp/.tmpZIM3yK/repo/.git/
+linux	Test	2026-09-10T23:43:15.1084231Z [main (root-commit) 6aacb51] initial
+linux	Test	2026-09-10T23:43:15.1085095Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:15.1085954Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:15.2165668Z test agent_hook_sequence_does_not_regress_state ... ok
+linux	Test	2026-09-10T23:43:15.2200246Z Initialized empty Git repository in /tmp/.tmpqUHq3k/repo/.git/
+linux	Test	2026-09-10T23:43:15.2214383Z Initialized empty Git repository in /tmp/.tmpBbsVJF/repo/.git/
+linux	Test	2026-09-10T23:43:15.2259538Z [main (root-commit) 6aacb51] initial
+linux	Test	2026-09-10T23:43:15.2262700Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:15.2263321Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:15.2265243Z [main (root-commit) 6aacb51] initial
+linux	Test	2026-09-10T23:43:15.2265962Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:15.2266473Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:15.3366320Z test agent_hook_startup_registration_is_visible ... ok
+linux	Test	2026-09-10T23:43:15.3383563Z Initialized empty Git repository in /tmp/.tmpV55nIJ/repo/.git/
+linux	Test	2026-09-10T23:43:15.3443300Z [main (root-commit) 6aacb51] initial
+linux	Test	2026-09-10T23:43:15.3443949Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:15.3445500Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:15.9332200Z test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+linux	Test	2026-09-10T23:43:15.9333334Z test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+linux	Test	2026-09-10T23:43:15.9334383Z test agent_run_native_helper ... ignored, native child fixture launched through agent run
+linux	Test	2026-09-10T23:43:15.9351152Z Initialized empty Git repository in /tmp/.tmpvYLw4o/repo/.git/
+linux	Test	2026-09-10T23:43:15.9414269Z [main (root-commit) 6aacb51] initial
+linux	Test	2026-09-10T23:43:15.9416235Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:15.9416917Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:16.0355917Z test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+linux	Test	2026-09-10T23:43:16.0372076Z Initialized empty Git repository in /tmp/.tmpBQ2UDg/repo/.git/
+linux	Test	2026-09-10T23:43:16.0436375Z [main (root-commit) 5e160ea] initial
+linux	Test	2026-09-10T23:43:16.0437100Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:16.0438672Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:17.1487334Z test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+linux	Test	2026-09-10T23:43:17.1506744Z Initialized empty Git repository in /tmp/.tmpkuSK0z/repo/.git/
+linux	Test	2026-09-10T23:43:17.1572158Z [main (root-commit) 257f5ad] initial
+linux	Test	2026-09-10T23:43:17.1574252Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:17.1574653Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:17.2090050Z test agent_run_runtime_kill_reaches_owned_native_group ... ok
+linux	Test	2026-09-10T23:43:17.2109314Z Initialized empty Git repository in /tmp/.tmpRHkEEq/repo/.git/
+linux	Test	2026-09-10T23:43:17.2193259Z [main (root-commit) 257f5ad] initial
+linux	Test	2026-09-10T23:43:17.2206927Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:17.2207830Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:18.0533976Z test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+linux	Test	2026-09-10T23:43:18.0552769Z Initialized empty Git repository in /tmp/.tmpi05JDD/repo/.git/
+linux	Test	2026-09-10T23:43:18.0616275Z [main (root-commit) 68c3e73] initial
+linux	Test	2026-09-10T23:43:18.0618056Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:18.0618893Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:18.5175860Z test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+linux	Test	2026-09-10T23:43:18.5192172Z Initialized empty Git repository in /tmp/.tmpPi8Wpk/repo/.git/
+linux	Test	2026-09-10T23:43:18.5256432Z [main (root-commit) 68c3e73] initial
+linux	Test	2026-09-10T23:43:18.5257042Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:18.5258562Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:18.9024955Z test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+linux	Test	2026-09-10T23:43:18.9042404Z Initialized empty Git repository in /tmp/.tmpyOGEpe/repo/.git/
+linux	Test	2026-09-10T23:43:18.9105502Z [main (root-commit) 68c3e73] initial
+linux	Test	2026-09-10T23:43:18.9106517Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:18.9107325Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:19.4236716Z test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+linux	Test	2026-09-10T23:43:19.6765002Z Initialized empty Git repository in /tmp/.tmp0FUIOn/repo/.git/
+linux	Test	2026-09-10T23:43:20.0628653Z test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+linux	Test	2026-09-10T23:43:20.1237215Z [main (root-commit) 00a0900] initial
+linux	Test	2026-09-10T23:43:20.1237888Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:20.1238886Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:20.3463719Z Initialized empty Git repository in /tmp/.tmpChcCVF/repo/.git/
+linux	Test	2026-09-10T23:43:20.8303142Z [main (root-commit) 00a0900] initial
+linux	Test	2026-09-10T23:43:20.8305719Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:20.8306487Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:23.0846217Z test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+linux	Test	2026-09-10T23:43:23.0871693Z Initialized empty Git repository in /tmp/.tmpI0ezuJ/repo/.git/
+linux	Test	2026-09-10T23:43:23.0937780Z [main (root-commit) d130dad] initial
+linux	Test	2026-09-10T23:43:23.0938846Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:23.0942331Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:23.1998518Z test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+linux	Test	2026-09-10T23:43:23.2017719Z Initialized empty Git repository in /tmp/.tmpxC8Tbu/repo/.git/
+linux	Test	2026-09-10T23:43:23.2081559Z [main (root-commit) d130dad] initial
+linux	Test	2026-09-10T23:43:23.2082242Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:23.2083681Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:23.3119600Z test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+linux	Test	2026-09-10T23:43:23.4148923Z test client_with_wrong_protocol_version_is_refused ... ok
+linux	Test	2026-09-10T23:43:23.4169633Z Initialized empty Git repository in /tmp/.tmpxpy2kp/repo/.git/
+linux	Test	2026-09-10T23:43:23.4236649Z [main (root-commit) d130dad] initial
+linux	Test	2026-09-10T23:43:23.4237240Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:23.4237736Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:23.7679744Z test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+linux	Test	2026-09-10T23:43:24.0297040Z test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+linux	Test	2026-09-10T23:43:24.0313703Z Initialized empty Git repository in /tmp/.tmpW6ABnq/repo/.git/
+linux	Test	2026-09-10T23:43:24.0379265Z [main (root-commit) 7d22249] initial
+linux	Test	2026-09-10T23:43:24.0381073Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:24.0381472Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:24.1466641Z test context_report_rejects_old_and_invalid_samples ... ok
+linux	Test	2026-09-10T23:43:24.1482909Z Initialized empty Git repository in /tmp/.tmpnKkeEr/repo/.git/
+linux	Test	2026-09-10T23:43:24.1544890Z [main (root-commit) 7d22249] initial
+linux	Test	2026-09-10T23:43:24.1545573Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:24.1547121Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:24.2637630Z test context_report_replaces_snapshot_and_preserves_activity ... ok
+linux	Test	2026-09-10T23:43:24.2656525Z Initialized empty Git repository in /tmp/.tmpWoIpwF/repo/.git/
+linux	Test	2026-09-10T23:43:24.2717682Z [main (root-commit) 7d22249] initial
+linux	Test	2026-09-10T23:43:24.2718649Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:24.2720113Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:24.3805982Z test context_snapshot_survives_dashboard_reattach ... ok
+linux	Test	2026-09-10T23:43:24.3822788Z Initialized empty Git repository in /tmp/.tmpvaJaRf/repo/.git/
+linux	Test	2026-09-10T23:43:24.3884338Z [main (root-commit) 7d22249] initial
+linux	Test	2026-09-10T23:43:24.3885052Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:24.3885436Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:25.0356107Z test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+linux	Test	2026-09-10T23:43:25.0386613Z Initialized empty Git repository in /tmp/.tmpNdZrV2/repo/.git/
+linux	Test	2026-09-10T23:43:25.0454043Z [main (root-commit) 89a3786] initial
+linux	Test	2026-09-10T23:43:25.0454757Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:25.0455371Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:25.1392212Z test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+linux	Test	2026-09-10T23:43:25.6499276Z test control_lifecycle_enforces_every_removal_gate ... ok
+linux	Test	2026-09-10T23:43:25.6513828Z Initialized empty Git repository in /tmp/.tmpnn4HO2/repo/.git/
+linux	Test	2026-09-10T23:43:25.6581061Z [main (root-commit) 89a3786] initial
+linux	Test	2026-09-10T23:43:25.6582751Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:25.6583307Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:25.7534744Z test dashboard_receives_concrete_ordinary_request_errors ... ok
+linux	Test	2026-09-10T23:43:25.8564794Z test dashboard_request_id_zero_does_not_block_followup_response ... ok
+linux	Test	2026-09-10T23:43:25.9638885Z test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+linux	Test	2026-09-10T23:43:26.0670577Z test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+linux	Test	2026-09-10T23:43:26.3042336Z test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+linux	Test	2026-09-10T23:43:26.3058920Z Initialized empty Git repository in /tmp/.tmpz4zc1D/repo/.git/
+linux	Test	2026-09-10T23:43:26.3122610Z [main (root-commit) f28a0df] initial
+linux	Test	2026-09-10T23:43:26.3123223Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:26.3124822Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:26.9182095Z test fast_exit_session_is_retained_as_exited ... ok
+linux	Test	2026-09-10T23:43:26.9206103Z Initialized empty Git repository in /tmp/.tmpE2LpmM/repo/.git/
+linux	Test	2026-09-10T23:43:26.9268014Z [main (root-commit) f28a0df] initial
+linux	Test	2026-09-10T23:43:26.9272058Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:26.9272792Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:27.6122533Z test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+linux	Test	2026-09-10T23:43:27.6123439Z test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+linux	Test	2026-09-10T23:43:28.1324335Z test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+linux	Test	2026-09-10T23:43:28.1334584Z test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+linux	Test	2026-09-10T23:43:28.1344619Z Initialized empty Git repository in /tmp/.tmpHuqyBH/repo/.git/
+linux	Test	2026-09-10T23:43:28.1406355Z [main (root-commit) 6adff82] initial
+linux	Test	2026-09-10T23:43:28.1406988Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:28.1408574Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:28.3503275Z test history_frozen_page_survives_eviction_and_exit ... ok
+linux	Test	2026-09-10T23:43:28.3521304Z Initialized empty Git repository in /tmp/.tmpxoFJST/repo/.git/
+linux	Test	2026-09-10T23:43:28.3580637Z [main (root-commit) 6adff82] initial
+linux	Test	2026-09-10T23:43:28.3582998Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:28.3583759Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:28.5672131Z test history_reattach_reads_retained_output ... ok
+linux	Test	2026-09-10T23:43:28.5673311Z test hook_child_report_helper ... ignored
+linux	Test	2026-09-10T23:43:28.5688851Z Initialized empty Git repository in /tmp/.tmpYnZ6If/repo/.git/
+linux	Test	2026-09-10T23:43:28.5959673Z [main (root-commit) 6adff82] initial
+linux	Test	2026-09-10T23:43:28.5960268Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:28.5961828Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:29.9660159Z test history_slow_dashboard_recovers_after_finite_burst ... ok
+linux	Test	2026-09-10T23:43:29.9694564Z Initialized empty Git repository in /tmp/.tmpeuToT5/repo/.git/
+linux	Test	2026-09-10T23:43:29.9759134Z [main (root-commit) e2908af] initial
+linux	Test	2026-09-10T23:43:29.9760472Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:29.9760974Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:31.9821524Z test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+linux	Test	2026-09-10T23:43:31.9822714Z test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+linux	Test	2026-09-10T23:43:32.5819501Z test kill_does_not_block_dashboard_geometry ... ok
+linux	Test	2026-09-10T23:43:32.5829457Z test pause_resume_child_fixture ... ignored
+linux	Test	2026-09-10T23:43:32.5843115Z Initialized empty Git repository in /tmp/.tmpOGE7Ar/repo/.git/
+linux	Test	2026-09-10T23:43:32.5909209Z [main (root-commit) fead211] initial
+linux	Test	2026-09-10T23:43:32.5909913Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:32.5911520Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:33.8012672Z test pause_resume_backpressured_input_keeps_controls_available ... ok
+linux	Test	2026-09-10T23:43:33.8032759Z Initialized empty Git repository in /tmp/.tmpxM2eYI/repo/.git/
+linux	Test	2026-09-10T23:43:33.8102941Z [main (root-commit) 231fc97] initial
+linux	Test	2026-09-10T23:43:33.8103615Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:33.8104018Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:34.5195871Z test pause_resume_control_races_converge ... ok
+linux	Test	2026-09-10T23:43:34.5214558Z Initialized empty Git repository in /tmp/.tmpDX0C34/repo/.git/
+linux	Test	2026-09-10T23:43:34.5276340Z [main (root-commit) 5bcb2e7] initial
+linux	Test	2026-09-10T23:43:34.5276845Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:34.5277520Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:35.2364108Z test pause_resume_kill_runs_group_handlers ... ok
+linux	Test	2026-09-10T23:43:35.2383350Z Initialized empty Git repository in /tmp/.tmpq6g29X/repo/.git/
+linux	Test	2026-09-10T23:43:35.2446203Z [main (root-commit) 3df7c1c] initial
+linux	Test	2026-09-10T23:43:35.2446883Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:35.2448246Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:36.3498307Z test pause_resume_server_refuses_removal_and_late_mutation ... ok
+linux	Test	2026-09-10T23:43:36.3514315Z Initialized empty Git repository in /tmp/.tmpobfBBB/repo/.git/
+linux	Test	2026-09-10T23:43:36.3577529Z [main (root-commit) 12b126c] initial
+linux	Test	2026-09-10T23:43:36.3578002Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:36.3578711Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:36.9685588Z test pause_resume_shutdown_cleans_stopped_groups ... ok
+linux	Test	2026-09-10T23:43:36.9710107Z Initialized empty Git repository in /tmp/.tmp0h5TXi/repo/.git/
+linux	Test	2026-09-10T23:43:36.9728243Z Initialized empty Git repository in /tmp/.tmpROjB6T/repo/.git/
+linux	Test	2026-09-10T23:43:36.9780539Z [main (root-commit) 12b126c] initial
+linux	Test	2026-09-10T23:43:36.9786850Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:36.9787736Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:36.9788643Z [main (root-commit) 12b126c] initial
+linux	Test	2026-09-10T23:43:36.9789299Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:36.9789779Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:37.6893350Z test pause_resume_stops_group_and_rejects_input ... ok
+linux	Test	2026-09-10T23:43:37.6913745Z Initialized empty Git repository in /tmp/.tmp6PyGp5/repo/.git/
+linux	Test	2026-09-10T23:43:37.6977818Z [main (root-commit) 42cd2b6] initial
+linux	Test	2026-09-10T23:43:37.6995443Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:37.7002014Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:37.7003819Z test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+linux	Test	2026-09-10T23:43:37.7023120Z Initialized empty Git repository in /tmp/.tmpQFNX76/repo/.git/
+linux	Test	2026-09-10T23:43:37.7109571Z [main (root-commit) 42cd2b6] initial
+linux	Test	2026-09-10T23:43:37.7110209Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:37.7110659Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:38.3201597Z test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+linux	Test	2026-09-10T23:43:38.3217921Z Initialized empty Git repository in /tmp/.tmpvfK0Up/repo/.git/
+linux	Test	2026-09-10T23:43:38.3279190Z [main (root-commit) 1b75446] initial
+linux	Test	2026-09-10T23:43:38.3280093Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:38.3280724Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:38.6299967Z test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+linux	Test	2026-09-10T23:43:38.7387335Z test shutdown_disconnected_requester_still_wakes_accept ... ok
+linux	Test	2026-09-10T23:43:38.9656373Z test selection_snapshot_precedes_later_quiet_tail_output ... ok
+linux	Test	2026-09-10T23:43:38.9677045Z Initialized empty Git repository in /tmp/.tmpvE2pZx/repo/.git/
+linux	Test	2026-09-10T23:43:38.9741645Z [main (root-commit) 1b75446] initial
+linux	Test	2026-09-10T23:43:38.9742335Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:38.9742726Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:39.6376460Z test shutdown_kill_terminates_sessions_concurrently ... ok
+linux	Test	2026-09-10T23:43:39.6393124Z Initialized empty Git repository in /tmp/.tmpkbS0U8/repo/.git/
+linux	Test	2026-09-10T23:43:39.6455560Z [main (root-commit) aab4b21] initial
+linux	Test	2026-09-10T23:43:39.6457254Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:39.6458200Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:40.2498827Z test shutdown_without_kill_rejects_exited_record ... ok
+linux	Test	2026-09-10T23:43:40.2517574Z Initialized empty Git repository in /tmp/.tmplKmqV7/repo/.git/
+linux	Test	2026-09-10T23:43:40.2580786Z [main (root-commit) 7534daa] initial
+linux	Test	2026-09-10T23:43:40.2583503Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:40.2584038Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:41.9652233Z test slow_dashboard_recovers_after_output_burst ... ok
+linux	Test	2026-09-10T23:43:41.9670449Z Initialized empty Git repository in /tmp/.tmpDDYho5/repo/.git/
+linux	Test	2026-09-10T23:43:41.9734451Z [main (root-commit) e0bf01f] initial
+linux	Test	2026-09-10T23:43:41.9735122Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:41.9735758Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:43.8869133Z test split_server_two_streams_resize_resync_and_detach ... ok
+linux	Test	2026-09-10T23:43:43.9993069Z test startup_concurrent_attempts_leave_one_server ... ok
+linux	Test	2026-09-10T23:43:44.0055103Z test startup_failure_reports_server_log ... ok
+linux	Test	2026-09-10T23:43:44.0102585Z test startup_read_only_commands_do_not_start_a_missing_server ... ok
+linux	Test	2026-09-10T23:43:44.0114109Z test startup_refuses_symlinked_socket_directory ... ok
+linux	Test	2026-09-10T23:43:44.1024313Z test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+linux	Test	2026-09-10T23:43:44.1140732Z test startup_socket_directory_is_private ... ok
+linux	Test	2026-09-10T23:43:44.2126115Z test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+linux	Test	2026-09-10T23:43:44.2144174Z Initialized empty Git repository in /tmp/.tmpHdaBMW/repo/.git/
+linux	Test	2026-09-10T23:43:44.2179636Z test startup_stale_socket_is_recovered ... ok
+linux	Test	2026-09-10T23:43:44.2213282Z [main (root-commit) 62fcdd2] initial
+linux	Test	2026-09-10T23:43:44.2213835Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:44.2214703Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:44.8255175Z test workspace_remove_succeeds_after_directory_deleted ... ok
+linux	Test	2026-09-10T23:43:44.8273115Z Initialized empty Git repository in /tmp/.tmp7knaTV/repo/.git/
+linux	Test	2026-09-10T23:43:44.8334781Z [main (root-commit) 62fcdd2] initial
+linux	Test	2026-09-10T23:43:44.8335480Z  1 file changed, 1 insertion(+)
+linux	Test	2026-09-10T23:43:44.8335892Z  create mode 100644 README
+linux	Test	2026-09-10T23:43:44.9370634Z test workspace_shell_failure_retains_worktree_and_registry ... ok
+linux	Test	2026-09-10T23:43:44.9371228Z 
+linux	Test	2026-09-10T23:43:44.9371853Z test result: ok. 71 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 36.12s
+linux	Test	2026-09-10T23:43:44.9372541Z 
+linux	Test	2026-09-10T23:43:44.9389362Z ^[[1m^[[92m     Running^[[0m tests/service.rs (target/debug/deps/service-8a8ad5d4d39e6a9c)
+linux	Test	2026-09-10T23:43:44.9396295Z 
+linux	Test	2026-09-10T23:43:44.9396696Z running 14 tests
+linux	Test	2026-09-10T23:43:44.9407245Z test environment_file_is_parsed_literally_in_the_application ... ok
+linux	Test	2026-09-10T23:43:44.9476485Z test changed_socket_cannot_control_the_installed_job_even_without_a_listener ... ok
+linux	Test	2026-09-10T23:43:44.9489643Z test failed_graceful_shutdown_does_not_stop_the_manager ... ok
+linux	Test	2026-09-10T23:43:44.9495009Z test install_refuses_to_take_over_an_unmanaged_server ... ok
+linux	Test	2026-09-10T23:43:44.9527758Z test launchd_install_writes_login_job_that_restarts_only_after_failure ... ok
+linux	Test	2026-09-10T23:43:44.9530995Z test service_args_parse_install_environment_file ... ok
+linux	Test	2026-09-10T23:43:44.9531879Z test service_definitions_reject_relative_runtime_paths ... ok
+linux	Test	2026-09-10T23:43:44.9594668Z test service_install_refuses_when_sessions_exist ... ok
+linux	Test	2026-09-10T23:43:44.9646486Z test start_if_installed_only_uses_an_existing_service_definition ... ok
+linux	Test	2026-09-10T23:43:44.9688734Z test status_queries_but_never_starts_the_service ... ok
+linux	Test	2026-09-10T23:43:44.9837351Z test stop_requests_graceful_server_shutdown_before_stopping_the_manager ... ok
+linux	Test	2026-09-10T23:43:44.9881922Z test systemd_install_writes_user_unit_and_enables_login_startup ... ok
+linux	Test	2026-09-10T23:43:44.9947686Z test uninstall_removes_only_service_files_and_preserves_task_data ... ok
+linux	Test	2026-09-10T23:43:44.9983017Z test loaded_service_does_not_send_shutdown_to_a_foreign_listener ... ok
+linux	Test	2026-09-10T23:43:44.9986554Z ^[[1m^[[92m     Running^[[0m tests/task_cli.rs (target/debug/deps/task_cli-a3ffe3b890889576)
+linux	Test	2026-09-10T23:43:44.9987033Z 
+linux	Test	2026-09-10T23:43:44.9987900Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+linux	Test	2026-09-10T23:43:44.9988627Z 
+linux	Test	2026-09-10T23:43:44.9993382Z 
+linux	Test	2026-09-10T23:43:44.9993783Z running 3 tests
+linux	Test	2026-09-10T23:43:45.0076576Z test offline_task_and_run_reads_do_not_start_a_server ... ok
+linux	Test	2026-09-10T23:43:45.0118542Z test unicode_duration_returns_validation_error_without_starting_server ... ok
+linux	Test	2026-09-10T23:43:45.2130994Z test task_crud_persists_and_manual_failure_retains_a_run_record ... ok
+linux	Test	2026-09-10T23:43:45.2132164Z ^[[1m^[[92m     Running^[[0m tests/task_execution.rs (target/debug/deps/task_execution-02ce0cd39a9b843c)
+linux	Test	2026-09-10T23:43:45.2148859Z 
+linux	Test	2026-09-10T23:43:45.2150638Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+linux	Test	2026-09-10T23:43:45.2175077Z 
+linux	Test	2026-09-10T23:43:45.2193103Z 
+linux	Test	2026-09-10T23:43:45.2193474Z running 12 tests
+linux	Test	2026-09-10T23:43:45.5234736Z test cancel_marks_run_cancelling_immediately ... ok
+linux	Test	2026-09-10T23:43:48.2906620Z test git_run_cleanup_rejects_a_replacement_workspace_after_cleanup ... ok
+linux	Test	2026-09-10T23:43:49.7496393Z test git_run_cleanup_rejects_a_workspace_that_preexisted_preparation ... ok
+linux	Test	2026-09-10T23:43:50.1914500Z test git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup ... ok
+linux	Test	2026-09-10T23:43:50.6279396Z test git_workspace_removal_refuses_a_running_task_in_a_clean_worktree ... ok
+linux	Test	2026-09-10T23:43:50.9474395Z test scratch_output_survives_completion_and_requires_confirmed_cleanup ... ok
+linux	Test	2026-09-10T23:43:51.2924871Z test server_crash_interrupts_pi_and_recovery_does_not_replay_the_run ... ok
+linux	Test	2026-09-10T23:43:51.6814757Z test shutdown_finishes_even_when_final_state_persistence_fails ... ok
+linux	Test	2026-09-10T23:43:51.9472371Z test signal_shutdown_cleans_up_despite_final_state_write_failure ... ok
+linux	Test	2026-09-10T23:43:52.6686667Z test three_runs_stream_independently_and_cancel_admits_the_fourth ... ok
+linux	Test	2026-09-10T23:43:54.1873509Z test timeout_is_distinct_from_failure_and_same_task_pending_is_coalesced ... ok
+linux	Test	2026-09-10T23:44:10.7810152Z test forced_cancel_kills_pi_process_group ... ok
+linux	Test	2026-09-10T23:44:10.7810921Z 
+linux	Test	2026-09-10T23:44:10.7811390Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.57s
+linux	Test	2026-09-10T23:44:10.7811916Z 
+linux	Test	2026-09-10T23:44:10.7815068Z ^[[1m^[[92m     Running^[[0m tests/task_paging.rs (target/debug/deps/task_paging-14ffc3c2d7e476ae)
+linux	Test	2026-09-10T23:44:10.7826502Z 
+linux	Test	2026-09-10T23:44:10.7827023Z running 5 tests
+linux	Test	2026-09-10T23:44:10.7870835Z test deleting_an_earlier_task_between_pages_keeps_original_tasks_once ... ok
+linux	Test	2026-09-10T23:44:10.7899566Z test new_runs_between_pages_do_not_duplicate_or_omit_original_runs ... ok
+linux	Test	2026-09-10T23:44:10.7909189Z test oversized_legacy_row_returns_an_error_instead_of_a_stuck_empty_page ... ok
+linux	Test	2026-09-10T23:44:10.7936185Z test serialized_pages_are_bounded_and_keep_task_order_and_filtered_run_order ... ok
+linux	Test	2026-09-10T23:44:14.9953374Z test cli_lists_all_large_tasks_and_runs_online_and_offline ... ok
+linux	Test	2026-09-10T23:44:14.9953984Z 
+linux	Test	2026-09-10T23:44:14.9954598Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.21s
+linux	Test	2026-09-10T23:44:14.9955236Z 
+linux	Test	2026-09-10T23:44:14.9960584Z ^[[1m^[[92m     Running^[[0m tests/task_runner.rs (target/debug/deps/task_runner-2d2b49da8c64a55d)
+linux	Test	2026-09-10T23:44:14.9967322Z 
+linux	Test	2026-09-10T23:44:14.9967842Z running 9 tests
+linux	Test	2026-09-10T23:44:15.1113501Z test acknowledgement_and_agent_end_are_not_success ... ok
+linux	Test	2026-09-10T23:44:15.2267626Z test completion_retains_stream_logs_and_explicit_configuration ... ok
+linux	Test	2026-09-10T23:44:15.5974196Z test error_length_abort_and_preflight_rejection_fail ... ok
+linux	Test	2026-09-10T23:44:15.5975498Z test installed_pi_background_work_survives_between_tools_but_not_the_run ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+linux	Test	2026-09-10T23:44:15.5977510Z test installed_pi_task_shell_preserves_output_and_cleans_abort_timeout_and_parent_loss ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+linux	Test	2026-09-10T23:44:15.5978820Z test logs_are_bounded_and_cursor_is_in_bytes ... ok
+linux	Test	2026-09-10T23:44:16.5100461Z test blocked_prompt_write_still_obeys_timeout ... ok
+linux	Test	2026-09-10T23:44:16.5929441Z test transient_ps_failure_does_not_fail_run ... ok
+linux	Test	2026-09-10T23:44:17.7257243Z test timeout_cancel_and_parent_loss_remove_detached_descendants ... ok
+linux	Test	2026-09-10T23:44:17.7258007Z 
+linux	Test	2026-09-10T23:44:17.7258689Z test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.73s
+linux	Test	2026-09-10T23:44:17.7259286Z 
+linux	Test	2026-09-10T23:44:17.7263015Z ^[[1m^[[92m     Running^[[0m tests/task_schedule.rs (target/debug/deps/task_schedule-b345032652ed2bc9)
+linux	Test	2026-09-10T23:44:17.7274042Z 
+linux	Test	2026-09-10T23:44:17.7274506Z running 12 tests
+linux	Test	2026-09-10T23:44:17.7276739Z test admission_respects_capacity_fifo_and_one_active_run_per_task ... ok
+linux	Test	2026-09-10T23:44:17.7277749Z test advancing_a_late_interval_enqueues_once_and_preserves_its_anchor ... ok
+linux	Test	2026-09-10T23:44:17.7280075Z test create_and_update_reject_past_one_time_schedules_but_resume_expires_them ... ok
+linux	Test	2026-09-10T23:44:17.7281051Z test create_update_pause_and_resume_use_the_injected_clock ... ok
+linux	Test	2026-09-10T23:44:17.7281834Z test delete_refuses_active_then_cancels_pending_and_preserves_history ... ok
+linux	Test	2026-09-10T23:44:17.7284051Z test helper_paths_have_the_documented_shape ... ok
+linux	Test	2026-09-10T23:44:17.7284735Z test pause_cancels_only_scheduled_pending_work ... ok
+linux	Test	2026-09-10T23:44:17.7285495Z test run_status_classification_matches_queue_and_capacity_semantics ... ok
+linux	Test	2026-09-10T23:44:17.7291356Z test schedules_validate_and_find_the_next_zoned_occurrence ... ok
+linux	Test	2026-09-10T23:44:17.7292919Z test manual_enqueue_coalesces_without_changing_the_schedule ... ok
+linux	Test	2026-09-10T23:44:17.7295175Z test task_specs_reject_missing_execution_inputs ... ok
+linux	Test	2026-09-10T23:44:17.7315028Z test store_and_run_metadata_round_trip_through_real_files ... ok
+linux	Test	2026-09-10T23:44:17.7316338Z ^[[1m^[[92m     Running^[[0m tests/task_tui.rs (target/debug/deps/task_tui-793d8e3b1e2ca18b)
+linux	Test	2026-09-10T23:44:17.7329492Z 
+linux	Test	2026-09-10T23:44:17.7339659Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Test	2026-09-10T23:44:17.7358713Z 
+linux	Test	2026-09-10T23:44:17.7410895Z 
+linux	Test	2026-09-10T23:44:17.7411423Z running 28 tests
+linux	Test	2026-09-10T23:44:17.7412845Z test browse_opens_tasks_and_terminal_ctrl_t_is_literal ... ok
+linux	Test	2026-09-10T23:44:17.7413602Z test create_and_edit_every_field_and_multiline_prompt_in_terminal ... ok
+linux	Test	2026-09-10T23:44:17.7414343Z test dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open ... ok
+linux	Test	2026-09-10T23:44:17.7415095Z test dense_task_list_and_editor_render_with_square_borders ... ok
+linux	Test	2026-09-10T23:44:17.7415827Z test destructive_actions_require_confirmation_and_escape_cancels ... ok
+linux	Test	2026-09-10T23:44:17.7480638Z test confirmations_show_only_answer_controls_at_narrow_widths ... ok
+linux	Test	2026-09-10T23:44:17.7524211Z test history_status_live_transcript_cancel_and_confirmed_cleanup ... ok
+linux	Test	2026-09-10T23:44:17.7628540Z test invalid_concurrency_shows_error_with_edit_controls_and_recovers ... ok
+linux	Test	2026-09-10T23:44:17.7649009Z test empty_task_views_only_hint_actions_with_available_targets ... ok
+linux	Test	2026-09-10T23:44:17.7829273Z test multiline_cursor_edits_unicode_without_corruption ... ok
+linux	Test	2026-09-10T23:44:17.7830217Z test new_task_defaults_match_cli_off_thinking_and_one_hour_timeout ... ok
+linux	Test	2026-09-10T23:44:17.7910442Z test pause_resume_manual_run_and_concurrency ... ok
+linux	Test	2026-09-10T23:44:17.7911297Z test rejected_save_retains_every_field_and_prompt_for_correction ... ok
+linux	Test	2026-09-10T23:44:17.7912335Z test long_editor_fields_keep_the_cursor_text_visible ... ok
+linux	Test	2026-09-10T23:44:17.7913173Z test task_confirmations_honor_default_no_and_case_insensitive_answers ... ok
+linux	Test	2026-09-10T23:44:17.8299360Z test task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows ... ok
+linux	Test	2026-09-10T23:44:17.8851978Z test task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once ... ok
+linux	Test	2026-09-10T23:44:17.9180111Z test task_mouse_project_picker_and_transcript_wheel_use_visible_rows ... ok
+linux	Test	2026-09-10T23:44:17.9979363Z test task_mouse_run_rows_cancel_and_cleanup_use_selected_run ... ok
+linux	Test	2026-09-10T23:44:17.9988995Z test task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation ... ok
+linux	Test	2026-09-10T23:44:18.0159457Z test task_project_picker_uses_dashboard_projects_and_filters_before_save ... ok
+linux	Test	2026-09-10T23:44:18.0161554Z test task_project_picker_preserves_edit_target_and_rejects_unmatched_save ... ok
+linux	Test	2026-09-10T23:44:18.0162256Z test transcript_wrap_is_cached_between_frames ... ok
+linux	Test	2026-09-10T23:44:18.0162966Z test unicode_duration_keeps_editor_fields_available_for_correction ... ok
+linux	Test	2026-09-10T23:44:18.0163707Z test unicode_prompt_render_is_safe_while_another_field_has_focus ... ok
+linux	Test	2026-09-10T23:44:18.0164459Z test ux_empty_history_preserves_status_without_stale_working ... ok
+linux	Test	2026-09-10T23:44:18.0165141Z test ux_narrow_task_footer_keeps_escape_and_save_complete ... ok
+linux	Test	2026-09-10T23:44:18.0194673Z test transcript_preserves_split_unicode_json_and_bounds_memory ... ok
+linux	Test	2026-09-10T23:44:18.0196197Z 
+linux	Test	2026-09-10T23:44:18.0196613Z test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+linux	Test	2026-09-10T23:44:18.0197092Z 
+linux	Test	2026-09-10T23:44:18.0199609Z ^[[1m^[[92m     Running^[[0m tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-53c276b7de096785)
+linux	Test	2026-09-10T23:44:18.0206268Z 
+linux	Test	2026-09-10T23:44:18.0207464Z running 10 tests
+linux	Test	2026-09-10T23:44:18.0749549Z 2
+linux	Test	2026-09-10T23:44:18.0750918Z 2
+linux	Test	2026-09-10T23:44:18.1011099Z 3
+linux	Test	2026-09-10T23:44:18.1011708Z 3
+linux	Test	2026-09-10T23:44:18.1012337Z 4
+linux	Test	2026-09-10T23:44:18.9792963Z test copy_mode_acceptance_emits_selected_text_and_reattaches ... ok
+linux	Test	2026-09-10T23:44:19.0202076Z 2
+linux	Test	2026-09-10T23:44:19.0351460Z 3
+linux	Test	2026-09-10T23:44:20.6803458Z test default_dashboard_acceptance_wrapper_exercises_pty_controls ... ok
+linux	Test	2026-09-10T23:44:20.7887168Z test empty_dashboard_start_screen_reports_isolated_paths ... ok
+linux	Test	2026-09-10T23:44:20.8283785Z 2
+linux	Test	2026-09-10T23:44:20.8329159Z 3
+linux	Test	2026-09-10T23:44:20.8419363Z 4
+linux	Test	2026-09-10T23:44:21.9266403Z test copy_history_acceptance_emits_across_page_and_tile_boundaries ... ok
+linux	Test	2026-09-10T23:44:21.9267264Z test mouse_fixture_child ... ignored
+linux	Test	2026-09-10T23:44:21.9673159Z 2
+linux	Test	2026-09-10T23:44:21.9719140Z 3
+linux	Test	2026-09-10T23:44:21.9768557Z 4
+linux	Test	2026-09-10T23:44:22.1098646Z test history_keyboard_reads_old_output_during_live_session ... ok
+linux	Test	2026-09-10T23:44:22.1490649Z 2
+linux	Test	2026-09-10T23:44:22.1578047Z 3
+linux	Test	2026-09-10T23:44:22.8138051Z test mouse_forwarding_outer_pty_round_trip ... ok
+linux	Test	2026-09-10T23:44:22.8522736Z 2
+linux	Test	2026-09-10T23:44:22.8577241Z 3
+linux	Test	2026-09-10T23:44:22.9476989Z test pause_resume_dashboard_round_trip ... ok
+linux	Test	2026-09-10T23:44:22.9887863Z 2
+linux	Test	2026-09-10T23:44:22.9973713Z 3
+linux	Test	2026-09-10T23:44:23.7434480Z test workspace_shortcut_creates_and_attaches_through_real_dashboard ... ok
+linux	Test	2026-09-10T23:44:23.8956501Z test split_terminal_acceptance_preserves_input_and_geometry ... ok
+linux	Test	2026-09-10T23:44:23.8957820Z ^[[1m^[[92m     Running^[[0m tests/tui/main.rs (target/debug/deps/tui-40203406ad55b900)
+linux	Test	2026-09-10T23:44:23.8959239Z 
+linux	Test	2026-09-10T23:44:23.8959744Z test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.87s
+linux	Test	2026-09-10T23:44:23.8960576Z 
+linux	Test	2026-09-10T23:44:23.8969493Z 
+linux	Test	2026-09-10T23:44:23.8970066Z running 180 tests
+linux	Test	2026-09-10T23:44:23.8977463Z test control_punctuation_and_modified_keys_encode ... ok
+linux	Test	2026-09-10T23:44:23.8978345Z test copy_history::browse_and_terminal_modes_keep_input_ownership_clear ... ok
+linux	Test	2026-09-10T23:44:23.9339238Z test copy_history::copy_history_invalid_snapshot_never_emits_partial_text ... ok
+linux	Test	2026-09-10T23:44:23.9347785Z test copy_history::copy_history_extraction_joins_wrap_and_skips_continuations ... ok
+linux	Test	2026-09-10T23:44:23.9410092Z test copy_history::copy_mode_cancels_at_identity_boundaries ... ok
+linux	Test	2026-09-10T23:44:23.9427187Z test copy_history::copy_mode_keeps_alternate_and_resync_snapshots ... ok
+linux	Test	2026-09-10T23:44:23.9469184Z test copy_history::copy_mode_routes_keys_and_freezes_output ... ok
+linux	Test	2026-09-10T23:44:23.9498973Z test copy_history::copy_mode_waits_for_matching_screen ... ok
+linux	Test	2026-09-10T23:44:23.9499912Z test copy_history::copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input ... ok
+linux	Test	2026-09-10T23:44:23.9519153Z test copy_history::copy_mouse_release_position_and_focus_loss_bound_the_gesture ... ok
+linux	Test	2026-09-10T23:44:23.9539123Z test copy_history::copy_render_highlights_unicode_and_preserves_layout ... ok
+linux	Test	2026-09-10T23:44:23.9755838Z test copy_history::copy_render_tiny_pane_and_footer ... ok
+linux	Test	2026-09-10T23:44:23.9763995Z test copy_history::history_begin_is_cancelled_and_captured_by_active_overlays ... ok
+linux	Test	2026-09-10T23:44:23.9779173Z test copy_history::history_cancelled_begin_releases_late_snapshot ... ok
+linux	Test	2026-09-10T23:44:23.9799189Z test copy_history::history_cursor_async_continuation_resolution_reveals_predecessor_tile ... ok
+linux	Test	2026-09-10T23:44:23.9819173Z test copy_history::history_cursor_resolution_reveals_anchored_viewport ... ok
+linux	Test	2026-09-10T23:44:23.9839007Z test copy_history::history_cursor_stays_visible_while_predecessor_tile_loads ... ok
+linux	Test	2026-09-10T23:44:23.9839937Z test copy_history::history_empty_rows_only_anchor_after_explicit_anchor ... ok
+linux	Test	2026-09-10T23:44:23.9858177Z test copy_history::history_key_kinds_gate_actions ... ok
+linux	Test	2026-09-10T23:44:23.9859226Z test copy_history::history_live_output_preserves_anchor ... ok
+linux	Test	2026-09-10T23:44:23.9860236Z test copy_history::history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture ... ok
+linux	Test	2026-09-10T23:44:24.0039314Z test copy_history::copy_history_range_survives_live_eviction ... ok
+linux	Test	2026-09-10T23:44:24.0053013Z test copy_history::history_navigation_never_writes_to_pty ... ok
+linux	Test	2026-09-10T23:44:24.0079599Z test copy_history::history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion ... ok
+linux	Test	2026-09-10T23:44:24.0091837Z test copy_history::history_release_precedes_hierarchy_fallback_selection ... ok
+linux	Test	2026-09-10T23:44:24.0100076Z test copy_history::history_pending_keys_coalesce ... ok
+linux	Test	2026-09-10T23:44:24.0133178Z test copy_history::history_resize_preserves_capture ... ok
+linux	Test	2026-09-10T23:44:24.0140913Z test copy_history::history_stale_response_is_ignored ... ok
+linux	Test	2026-09-10T23:44:24.0148689Z test copy_history::history_unanchored_retry_keys_reissue_failed_cursor_request ... ok
+linux	Test	2026-09-10T23:44:24.0179181Z test copy_history::history_waits_for_coalesced_focus_view_before_capture ... ok
+linux	Test	2026-09-10T23:44:24.0199139Z test copy_history::matching_history_open_clears_resize_notice_but_stale_response_does_not ... ok
+linux	Test	2026-09-10T23:44:24.0218873Z test copy_history::pause_resume_browse_keys_send_explicit_requests ... ok
+linux	Test	2026-09-10T23:44:24.0319007Z test copy_history::pause_resume_dense_status_has_priority ... ok
+linux	Test	2026-09-10T23:44:24.0338847Z test copy_history::pause_resume_input_and_paste_stay_guarded ... ok
+linux	Test	2026-09-10T23:44:24.0339804Z test copy_history::resize_matching_screen_restores_snapshot_and_ignores_stale_screen ... ok
+linux	Test	2026-09-10T23:44:24.0469052Z test copy_history::history_render_preserves_cells_and_clips ... ok
+linux	Test	2026-09-10T23:44:24.0602826Z test copy_history::ux_history_footer_names_the_actual_escape_action ... ok
+linux	Test	2026-09-10T23:44:24.0629030Z test ctrl_g_is_reserved_and_other_control_keys_reach_the_pty ... ok
+linux	Test	2026-09-10T23:44:24.0639104Z test dashboard_reader_channel_applies_bounded_backpressure ... ok
+linux	Test	2026-09-10T23:44:24.0639951Z test inverse_colors_keep_explicit_colors_and_set_reverse_modifier ... ok
+linux	Test	2026-09-10T23:44:24.0669049Z test mouse::browse_click_focuses_other_running_pane_and_types_after_view_ack ... ok
+linux	Test	2026-09-10T23:44:24.0669915Z test mouse::browse_click_in_pane_focuses_without_bytes ... ok
+linux	Test	2026-09-10T23:44:24.0689303Z test mouse::ctrl_g_releases_held_buttons_before_switching ... ok
+linux	Test	2026-09-10T23:44:24.0690245Z test copy_history::whichkey_acquisition_cancels_copy_and_history_drags ... ok
+linux	Test	2026-09-10T23:44:24.0710632Z test mouse::dragging_tracked_mouse_into_sidebar_releases_application_button ... ok
+linux	Test	2026-09-10T23:44:24.0711925Z test mouse::focus_lost_finishes_gestures_and_focus_gained_resumes ... ok
+linux	Test	2026-09-10T23:44:24.0719703Z test mouse::mouse_encode_legacy_boundaries ... ok
+linux	Test	2026-09-10T23:44:24.0720402Z test mouse::mouse_encode_sgr_events ... ok
+linux	Test	2026-09-10T23:44:24.0721001Z test mouse::mouse_encode_tracking_filters ... ok
+linux	Test	2026-09-10T23:44:24.0737407Z test mouse::leaving_the_rectangle_releases_at_last_valid_cell ... ok
+linux	Test	2026-09-10T23:44:24.0745817Z test mouse::pause_cancels_a_held_mouse_gesture ... ok
+linux	Test	2026-09-10T23:44:24.0769212Z test mouse::protocol_change_clears_held_state ... ok
+linux	Test	2026-09-10T23:44:24.0779417Z test mouse::press_outside_rectangle_is_not_clamped ... ok
+linux	Test	2026-09-10T23:44:24.0780484Z test mouse::terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session ... ok
+linux	Test	2026-09-10T23:44:24.0795984Z test mouse::terminal_click_focuses_other_pane_without_forwarding ... ok
+linux	Test	2026-09-10T23:44:24.0825736Z test mouse::wheel_down_at_newest_row_returns_to_live ... ok
+linux	Test	2026-09-10T23:44:24.0826728Z test mouse::wheel_is_forwarded_when_tracking_is_enabled ... ok
+linux	Test	2026-09-10T23:44:24.0852719Z test mouse::wheel_over_a_pane_without_tracking_opens_history_at_the_tail ... ok
+linux	Test	2026-09-10T23:44:24.0853711Z test mouse::wheel_up_over_the_unfocused_pane_opens_its_history ... ok
+linux	Test	2026-09-10T23:44:24.0854794Z test ordinary_response_errors_remain_visible_to_dashboard ... ok
+linux	Test	2026-09-10T23:44:24.0869254Z test output_for_newly_selected_session_waits_for_screen ... ok
+linux	Test	2026-09-10T23:44:24.0978229Z test palette::a_opens_project_form_with_roots_and_derives_name_and_root ... ok
+linux	Test	2026-09-10T23:44:24.0994096Z test palette::created_session_enters_terminal_mode ... ok
+linux	Test	2026-09-10T23:44:24.1074112Z test palette::double_enter_refreshes_the_derived_workspace_root_listing ... ok
+linux	Test	2026-09-10T23:44:24.1168983Z test palette::empty_hierarchy_shows_start_screen ... ok
+linux	Test	2026-09-10T23:44:24.1319330Z test palette::case_only_branch_mismatch_is_refused_not_submitted ... ok
+linux	Test	2026-09-10T23:44:24.1359248Z test palette::keyboard_overlays_cancel_divider_gesture_before_consuming_release ... ok
+linux	Test	2026-09-10T23:44:24.1439097Z test palette::leader_workspace_uses_inspection_and_name_first_picker_defaults ... ok
+linux	Test	2026-09-10T23:44:24.1509085Z test palette::n_is_listed_in_the_browse_footer ... ok
+linux	Test	2026-09-10T23:44:24.1639130Z test palette::n_is_listed_in_the_hint_table ... ok
+linux	Test	2026-09-10T23:44:24.1719082Z test palette::n_opens_terminal_form_prefilled_for_selected_workspace ... ok
+linux	Test	2026-09-10T23:44:24.1779146Z test palette::fuzzy_matched_branch_is_not_submitted_without_confirmation ... ok
+linux	Test	2026-09-10T23:44:24.1819175Z test palette::narrow_popup_moves_description_to_detail_line ... ok
+linux	Test	2026-09-10T23:44:24.1979137Z test palette::nested_whichkey_empty_hierarchy_can_register_and_open_global_view ... ok
+linux	Test	2026-09-10T23:44:24.2119251Z test palette::nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys ... ok
+linux	Test	2026-09-10T23:44:24.2270447Z test palette::nested_whichkey_container_selection_limits_groups_and_removal_target ... ok
+linux	Test	2026-09-10T23:44:24.2409321Z test palette::nested_whichkey_mouse_and_enter_open_groups_before_running_actions ... ok
+linux	Test	2026-09-10T23:44:24.2523656Z test palette::nested_whichkey_terminal_group_waits_for_action_and_backspace_returns ... ok
+linux	Test	2026-09-10T23:44:24.2560059Z test palette::palette_active_field_remains_visible_in_a_small_window ... ok
+linux	Test	2026-09-10T23:44:24.2579179Z test palette::palette_close_updates_selection_and_clears_removed_screen ... ok
+linux	Test	2026-09-10T23:44:24.2659169Z test palette::palette_entries_show_keys_and_descriptions ... ok
+linux	Test	2026-09-10T23:44:24.2849029Z test palette::palette_escape_cancels_pending_request ... ok
+linux	Test	2026-09-10T23:44:24.2908714Z test palette::nested_whichkey_removal_confirms_the_selected_target_and_can_cancel ... ok
+linux	Test	2026-09-10T23:44:24.3158249Z test palette::palette_filters_and_captures_input_without_sending_it_to_terminal ... ok
+linux	Test	2026-09-10T23:44:24.3162270Z test palette::palette_hint_action_ignores_late_inspection_error ... ok
+linux	Test	2026-09-10T23:44:24.3289611Z test palette::palette_requires_fields_and_keeps_terminal_keys_outside_palette ... ok
+linux	Test	2026-09-10T23:44:24.3309397Z test palette::palette_switch_drops_late_inventory_without_clearing_current_error ... ok
+linux	Test	2026-09-10T23:44:24.3368993Z test palette::palette_switches_by_search_and_confirms_exact_close_target ... ok
+linux	Test	2026-09-10T23:44:24.3443990Z test palette::paste_into_repository_field_refreshes_the_listing ... ok
+linux	Test	2026-09-10T23:44:24.3984857Z test palette::palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes ... ok
+linux	Test	2026-09-10T23:44:24.4103193Z test palette::question_mark_popup_is_browsable ... ok
+linux	Test	2026-09-10T23:44:24.4139180Z test palette::picker_validation_keeps_recovery_hints_and_cancels_without_removal ... ok
+linux	Test	2026-09-10T23:44:24.4282364Z test palette::removal_picker_rejects_no_match_and_excludes_root ... ok
+linux	Test	2026-09-10T23:44:24.4350179Z test palette::removal_pickers_filter_and_confirm_a_different_target ... ok
+linux	Test	2026-09-10T23:44:24.4354881Z test palette::search_selection_clamps_when_entries_shrink ... ok
+linux	Test	2026-09-10T23:44:24.4397824Z test palette::removal_pickers_with_empty_hierarchy_never_confirm ... ok
+linux	Test	2026-09-10T23:44:24.4487746Z test palette::space_w_n_opens_the_terminal_form ... ok
+linux	Test	2026-09-10T23:44:24.4509285Z test palette::tasks_hotkey_cancels_pending_history_like_control_t ... ok
+linux	Test	2026-09-10T23:44:24.4515923Z test palette::tab_on_a_leaf_path_advances_to_the_next_field ... ok
+linux	Test	2026-09-10T23:44:24.5011581Z test palette::typed_branch_missing_from_hints_is_refused_not_replaced ... ok
+linux	Test	2026-09-10T23:44:24.5089212Z test palette::uppercase_x_confirms_session_close_without_closing_pane ... ok
+linux	Test	2026-09-10T23:44:24.5113768Z test palette::typed_existing_branch_survives_hint_arrival ... ok
+linux	Test	2026-09-10T23:44:24.5289203Z test palette::ux_forms_put_task_name_in_border_and_keep_active_field_visible ... ok
+linux	Test	2026-09-10T23:44:24.5302413Z test palette::ux_browse_footer_names_actions_and_respects_availability ... ok
+linux	Test	2026-09-10T23:44:24.5372652Z test palette::w_opens_workspace_form_with_project_and_derived_branch ... ok
+linux	Test	2026-09-10T23:44:24.5556422Z test palette::ux_search_keeps_session_identity_and_filters_complete_context ... ok
+linux	Test	2026-09-10T23:44:24.5622152Z test palette::whichkey_compact_corner_preserves_the_surrounding_dashboard ... ok
+linux	Test	2026-09-10T23:44:24.5630227Z test palette::whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture ... ok
+linux	Test	2026-09-10T23:44:24.5791919Z test palette::whichkey_empty_workspace_click_sets_terminal_form_target ... ok
+linux	Test	2026-09-10T23:44:24.5804434Z test palette::whichkey_copy_leader_preserves_capture_and_v_anchors ... ok
+linux	Test	2026-09-10T23:44:24.5961975Z test palette::whichkey_preserves_readiness_and_never_forwards_overlay_input ... ok
+linux	Test	2026-09-10T23:44:24.6229916Z test palette::whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks ... ok
+linux	Test	2026-09-10T23:44:24.6335364Z test palette::whichkey_scrolled_last_row_remains_clickable_after_resize ... ok
+linux	Test	2026-09-10T23:44:24.6535532Z test palette::whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable ... ok
+linux	Test	2026-09-10T23:44:24.6705721Z test palette::workspace_created_with_exited_local_shell_closes_palette ... ok
+linux	Test	2026-09-10T23:44:24.6719348Z test palette::workspace_creation_attaches_to_its_local_shell ... ok
+linux	Test	2026-09-10T23:44:24.6918796Z test palette::workspace_creation_cancel_and_failure_do_not_attach_late ... ok
+linux	Test	2026-09-10T23:44:24.6939022Z test paste_honors_bracketed_paste_mode ... ok
+linux	Test	2026-09-10T23:44:24.6939935Z test render_terminal_copies_text_style_wide_cells_and_cursor ... ok
+linux	Test	2026-09-10T23:44:24.6959086Z test render_terminal_crossterm_roundtrip_clears_replaced_text ... ok
+linux	Test	2026-09-10T23:44:24.6979083Z test runtime_paste_event_becomes_selected_session_input ... ok
+linux	Test	2026-09-10T23:44:24.7079040Z test palette::workspace_branch_mode_uses_local_branches_and_preserves_edits ... ok
+linux	Test	2026-09-10T23:44:24.7139098Z test sidebar::agent_hook_sidebar_states_are_literal ... ok
+linux	Test	2026-09-10T23:44:24.7148829Z test sidebar::agent_hook_selected_metadata_reports_activity_and_lifecycle ... ok
+linux	Test	2026-09-10T23:44:24.7226186Z test sidebar::collapse_and_mouse_hits_use_current_visible_tree ... ok
+linux	Test	2026-09-10T23:44:24.7255102Z test sidebar::agent_hook_summary_updates_drive_animation ... ok
+linux	Test	2026-09-10T23:44:24.7341919Z test sidebar::context_sidebar_unknown_and_over_capacity ... ok
+linux	Test	2026-09-10T23:44:24.7349656Z test sidebar::context_sidebar_updates_and_expires ... ok
+linux	Test	2026-09-10T23:44:24.7402291Z test sidebar::dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible ... ok
+linux	Test	2026-09-10T23:44:24.7490944Z test sidebar::dashboard_layout ... ok
+linux	Test	2026-09-10T23:44:24.7529052Z test sidebar::empty_pane_click_preserves_the_assigned_wire_focus ... ok
+linux	Test	2026-09-10T23:44:24.7571737Z test sidebar::dashboard_geometry_remains_drawable_at_target_and_tiny_sizes ... ok
+linux	Test	2026-09-10T23:44:24.7629266Z test sidebar::empty_workspace_selection_does_not_cover_a_retained_terminal ... ok
+linux	Test	2026-09-10T23:44:24.7667645Z test sidebar::long_sidebar_names_clip_to_one_screen_line ... ok
+linux	Test	2026-09-10T23:44:24.7718186Z test sidebar::fifty_session_selection_scrolls_tree_and_mouse_hits_viewport ... ok
+linux	Test	2026-09-10T23:44:24.7736507Z test sidebar::selected_session_uses_three_full_width_sidebar_lines ... ok
+linux	Test	2026-09-10T23:44:24.7779100Z test sidebar::shrinking_dashboard_keeps_selected_tree_row_visible ... ok
+linux	Test	2026-09-10T23:44:24.7869074Z test sidebar::sidebar_container_click_keeps_focus_on_another_assigned_pane ... ok
+linux	Test	2026-09-10T23:44:24.7923627Z test sidebar::sidebar_animates_only_explicitly_busy_sessions ... ok
+linux	Test	2026-09-10T23:44:24.7950502Z test sidebar::sidebar_glyphs_and_columns_match_the_reference_tree ... ok
+linux	Test	2026-09-10T23:44:24.7963761Z test sidebar::sidebar_labels_select_without_toggling_and_work_in_terminal_mode ... ok
+linux	Test	2026-09-10T23:44:24.8019236Z test sidebar::ux_live_metadata_is_readable_and_preserves_selection ... ok
+linux	Test	2026-09-10T23:44:24.8023600Z test sidebar::sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names ... ok
+linux	Test	2026-09-10T23:44:24.8047141Z test split::divider_gesture_releases_all_application_buttons_without_resizing ... ok
+linux	Test	2026-09-10T23:44:24.8088685Z test split::divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged ... ok
+linux	Test	2026-09-10T23:44:24.8093287Z test split::incomplete_final_ok_marks_panes_failed_and_refreshes ... ok
+linux	Test	2026-09-10T23:44:24.8099585Z test split::pane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane ... ok
+linux	Test	2026-09-10T23:44:24.8119338Z test split::settings_error_survives_the_geometry_ack ... ok
+linux	Test	2026-09-10T23:44:24.8120484Z test split::split_error_is_cleared_by_the_view_the_next_selection_requests ... ok
+linux	Test	2026-09-10T23:44:24.8121565Z test split::divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins ... ok
+linux	Test	2026-09-10T23:44:24.8137723Z test split::split_error_survives_mouse_cleanup_ack ... ok
+linux	Test	2026-09-10T23:44:24.8138602Z test split::split_layout_geometry_and_narrow_fallback ... ok
+linux	Test	2026-09-10T23:44:24.8767494Z test split::split_layout_renders_independent_cells_and_cursor ... ok
+linux	Test	2026-09-10T23:44:24.8768293Z test split::split_preserves_history_copy_and_paused_input ... ok
+linux	Test	2026-09-10T23:44:24.8776391Z test split::split_review_absent_a_screen_cannot_authorize_reassigned_parser ... ok
+linux	Test	2026-09-10T23:44:24.8777316Z test split::split_review_cancels_inflight_history_copy_before_focus_change ... ok
+linux	Test	2026-09-10T23:44:24.8787615Z test split::split_review_close_reopen_does_not_authorize_recreated_parser ... ok
+linux	Test	2026-09-10T23:44:24.8789193Z test split::split_review_discarded_pending_view_refreshes_before_late_receipts ... ok
+linux	Test	2026-09-10T23:44:24.8794974Z test split::split_review_focus_select_and_close_revoke_public_input_until_setview_ok ... ok
+linux	Test	2026-09-10T23:44:24.8804210Z test split::split_review_keeps_history_a_while_b_changes_and_cancels_late_work ... ok
+linux	Test	2026-09-10T23:44:25.0712695Z test split::split_error_survives_a_screen_dirty_refresh ... ok
+linux	Test	2026-09-10T23:44:25.0719360Z test split::split_review_pending_a_b_a_preserves_received_parser_before_ok ... ok
+linux	Test	2026-09-10T23:44:25.0727790Z test split::split_review_pending_view_completes_after_focus_and_geometry_return ... ok
+linux	Test	2026-09-10T23:44:25.0742860Z test split::split_review_preserves_nonfirst_survivor_on_hierarchy_removal ... ok
+linux	Test	2026-09-10T23:44:25.0744420Z test split::split_review_readiness_requires_matching_targets_and_cancels_resize_copy ... ok
+linux	Test	2026-09-10T23:44:25.0759002Z test split::split_review_replaces_a_b_a_and_rejects_old_completions ... ok
+linux	Test	2026-09-10T23:44:25.0760055Z test split::split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion ... ok
+linux	Test	2026-09-10T23:44:25.0770108Z test split::split_review_terminal_modes_use_each_panes_parser ... ok
+linux	Test	2026-09-10T23:44:25.0771025Z test split::split_review_unfocused_removal_preserves_focused_history_capture ... ok
+linux	Test	2026-09-10T23:44:25.0775015Z test split::split_state_focus_and_close_preserve_sessions ... ok
+linux	Test	2026-09-10T23:44:25.0779088Z test split::split_state_ignores_stale_revisions_and_removed_sessions ... ok
+linux	Test	2026-09-10T23:44:25.0782992Z test split::split_state_modes_and_input_are_local ... ok
+linux	Test	2026-09-10T23:44:25.0889733Z test split::ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes ... ok
+linux	Test	2026-09-10T23:44:25.1407752Z test split::split_review_matching_view_error_disables_input_until_a_new_view_is_ready ... ok
+linux	Test	2026-09-10T23:44:25.3494250Z test split::view_error_on_changed_view_does_not_spin ... ok
+linux	Test	2026-09-10T23:44:25.3503325Z test split::view_request_ids_are_released_on_final_response ... ok
+linux	Test	2026-09-10T23:44:25.3504158Z test terminal_guard_restores_before_prior_hook_callback ... ok
+linux	Test	2026-09-10T23:44:25.3506237Z test terminal_guard_restores_each_enabled_mode_once_on_normal_return_and_unwind ... ok
+linux	Test	2026-09-10T23:44:25.3507065Z test terminal_guard_rolls_back_modes_when_a_later_enter_write_fails ... ok
+linux	Test	2026-09-10T23:44:25.4013197Z test split::view_error_on_unchanged_view_retries_once_after_backoff ... ok
+linux	Test	2026-09-10T23:44:25.4013855Z 
+linux	Test	2026-09-10T23:44:25.4014595Z test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.50s
+linux	Test	2026-09-10T23:44:25.4015296Z 
+linux	Test	2026-09-10T23:44:25.4017660Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_protocol-871982f026a80023)
+linux	Test	2026-09-10T23:44:25.4025404Z 
+linux	Test	2026-09-10T23:44:25.4025857Z running 22 tests
+linux	Test	2026-09-10T23:44:25.4040406Z test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+linux	Test	2026-09-10T23:44:25.4042451Z test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+linux	Test	2026-09-10T23:44:25.4043269Z test codec::tests::agent_report_round_trip_and_redaction ... ok
+linux	Test	2026-09-10T23:44:25.4043900Z test codec::tests::appended_resource_requests_round_trip ... ok
+linux	Test	2026-09-10T23:44:25.4044545Z test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+linux	Test	2026-09-10T23:44:25.4045214Z test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+linux	Test	2026-09-10T23:44:25.4045845Z test codec::tests::pause_resume_requests_round_trip ... ok
+linux	Test	2026-09-10T23:44:25.4046517Z test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+linux	Test	2026-09-10T23:44:25.4047090Z test codec::tests::preamble_round_trip ... ok
+linux	Test	2026-09-10T23:44:25.4047641Z test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+linux	Test	2026-09-10T23:44:25.4048240Z test codec::tests::split_view_frames_round_trip ... ok
+linux	Test	2026-09-10T23:44:25.4049030Z test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+linux	Test	2026-09-10T23:44:25.4049683Z test context::tests::context_claude_projection ... ok
+linux	Test	2026-09-10T23:44:25.4050342Z test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+linux	Test	2026-09-10T23:44:25.4051184Z test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+linux	Test	2026-09-10T23:44:25.4052419Z test context::tests::context_json_validation ... ok
+linux	Test	2026-09-10T23:44:25.4053191Z test context::tests::context_semantics ... ok
+linux	Test	2026-09-10T23:44:25.4054177Z test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+linux	Test	2026-09-10T23:44:25.4055064Z test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+linux	Test	2026-09-10T23:44:25.4056026Z test wire::tests::validate_rejects_oversized_panes ... ok
+linux	Test	2026-09-10T23:44:25.4056876Z test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+linux	Test	2026-09-10T23:44:25.4084827Z test codec::tests::history_page_round_trip_and_size_bound ... ok
+linux	Test	2026-09-10T23:44:25.4085499Z 
+linux	Test	2026-09-10T23:44:25.4086088Z test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+linux	Test	2026-09-10T23:44:25.4087209Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_runtime-9d256593a42fe384)
+linux	Test	2026-09-10T23:44:25.4088961Z 
+linux	Test	2026-09-10T23:44:25.4100711Z 
+linux	Test	2026-09-10T23:44:25.4101224Z running 97 tests
+linux	Test	2026-09-10T23:44:25.4211530Z test agent_runner::tests::invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching ... ok
+linux	Test	2026-09-10T23:44:25.4214491Z test agent_runner::tests::invocation_channel_accepts_exact_payload_limit ... ok
+linux	Test	2026-09-10T23:44:25.4215048Z test config::tests::present_empty_registry_is_reported_and_not_replaced ... ok
+linux	Test	2026-09-10T23:44:25.4215517Z test config::tests::corrupt_registry_is_reported_and_not_replaced ... ok
+linux	Test	2026-09-10T23:44:25.4219609Z test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... ok
+linux	Test	2026-09-10T23:44:25.4220861Z test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+linux	Test	2026-09-10T23:44:25.4223215Z test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+linux	Test	2026-09-10T23:44:25.4224257Z test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+linux	Test	2026-09-10T23:44:25.4225023Z test server::reporting_queue::tests::sender_drop_cannot_be_lost_between_empty_and_wait ... ok
+linux	Test	2026-09-10T23:44:25.4233704Z test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+linux	Test	2026-09-10T23:44:25.4245447Z test config::tests::registry_round_trip_preserves_projects_and_workspaces ... ok
+linux	Test	2026-09-10T23:44:25.4303489Z test server::tests::accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked ... ok
+linux	Test	2026-09-10T23:44:25.4308911Z test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+linux	Test	2026-09-10T23:44:25.5274787Z test server::tests::accept_loop_survives_thread_spawn_failure ... ok
+linux	Test	2026-09-10T23:44:25.5436411Z test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+linux	Test	2026-09-10T23:44:25.6394747Z test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+linux	Test	2026-09-10T23:44:25.6562553Z test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+linux	Test	2026-09-10T23:44:25.7516672Z test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+linux	Test	2026-09-10T23:44:25.7688008Z test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+linux	Test	2026-09-10T23:44:25.8622898Z test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+linux	Test	2026-09-10T23:44:25.8811531Z test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+linux	Test	2026-09-10T23:44:25.9737036Z test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+linux	Test	2026-09-10T23:44:25.9931221Z test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+linux	Test	2026-09-10T23:44:25.9946507Z test server::tests::control_and_refresh_failures_preserve_both_causes ... ok
+linux	Test	2026-09-10T23:44:27.9791767Z test server::tests::close_failure_retains_record_until_cleanup_can_finish ... ok
+linux	Test	2026-09-10T23:44:27.9792884Z test server::tests::dashboard_overflow_closes_affected_connection ... ok
+linux	Test	2026-09-10T23:44:27.9793716Z test server::tests::dashboard_overflow_does_not_clear_replacement_slot ... ok
+linux	Test	2026-09-10T23:44:27.9796632Z test server::tests::dashboard_shutdown_completes_when_response_sink_is_closed ... ok
+linux	Test	2026-09-10T23:44:28.0849838Z test server::tests::dashboard_shutdown_waits_for_stalled_writer_completion ... ok
+linux	Test	2026-09-10T23:44:28.0858078Z test server::tests::dashboard_slot_is_released_when_registration_panics ... ok
+linux	Test	2026-09-10T23:44:28.0896510Z test server::tests::dashboard_snapshot_counts_messages_terminal_and_dirty_separately ... ok
+linux	Test	2026-09-10T23:44:30.0247658Z test server::tests::current_owner_rejects_hidden_input_and_unknown_view_session ... ok
+linux	Test	2026-09-10T23:44:30.1060506Z test server::tests::history_capture_orders_with_output ... ok
+linux	Test	2026-09-10T23:44:34.0617295Z test server::tests::history_owner_and_token_isolation ... ok
+linux	Test	2026-09-10T23:44:34.0619663Z test server::tests::hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink ... ok
+linux	Test	2026-09-10T23:44:34.1365931Z test server::tests::history_page_overflow_disconnects_without_parser_wait ... ok
+linux	Test	2026-09-10T23:44:34.6627204Z test server::tests::kill_and_close_refresh_failures_keep_exited_records ... ok
+linux	Test	2026-09-10T23:44:34.6896653Z test server::tests::kill_failure_cleanup_retains_original_group_after_leader_exit ... ok
+linux	Test	2026-09-10T23:44:36.7655333Z test server::tests::kill_session_termination_failure_revokes_and_retains_session ... ok
+linux	Test	2026-09-10T23:44:36.7762959Z test server::tests::late_response_does_not_reach_a_replacement_dashboard ... ok
+linux	Test	2026-09-10T23:44:36.7764018Z test server::tests::lifecycle_response_preserves_error_chain_and_code ... ok
+linux	Test	2026-09-10T23:44:38.0975668Z test server::tests::invalid_view_preserves_populated_geometry_and_pty_sizes ... ok
+linux	Test	2026-09-10T23:44:38.7920241Z test server::tests::oversized_set_view_returns_invalid_request_without_resizing ... ok
+linux	Test	2026-09-10T23:44:42.8258831Z test server::tests::partial_resize_connection_delivers_error_before_owner_close ... ok
+linux	Test	2026-09-10T23:44:44.4535322Z test server::tests::partial_resize_blocked_writer_times_out_and_closes_owner ... ok
+linux	Test	2026-09-10T23:44:44.4549486Z test server::tests::pending_output_does_not_evict_dashboard_on_lifecycle_event ... ok
+linux	Test	2026-09-10T23:44:44.4552875Z test server::tests::raw_event_and_dispatch_queues_reject_the_65th_item ... ok
+linux	Test	2026-09-10T23:44:44.4815604Z test server::tests::registration_publishes_the_session_before_its_events_can_arrive ... ok
+linux	Test	2026-09-10T23:44:44.4882750Z test server::tests::relative_bound_socket_validates_spawn_and_child_cwd_is_distinct ... ok
+linux	Test	2026-09-10T23:44:46.8598357Z test server::tests::partial_resize_failure_does_not_restore_revision_after_owner_replacement ... ok
+linux	Test	2026-09-10T23:44:46.8953523Z test server::tests::session_output_flows_while_another_session_spawns ... ok
+linux	Test	2026-09-10T23:44:48.5185821Z test server::tests::resize_is_rejected_for_a_split_view ... ok
+linux	Test	2026-09-10T23:44:48.5206494Z test server::tests::set_view_drops_a_session_removed_before_publication ... ok
+linux	Test	2026-09-10T23:44:50.9344284Z test server::tests::session_refresh_dispatch_failures_disconnect_without_blocking ... ok
+linux	Test	2026-09-10T23:44:52.5543327Z test server::tests::set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames ... ok
+linux	Test	2026-09-10T23:44:52.9543678Z test server::tests::set_view_publishes_without_an_unfocused_pane_removed_before_publication ... ok
+linux	Test	2026-09-10T23:44:53.4667988Z test server::tests::shutdown_termination_failure_is_partial_and_server_remains_available ... ok
+linux	Test	2026-09-10T23:44:53.4801831Z test server::tests::shutdown_without_kill_rejects_paused_session ... ok
+linux	Test	2026-09-10T23:44:53.4821188Z test server::tests::split_delivery_dirty_revisions_are_isolated ... ok
+linux	Test	2026-09-10T23:44:57.5160983Z test server::tests::split_delivery_rejects_stale_owner_and_input ... ok
+linux	Test	2026-09-10T23:44:57.5167751Z test server::tests::split_delivery_snapshots_precede_increments ... ok
+linux	Test	2026-09-10T23:44:57.5275772Z test server::tests::stale_geometry_does_not_overwrite_replacement_size ... ok
+linux	Test	2026-09-10T23:44:57.5276805Z test server::tests::terminal_delivery_is_final_entry_and_closing_stays_sticky ... ok
+linux	Test	2026-09-10T23:44:57.5681235Z test server::tests::shutdown_refresh_failure_keeps_exited_record_and_server_available ... ok
+linux	Test	2026-09-10T23:44:57.5682516Z test server::tests::uncommitted_partial_failure_does_not_publish_hierarchy ... ok
+linux	Test	2026-09-10T23:44:59.5879438Z test server::tests::view_publication_aborts_when_owner_disconnects_during_resize ... ok
+linux	Test	2026-09-10T23:45:01.5651014Z test server::tests::terminal_frame_survives_a_concurrent_lifecycle_event ... ok
+linux	Test	2026-09-10T23:45:01.5659859Z test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+linux	Test	2026-09-10T23:45:01.5892430Z test session::shell_prompt::tests::compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone ... ok
+linux	Test	2026-09-10T23:45:01.5893320Z test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+linux	Test	2026-09-10T23:45:01.5894751Z test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+linux	Test	2026-09-10T23:45:01.5907869Z test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+linux	Test	2026-09-10T23:45:01.6009397Z test server::tests::view_revision_floor_survives_exit_and_removal ... ok
+linux	Test	2026-09-10T23:45:01.6049995Z test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+linux	Test	2026-09-10T23:45:01.6069304Z test session::tests::final_output_is_parsed_before_session_becomes_removable ... ok
+linux	Test	2026-09-10T23:45:01.8244869Z test session::tests::compact_zsh_prompt_preserves_config_and_reports_failure ... ok
+linux	Test	2026-09-10T23:45:01.8245878Z test session::tests::group_leader_timeout_override_keeps_the_default_bound ... ok
+linux	Test	2026-09-10T23:45:01.8313092Z test session::tests::pause_resume_exit_event_cannot_be_overwritten ... ok
+linux	Test	2026-09-10T23:45:01.8570130Z test session::tests::group_leader_timeout_kills_the_child ... ok
+linux	Test	2026-09-10T23:45:01.8587123Z test session::tests::pause_resume_rejects_unsafe_group ... ok
+linux	Test	2026-09-10T23:45:01.8761282Z test session::tests::pause_resume_terminate_runs_term_handler ... ok
+linux	Test	2026-09-10T23:45:02.0684600Z test session::tests::pause_resume_phase_and_input_admission ... ok
+linux	Test	2026-09-10T23:45:02.0923335Z test session::tests::pause_resume_terminate_serializes_competing_controls ... ok
+linux	Test	2026-09-10T23:45:02.2858905Z test session::tests::resize_reaches_the_child_tty ... ok
+linux	Test	2026-09-10T23:45:02.3096991Z test session::tests::shell_round_trip_updates_the_current_screen ... ok
+linux	Test	2026-09-10T23:45:02.3239286Z test session::tests::terminate_removes_the_whole_process_group ... ok
+linux	Test	2026-09-10T23:45:02.5950399Z test session::tests::terminate_retains_sigcont_permission_error_for_live_group ... ok
+linux	Test	2026-09-10T23:45:02.6555317Z test task_manager::tests::cancellation_waits_for_admission_to_publish_its_worker ... ok
+linux	Test	2026-09-10T23:45:02.6610784Z test task_manager::tests::cleanup_reports_retained_directory_without_registry_ownership ... ok
+linux	Test	2026-09-10T23:45:02.6682795Z test task_manager::tests::corrupt_run_file_does_not_block_open ... ok
+linux	Test	2026-09-10T23:45:02.7254450Z test task_manager::tests::graceful_shutdown_refuses_a_run_crossing_admission ... ok
+linux	Test	2026-09-10T23:45:02.7862303Z test task_manager::tests::tick_does_not_reread_terminal_runs ... ok
+linux	Test	2026-09-10T23:45:02.8033018Z test session::tests::terminate_removes_job_control_subgroups ... ok
+linux	Test	2026-09-10T23:45:02.8036630Z test task_runner::tests::reused_pid_cannot_claim_process_group_or_children ... ok
+linux	Test	2026-09-10T23:45:02.8037645Z test task_runner::tests::surviving_member_preserves_owned_group_after_leader_exits ... ok
+linux	Test	2026-09-10T23:45:02.8040372Z test tasks::tests::prune_keeps_recent_runs_and_the_newest_per_task ... ok
+linux	Test	2026-09-10T23:45:02.8263283Z test task_manager::tests::workspace_removal_protects_admitted_tasks_before_run_metadata_is_written ... ok
+linux	Test	2026-09-10T23:45:02.8264698Z 
+linux	Test	2026-09-10T23:45:02.8265197Z test result: ok. 97 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 37.42s
+linux	Test	2026-09-10T23:45:02.8265781Z 
+linux	Test	2026-09-10T23:45:02.8269280Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_terminal-571cb8e68e877fbd)
+linux	Test	2026-09-10T23:45:02.8276347Z 
+linux	Test	2026-09-10T23:45:02.8276790Z running 6 tests
+linux	Test	2026-09-10T23:45:02.8279515Z test history::tests::history_alternate_screen_has_no_transcript ... ok
+linux	Test	2026-09-10T23:45:02.8280474Z test history::tests::history_bounds_reject_bad_ranges ... ok
+linux	Test	2026-09-10T23:45:02.8294515Z test history::tests::history_partial_escape_survives_capture ... ok
+linux	Test	2026-09-10T23:45:02.8295343Z test history::tests::history_resize_keeps_old_width ... ok
+linux	Test	2026-09-10T23:45:02.8296527Z test history::tests::history_tiles_preserve_wide_combining_and_wrap ... ok
+linux	Test	2026-09-10T23:45:02.8297802Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_tui-635150e4c7aff915)
+linux	Test	2026-09-10T23:45:02.8299646Z test history::tests::history_retention_is_frozen_and_evicts_oldest ... ok
+linux	Test	2026-09-10T23:45:02.8300489Z 
+linux	Test	2026-09-10T23:45:02.8300989Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Test	2026-09-10T23:45:02.8301822Z 
+linux	Test	2026-09-10T23:45:02.8307796Z 
+linux	Test	2026-09-10T23:45:02.8308295Z running 50 tests
+linux	Test	2026-09-10T23:45:02.8314603Z test dashboard::agents::tests::custom_override_replaces_the_custom_entry ... ok
+linux	Test	2026-09-10T23:45:02.8315998Z test dashboard::agents::tests::detects_executables_then_shell_then_custom ... ok
+linux	Test	2026-09-10T23:45:02.8317255Z test dashboard::copy::tests::copy_clipboard_rejects_invalid_payload_and_io_failure ... ok
+linux	Test	2026-09-10T23:45:02.8317924Z test dashboard::copy::tests::copy_clipboard_emits_osc52 ... ok
+linux	Test	2026-09-10T23:45:02.8319038Z test dashboard::copy::tests::history_copy_append_normalizes_wide_cells_and_preserves_spaces ... ok
+linux	Test	2026-09-10T23:45:02.8320109Z test dashboard::copy::tests::history_copy_append_rejects_malformed_cells_and_byte_overflow ... ok
+linux	Test	2026-09-10T23:45:02.8329382Z test dashboard::copy::tests::history_copy_job_streams_overlapping_tiles_and_soft_wraps ... ok
+linux	Test	2026-09-10T23:45:02.8823576Z test dashboard::git_hints::tests::detached_head_yields_no_base_suggestion ... ok
+linux	Test	2026-09-10T23:45:02.9618004Z test dashboard::git_hints::tests::missing_origin_uses_master_then_current_head ... ok
+linux	Test	2026-09-10T23:45:02.9950420Z test dashboard::git_hints::tests::branches_and_remote_default_from_real_repository ... ok
+linux	Test	2026-09-10T23:45:03.0334609Z test dashboard::git_hints::tests::sole_non_origin_remote_provides_the_base ... ok
+linux	Test	2026-09-10T23:45:03.0691351Z test dashboard::palette::mouse_tests::mouse_actions_search_and_confirmation_pending_guard ... ok
+linux	Test	2026-09-10T23:45:03.0806815Z test dashboard::palette::mouse_tests::mouse_cursor_uses_rendered_emoji_grapheme_width ... ok
+linux	Test	2026-09-10T23:45:03.1010427Z test dashboard::palette::mouse_tests::mouse_form_focus_unicode_edit_and_cancel ... ok
+linux	Test	2026-09-10T23:45:03.1369334Z test dashboard::palette::mouse_tests::mouse_menu_back_and_close_without_clickthrough ... ok
+linux	Test	2026-09-10T23:45:03.1395425Z test dashboard::palette::mouse_tests::mouse_narrow_form_scroll_reaches_hidden_fields ... ok
+linux	Test	2026-09-10T23:45:03.1455143Z test dashboard::palette::mouse_tests::mouse_pick_value_edits_at_visible_cursor ... ok
+linux	Test	2026-09-10T23:45:03.1541566Z test dashboard::palette::mouse_tests::mouse_scrolled_picker_accepts_visible_option ... ok
+linux	Test	2026-09-10T23:45:03.1648495Z test dashboard::palette::mouse_tests::mouse_submit_from_first_field_and_outside_overlay_guard ... ok
+linux	Test	2026-09-10T23:45:03.1882969Z test dashboard::palette::mouse_tests::mouse_submit_from_project_survives_waiting_for_git_suggestions_once ... ok
+linux	Test	2026-09-10T23:45:03.1966329Z test dashboard::palette::mouse_tests::mouse_text_search_and_narrow_unicode_cursor ... ok
+linux	Test	2026-09-10T23:45:03.2012119Z test dashboard::palette::mouse_tests::mouse_tiny_overlay_controls_remain_visible ... ok
+linux	Test	2026-09-10T23:45:03.2156345Z test dashboard::palette::mouse_tests::mouse_toggle_and_scrolled_path_row ... ok
+linux	Test	2026-09-10T23:45:03.2157478Z test dashboard::picker::tests::expand_path_resolves_tilde_and_keeps_absolute ... ok
+linux	Test	2026-09-10T23:45:03.2161101Z test dashboard::picker::tests::git_dirs_sort_first_and_hidden_needs_dot_segment ... ok
+linux	Test	2026-09-10T23:45:03.2162501Z test dashboard::picker::tests::listing_is_cached_until_input_changes ... ok
+linux	Test	2026-09-10T23:45:03.2178851Z test dashboard::picker::tests::slash_prefix_lists_filesystem_root ... ok
+linux	Test	2026-09-10T23:45:03.2180942Z test dashboard::picker::tests::tilde_prefix_lists_code_and_tab_completes ... ok
+linux	Test	2026-09-10T23:45:03.2185450Z test dashboard::settings::tests::invalid_file_yields_defaults_and_error ... ok
+linux	Test	2026-09-10T23:45:03.2186623Z test dashboard::settings::tests::loads_overrides_and_expands_picker_roots ... ok
+linux	Test	2026-09-10T23:45:03.2187613Z test dashboard::tests::completed_history_copy_emits_once_through_the_writer_adapter ... ok
+linux	Test	2026-09-10T23:45:03.2189712Z test dashboard::tests::copy_selection_joins_soft_wraps_and_preserves_unicode ... ok
+linux	Test	2026-09-10T23:45:03.2190684Z test dashboard::tests::copy_selection_moves_over_wide_cells_and_clamps ... ok
+linux	Test	2026-09-10T23:45:03.2191640Z test dashboard::tests::dashboard_input_boundary_defers_after_a_bounded_ready_batch ... ok
+linux	Test	2026-09-10T23:45:03.2192763Z test dashboard::tests::dashboard_input_boundary_reports_detach_from_a_processed_event ... ok
+linux	Test	2026-09-10T23:45:03.2193872Z test dashboard::tests::dashboard_input_boundary_separates_deferred_input_from_idle_emission ... ok
+linux	Test	2026-09-10T23:45:03.2194853Z test dashboard::tests::dashboard_output_wake_interrupts_idle_wait ... ok
+linux	Test	2026-09-10T23:45:03.2200063Z test dashboard::tests::dashboard_reader_reconciles_two_pane_burst_at_ack_boundary ... ok
+linux	Test	2026-09-10T23:45:03.2201491Z test dashboard::tests::dashboard_surfaces_hello_refusal_and_reader_disconnect ... ok
+linux	Test	2026-09-10T23:45:03.2202951Z test dashboard::tests::dashboard_wait_reports_input_and_output_together ... ok
+linux	Test	2026-09-10T23:45:03.2203845Z test dashboard::tests::failed_history_copy_writer_preserves_selection_for_retry ... ok
+linux	Test	2026-09-10T23:45:03.2220381Z test dashboard::tests::hierarchy_removal_clears_a_parked_wheel_deferral ... ok
+linux	Test	2026-09-10T23:45:03.2223400Z test dashboard::tests::hints_name_targets_and_explain_disabled_session_actions ... ok
+linux	Test	2026-09-10T23:45:03.2225342Z test dashboard::tests::initial_selection_completes_zero_target_view_on_ok ... ok
+linux	Test	2026-09-10T23:45:03.2227351Z test dashboard::tests::initial_selection_does_not_complete_after_wrong_screen_and_ok ... ok
+linux	Test	2026-09-10T23:45:03.2229344Z test dashboard::tests::initial_selection_ignores_wrong_screen_before_matching_ok ... ok
+linux	Test	2026-09-10T23:45:03.2246353Z test dashboard::tests::mouse_release_precedes_the_replacement_view_request ... ok
+linux	Test	2026-09-10T23:45:03.2248316Z test dashboard::tests::panic_hook_ignores_non_main_threads ... ok
+linux	Test	2026-09-10T23:45:03.2384301Z test dashboard::git_hints::tests::timeout_reaps_owned_child_and_output_is_bounded ... ok
+linux	Test	2026-09-10T23:45:03.2558342Z test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... ok
+linux	Test	2026-09-10T23:45:03.2568657Z 
+linux	Test	2026-09-10T23:45:03.2569400Z test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+linux	Test	2026-09-10T23:45:03.2570179Z 
+linux	Doc tests	﻿2026-09-10T23:45:03.2627802Z ##[group]Run cargo test --workspace --doc
+linux	Doc tests	2026-09-10T23:45:03.2628305Z ^[[36;1mcargo test --workspace --doc^[[0m
+linux	Doc tests	2026-09-10T23:45:03.2656165Z shell: /usr/bin/bash -e {0}
+linux	Doc tests	2026-09-10T23:45:03.2656707Z env:
+linux	Doc tests	2026-09-10T23:45:03.2657066Z   CARGO_TERM_COLOR: always
+linux	Doc tests	2026-09-10T23:45:03.2657448Z   SHELL: /bin/bash
+linux	Doc tests	2026-09-10T23:45:03.2657883Z   CARGO_HOME: /home/runner/.cargo
+linux	Doc tests	2026-09-10T23:45:03.2658296Z   CARGO_INCREMENTAL: 0
+linux	Doc tests	2026-09-10T23:45:03.2659231Z   CACHE_ON_FAILURE: true
+linux	Doc tests	2026-09-10T23:45:03.2659619Z ##[endgroup]
+linux	Doc tests	2026-09-10T23:45:03.4154304Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+linux	Doc tests	2026-09-10T23:45:03.4208711Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr
+linux	Doc tests	2026-09-10T23:45:04.1842940Z 
+linux	Doc tests	2026-09-10T23:45:04.1844515Z running 0 tests
+linux	Doc tests	2026-09-10T23:45:04.1844917Z 
+linux	Doc tests	2026-09-10T23:45:04.1845370Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Doc tests	2026-09-10T23:45:04.1868770Z 
+linux	Doc tests	2026-09-10T23:45:04.1889304Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_protocol
+linux	Doc tests	2026-09-10T23:45:04.3958918Z 
+linux	Doc tests	2026-09-10T23:45:04.3959316Z running 0 tests
+linux	Doc tests	2026-09-10T23:45:04.3959704Z 
+linux	Doc tests	2026-09-10T23:45:04.3960106Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Doc tests	2026-09-10T23:45:04.3960584Z 
+linux	Doc tests	2026-09-10T23:45:04.3976412Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_runtime
+linux	Doc tests	2026-09-10T23:45:04.5037872Z 
+linux	Doc tests	2026-09-10T23:45:04.5038647Z running 0 tests
+linux	Doc tests	2026-09-10T23:45:04.5039014Z 
+linux	Doc tests	2026-09-10T23:45:04.5039655Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Doc tests	2026-09-10T23:45:04.5040244Z 
+linux	Doc tests	2026-09-10T23:45:04.5051428Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_terminal
+linux	Doc tests	2026-09-10T23:45:04.5206824Z 
+linux	Doc tests	2026-09-10T23:45:04.5207216Z running 0 tests
+linux	Doc tests	2026-09-10T23:45:04.5207540Z 
+linux	Doc tests	2026-09-10T23:45:04.5207996Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Doc tests	2026-09-10T23:45:04.5208727Z 
+linux	Doc tests	2026-09-10T23:45:04.5221351Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_tui
+linux	Doc tests	2026-09-10T23:45:04.6060865Z 
+linux	Doc tests	2026-09-10T23:45:04.6061329Z running 0 tests
+linux	Doc tests	2026-09-10T23:45:04.6061766Z 
+linux	Doc tests	2026-09-10T23:45:04.6062221Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+linux	Doc tests	2026-09-10T23:45:04.6062700Z 
+linux	Post Run Swatinem/rust-cache@v2	﻿2026-09-10T23:45:04.6203934Z Post job cleanup.
+linux	Post Run Swatinem/rust-cache@v2	2026-09-10T23:45:04.7193698Z Cache up-to-date.
+linux	Post Run actions/checkout@v4	﻿2026-09-10T23:45:04.7375030Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.7376600Z Post job cleanup.
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8258825Z [command]/usr/bin/git version
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8296642Z git version 2.55.0
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8422868Z Copying '/home/runner/.gitconfig' to '/home/runner/work/_temp/00dc9b99-c7eb-473e-8475-c5bbeea227ad/.gitconfig'
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8426852Z Temporarily overriding HOME='/home/runner/work/_temp/00dc9b99-c7eb-473e-8475-c5bbeea227ad' before making global git config changes
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8435032Z Adding repository directory to the temporary git global config as a safe directory
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8437356Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ovrcr/ovrcr
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8439170Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8441068Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8694596Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8721829Z http.https://github.com/.extraheader
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8739015Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.8781662Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.9109730Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+linux	Post Run actions/checkout@v4	2026-09-10T23:45:04.9149731Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+linux	Complete job	﻿2026-09-10T23:45:04.9686535Z Cleaning up orphan processes
+linux	Complete job	2026-09-10T23:45:04.9887316Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

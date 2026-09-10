@@ -51,3 +51,9 @@ The new native records include long/short resume success and missing-UUID exit 1
 | Other launch forms | Short exact UUID form has version-specific argv and matching native identity | Continue, picker/name/search, equals syntax and other UUID spellings remain disabled |
 
 No production OTEL collector, correction support, Complete quality, Confirmed quality or transition rebinding is authorized by these observations. The full milestone remains incomplete. The [memory inventory](part3-memory/inventory.md) separates measured/charged limits from allocator, JSON, queue and kernel terms; its required high-water run is unrun on this disk-constrained host.
+
+## Integrated Part 3 acceptance, 2026-09-10
+
+The approved `c169939` product implementation now has [native integrated evidence](part3-integrated/README.md): exact 2.1.268 fresh startup, long UUID resume, and 2.1.268-only short UUID resume retain reporting and imported recognized history. Actual native responses recovered the fixture's remembered word; seven numerical snapshots match all recognized root token components. Source loss/recovery and actual child HTTP 404 StopFailure isolation passed. The corrected child StopFailure before/after root objects are equal; earlier unavailable snapshots remain explicit. All recorded fixture groups and paths were removed after exit.
+
+[Platform verification](part3-final/README.md) passed the new lifecycle proofs on macOS and Linux and all four hosted jobs at `8166712`. No further provider capabilities are inferred: foreground transition intent, full-category/correction contracts, final source boundary and post-decision settled-turn guarantee remain absent. The new bounded Linux memory result is measured evidence, not a universal memory maximum.

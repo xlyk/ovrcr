@@ -1,0 +1,4 @@
+MemAvailable_kib=7068072
+available_disk_bytes=13361102848
+required_ram_kib=6291456
+required_disk_bytes=536870912

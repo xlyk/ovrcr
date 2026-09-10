@@ -1,0 +1,1 @@
+{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":14,"label":"python3","measurement_age_ms":null,"name":"integrated-child-isolation","phase":"running","pid":45819,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789084112728,"workspace":"auth-handoff"}

@@ -1,0 +1,1584 @@
+checks	Set up job	﻿2026-09-10T23:41:44.0902140Z Current runner version: '2.337.0'
+checks	Set up job	2026-09-10T23:41:44.0922230Z ##[group]Runner Image Provisioner
+checks	Set up job	2026-09-10T23:41:44.0923490Z Hosted Compute Agent
+checks	Set up job	2026-09-10T23:41:44.0923950Z Version: 20260828.587
+checks	Set up job	2026-09-10T23:41:44.0924540Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+checks	Set up job	2026-09-10T23:41:44.0925080Z Build Date: 2026-08-28T16:44:25Z
+checks	Set up job	2026-09-10T23:41:44.0925530Z Worker ID: {8e121ddd-bbdf-488d-b903-fcf8394f072e}
+checks	Set up job	2026-09-10T23:41:44.0926080Z Azure Region: westus
+checks	Set up job	2026-09-10T23:41:44.0926490Z ##[endgroup]
+checks	Set up job	2026-09-10T23:41:44.0927510Z ##[group]Operating System
+checks	Set up job	2026-09-10T23:41:44.0927990Z macOS
+checks	Set up job	2026-09-10T23:41:44.0928380Z 26.6.2
+checks	Set up job	2026-09-10T23:41:44.0928740Z 25G83
+checks	Set up job	2026-09-10T23:41:44.0929160Z ##[endgroup]
+checks	Set up job	2026-09-10T23:41:44.0929520Z ##[group]Runner Image
+checks	Set up job	2026-09-10T23:41:44.0929960Z Image: macos-26-arm64
+checks	Set up job	2026-09-10T23:41:44.0930440Z Version: 20260907.0351.1
+checks	Set up job	2026-09-10T23:41:44.0931190Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20260907.0351/images/macos/macos-26-arm64-Readme.md
+checks	Set up job	2026-09-10T23:41:44.0932470Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20260907.0351
+checks	Set up job	2026-09-10T23:41:44.0933240Z ##[endgroup]
+checks	Set up job	2026-09-10T23:41:44.0934190Z ##[group]GITHUB_TOKEN Permissions
+checks	Set up job	2026-09-10T23:41:44.0935600Z Contents: read
+checks	Set up job	2026-09-10T23:41:44.0936000Z Metadata: read
+checks	Set up job	2026-09-10T23:41:44.0936480Z Packages: read
+checks	Set up job	2026-09-10T23:41:44.0936990Z ##[endgroup]
+checks	Set up job	2026-09-10T23:41:44.0938600Z Secret source: Actions
+checks	Set up job	2026-09-10T23:41:44.0939200Z Cache mode: write
+checks	Set up job	2026-09-10T23:41:44.0939700Z Prepare workflow directory
+checks	Set up job	2026-09-10T23:41:44.1314520Z Prepare all required actions
+checks	Set up job	2026-09-10T23:41:44.1354560Z Getting action download info
+checks	Set up job	2026-09-10T23:41:44.4013920Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+checks	Set up job	2026-09-10T23:41:44.7565350Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:6bed0761d98439e5a578e2877258200ad565ba87)
+checks	Set up job	2026-09-10T23:41:45.0461440Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+checks	Set up job	2026-09-10T23:41:45.5739900Z Complete job name: checks
+checks	Run actions/checkout@v4	﻿2026-09-10T23:41:45.6312520Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6320770Z ##[group]Run actions/checkout@v4
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6321410Z with:
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6321780Z   repository: xlyk/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6325290Z   token: ***
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6325790Z   ssh-strict: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6326180Z   ssh-user: git
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6327060Z   persist-credentials: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6327480Z   clean: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6327900Z   sparse-checkout-cone-mode: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6328300Z   fetch-depth: 1
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6328630Z   fetch-tags: false
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6329060Z   show-progress: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6329440Z   lfs: false
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6329760Z   submodules: false
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6330140Z   set-safe-directory: true
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6330520Z   allow-unsafe-pr-checkout: false
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6331210Z env:
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6331630Z   CARGO_TERM_COLOR: always
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.6332030Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.9765870Z Syncing repository: xlyk/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.9767680Z ##[group]Getting Git version info
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.9768360Z Working directory is '/Users/runner/work/ovrcr/ovrcr'
+checks	Run actions/checkout@v4	2026-09-10T23:41:45.9769400Z [command]/opt/homebrew/bin/git version
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0490660Z git version 2.55.0
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0503450Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0511010Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/93dc7dda-2889-40d4-8c4b-2e5365725df9/.gitconfig'
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0525640Z Temporarily overriding HOME='/Users/runner/work/_temp/93dc7dda-2889-40d4-8c4b-2e5365725df9' before making global git config changes
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0531820Z Adding repository directory to the temporary git global config as a safe directory
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0535000Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/ovrcr/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0652620Z Deleting the contents of '/Users/runner/work/ovrcr/ovrcr'
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0658660Z ##[group]Initializing the repository
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0661810Z [command]/opt/homebrew/bin/git init /Users/runner/work/ovrcr/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0895720Z hint: Using 'master' as the name for the initial branch. This default branch name
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0897450Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0898430Z hint: to use in all of your new repositories, which will suppress this warning,
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0899130Z hint: call:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0899640Z hint:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0900170Z hint: 	git config --global init.defaultBranch <name>
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0900720Z hint:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0901280Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0902040Z hint: 'development'. The just-created branch can be renamed via this command:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0903050Z hint:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0903590Z hint: 	git branch -m <name>
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0904030Z hint:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0904790Z hint: Disable this message with "git config set advice.defaultBranchName false"
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0905590Z Initialized empty Git repository in /Users/runner/work/ovrcr/ovrcr/.git/
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.0907430Z [command]/opt/homebrew/bin/git remote add origin https://github.com/xlyk/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1003870Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1004930Z ##[group]Disabling automatic garbage collection
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1005630Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1076830Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1077530Z ##[group]Setting up auth
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1082180Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.1157640Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.2241640Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.2308870Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.3150960Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.3218450Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.4773680Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.5080120Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.5180110Z ##[group]Fetching the repository
+checks	Run actions/checkout@v4	2026-09-10T23:41:46.5257240Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +3538b2807f2e08e887fb82e9fbf970304a0500c0:refs/remotes/pull/55/merge
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8588510Z From https://github.com/xlyk/ovrcr
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8590000Z  * [new ref]         3538b2807f2e08e887fb82e9fbf970304a0500c0 -> pull/55/merge
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8592600Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8593530Z ##[group]Determining the checkout info
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8594410Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8596320Z [command]/opt/homebrew/bin/git sparse-checkout disable
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8703330Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8823200Z ##[group]Checking out the ref
+checks	Run actions/checkout@v4	2026-09-10T23:41:47.8825880Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/55/merge
+checks	Run actions/checkout@v4	2026-09-10T23:41:48.0577900Z HEAD is now at 3538b28 Merge 8166712186a1d1a199111a2ba0c0b844132918e1 into c4ee88e9906ca6aa7ee95dc6aad06ed7053b6dc1
+checks	Run actions/checkout@v4	2026-09-10T23:41:48.0593960Z ##[endgroup]
+checks	Run actions/checkout@v4	2026-09-10T23:41:48.0735600Z [command]/opt/homebrew/bin/git log -1 --format=%H
+checks	Run actions/checkout@v4	2026-09-10T23:41:48.0816860Z 3538b2807f2e08e887fb82e9fbf970304a0500c0
+checks	Run dtolnay/rust-toolchain@stable	﻿2026-09-10T23:41:48.1452360Z ##[group]Run dtolnay/rust-toolchain@stable
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1453350Z with:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1454870Z   components: rustfmt, clippy
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1456880Z   toolchain: stable
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1457650Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1458330Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1459160Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1557610Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1684800Z ##[group]Run if [[ -z $toolchain ]]; then
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1685780Z ^[[36;1mif [[ -z $toolchain ]]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1687140Z ^[[36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1688630Z ^[[36;1m  echo "'toolchain' is a required input" >&2^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1689580Z ^[[36;1m  exit 1^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1690640Z ^[[36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1691990Z ^[[36;1m  if [[ macOS == macOS ]]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1693640Z ^[[36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1695290Z ^[[36;1m  else^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1696640Z ^[[36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1697960Z ^[[36;1m  fi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1698810Z ^[[36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1700320Z ^[[36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1701740Z ^[[36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1703260Z ^[[36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1704800Z ^[[36;1melse^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1705620Z ^[[36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1706540Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1764460Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1766800Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1768240Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1769980Z   toolchain: stable
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.1771500Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2227930Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=66]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2242370Z ##[start-action display=Construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2317010Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2321250Z ^[[36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2325480Z ^[[36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2329030Z ^[[36;1mecho "downgrade=" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2398810Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2401060Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2401830Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2402540Z   targets: 
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2403170Z   components: rustfmt, clippy
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2403980Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2935090Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=69]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.2940780Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3081570Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3082970Z ^[[36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3141510Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3142490Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3143870Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3145320Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3507490Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=56]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3512810Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3573090Z ##[group]Run if ! command -v rustup &>/dev/null; then
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3574100Z ^[[36;1mif ! command -v rustup &>/dev/null; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3575960Z ^[[36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3577870Z ^[[36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3578700Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3612690Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3613640Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3614240Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3614990Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3615800Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3962330Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=44]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3975170Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.3992370Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4004450Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4045430Z ##[group]Run rustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4047490Z ^[[36;1mrustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4085350Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4086400Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4087050Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4087810Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4088700Z   RUSTUP_PERMIT_COPY_RENAME: 1
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.4089450Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:48.8592080Z info: syncing channel updates for stable-aarch64-apple-darwin
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1284020Z info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1385160Z info: component clippy is up to date
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1485060Z info: component rustfmt is up to date
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1485560Z 
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1688110Z info: self-update is disabled for this build of rustup
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1690590Z   stable-aarch64-apple-darwin unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1794910Z info: any updates to rustup will need to be fetched with your system package manager
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1796910Z 
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1868940Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=786]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1877430Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1907190Z ##[group]Run rustup default stable
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1907490Z ^[[36;1mrustup default stable^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1948070Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1948420Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1948670Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1948990Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.1949260Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.2638350Z info: using existing install for stable-aarch64-apple-darwin
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.2684530Z info: default toolchain set to stable-aarch64-apple-darwin
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.2685720Z 
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.2938180Z   stable-aarch64-apple-darwin unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.2945800Z 
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3007360Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=112]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3010480Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3037500Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3038330Z ^[[36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3039100Z ^[[36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3039650Z ^[[36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3091400Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3091920Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3092100Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3092420Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.3092640Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4537940Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=152]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4540470Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4567830Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4568280Z ^[[36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4568710Z ^[[36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4568990Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4603480Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4603920Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4604190Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4604510Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4604800Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4809820Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=26]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4812180Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4834370Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4834770Z ^[[36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4835160Z ^[[36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4835410Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4869470Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4869840Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4870040Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4870400Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4870650Z   CARGO_INCREMENTAL: 0
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.4870880Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5072750Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=25]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5075160Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5133090Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5133780Z ^[[36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5134600Z ^[[36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5135610Z ^[[36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5136600Z ^[[36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5137170Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5137660Z ^[[36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5138760Z ^[[36;1m    touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5139280Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5140250Z ^[[36;1m  fi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5141030Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5185950Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5186770Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5186960Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5187200Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5187420Z   CARGO_INCREMENTAL: 0
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5187640Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5992770Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=91]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.5994980Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6067200Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6067950Z ^[[36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6068500Z ^[[36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6068930Z ^[[36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6069210Z ^[[36;1mfi^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6119540Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6120350Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6120800Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6121470Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6122120Z   CARGO_INCREMENTAL: 0
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6122620Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6614390Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=61]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6618140Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6641870Z ##[group]Run rustc +stable --version --verbose
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6642190Z ^[[36;1mrustc +stable --version --verbose^[[0m
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6670820Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6671120Z env:
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6671260Z   CARGO_TERM_COLOR: always
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6671450Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6671640Z   CARGO_INCREMENTAL: 0
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.6671830Z ##[endgroup]
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7098970Z rustc 1.98.1 (48a229cea 2026-09-01)
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7099330Z binary: rustc
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7099560Z commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7099820Z commit-date: 2026-09-01
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7100010Z host: aarch64-apple-darwin
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7100200Z release: 1.98.1
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7101250Z LLVM version: 22.1.8
+checks	Run dtolnay/rust-toolchain@stable	2026-09-10T23:41:49.7114960Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=49]
+checks	Run Swatinem/rust-cache@v2	﻿2026-09-10T23:41:49.7235910Z ##[group]Run Swatinem/rust-cache@v2
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7236270Z with:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7236430Z   shared-key: checks
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7236640Z   cache-on-failure: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7236830Z   prefix-key: v0-rust
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7237030Z   add-job-id-key: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7237210Z   add-rust-environment-hash-key: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7237450Z   cache-targets: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7237650Z   cache-all-crates: false
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7237860Z   cache-workspace-crates: false
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7238050Z   save-if: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7238210Z   cache-provider: github
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7238420Z   cache-bin: true
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7238610Z   lookup-only: false
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7238800Z   cmd-format: {0}
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7239000Z env:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7239210Z   CARGO_TERM_COLOR: always
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7239460Z   CARGO_HOME: /Users/runner/.cargo
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7239710Z   CARGO_INCREMENTAL: 0
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:49.7240150Z ##[endgroup]
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3397520Z ##[group]Cache Configuration
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3438440Z Cache Provider:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3441680Z     github
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3442290Z Workspaces:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3443080Z     /Users/runner/work/ovrcr/ovrcr
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3443760Z Cache Paths:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3444470Z     /Users/runner/.cargo/bin
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3445180Z     /Users/runner/.cargo/.crates.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3445940Z     /Users/runner/.cargo/.crates2.json
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3446740Z     /Users/runner/.cargo/registry
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3447480Z     /Users/runner/.cargo/git
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3448220Z     /Users/runner/work/ovrcr/ovrcr/target
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3449060Z Restore Key:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3449700Z     v0-rust-checks-Darwin-arm64-2eab217e
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3450500Z Cache Key:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3451200Z     v0-rust-checks-Darwin-arm64-2eab217e-29fb430f
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3451970Z .. Prefix:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3452620Z   - v0-rust-checks-Darwin-arm64
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3455820Z .. Environment considered:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3456790Z   - Rust Versions:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3458190Z     - 1.98.1 aarch64-apple-darwin 48a229ceaefd4985c50990b14116b6d856af0985
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3459300Z   - CARGO_HOME
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3459960Z   - CARGO_INCREMENTAL
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3460570Z   - CARGO_TERM_COLOR
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3461270Z .. Lockfiles considered:
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3462220Z   - /Users/runner/work/ovrcr/ovrcr/Cargo.lock
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3488040Z   - /Users/runner/work/ovrcr/ovrcr/Cargo.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3511520Z   - /Users/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol/Cargo.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3513210Z   - /Users/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime/Cargo.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3515270Z   - /Users/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal/Cargo.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3516390Z   - /Users/runner/work/ovrcr/ovrcr/crates/ovrcr-tui/Cargo.toml
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3517950Z ##[endgroup]
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3518380Z 
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.3518700Z ... Restoring cache ...
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:50.5492270Z Cache hit for: v0-rust-checks-Darwin-arm64-2eab217e-29fb430f
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:51.7296620Z Received 41943040 of 420002981 (10.0%), 39.8 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:52.7330470Z Received 134217728 of 420002981 (32.0%), 63.7 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:53.7470730Z Received 226492416 of 420002981 (53.9%), 71.7 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:54.7369910Z Received 285212672 of 420002981 (67.9%), 67.8 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:55.7428030Z Received 385875968 of 420002981 (91.9%), 73.4 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:56.5948800Z Received 420002981 of 420002981 (100.0%), 68.2 MBs/sec
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:56.6053360Z Cache Size: ~401 MB (420002981 B)
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:41:56.6157300Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/8214c268-4699-4c1e-91e0-bd725fa257b5/cache.tzst -P -C /Users/runner/work/ovrcr/ovrcr --delay-directory-restore --use-compress-program unzstd
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:42:01.7305200Z Cache restored successfully
+checks	Run Swatinem/rust-cache@v2	2026-09-10T23:42:01.7559260Z Restored from cache key "v0-rust-checks-Darwin-arm64-2eab217e-29fb430f" full match: true.
+checks	Configure git identity	﻿2026-09-10T23:42:01.7975560Z ##[group]Run git config --global user.name "OVRCR CI"
+checks	Configure git identity	2026-09-10T23:42:01.7977100Z ^[[36;1mgit config --global user.name "OVRCR CI"^[[0m
+checks	Configure git identity	2026-09-10T23:42:01.7978040Z ^[[36;1mgit config --global user.email "ci@ovrcr.invalid"^[[0m
+checks	Configure git identity	2026-09-10T23:42:01.8058330Z shell: /bin/bash -e {0}
+checks	Configure git identity	2026-09-10T23:42:01.8058660Z env:
+checks	Configure git identity	2026-09-10T23:42:01.8058990Z   CARGO_TERM_COLOR: always
+checks	Configure git identity	2026-09-10T23:42:01.8059390Z   CARGO_HOME: /Users/runner/.cargo
+checks	Configure git identity	2026-09-10T23:42:01.8059690Z   CARGO_INCREMENTAL: 0
+checks	Configure git identity	2026-09-10T23:42:01.8060030Z   CACHE_ON_FAILURE: true
+checks	Configure git identity	2026-09-10T23:42:01.8060280Z ##[endgroup]
+checks	Format	﻿2026-09-10T23:42:01.9510380Z ##[group]Run cargo fmt --all -- --check
+checks	Format	2026-09-10T23:42:01.9510770Z ^[[36;1mcargo fmt --all -- --check^[[0m
+checks	Format	2026-09-10T23:42:01.9555770Z shell: /bin/bash -e {0}
+checks	Format	2026-09-10T23:42:01.9556200Z env:
+checks	Format	2026-09-10T23:42:01.9556420Z   CARGO_TERM_COLOR: always
+checks	Format	2026-09-10T23:42:01.9556660Z   CARGO_HOME: /Users/runner/.cargo
+checks	Format	2026-09-10T23:42:01.9556930Z   CARGO_INCREMENTAL: 0
+checks	Format	2026-09-10T23:42:01.9564450Z   CACHE_ON_FAILURE: true
+checks	Format	2026-09-10T23:42:01.9564790Z ##[endgroup]
+checks	Lint	﻿2026-09-10T23:42:03.4241480Z ##[group]Run cargo clippy --workspace --all-targets --all-features -- -D warnings
+checks	Lint	2026-09-10T23:42:03.4242090Z ^[[36;1mcargo clippy --workspace --all-targets --all-features -- -D warnings^[[0m
+checks	Lint	2026-09-10T23:42:03.4277130Z shell: /bin/bash -e {0}
+checks	Lint	2026-09-10T23:42:03.4277370Z env:
+checks	Lint	2026-09-10T23:42:03.4277540Z   CARGO_TERM_COLOR: always
+checks	Lint	2026-09-10T23:42:03.4277760Z   CARGO_HOME: /Users/runner/.cargo
+checks	Lint	2026-09-10T23:42:03.4278000Z   CARGO_INCREMENTAL: 0
+checks	Lint	2026-09-10T23:42:03.4278180Z   CACHE_ON_FAILURE: true
+checks	Lint	2026-09-10T23:42:03.4278400Z ##[endgroup]
+checks	Lint	2026-09-10T23:42:03.7381520Z ^[[1m^[[92m    Updating^[[0m crates.io index
+checks	Lint	2026-09-10T23:42:07.2020640Z ^[[1m^[[92m    Checking^[[0m ovrcr-protocol v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+checks	Lint	2026-09-10T23:42:09.0068510Z ^[[1m^[[92m    Checking^[[0m ovrcr-terminal v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+checks	Lint	2026-09-10T23:42:09.0997100Z ^[[1m^[[92m    Checking^[[0m ovrcr-tui v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+checks	Lint	2026-09-10T23:42:09.1002510Z ^[[1m^[[92m    Checking^[[0m ovrcr-runtime v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+checks	Lint	2026-09-10T23:42:10.2350550Z ^[[1m^[[92m    Checking^[[0m ovrcr v0.1.0 (/Users/runner/work/ovrcr/ovrcr)
+checks	Lint	2026-09-10T23:42:13.6642770Z ^[[1m^[[92m    Finished^[[0m `dev` profile [unoptimized + debuginfo] target(s) in 10.11s
+checks	Test	﻿2026-09-10T23:42:13.7113290Z ##[group]Run cargo test --workspace --all-targets --all-features
+checks	Test	2026-09-10T23:42:13.7114070Z ^[[36;1mcargo test --workspace --all-targets --all-features^[[0m
+checks	Test	2026-09-10T23:42:13.7161430Z shell: /bin/bash -e {0}
+checks	Test	2026-09-10T23:42:13.7161750Z env:
+checks	Test	2026-09-10T23:42:13.7162070Z   CARGO_TERM_COLOR: always
+checks	Test	2026-09-10T23:42:13.7162390Z   CARGO_HOME: /Users/runner/.cargo
+checks	Test	2026-09-10T23:42:13.7162640Z   CARGO_INCREMENTAL: 0
+checks	Test	2026-09-10T23:42:13.7162980Z   CACHE_ON_FAILURE: true
+checks	Test	2026-09-10T23:42:13.7163200Z ##[endgroup]
+checks	Test	2026-09-10T23:42:14.2175030Z ^[[1m^[[92m   Compiling^[[0m ovrcr-protocol v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+checks	Test	2026-09-10T23:42:15.8770270Z ^[[1m^[[92m   Compiling^[[0m ovrcr-terminal v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+checks	Test	2026-09-10T23:42:16.0617610Z ^[[1m^[[92m   Compiling^[[0m ovrcr-tui v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+checks	Test	2026-09-10T23:42:16.4192450Z ^[[1m^[[92m   Compiling^[[0m ovrcr-runtime v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+checks	Test	2026-09-10T23:42:20.9902540Z ^[[1m^[[92m   Compiling^[[0m ovrcr v0.1.0 (/Users/runner/work/ovrcr/ovrcr)
+checks	Test	2026-09-10T23:42:45.0798360Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 31.28s
+checks	Test	2026-09-10T23:42:45.1802680Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr-c4d2c5530afab725)
+checks	Test	2026-09-10T23:42:45.1991630Z 
+checks	Test	2026-09-10T23:42:45.1994060Z running 35 tests
+checks	Test	2026-09-10T23:42:45.2053240Z test gui::input::tests::alt_letter_encodes_meta ... ok
+checks	Test	2026-09-10T23:42:45.2054810Z test gui::input::tests::drag_released_outside_ends_at_the_last_reported_cell ... ok
+checks	Test	2026-09-10T23:42:45.2055730Z test gui::input::tests::drag_is_forwarded_in_button_motion_mode ... ok
+checks	Test	2026-09-10T23:42:45.2056250Z test gui::input::tests::release_with_nothing_held_reports_nothing ... ok
+checks	Test	2026-09-10T23:42:45.2056890Z test gui::input::tests::unmodified_letter_keeps_its_text ... ok
+checks	Test	2026-09-10T23:42:45.2057430Z test gui::input::tests::special_keys_carry_modifiers ... ok
+checks	Test	2026-09-10T23:42:45.2057990Z test gui::input::tests::press_encoding_matches_encode_mouse ... ok
+checks	Test	2026-09-10T23:42:45.2058540Z test gui::input::tests::wheel_points_accumulate_into_lines ... ok
+checks	Test	2026-09-10T23:42:45.2059140Z test gui::input::tests::wheel_ignores_off_axis_drift ... ok
+checks	Test	2026-09-10T23:42:45.2070490Z test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+checks	Test	2026-09-10T23:42:45.2074060Z test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+checks	Test	2026-09-10T23:42:45.2103110Z test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+checks	Test	2026-09-10T23:42:45.2427620Z test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+checks	Test	2026-09-10T23:42:45.2521930Z test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+checks	Test	2026-09-10T23:42:45.2525310Z test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+checks	Test	2026-09-10T23:42:45.2805380Z test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+checks	Test	2026-09-10T23:42:45.2810490Z test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+checks	Test	2026-09-10T23:42:45.2811390Z POST_EXIT_DRAIN_NATIVE_OUTPUT
+checks	Test	2026-09-10T23:42:45.2812320Z test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+checks	Test	2026-09-10T23:42:45.2813220Z test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+checks	Test	2026-09-10T23:42:45.2813990Z test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+checks	Test	2026-09-10T23:42:45.2819640Z test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+checks	Test	2026-09-10T23:42:45.2820400Z test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+checks	Test	2026-09-10T23:42:45.2824520Z test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+checks	Test	2026-09-10T23:42:45.2826190Z test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+checks	Test	2026-09-10T23:42:45.2826930Z test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+checks	Test	2026-09-10T23:42:45.3508200Z test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+checks	Test	2026-09-10T23:42:45.3516370Z test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+checks	Test	2026-09-10T23:42:45.3563370Z test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+checks	Test	2026-09-10T23:42:45.3566210Z test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+checks	Test	2026-09-10T23:42:45.3567660Z test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+checks	Test	2026-09-10T23:42:45.3568480Z test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+checks	Test	2026-09-10T23:42:45.3579260Z test report::tests::agent_hook_claude_maps_supported_events ... ok
+checks	Test	2026-09-10T23:42:45.3579820Z test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+checks	Test	2026-09-10T23:42:45.4353900Z test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+checks	Test	2026-09-10T23:42:45.9217070Z test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+checks	Test	2026-09-10T23:42:45.9323020Z ^[[1m^[[92m     Running^[[0m unittests src/main.rs (target/debug/deps/ovrcr-af5f248cf39eb2f3)
+checks	Test	2026-09-10T23:42:45.9324070Z 
+checks	Test	2026-09-10T23:42:45.9443460Z ^[[1m^[[92m     Running^[[0m unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-d59d19af958a06ad)
+checks	Test	2026-09-10T23:42:45.9444290Z test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+checks	Test	2026-09-10T23:42:45.9547340Z 
+checks	Test	2026-09-10T23:42:45.9652080Z 
+checks	Test	2026-09-10T23:42:45.9754660Z running 0 tests
+checks	Test	2026-09-10T23:42:45.9856150Z 
+checks	Test	2026-09-10T23:42:45.9939640Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Test	2026-09-10T23:42:45.9941060Z 
+checks	Test	2026-09-10T23:42:45.9941310Z 
+checks	Test	2026-09-10T23:42:45.9941830Z running 7 tests
+checks	Test	2026-09-10T23:42:46.1974280Z test native_glyph::native_raster_retains_style_scale_and_opacity ... ok
+checks	Test	2026-09-10T23:42:46.2059280Z test native_glyph_cache_evicts_entries_unused_last_frame ... ok
+checks	Test	2026-09-10T23:42:46.2158810Z test terminal_fonts_render_mockup_glyphs_or_default_symbols ... ok
+checks	Test	2026-09-10T23:42:46.2603620Z test terminal_paints_missing_unicode_as_native_images ... ok
+checks	Test	2026-09-10T23:42:46.4382390Z test terminal_paints_reserved_icon_cell_before_foreground_glyph ... ok
+checks	Test	2026-09-10T23:42:46.7292620Z test native_glyph_cache_keeps_a_screen_of_distinct_glyphs ... ok
+checks	Test	2026-09-10T23:42:52.5217220Z ^[[1m^[[92m     Running^[[0m tests/agent_setup.rs (target/debug/deps/agent_setup-3bbd97247b57b69b)
+checks	Test	2026-09-10T23:42:52.5218040Z test command_palette_opens_when_another_control_has_focus ... ok
+checks	Test	2026-09-10T23:42:52.5319700Z 
+checks	Test	2026-09-10T23:42:52.5422640Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.56s
+checks	Test	2026-09-10T23:42:52.5524520Z 
+checks	Test	2026-09-10T23:42:52.5640500Z 
+checks	Test	2026-09-10T23:42:52.5748620Z running 7 tests
+checks	Test	2026-09-10T23:42:52.5955240Z test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+checks	Test	2026-09-10T23:42:52.6692720Z test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+checks	Test	2026-09-10T23:42:52.7039010Z test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+checks	Test	2026-09-10T23:42:52.7875840Z test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+checks	Test	2026-09-10T23:42:52.8085130Z test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+checks	Test	2026-09-10T23:42:52.8856270Z test setup_quotes_actual_executable_path ... ok
+checks	Test	2026-09-10T23:42:56.7563790Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting.rs (target/debug/deps/claude_reporting-7bd9c90bb52cfa17)
+checks	Test	2026-09-10T23:42:56.7565740Z test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+checks	Test	2026-09-10T23:42:56.7572660Z 
+checks	Test	2026-09-10T23:42:56.7574600Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.20s
+checks	Test	2026-09-10T23:42:56.7677690Z 
+checks	Test	2026-09-10T23:42:56.7778690Z 
+checks	Test	2026-09-10T23:42:56.7813140Z running 17 tests
+checks	Test	2026-09-10T23:42:56.8256180Z test collector_diagnostics_track_one_bounded_exchange_and_drain ... ok
+checks	Test	2026-09-10T23:42:56.8288250Z test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+checks	Test	2026-09-10T23:42:56.8692490Z test collector_cancel_reaps_an_exited_group_before_confirming_absence ... ok
+checks	Test	2026-09-10T23:42:56.8857630Z test collector_drop_is_bounded_for_a_stalled_helper ... ok
+checks	Test	2026-09-10T23:42:56.9104120Z test collector_differing_duplicate_freezes_before_replacement ... ok
+checks	Test	2026-09-10T23:42:56.9250230Z test collector_expired_deadline_transfers_reaping_ownership ... ok
+checks	Test	2026-09-10T23:42:56.9456510Z test collector_launch_clears_inherited_environment ... ok
+checks	Test	2026-09-10T23:42:56.9606750Z test collector_missing_file_retries_same_path_and_truncation_preserves_watermark ... ok
+checks	Test	2026-09-10T23:42:56.9760070Z test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+checks	Test	2026-09-10T23:42:57.8832760Z test collector_raw_record_limit_preserves_prefix ... ok
+checks	Test	2026-09-10T23:42:57.9444810Z test collector_reads_only_one_chunk_and_excludes_sidechains ... ok
+checks	Test	2026-09-10T23:42:58.0167040Z test collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound ... ok
+checks	Test	2026-09-10T23:42:58.0318680Z test collector_rejects_oversized_configuration_before_spawn ... ok
+checks	Test	2026-09-10T23:42:58.1560800Z test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+checks	Test	2026-09-10T23:42:58.2430150Z test collector_stalled_helper_is_nonblocking_and_owned_group_cleanup_is_bounded ... ok
+checks	Test	2026-09-10T23:42:59.6850260Z test collector_production_byte_cap_freezes_before_identity_cap ... ok
+checks	Test	2026-09-10T23:42:59.8176060Z test collector_production_identity_cap_freezes_later_unique_usage ... ok
+checks	Test	2026-09-10T23:42:59.8176880Z 
+checks	Test	2026-09-10T23:42:59.8178450Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-2e5cae92b386f608)
+checks	Test	2026-09-10T23:42:59.8179230Z test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.05s
+checks	Test	2026-09-10T23:42:59.8179520Z 
+checks	Test	2026-09-10T23:43:00.5020410Z 
+checks	Test	2026-09-10T23:43:00.5040920Z running 2 tests
+checks	Test	2026-09-10T23:43:00.5195230Z test fifty_collector_raw_index_and_sequential_json_high_water ... ignored, isolated Linux runner only: 50 collectors at raw/index limits
+checks	Test	2026-09-10T23:43:00.5268880Z test fifty_session_reporting_capacity ... ignored, 50 real PTYs/helpers, production indices, 60 seconds; run explicitly alone
+checks	Test	2026-09-10T23:43:00.5394820Z ^[[1m^[[92m     Running^[[0m tests/cli.rs (target/debug/deps/cli-3cc0b6412c348575)
+checks	Test	2026-09-10T23:43:00.5427600Z 
+checks	Test	2026-09-10T23:43:00.5473970Z test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+checks	Test	2026-09-10T23:43:00.5474550Z 
+checks	Test	2026-09-10T23:43:00.5811110Z 
+checks	Test	2026-09-10T23:43:00.5817570Z running 29 tests
+checks	Test	2026-09-10T23:43:00.6109100Z test agent_hook_cli_requires_identity_without_starting_server ... ok
+checks	Test	2026-09-10T23:43:01.6354170Z test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+checks	Test	2026-09-10T23:43:01.7874180Z test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+checks	Test	2026-09-10T23:43:01.8347250Z test agent_hook_cli_reaches_managed_session ... ok
+checks	Test	2026-09-10T23:43:01.8910880Z test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+checks	Test	2026-09-10T23:43:01.9960080Z test claude_doctor_reports_exact_version_and_version_specific_resume_forms ... ok
+checks	Test	2026-09-10T23:43:02.1980450Z test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+checks	Test	2026-09-10T23:43:02.3648530Z test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+checks	Test	2026-09-10T23:43:02.3777980Z test claude_statusline_renders_default_without_reporting_server ... ok
+checks	Test	2026-09-10T23:43:03.7075510Z test agent_hook_cli_timeout_is_bounded ... ok
+checks	Test	2026-09-10T23:43:04.0970950Z test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+checks	Test	2026-09-10T23:43:04.1709720Z test context_helper_invalid_input_has_no_effect ... ok
+checks	Test	2026-09-10T23:43:04.1813650Z test context_inspect_missing_session_fails ... ok
+checks	Test	2026-09-10T23:43:04.7705540Z test context_helper_missing_server_does_not_start_one ... ok
+checks	Test	2026-09-10T23:43:04.7773900Z test malformed_offline_registry_is_reported_without_replacing_it ... ok
+checks	Test	2026-09-10T23:43:04.8023670Z test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+checks	Test	2026-09-10T23:43:04.9702470Z test mutations_do_not_start_a_server ... ok
+checks	Test	2026-09-10T23:43:04.9807760Z test new_and_existing_branch_flags_are_exclusive ... ok
+checks	Test	2026-09-10T23:43:05.1019890Z test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+checks	Test	2026-09-10T23:43:05.1240440Z test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+checks	Test	2026-09-10T23:43:05.1450450Z test pause_resume_cli_requires_id ... ok
+checks	Test	2026-09-10T23:43:05.5477200Z test context_helper_reports_from_managed_pty ... ok
+checks	Test	2026-09-10T23:43:05.6784340Z test resource_aliases_are_visible_and_parse_as_commands ... ok
+checks	Test	2026-09-10T23:43:05.6989560Z test runtime_errors_include_the_cause_chain ... ok
+checks	Test	2026-09-10T23:43:05.7347640Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpGHq8I4/repo/.git/
+checks	Test	2026-09-10T23:43:05.8349000Z [main (root-commit) b51468b] initial
+checks	Test	2026-09-10T23:43:05.8353980Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:05.8354550Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:05.9921310Z test context_inspect_reports_unknown_and_sample ... ok
+checks	Test	2026-09-10T23:43:06.0156070Z test terminal_workspace_filter_requires_project ... ok
+checks	Test	2026-09-10T23:43:06.0555410Z test version_flag_prints_package_version ... ok
+checks	Test	2026-09-10T23:43:07.0906600Z test session_command_keeps_arguments_after_separator ... ok
+checks	Test	2026-09-10T23:43:08.2677340Z test requests_time_out_against_a_wedged_server ... ok
+checks	Test	2026-09-10T23:43:08.2677930Z 
+checks	Test	2026-09-10T23:43:08.2678330Z test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.69s
+checks	Test	2026-09-10T23:43:08.2679070Z 
+checks	Test	2026-09-10T23:43:08.2694260Z ^[[1m^[[92m     Running^[[0m tests/git_lifecycle.rs (target/debug/deps/git_lifecycle-b99c7f63a10ec1d1)
+checks	Test	2026-09-10T23:43:08.3186320Z 
+checks	Test	2026-09-10T23:43:08.3188230Z running 17 tests
+checks	Test	2026-09-10T23:43:08.3575780Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpx27N8A/repo/.git/
+checks	Test	2026-09-10T23:43:08.3585570Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpCYFMHq/repo/.git/
+checks	Test	2026-09-10T23:43:08.3590850Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpvZnP7R/repo/.git/
+checks	Test	2026-09-10T23:43:08.5004920Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.5005550Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.5005910Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.5006720Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.5008550Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.5009430Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.5012690Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.5013140Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.5013470Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.6541410Z test add_project_creates_a_missing_workspace_root ... ok
+checks	Test	2026-09-10T23:43:08.6546220Z test add_project_leaves_no_workspace_root_when_the_repository_is_invalid ... ok
+checks	Test	2026-09-10T23:43:08.6703080Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpKf8J1D/repo/.git/
+checks	Test	2026-09-10T23:43:08.6761610Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpMuXOzG/repo/.git/
+checks	Test	2026-09-10T23:43:08.7323690Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.7331780Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.7349260Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.7415340Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.7417410Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.7418540Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.7540640Z test add_project_refuses_relative_paths_without_creating_anything ... ok
+checks	Test	2026-09-10T23:43:08.7685100Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp2qR9kZ/repo/.git/
+checks	Test	2026-09-10T23:43:08.8875940Z [main (root-commit) c67c371] initial
+checks	Test	2026-09-10T23:43:08.8877040Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:08.8877500Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:08.9791130Z test inspects_clean_and_dirty_worktrees ... ok
+checks	Test	2026-09-10T23:43:09.0084880Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpvJTunU/repo/.git/
+checks	Test	2026-09-10T23:43:09.0310540Z test refuses_registry_and_git_path_disagreement ... ok
+checks	Test	2026-09-10T23:43:09.0496960Z test creates_new_and_existing_branch_worktrees ... ok
+checks	Test	2026-09-10T23:43:09.0564530Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpGLCExz/repo/.git/
+checks	Test	2026-09-10T23:43:09.0682450Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpjqvtGg/repo/.git/
+checks	Test	2026-09-10T23:43:09.0851010Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.0852420Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.0854610Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.1451910Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.1511130Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.1630470Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.1723700Z Preparing worktree (new branch 'feature/shared')
+checks	Test	2026-09-10T23:43:09.1724460Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.1724990Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.1842750Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.2099220Z HEAD is now at 7532db4 initial
+checks	Test	2026-09-10T23:43:09.2803480Z test refuses_to_remove_unregistered_matching_worktree ... ok
+checks	Test	2026-09-10T23:43:09.2967900Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpai2H9P/repo/.git/
+checks	Test	2026-09-10T23:43:09.3294320Z test refuses_symlink_substitution_without_touching_either_worktree ... ok
+checks	Test	2026-09-10T23:43:09.3436400Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpfSHRqj/repo/.git/
+checks	Test	2026-09-10T23:43:09.3723370Z test refuses_to_remove_branch_checked_out_elsewhere ... ok
+checks	Test	2026-09-10T23:43:09.3792280Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.3794750Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.3795810Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.3881890Z Preparing worktree (new branch 'feature/outside')
+checks	Test	2026-09-10T23:43:09.3882510Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpVnStKb/repo/.git/
+checks	Test	2026-09-10T23:43:09.4011240Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.4012860Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.4013260Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.4978790Z HEAD is now at 7532db4 initial
+checks	Test	2026-09-10T23:43:09.5098330Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.5102200Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.5104200Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.5327580Z test refuses_to_remove_worktree_outside_registered_root ... ok
+checks	Test	2026-09-10T23:43:09.5519620Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpHBItK2/repo/.git/
+checks	Test	2026-09-10T23:43:09.5548780Z test refuses_to_remove_worktree_with_tracked_changes ... ok
+checks	Test	2026-09-10T23:43:09.5730460Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpzd6i7d/repo/.git/
+checks	Test	2026-09-10T23:43:09.6573650Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.6576670Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.6717770Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.7094810Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.7171650Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.7204300Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.7283820Z test rejects_existing_worktree_destination ... ok
+checks	Test	2026-09-10T23:43:09.7353790Z test refuses_to_remove_worktree_with_untracked_files ... ok
+checks	Test	2026-09-10T23:43:09.7487310Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpuBrSJJ/repo/.git/
+checks	Test	2026-09-10T23:43:09.7550090Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpLZVsEX/repo/.git/
+checks	Test	2026-09-10T23:43:09.8090360Z test rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation ... ok
+checks	Test	2026-09-10T23:43:09.8091810Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.8093170Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.8094310Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.8140870Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.8142300Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.8143250Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.8225510Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmprLm6vP/repo/.git/
+checks	Test	2026-09-10T23:43:09.8238220Z test rejects_workspace_path_traversal_before_git ... ok
+checks	Test	2026-09-10T23:43:09.8699370Z [main (root-commit) 7532db4] initial
+checks	Test	2026-09-10T23:43:09.8702000Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:09.8705370Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:09.9516870Z test removes_clean_registered_worktree_and_preserves_branch ... ok
+checks	Test	2026-09-10T23:43:10.0300270Z test removes_workspace_whose_directory_is_gone ... ok
+checks	Test	2026-09-10T23:43:10.0300630Z 
+checks	Test	2026-09-10T23:43:10.0306720Z test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+checks	Test	2026-09-10T23:43:10.0307780Z 
+checks	Test	2026-09-10T23:43:10.0311380Z ^[[1m^[[92m     Running^[[0m tests/gui.rs (target/debug/deps/gui-cb38a8ad30d28c19)
+checks	Test	2026-09-10T23:43:10.0478180Z 
+checks	Test	2026-09-10T23:43:10.0479130Z running 6 tests
+checks	Test	2026-09-10T23:43:10.0529800Z test command_k_is_not_forwarded_to_terminal ... ok
+checks	Test	2026-09-10T23:43:10.0573310Z test input_preserves_control_keys_terminal_modes_and_mouse_cells ... ok
+checks	Test	2026-09-10T23:43:12.4549610Z test outer_pty_parses_attributes_and_resize_reaches_the_tty ... ok
+checks	Test	2026-09-10T23:43:13.4215460Z test demo_shells_inherit_paths_and_cli_reaches_fixture ... ok
+checks	Test	2026-09-10T23:43:13.5182280Z test palette_creates_switches_and_closes_a_real_terminal ... ok
+checks	Test	2026-09-10T23:43:15.6493960Z test real_dashboard_accepts_input_reattaches_and_cleans_up_demo ... ok
+checks	Test	2026-09-10T23:43:15.6495030Z 
+checks	Test	2026-09-10T23:43:15.6495500Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.60s
+checks	Test	2026-09-10T23:43:15.6495900Z 
+checks	Test	2026-09-10T23:43:15.6499290Z ^[[1m^[[92m     Running^[[0m tests/resource_cli.rs (target/debug/deps/resource_cli-c8ef5df94b813e09)
+checks	Test	2026-09-10T23:43:15.6645380Z 
+checks	Test	2026-09-10T23:43:15.6645820Z running 6 tests
+checks	Test	2026-09-10T23:43:15.8528620Z test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... ok
+checks	Test	2026-09-10T23:43:16.5963870Z test agent_hook_resource_inventory_reports_activity ... ok
+checks	Test	2026-09-10T23:43:16.9551080Z test pause_resume_resource_cli_preserves_input_and_close_contract ... ok
+checks	Test	2026-09-10T23:43:17.0083120Z test context_resource_inventory_matches_inspection ... ok
+checks	Test	2026-09-10T23:43:17.5819640Z test remove_project_reports_workspaces_remain ... ok
+checks	Test	2026-09-10T23:43:18.3268470Z test terminal_cli_drives_real_session_and_preserves_workspace_removal_guards ... ok
+checks	Test	2026-09-10T23:43:18.3269160Z 
+checks	Test	2026-09-10T23:43:18.3269690Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.66s
+checks	Test	2026-09-10T23:43:18.3270230Z 
+checks	Test	2026-09-10T23:43:18.3275480Z ^[[1m^[[92m     Running^[[0m tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-1b634a96e26e8208)
+checks	Test	2026-09-10T23:43:18.3677920Z 
+checks	Test	2026-09-10T23:43:18.3678310Z running 79 tests
+checks	Test	2026-09-10T23:43:18.4201330Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpQEtMeY/repo/.git/
+checks	Test	2026-09-10T23:43:18.4204450Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpRRxdZn/repo/.git/
+checks	Test	2026-09-10T23:43:18.4218730Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp16mV3W/repo/.git/
+checks	Test	2026-09-10T23:43:18.4787330Z [main (root-commit) 68c3e73] initial
+checks	Test	2026-09-10T23:43:18.4798870Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:18.4818160Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:18.4819880Z [main (root-commit) 68c3e73] initial
+checks	Test	2026-09-10T23:43:18.4820460Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:18.4820850Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:18.4821110Z [main (root-commit) 68c3e73] initial
+checks	Test	2026-09-10T23:43:18.4821500Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:18.4821800Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:20.5934080Z test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+checks	Test	2026-09-10T23:43:20.6124060Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpefjtxj/repo/.git/
+checks	Test	2026-09-10T23:43:20.6617060Z [main (root-commit) 00a0900] initial
+checks	Test	2026-09-10T23:43:20.6621290Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:20.6627980Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:21.0966990Z test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+checks	Test	2026-09-10T23:43:21.1168760Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpcHJ8Si/repo/.git/
+checks	Test	2026-09-10T23:43:21.1692320Z [main (root-commit) ddcf117] initial
+checks	Test	2026-09-10T23:43:21.1696340Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:21.1696870Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:21.2689780Z test agent_admission_failed_bind_status_disconnects_watch ... ok
+checks	Test	2026-09-10T23:43:21.2969510Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpbulCg7/repo/.git/
+checks	Test	2026-09-10T23:43:21.3697490Z [main (root-commit) ddcf117] initial
+checks	Test	2026-09-10T23:43:21.3701760Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:21.3704180Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:23.7327630Z test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+checks	Test	2026-09-10T23:43:23.7352030Z test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+checks	Test	2026-09-10T23:43:23.7922860Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpdN7ut0/repo/.git/
+checks	Test	2026-09-10T23:43:23.8486320Z [main (root-commit) d130dad] initial
+checks	Test	2026-09-10T23:43:23.8490920Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:23.8491510Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:24.2552600Z test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+checks	Test	2026-09-10T23:43:24.2793760Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpr95Oct/repo/.git/
+checks	Test	2026-09-10T23:43:24.3296140Z [main (root-commit) 7d22249] initial
+checks	Test	2026-09-10T23:43:24.3298400Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:24.3299350Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:25.0200150Z test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+checks	Test	2026-09-10T23:43:25.0508030Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp08hIfl/repo/.git/
+checks	Test	2026-09-10T23:43:25.1183460Z [main (root-commit) 89a3786] initial
+checks	Test	2026-09-10T23:43:25.1184370Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:25.1184820Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:25.4114960Z test agent_hook_capability_and_exit_are_enforced ... ok
+checks	Test	2026-09-10T23:43:25.4273640Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpqz0pNB/repo/.git/
+checks	Test	2026-09-10T23:43:25.4907760Z [main (root-commit) 89a3786] initial
+checks	Test	2026-09-10T23:43:25.4909340Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:25.4909850Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:25.8838120Z test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+checks	Test	2026-09-10T23:43:25.8943080Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpaZuFBq/repo/.git/
+checks	Test	2026-09-10T23:43:25.9752210Z [main (root-commit) 89a3786] initial
+checks	Test	2026-09-10T23:43:25.9854370Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:25.9957240Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:26.2895730Z test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+checks	Test	2026-09-10T23:43:26.4903290Z test agent_hook_sequence_does_not_regress_state ... ok
+checks	Test	2026-09-10T23:43:26.5004720Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpfmGRwl/repo/.git/
+checks	Test	2026-09-10T23:43:26.5100810Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpa7AqAD/repo/.git/
+checks	Test	2026-09-10T23:43:26.5472900Z [main (root-commit) f28a0df] initial
+checks	Test	2026-09-10T23:43:26.5494270Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:26.5499250Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:26.5500950Z [main (root-commit) f28a0df] initial
+checks	Test	2026-09-10T23:43:26.5501560Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:26.5515110Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:26.8143020Z test agent_hook_startup_registration_is_visible ... ok
+checks	Test	2026-09-10T23:43:26.8255280Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpPCjgYY/repo/.git/
+checks	Test	2026-09-10T23:43:26.8568930Z [main (root-commit) f28a0df] initial
+checks	Test	2026-09-10T23:43:26.8574020Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:26.8578100Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:26.9857050Z test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+checks	Test	2026-09-10T23:43:26.9857720Z test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+checks	Test	2026-09-10T23:43:26.9858390Z test agent_run_native_helper ... ignored, native child fixture launched through agent run
+checks	Test	2026-09-10T23:43:26.9951750Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpXe3N8Q/repo/.git/
+checks	Test	2026-09-10T23:43:27.0261800Z [main (root-commit) d5e9096] initial
+checks	Test	2026-09-10T23:43:27.0263500Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:27.0265920Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:27.5354030Z test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+checks	Test	2026-09-10T23:43:27.5497880Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpb29upo/repo/.git/
+checks	Test	2026-09-10T23:43:27.5798180Z [main (root-commit) d5e9096] initial
+checks	Test	2026-09-10T23:43:27.5799000Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:27.5800040Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:27.9398090Z test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+checks	Test	2026-09-10T23:43:27.9710230Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp2Mrkaz/repo/.git/
+checks	Test	2026-09-10T23:43:28.0061840Z [main (root-commit) d5e9096] initial
+checks	Test	2026-09-10T23:43:28.0062610Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:28.0063220Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:28.9700600Z test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+checks	Test	2026-09-10T23:43:29.0909530Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpFY9VIh/repo/.git/
+checks	Test	2026-09-10T23:43:29.1757610Z test agent_run_runtime_kill_reaches_owned_native_group ... ok
+checks	Test	2026-09-10T23:43:29.2141030Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp2naB03/repo/.git/
+checks	Test	2026-09-10T23:43:29.2234580Z [main (root-commit) e2908af] initial
+checks	Test	2026-09-10T23:43:29.2250850Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:29.2255050Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:29.3096270Z [main (root-commit) e2908af] initial
+checks	Test	2026-09-10T23:43:29.3156670Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:29.3157450Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:29.7382660Z test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+checks	Test	2026-09-10T23:43:29.7702980Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpbqYvq8/repo/.git/
+checks	Test	2026-09-10T23:43:29.8239580Z [main (root-commit) e2908af] initial
+checks	Test	2026-09-10T23:43:29.8241260Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:29.8241870Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:30.7930930Z test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+checks	Test	2026-09-10T23:43:30.8131720Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpP0ncnm/repo/.git/
+checks	Test	2026-09-10T23:43:30.9012250Z [main (root-commit) eaa45ac] initial
+checks	Test	2026-09-10T23:43:30.9016330Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:30.9017080Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:31.1834270Z test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+checks	Test	2026-09-10T23:43:31.1952260Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpsXehUL/repo/.git/
+checks	Test	2026-09-10T23:43:31.2315250Z [main (root-commit) a230d87] initial
+checks	Test	2026-09-10T23:43:31.2318820Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:31.2319240Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:31.2391310Z test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+checks	Test	2026-09-10T23:43:31.2493660Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp5jgc11/repo/.git/
+checks	Test	2026-09-10T23:43:31.2930410Z [main (root-commit) a230d87] initial
+checks	Test	2026-09-10T23:43:31.2931170Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:31.2931580Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:32.7047600Z test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+checks	Test	2026-09-10T23:43:32.7249610Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpJ8wrYy/repo/.git/
+checks	Test	2026-09-10T23:43:32.7547180Z [main (root-commit) fead211] initial
+checks	Test	2026-09-10T23:43:32.7547650Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:32.7548150Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:33.0611630Z test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+checks	Test	2026-09-10T23:43:33.0813560Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpSF2gJR/repo/.git/
+checks	Test	2026-09-10T23:43:33.0922430Z test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+checks	Test	2026-09-10T23:43:33.1282730Z [main (root-commit) 231fc97] initial
+checks	Test	2026-09-10T23:43:33.1283180Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:33.1284640Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:33.3411510Z test client_with_wrong_protocol_version_is_refused ... ok
+checks	Test	2026-09-10T23:43:33.3436550Z test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+checks	Test	2026-09-10T23:43:33.3562110Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpOTGLFU/repo/.git/
+checks	Test	2026-09-10T23:43:33.3976550Z [main (root-commit) 231fc97] initial
+checks	Test	2026-09-10T23:43:33.3978130Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:33.3978620Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:33.7791030Z test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+checks	Test	2026-09-10T23:43:34.2947190Z test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+checks	Test	2026-09-10T23:43:34.3149790Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpcIAkm9/repo/.git/
+checks	Test	2026-09-10T23:43:34.3587180Z [main (root-commit) 5bcb2e7] initial
+checks	Test	2026-09-10T23:43:34.3589360Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:34.3590530Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:34.6495160Z test context_report_rejects_old_and_invalid_samples ... ok
+checks	Test	2026-09-10T23:43:34.6655270Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpNpbloB/repo/.git/
+checks	Test	2026-09-10T23:43:34.6964020Z [main (root-commit) 5bcb2e7] initial
+checks	Test	2026-09-10T23:43:34.6967660Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:34.6969080Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:34.9993490Z test context_report_replaces_snapshot_and_preserves_activity ... ok
+checks	Test	2026-09-10T23:43:35.0194370Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp2t59mw/repo/.git/
+checks	Test	2026-09-10T23:43:35.0687620Z [main (root-commit) 3df7c1c] initial
+checks	Test	2026-09-10T23:43:35.0696810Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:35.0697940Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:35.4643700Z test context_snapshot_survives_dashboard_reattach ... ok
+checks	Test	2026-09-10T23:43:35.5106770Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpPttGjo/repo/.git/
+checks	Test	2026-09-10T23:43:35.5457050Z [main (root-commit) 3df7c1c] initial
+checks	Test	2026-09-10T23:43:35.5457650Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:35.5458120Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:35.6328380Z test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+checks	Test	2026-09-10T23:43:36.3442390Z test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+checks	Test	2026-09-10T23:43:36.3782290Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmph4jWzp/repo/.git/
+checks	Test	2026-09-10T23:43:36.4172120Z [main (root-commit) 12b126c] initial
+checks	Test	2026-09-10T23:43:36.4174780Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:36.4175370Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:36.4824050Z test dashboard_receives_concrete_ordinary_request_errors ... ok
+checks	Test	2026-09-10T23:43:36.6850760Z test dashboard_request_id_zero_does_not_block_followup_response ... ok
+checks	Test	2026-09-10T23:43:36.8346380Z test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+checks	Test	2026-09-10T23:43:36.9436710Z test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+checks	Test	2026-09-10T23:43:37.3340020Z test control_lifecycle_enforces_every_removal_gate ... ok
+checks	Test	2026-09-10T23:43:37.3504730Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpW0gERf/repo/.git/
+checks	Test	2026-09-10T23:43:37.4030380Z [main (root-commit) 42cd2b6] initial
+checks	Test	2026-09-10T23:43:37.4032440Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:37.4033410Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:38.2624430Z test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+checks	Test	2026-09-10T23:43:38.2829290Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpa6Ii1b/repo/.git/
+checks	Test	2026-09-10T23:43:38.3172300Z [main (root-commit) 1b75446] initial
+checks	Test	2026-09-10T23:43:38.3188010Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:38.3189570Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:39.3173120Z test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+checks	Test	2026-09-10T23:43:39.3281870Z test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+checks	Test	2026-09-10T23:43:39.3583780Z test fast_exit_session_is_retained_as_exited ... ok
+checks	Test	2026-09-10T23:43:39.3684790Z test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+checks	Test	2026-09-10T23:43:39.3769650Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpQUTNzl/repo/.git/
+checks	Test	2026-09-10T23:43:39.4132150Z [main (root-commit) aab4b21] initial
+checks	Test	2026-09-10T23:43:39.4133150Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:39.4134130Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:42.4850400Z test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+checks	Test	2026-09-10T23:43:42.5051230Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpFjTCnx/repo/.git/
+checks	Test	2026-09-10T23:43:42.5388840Z [main (root-commit) c259f60] initial
+checks	Test	2026-09-10T23:43:42.5390000Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:42.5390820Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:42.9288890Z test history_frozen_page_survives_eviction_and_exit ... ok
+checks	Test	2026-09-10T23:43:42.9389650Z test hook_child_report_helper ... ignored
+checks	Test	2026-09-10T23:43:42.9491360Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpHhhzzX/repo/.git/
+checks	Test	2026-09-10T23:43:42.9956470Z [main (root-commit) c259f60] initial
+checks	Test	2026-09-10T23:43:42.9957080Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:42.9957530Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:43.3665420Z test history_reattach_reads_retained_output ... ok
+checks	Test	2026-09-10T23:43:43.3866730Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpRj7vN7/repo/.git/
+checks	Test	2026-09-10T23:43:43.4233370Z [main (root-commit) 253e292] initial
+checks	Test	2026-09-10T23:43:43.4234060Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:43.4235040Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:44.8867370Z test history_slow_dashboard_recovers_after_finite_burst ... ok
+checks	Test	2026-09-10T23:43:44.8887630Z test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+checks	Test	2026-09-10T23:43:45.1595660Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmprAcNy8/repo/.git/
+checks	Test	2026-09-10T23:43:45.2164770Z [main (root-commit) 8e277e6] initial
+checks	Test	2026-09-10T23:43:45.2181630Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:45.2187350Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:45.4714490Z test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+checks	Test	2026-09-10T23:43:45.4718010Z test pause_resume_child_fixture ... ignored
+checks	Test	2026-09-10T23:43:47.9463290Z test kill_does_not_block_dashboard_geometry ... ok
+checks	Test	2026-09-10T23:43:47.9777470Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpV7WOrB/repo/.git/
+checks	Test	2026-09-10T23:43:48.0156610Z [main (root-commit) c15cbe6] initial
+checks	Test	2026-09-10T23:43:48.0158520Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:48.0160810Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:49.4640170Z test pause_resume_backpressured_input_keeps_controls_available ... ok
+checks	Test	2026-09-10T23:43:49.4771600Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmphbfD7T/repo/.git/
+checks	Test	2026-09-10T23:43:49.5123980Z [main (root-commit) 16f535a] initial
+checks	Test	2026-09-10T23:43:49.5124800Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:49.5125310Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:50.6153800Z test pause_resume_control_races_converge ... ok
+checks	Test	2026-09-10T23:43:50.6255260Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpaOGBe4/repo/.git/
+checks	Test	2026-09-10T23:43:50.6566200Z [main (root-commit) 9852fd8] initial
+checks	Test	2026-09-10T23:43:50.6566930Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:50.6567960Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:51.5315660Z test pause_resume_kill_runs_group_handlers ... ok
+checks	Test	2026-09-10T23:43:51.5431890Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpkHzaIt/repo/.git/
+checks	Test	2026-09-10T23:43:51.5797440Z [main (root-commit) f1a3584] initial
+checks	Test	2026-09-10T23:43:51.5798190Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:51.5798800Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:52.8868810Z test pause_resume_server_refuses_removal_and_late_mutation ... ok
+checks	Test	2026-09-10T23:43:52.8980530Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmplsPjkC/repo/.git/
+checks	Test	2026-09-10T23:43:52.8981920Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpYZFuxE/repo/.git/
+checks	Test	2026-09-10T23:43:52.9317210Z [main (root-commit) 203b42d] initial
+checks	Test	2026-09-10T23:43:52.9319090Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:52.9321020Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:52.9321460Z [main (root-commit) 203b42d] initial
+checks	Test	2026-09-10T23:43:52.9321790Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:52.9323100Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:53.9851190Z test pause_resume_shutdown_cleans_stopped_groups ... ok
+checks	Test	2026-09-10T23:43:54.0526610Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpDC9itk/repo/.git/
+checks	Test	2026-09-10T23:43:54.0535070Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmptGpY0M/repo/.git/
+checks	Test	2026-09-10T23:43:54.0967170Z [main (root-commit) 710ec82] initial
+checks	Test	2026-09-10T23:43:54.0977320Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:54.0978680Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:54.0979010Z [main (root-commit) 710ec82] initial
+checks	Test	2026-09-10T23:43:54.0979310Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:54.0979650Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:54.4645020Z test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+checks	Test	2026-09-10T23:43:54.9203920Z test pause_resume_stops_group_and_rejects_input ... ok
+checks	Test	2026-09-10T23:43:54.9391520Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp70C6Yv/repo/.git/
+checks	Test	2026-09-10T23:43:54.9826730Z [main (root-commit) 710ec82] initial
+checks	Test	2026-09-10T23:43:54.9871420Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:54.9896550Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:55.9264290Z test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+checks	Test	2026-09-10T23:43:55.9432170Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpgwhdp6/repo/.git/
+checks	Test	2026-09-10T23:43:55.9830190Z [main (root-commit) d5966bc] initial
+checks	Test	2026-09-10T23:43:55.9830860Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:55.9831270Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:56.0388050Z test shutdown_disconnected_requester_still_wakes_accept ... ok
+checks	Test	2026-09-10T23:43:56.7333140Z test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+checks	Test	2026-09-10T23:43:56.8523340Z test selection_snapshot_precedes_later_quiet_tail_output ... ok
+checks	Test	2026-09-10T23:43:56.8710010Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpqDMDO3/repo/.git/
+checks	Test	2026-09-10T23:43:56.9027240Z [main (root-commit) 7bcbda0] initial
+checks	Test	2026-09-10T23:43:56.9027960Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:56.9029110Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:57.8315230Z test shutdown_kill_terminates_sessions_concurrently ... ok
+checks	Test	2026-09-10T23:43:57.8455500Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmppPwTUs/repo/.git/
+checks	Test	2026-09-10T23:43:57.8819130Z [main (root-commit) f00feda] initial
+checks	Test	2026-09-10T23:43:57.8819880Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:57.8820310Z  create mode 100644 README
+checks	Test	2026-09-10T23:43:58.5838040Z test shutdown_without_kill_rejects_exited_record ... ok
+checks	Test	2026-09-10T23:43:58.5955470Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpItxuJR/repo/.git/
+checks	Test	2026-09-10T23:43:58.6319310Z [main (root-commit) 2d739a9] initial
+checks	Test	2026-09-10T23:43:58.6321250Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:43:58.6322200Z  create mode 100644 README
+checks	Test	2026-09-10T23:44:00.3167170Z test slow_dashboard_recovers_after_output_burst ... ok
+checks	Test	2026-09-10T23:44:00.3282760Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpQdAqMP/repo/.git/
+checks	Test	2026-09-10T23:44:00.3596490Z [main (root-commit) 51e5e83] initial
+checks	Test	2026-09-10T23:44:00.3597160Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:44:00.3597780Z  create mode 100644 README
+checks	Test	2026-09-10T23:44:02.0392310Z test split_server_two_streams_resize_resync_and_detach ... ok
+checks	Test	2026-09-10T23:44:02.2372080Z test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+checks	Test	2026-09-10T23:44:02.2726740Z test startup_read_only_commands_do_not_start_a_missing_server ... ok
+checks	Test	2026-09-10T23:44:02.2762880Z test startup_refuses_symlinked_socket_directory ... ok
+checks	Test	2026-09-10T23:44:02.2767740Z test startup_concurrent_attempts_leave_one_server ... ok
+checks	Test	2026-09-10T23:44:02.2868580Z test startup_failure_reports_server_log ... ok
+checks	Test	2026-09-10T23:44:02.4806590Z test startup_stale_socket_is_recovered ... ok
+checks	Test	2026-09-10T23:44:02.5154410Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp1V3dM5/repo/.git/
+checks	Test	2026-09-10T23:44:02.5187600Z test startup_socket_directory_is_private ... ok
+checks	Test	2026-09-10T23:44:02.5315590Z test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+checks	Test	2026-09-10T23:44:02.5659240Z [main (root-commit) f0e2123] initial
+checks	Test	2026-09-10T23:44:02.5660200Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:44:02.5661020Z  create mode 100644 README
+checks	Test	2026-09-10T23:44:03.4655580Z test workspace_remove_succeeds_after_directory_deleted ... ok
+checks	Test	2026-09-10T23:44:03.4772920Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpqmXMiE/repo/.git/
+checks	Test	2026-09-10T23:44:03.5128640Z [main (root-commit) bf4db7f] initial
+checks	Test	2026-09-10T23:44:03.5129500Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-10T23:44:03.5130380Z  create mode 100644 README
+checks	Test	2026-09-10T23:44:03.6648310Z test workspace_shell_failure_retains_worktree_and_registry ... ok
+checks	Test	2026-09-10T23:44:03.6648790Z 
+checks	Test	2026-09-10T23:44:03.6649110Z test result: ok. 71 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 45.30s
+checks	Test	2026-09-10T23:44:03.6650430Z 
+checks	Test	2026-09-10T23:44:03.6738720Z ^[[1m^[[92m     Running^[[0m tests/service.rs (target/debug/deps/service-d37f94fcf3ec1594)
+checks	Test	2026-09-10T23:44:03.6881660Z 
+checks	Test	2026-09-10T23:44:03.6882470Z running 14 tests
+checks	Test	2026-09-10T23:44:03.6948160Z test environment_file_is_parsed_literally_in_the_application ... ok
+checks	Test	2026-09-10T23:44:03.7007310Z test install_refuses_to_take_over_an_unmanaged_server ... ok
+checks	Test	2026-09-10T23:44:03.7199030Z /var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpx8PqMO/LaunchAgents/com.ovrcr.server.plist: OK
+checks	Test	2026-09-10T23:44:03.7213050Z test launchd_install_writes_login_job_that_restarts_only_after_failure ... ok
+checks	Test	2026-09-10T23:44:03.7269810Z test changed_socket_cannot_control_the_installed_job_even_without_a_listener ... ok
+checks	Test	2026-09-10T23:44:03.7284190Z test service_args_parse_install_environment_file ... ok
+checks	Test	2026-09-10T23:44:03.7291070Z test service_definitions_reject_relative_runtime_paths ... ok
+checks	Test	2026-09-10T23:44:03.7306160Z test failed_graceful_shutdown_does_not_stop_the_manager ... ok
+checks	Test	2026-09-10T23:44:03.7519470Z test start_if_installed_only_uses_an_existing_service_definition ... ok
+checks	Test	2026-09-10T23:44:03.7623590Z test service_install_refuses_when_sessions_exist ... ok
+checks	Test	2026-09-10T23:44:03.7763640Z test status_queries_but_never_starts_the_service ... ok
+checks	Test	2026-09-10T23:44:03.7934330Z test systemd_install_writes_user_unit_and_enables_login_startup ... ok
+checks	Test	2026-09-10T23:44:03.8241090Z test uninstall_removes_only_service_files_and_preserves_task_data ... ok
+checks	Test	2026-09-10T23:44:03.8265320Z test stop_requests_graceful_server_shutdown_before_stopping_the_manager ... ok
+checks	Test	2026-09-10T23:44:03.9046940Z test loaded_service_does_not_send_shutdown_to_a_foreign_listener ... ok
+checks	Test	2026-09-10T23:44:03.9047990Z 
+checks	Test	2026-09-10T23:44:03.9048450Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+checks	Test	2026-09-10T23:44:03.9049320Z ^[[1m^[[92m     Running^[[0m tests/task_cli.rs (target/debug/deps/task_cli-892e8762fabf117f)
+checks	Test	2026-09-10T23:44:03.9049650Z 
+checks	Test	2026-09-10T23:44:03.9086400Z 
+checks	Test	2026-09-10T23:44:03.9090530Z running 3 tests
+checks	Test	2026-09-10T23:44:03.9222390Z test unicode_duration_returns_validation_error_without_starting_server ... ok
+checks	Test	2026-09-10T23:44:03.9276490Z test offline_task_and_run_reads_do_not_start_a_server ... ok
+checks	Test	2026-09-10T23:44:04.4488210Z test task_crud_persists_and_manual_failure_retains_a_run_record ... ok
+checks	Test	2026-09-10T23:44:04.4488730Z 
+checks	Test	2026-09-10T23:44:04.4489320Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+checks	Test	2026-09-10T23:44:04.4489850Z 
+checks	Test	2026-09-10T23:44:04.4494560Z ^[[1m^[[92m     Running^[[0m tests/task_execution.rs (target/debug/deps/task_execution-0ac57ca81efa2bd3)
+checks	Test	2026-09-10T23:44:04.4566190Z 
+checks	Test	2026-09-10T23:44:04.4573890Z running 12 tests
+checks	Test	2026-09-10T23:44:05.3062370Z test cancel_marks_run_cancelling_immediately ... ok
+checks	Test	2026-09-10T23:44:07.9801110Z test git_run_cleanup_rejects_a_workspace_that_preexisted_preparation ... ok
+checks	Test	2026-09-10T23:44:09.4843680Z test git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup ... ok
+checks	Test	2026-09-10T23:44:10.4277050Z test git_run_cleanup_rejects_a_replacement_workspace_after_cleanup ... ok
+checks	Test	2026-09-10T23:44:10.8582260Z test git_workspace_removal_refuses_a_running_task_in_a_clean_worktree ... ok
+checks	Test	2026-09-10T23:44:10.9966020Z test scratch_output_survives_completion_and_requires_confirmed_cleanup ... ok
+checks	Test	2026-09-10T23:44:11.7121050Z test server_crash_interrupts_pi_and_recovery_does_not_replay_the_run ... ok
+checks	Test	2026-09-10T23:44:11.8296180Z test shutdown_finishes_even_when_final_state_persistence_fails ... ok
+checks	Test	2026-09-10T23:44:12.5022060Z test signal_shutdown_cleans_up_despite_final_state_write_failure ... ok
+checks	Test	2026-09-10T23:44:13.5851000Z test three_runs_stream_independently_and_cancel_admits_the_fourth ... ok
+checks	Test	2026-09-10T23:44:14.8764900Z test timeout_is_distinct_from_failure_and_same_task_pending_is_coalesced ... ok
+checks	Test	2026-09-10T23:44:30.6603460Z test forced_cancel_kills_pi_process_group ... ok
+checks	Test	2026-09-10T23:44:30.6607510Z 
+checks	Test	2026-09-10T23:44:30.6608190Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.20s
+checks	Test	2026-09-10T23:44:30.6608940Z 
+checks	Test	2026-09-10T23:44:30.6613040Z ^[[1m^[[92m     Running^[[0m tests/task_paging.rs (target/debug/deps/task_paging-8bf506dc701734a2)
+checks	Test	2026-09-10T23:44:30.6986680Z 
+checks	Test	2026-09-10T23:44:30.6993680Z running 5 tests
+checks	Test	2026-09-10T23:44:30.7010450Z test new_runs_between_pages_do_not_duplicate_or_omit_original_runs ... ok
+checks	Test	2026-09-10T23:44:30.7019150Z test deleting_an_earlier_task_between_pages_keeps_original_tasks_once ... ok
+checks	Test	2026-09-10T23:44:30.7019770Z test oversized_legacy_row_returns_an_error_instead_of_a_stuck_empty_page ... ok
+checks	Test	2026-09-10T23:44:30.7020450Z test serialized_pages_are_bounded_and_keep_task_order_and_filtered_run_order ... ok
+checks	Test	2026-09-10T23:44:33.7918920Z test cli_lists_all_large_tasks_and_runs_online_and_offline ... ok
+checks	Test	2026-09-10T23:44:33.7920290Z 
+checks	Test	2026-09-10T23:44:33.7920680Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+checks	Test	2026-09-10T23:44:33.7921120Z 
+checks	Test	2026-09-10T23:44:33.7924360Z ^[[1m^[[92m     Running^[[0m tests/task_runner.rs (target/debug/deps/task_runner-a6fc5c5cb7ce2b06)
+checks	Test	2026-09-10T23:44:33.8053800Z 
+checks	Test	2026-09-10T23:44:33.8055740Z running 9 tests
+checks	Test	2026-09-10T23:44:34.0852860Z test completion_retains_stream_logs_and_explicit_configuration ... ok
+checks	Test	2026-09-10T23:44:34.1758430Z test acknowledgement_and_agent_end_are_not_success ... ok
+checks	Test	2026-09-10T23:44:34.1772520Z test installed_pi_background_work_survives_between_tools_but_not_the_run ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+checks	Test	2026-09-10T23:44:34.1774160Z test installed_pi_task_shell_preserves_output_and_cleans_abort_timeout_and_parent_loss ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+checks	Test	2026-09-10T23:44:34.1776490Z test logs_are_bounded_and_cursor_is_in_bytes ... ok
+checks	Test	2026-09-10T23:44:35.1322050Z test error_length_abort_and_preflight_rejection_fail ... ok
+checks	Test	2026-09-10T23:44:35.4189160Z test transient_ps_failure_does_not_fail_run ... ok
+checks	Test	2026-09-10T23:44:35.4631560Z test blocked_prompt_write_still_obeys_timeout ... ok
+checks	Test	2026-09-10T23:44:37.0882700Z test timeout_cancel_and_parent_loss_remove_detached_descendants ... ok
+checks	Test	2026-09-10T23:44:37.0884640Z 
+checks	Test	2026-09-10T23:44:37.0885880Z test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 3.28s
+checks	Test	2026-09-10T23:44:37.0887520Z 
+checks	Test	2026-09-10T23:44:37.0899100Z ^[[1m^[[92m     Running^[[0m tests/task_schedule.rs (target/debug/deps/task_schedule-d21740a325834c8d)
+checks	Test	2026-09-10T23:44:37.1114830Z 
+checks	Test	2026-09-10T23:44:37.1115340Z running 12 tests
+checks	Test	2026-09-10T23:44:37.1163930Z test create_and_update_reject_past_one_time_schedules_but_resume_expires_them ... ok
+checks	Test	2026-09-10T23:44:37.1164690Z test create_update_pause_and_resume_use_the_injected_clock ... ok
+checks	Test	2026-09-10T23:44:37.1169330Z test delete_refuses_active_then_cancels_pending_and_preserves_history ... ok
+checks	Test	2026-09-10T23:44:37.1171730Z test advancing_a_late_interval_enqueues_once_and_preserves_its_anchor ... ok
+checks	Test	2026-09-10T23:44:37.1172430Z test admission_respects_capacity_fifo_and_one_active_run_per_task ... ok
+checks	Test	2026-09-10T23:44:37.1174120Z test manual_enqueue_coalesces_without_changing_the_schedule ... ok
+checks	Test	2026-09-10T23:44:37.1176160Z test pause_cancels_only_scheduled_pending_work ... ok
+checks	Test	2026-09-10T23:44:37.1176610Z test run_status_classification_matches_queue_and_capacity_semantics ... ok
+checks	Test	2026-09-10T23:44:37.1186580Z test helper_paths_have_the_documented_shape ... ok
+checks	Test	2026-09-10T23:44:37.1188090Z test schedules_validate_and_find_the_next_zoned_occurrence ... ok
+checks	Test	2026-09-10T23:44:37.1189620Z test task_specs_reject_missing_execution_inputs ... ok
+checks	Test	2026-09-10T23:44:37.1244880Z test store_and_run_metadata_round_trip_through_real_files ... ok
+checks	Test	2026-09-10T23:44:37.1246600Z 
+checks	Test	2026-09-10T23:44:37.1248070Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+checks	Test	2026-09-10T23:44:37.1248520Z 
+checks	Test	2026-09-10T23:44:37.1249000Z ^[[1m^[[92m     Running^[[0m tests/task_tui.rs (target/debug/deps/task_tui-2dda164ec8938a86)
+checks	Test	2026-09-10T23:44:37.1383290Z 
+checks	Test	2026-09-10T23:44:37.1383810Z running 28 tests
+checks	Test	2026-09-10T23:44:37.1451460Z test browse_opens_tasks_and_terminal_ctrl_t_is_literal ... ok
+checks	Test	2026-09-10T23:44:37.1453980Z test dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open ... ok
+checks	Test	2026-09-10T23:44:37.1473830Z test create_and_edit_every_field_and_multiline_prompt_in_terminal ... ok
+checks	Test	2026-09-10T23:44:37.1474620Z test destructive_actions_require_confirmation_and_escape_cancels ... ok
+checks	Test	2026-09-10T23:44:37.1580190Z test dense_task_list_and_editor_render_with_square_borders ... ok
+checks	Test	2026-09-10T23:44:37.1600560Z test history_status_live_transcript_cancel_and_confirmed_cleanup ... ok
+checks	Test	2026-09-10T23:44:37.1722500Z test confirmations_show_only_answer_controls_at_narrow_widths ... ok
+checks	Test	2026-09-10T23:44:37.1829130Z test invalid_concurrency_shows_error_with_edit_controls_and_recovers ... ok
+checks	Test	2026-09-10T23:44:37.1929910Z test multiline_cursor_edits_unicode_without_corruption ... ok
+checks	Test	2026-09-10T23:44:37.2036790Z test empty_task_views_only_hint_actions_with_available_targets ... ok
+checks	Test	2026-09-10T23:44:37.2137340Z test pause_resume_manual_run_and_concurrency ... ok
+checks	Test	2026-09-10T23:44:37.2238100Z test new_task_defaults_match_cli_off_thinking_and_one_hour_timeout ... ok
+checks	Test	2026-09-10T23:44:37.2347200Z test rejected_save_retains_every_field_and_prompt_for_correction ... ok
+checks	Test	2026-09-10T23:44:37.2453420Z test long_editor_fields_keep_the_cursor_text_visible ... ok
+checks	Test	2026-09-10T23:44:37.2561560Z test task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows ... ok
+checks	Test	2026-09-10T23:44:37.2621440Z test task_confirmations_honor_default_no_and_case_insensitive_answers ... ok
+checks	Test	2026-09-10T23:44:37.2622060Z test task_mouse_run_rows_cancel_and_cleanup_use_selected_run ... ok
+checks	Test	2026-09-10T23:44:37.2652240Z test task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once ... ok
+checks	Test	2026-09-10T23:44:37.2652840Z test task_mouse_project_picker_and_transcript_wheel_use_visible_rows ... ok
+checks	Test	2026-09-10T23:44:37.2653450Z test task_project_picker_uses_dashboard_projects_and_filters_before_save ... ok
+checks	Test	2026-09-10T23:44:37.2654110Z test task_project_picker_preserves_edit_target_and_rejects_unmatched_save ... ok
+checks	Test	2026-09-10T23:44:37.2654610Z test transcript_wrap_is_cached_between_frames ... ok
+checks	Test	2026-09-10T23:44:37.2655160Z test unicode_duration_keeps_editor_fields_available_for_correction ... ok
+checks	Test	2026-09-10T23:44:37.2655740Z test unicode_prompt_render_is_safe_while_another_field_has_focus ... ok
+checks	Test	2026-09-10T23:44:37.2656270Z test ux_empty_history_preserves_status_without_stale_working ... ok
+checks	Test	2026-09-10T23:44:37.2656830Z test ux_narrow_task_footer_keeps_escape_and_save_complete ... ok
+checks	Test	2026-09-10T23:44:37.2756910Z test transcript_preserves_split_unicode_json_and_bounds_memory ... ok
+checks	Test	2026-09-10T23:44:37.2791040Z test task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation ... ok
+checks	Test	2026-09-10T23:44:37.2791440Z 
+checks	Test	2026-09-10T23:44:37.2791720Z test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+checks	Test	2026-09-10T23:44:37.2792080Z 
+checks	Test	2026-09-10T23:44:37.2795200Z ^[[1m^[[92m     Running^[[0m tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-398c0258b5c6a28c)
+checks	Test	2026-09-10T23:44:37.2905170Z 
+checks	Test	2026-09-10T23:44:37.2905580Z running 10 tests
+checks	Test	2026-09-10T23:44:37.5060980Z 2
+checks	Test	2026-09-10T23:44:37.5165820Z 2
+checks	Test	2026-09-10T23:44:37.5273380Z 2
+checks	Test	2026-09-10T23:44:37.5387530Z 3
+checks	Test	2026-09-10T23:44:37.5500830Z 3
+checks	Test	2026-09-10T23:44:37.5550050Z 3
+checks	Test	2026-09-10T23:44:37.5562560Z 4
+checks	Test	2026-09-10T23:44:38.6708830Z test copy_mode_acceptance_emits_selected_text_and_reattaches ... ok
+checks	Test	2026-09-10T23:44:38.8167450Z test empty_dashboard_start_screen_reports_isolated_paths ... ok
+checks	Test	2026-09-10T23:44:38.9464790Z 2
+checks	Test	2026-09-10T23:44:38.9555310Z 3
+checks	Test	2026-09-10T23:44:38.9644760Z 4
+checks	Test	2026-09-10T23:44:39.9685210Z test default_dashboard_acceptance_wrapper_exercises_pty_controls ... ok
+checks	Test	2026-09-10T23:44:39.9687950Z test mouse_fixture_child ... ignored
+checks	Test	2026-09-10T23:44:40.1186490Z 2
+checks	Test	2026-09-10T23:44:40.1271440Z 3
+checks	Test	2026-09-10T23:44:40.1350110Z 4
+checks	Test	2026-09-10T23:44:40.7218800Z test history_keyboard_reads_old_output_during_live_session ... ok
+checks	Test	2026-09-10T23:44:40.8834040Z 2
+checks	Test	2026-09-10T23:44:40.8954320Z 3
+checks	Test	2026-09-10T23:44:41.2611540Z test mouse_forwarding_outer_pty_round_trip ... ok
+checks	Test	2026-09-10T23:44:41.3854900Z 2
+checks	Test	2026-09-10T23:44:41.3953400Z 3
+checks	Test	2026-09-10T23:44:41.8985620Z test pause_resume_dashboard_round_trip ... ok
+checks	Test	2026-09-10T23:44:42.0434270Z 2
+checks	Test	2026-09-10T23:44:42.0523240Z 3
+checks	Test	2026-09-10T23:44:42.7726100Z test split_terminal_acceptance_preserves_input_and_geometry ... ok
+checks	Test	2026-09-10T23:44:43.0781080Z test workspace_shortcut_creates_and_attaches_through_real_dashboard ... ok
+checks	Test	2026-09-10T23:44:43.3801800Z test copy_history_acceptance_emits_across_page_and_tile_boundaries ... ok
+checks	Test	2026-09-10T23:44:43.3803490Z 
+checks	Test	2026-09-10T23:44:43.3804370Z test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.09s
+checks	Test	2026-09-10T23:44:43.3805430Z 
+checks	Test	2026-09-10T23:44:43.3814780Z ^[[1m^[[92m     Running^[[0m tests/tui/main.rs (target/debug/deps/tui-1a716b90a05c09d0)
+checks	Test	2026-09-10T23:44:43.4055460Z 
+checks	Test	2026-09-10T23:44:43.4056020Z running 180 tests
+checks	Test	2026-09-10T23:44:43.4109870Z test control_punctuation_and_modified_keys_encode ... ok
+checks	Test	2026-09-10T23:44:43.4182270Z test copy_history::browse_and_terminal_modes_keep_input_ownership_clear ... ok
+checks	Test	2026-09-10T23:44:43.4461620Z test copy_history::copy_history_extraction_joins_wrap_and_skips_continuations ... ok
+checks	Test	2026-09-10T23:44:43.4490970Z test copy_history::copy_history_invalid_snapshot_never_emits_partial_text ... ok
+checks	Test	2026-09-10T23:44:43.4592440Z test copy_history::copy_mode_keeps_alternate_and_resync_snapshots ... ok
+checks	Test	2026-09-10T23:44:43.4729320Z test copy_history::copy_mode_cancels_at_identity_boundaries ... ok
+checks	Test	2026-09-10T23:44:43.4831280Z test copy_history::copy_mode_waits_for_matching_screen ... ok
+checks	Test	2026-09-10T23:44:43.4938070Z test copy_history::copy_mode_routes_keys_and_freezes_output ... ok
+checks	Test	2026-09-10T23:44:43.4939280Z test copy_history::copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input ... ok
+checks	Test	2026-09-10T23:44:43.4947430Z test copy_history::copy_render_highlights_unicode_and_preserves_layout ... ok
+checks	Test	2026-09-10T23:44:43.4949310Z test copy_history::copy_mouse_release_position_and_focus_loss_bound_the_gesture ... ok
+checks	Test	2026-09-10T23:44:43.4950640Z test copy_history::history_begin_is_cancelled_and_captured_by_active_overlays ... ok
+checks	Test	2026-09-10T23:44:43.4951620Z test copy_history::history_cancelled_begin_releases_late_snapshot ... ok
+checks	Test	2026-09-10T23:44:43.4952910Z test copy_history::history_cursor_async_continuation_resolution_reveals_predecessor_tile ... ok
+checks	Test	2026-09-10T23:44:43.4976920Z test copy_history::history_cursor_resolution_reveals_anchored_viewport ... ok
+checks	Test	2026-09-10T23:44:43.4977610Z test copy_history::history_cursor_stays_visible_while_predecessor_tile_loads ... ok
+checks	Test	2026-09-10T23:44:43.4978300Z test copy_history::history_empty_rows_only_anchor_after_explicit_anchor ... ok
+checks	Test	2026-09-10T23:44:43.5041610Z test copy_history::history_key_kinds_gate_actions ... ok
+checks	Test	2026-09-10T23:44:43.5043530Z test copy_history::history_live_output_preserves_anchor ... ok
+checks	Test	2026-09-10T23:44:43.5045560Z test copy_history::history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture ... ok
+checks	Test	2026-09-10T23:44:43.5047350Z test copy_history::copy_history_range_survives_live_eviction ... ok
+checks	Test	2026-09-10T23:44:43.5062490Z test copy_history::history_navigation_never_writes_to_pty ... ok
+checks	Test	2026-09-10T23:44:43.5064190Z test copy_history::copy_render_tiny_pane_and_footer ... ok
+checks	Test	2026-09-10T23:44:43.5065400Z test copy_history::history_release_precedes_hierarchy_fallback_selection ... ok
+checks	Test	2026-09-10T23:44:43.5066690Z test copy_history::history_pending_keys_coalesce ... ok
+checks	Test	2026-09-10T23:44:43.5160070Z test copy_history::history_resize_preserves_capture ... ok
+checks	Test	2026-09-10T23:44:43.5162560Z test copy_history::history_stale_response_is_ignored ... ok
+checks	Test	2026-09-10T23:44:43.5163570Z test copy_history::history_unanchored_retry_keys_reissue_failed_cursor_request ... ok
+checks	Test	2026-09-10T23:44:43.5164310Z test copy_history::history_waits_for_coalesced_focus_view_before_capture ... ok
+checks	Test	2026-09-10T23:44:43.5165670Z test copy_history::matching_history_open_clears_resize_notice_but_stale_response_does_not ... ok
+checks	Test	2026-09-10T23:44:43.5167370Z test copy_history::pause_resume_browse_keys_send_explicit_requests ... ok
+checks	Test	2026-09-10T23:44:43.5228460Z test copy_history::history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion ... ok
+checks	Test	2026-09-10T23:44:43.5237310Z test copy_history::pause_resume_input_and_paste_stay_guarded ... ok
+checks	Test	2026-09-10T23:44:43.5241010Z test copy_history::resize_matching_screen_restores_snapshot_and_ignores_stale_screen ... ok
+checks	Test	2026-09-10T23:44:43.5242410Z test copy_history::pause_resume_dense_status_has_priority ... ok
+checks	Test	2026-09-10T23:44:43.5243750Z test copy_history::history_render_preserves_cells_and_clips ... ok
+checks	Test	2026-09-10T23:44:43.5258110Z test ctrl_g_is_reserved_and_other_control_keys_reach_the_pty ... ok
+checks	Test	2026-09-10T23:44:43.5260950Z test dashboard_reader_channel_applies_bounded_backpressure ... ok
+checks	Test	2026-09-10T23:44:43.5315000Z test inverse_colors_keep_explicit_colors_and_set_reverse_modifier ... ok
+checks	Test	2026-09-10T23:44:43.5329490Z test copy_history::ux_history_footer_names_the_actual_escape_action ... ok
+checks	Test	2026-09-10T23:44:43.5330850Z test mouse::browse_click_focuses_other_running_pane_and_types_after_view_ack ... ok
+checks	Test	2026-09-10T23:44:43.5332110Z test mouse::browse_click_in_pane_focuses_without_bytes ... ok
+checks	Test	2026-09-10T23:44:43.5333330Z test mouse::ctrl_g_releases_held_buttons_before_switching ... ok
+checks	Test	2026-09-10T23:44:43.5395250Z test copy_history::whichkey_acquisition_cancels_copy_and_history_drags ... ok
+checks	Test	2026-09-10T23:44:43.5427640Z test mouse::dragging_tracked_mouse_into_sidebar_releases_application_button ... ok
+checks	Test	2026-09-10T23:44:43.5475690Z test mouse::mouse_encode_legacy_boundaries ... ok
+checks	Test	2026-09-10T23:44:43.5538900Z test mouse::mouse_encode_sgr_events ... ok
+checks	Test	2026-09-10T23:44:43.5569720Z test mouse::mouse_encode_tracking_filters ... ok
+checks	Test	2026-09-10T23:44:43.5597570Z test mouse::focus_lost_finishes_gestures_and_focus_gained_resumes ... ok
+checks	Test	2026-09-10T23:44:43.5600570Z test mouse::leaving_the_rectangle_releases_at_last_valid_cell ... ok
+checks	Test	2026-09-10T23:44:43.5628570Z test mouse::pause_cancels_a_held_mouse_gesture ... ok
+checks	Test	2026-09-10T23:44:43.5631320Z test mouse::press_outside_rectangle_is_not_clamped ... ok
+checks	Test	2026-09-10T23:44:43.5659430Z test mouse::terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session ... ok
+checks	Test	2026-09-10T23:44:43.5662020Z test mouse::protocol_change_clears_held_state ... ok
+checks	Test	2026-09-10T23:44:43.5690210Z test mouse::terminal_click_focuses_other_pane_without_forwarding ... ok
+checks	Test	2026-09-10T23:44:43.5701610Z test mouse::wheel_down_at_newest_row_returns_to_live ... ok
+checks	Test	2026-09-10T23:44:43.5723120Z test mouse::wheel_is_forwarded_when_tracking_is_enabled ... ok
+checks	Test	2026-09-10T23:44:43.5733360Z test mouse::wheel_over_a_pane_without_tracking_opens_history_at_the_tail ... ok
+checks	Test	2026-09-10T23:44:43.5754430Z test ordinary_response_errors_remain_visible_to_dashboard ... ok
+checks	Test	2026-09-10T23:44:43.5764060Z test output_for_newly_selected_session_waits_for_screen ... ok
+checks	Test	2026-09-10T23:44:43.5785080Z test mouse::wheel_up_over_the_unfocused_pane_opens_its_history ... ok
+checks	Test	2026-09-10T23:44:43.5794900Z test palette::created_session_enters_terminal_mode ... ok
+checks	Test	2026-09-10T23:44:43.5816180Z test palette::double_enter_refreshes_the_derived_workspace_root_listing ... ok
+checks	Test	2026-09-10T23:44:43.5826660Z test palette::a_opens_project_form_with_roots_and_derives_name_and_root ... ok
+checks	Test	2026-09-10T23:44:43.5846800Z test palette::empty_hierarchy_shows_start_screen ... ok
+checks	Test	2026-09-10T23:44:43.5857280Z test palette::keyboard_overlays_cancel_divider_gesture_before_consuming_release ... ok
+checks	Test	2026-09-10T23:44:43.5877550Z test palette::leader_workspace_uses_inspection_and_name_first_picker_defaults ... ok
+checks	Test	2026-09-10T23:44:43.5887910Z test palette::n_is_listed_in_the_browse_footer ... ok
+checks	Test	2026-09-10T23:44:43.5908180Z test palette::n_is_listed_in_the_hint_table ... ok
+checks	Test	2026-09-10T23:44:43.5918750Z test palette::n_opens_terminal_form_prefilled_for_selected_workspace ... ok
+checks	Test	2026-09-10T23:44:43.5938840Z test palette::narrow_popup_moves_description_to_detail_line ... ok
+checks	Test	2026-09-10T23:44:43.5949470Z test palette::nested_whichkey_container_selection_limits_groups_and_removal_target ... ok
+checks	Test	2026-09-10T23:44:43.5969540Z test palette::nested_whichkey_empty_hierarchy_can_register_and_open_global_view ... ok
+checks	Test	2026-09-10T23:44:43.5980490Z test palette::nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys ... ok
+checks	Test	2026-09-10T23:44:43.6101460Z test palette::nested_whichkey_mouse_and_enter_open_groups_before_running_actions ... ok
+checks	Test	2026-09-10T23:44:43.6498420Z test palette::nested_whichkey_removal_confirms_the_selected_target_and_can_cancel ... ok
+checks	Test	2026-09-10T23:44:43.6589950Z test palette::nested_whichkey_terminal_group_waits_for_action_and_backspace_returns ... ok
+checks	Test	2026-09-10T23:44:43.6593410Z test palette::palette_active_field_remains_visible_in_a_small_window ... ok
+checks	Test	2026-09-10T23:44:43.6621000Z test palette::palette_close_updates_selection_and_clears_removed_screen ... ok
+checks	Test	2026-09-10T23:44:43.6651810Z test palette::palette_entries_show_keys_and_descriptions ... ok
+checks	Test	2026-09-10T23:44:43.6775320Z test palette::palette_escape_cancels_pending_request ... ok
+checks	Test	2026-09-10T23:44:43.6978610Z test palette::palette_filters_and_captures_input_without_sending_it_to_terminal ... ok
+checks	Test	2026-09-10T23:44:43.7145350Z test palette::fuzzy_matched_branch_is_not_submitted_without_confirmation ... ok
+checks	Test	2026-09-10T23:44:43.7176070Z test palette::palette_hint_action_ignores_late_inspection_error ... ok
+checks	Test	2026-09-10T23:44:43.7207870Z test palette::palette_requires_fields_and_keeps_terminal_keys_outside_palette ... ok
+checks	Test	2026-09-10T23:44:43.7308710Z test palette::palette_switch_drops_late_inventory_without_clearing_current_error ... ok
+checks	Test	2026-09-10T23:44:43.7408810Z test palette::palette_switches_by_search_and_confirms_exact_close_target ... ok
+checks	Test	2026-09-10T23:44:43.7409720Z test palette::case_only_branch_mismatch_is_refused_not_submitted ... ok
+checks	Test	2026-09-10T23:44:43.7410180Z test palette::paste_into_repository_field_refreshes_the_listing ... ok
+checks	Test	2026-09-10T23:44:43.7410630Z test palette::question_mark_popup_is_browsable ... ok
+checks	Test	2026-09-10T23:44:43.7509850Z test palette::removal_picker_rejects_no_match_and_excludes_root ... ok
+checks	Test	2026-09-10T23:44:43.7610040Z test palette::removal_pickers_filter_and_confirm_a_different_target ... ok
+checks	Test	2026-09-10T23:44:43.7697990Z test palette::palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes ... ok
+checks	Test	2026-09-10T23:44:43.7699710Z test palette::search_selection_clamps_when_entries_shrink ... ok
+checks	Test	2026-09-10T23:44:43.7700710Z test palette::removal_pickers_with_empty_hierarchy_never_confirm ... ok
+checks	Test	2026-09-10T23:44:43.7702010Z test palette::picker_validation_keeps_recovery_hints_and_cancels_without_removal ... ok
+checks	Test	2026-09-10T23:44:43.7703580Z test palette::tasks_hotkey_cancels_pending_history_like_control_t ... ok
+checks	Test	2026-09-10T23:44:43.7724630Z test palette::space_w_n_opens_the_terminal_form ... ok
+checks	Test	2026-09-10T23:44:43.7812400Z test palette::tab_on_a_leaf_path_advances_to_the_next_field ... ok
+checks	Test	2026-09-10T23:44:43.7814010Z test palette::uppercase_x_confirms_session_close_without_closing_pane ... ok
+checks	Test	2026-09-10T23:44:43.7966860Z test palette::ux_browse_footer_names_actions_and_respects_availability ... ok
+checks	Test	2026-09-10T23:44:43.8138230Z test palette::ux_forms_put_task_name_in_border_and_keep_active_field_visible ... ok
+checks	Test	2026-09-10T23:44:43.8262440Z test palette::ux_search_keeps_session_identity_and_filters_complete_context ... ok
+checks	Test	2026-09-10T23:44:43.8293630Z test palette::w_opens_workspace_form_with_project_and_derived_branch ... ok
+checks	Test	2026-09-10T23:44:43.8461550Z test palette::whichkey_compact_corner_preserves_the_surrounding_dashboard ... ok
+checks	Test	2026-09-10T23:44:43.8492720Z test palette::whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture ... ok
+checks	Test	2026-09-10T23:44:43.8604020Z test palette::whichkey_copy_leader_preserves_capture_and_v_anchors ... ok
+checks	Test	2026-09-10T23:44:43.8712970Z test palette::whichkey_empty_workspace_click_sets_terminal_form_target ... ok
+checks	Test	2026-09-10T23:44:43.8984080Z test palette::whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks ... ok
+checks	Test	2026-09-10T23:44:43.9075820Z test palette::whichkey_preserves_readiness_and_never_forwards_overlay_input ... ok
+checks	Test	2026-09-10T23:44:43.9372670Z test palette::whichkey_scrolled_last_row_remains_clickable_after_resize ... ok
+checks	Test	2026-09-10T23:44:43.9557640Z test palette::whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable ... ok
+checks	Test	2026-09-10T23:44:43.9631410Z test palette::typed_existing_branch_survives_hint_arrival ... ok
+checks	Test	2026-09-10T23:44:43.9732830Z test palette::workspace_created_with_exited_local_shell_closes_palette ... ok
+checks	Test	2026-09-10T23:44:43.9745600Z test palette::workspace_creation_attaches_to_its_local_shell ... ok
+checks	Test	2026-09-10T23:44:43.9869990Z test palette::workspace_creation_cancel_and_failure_do_not_attach_late ... ok
+checks	Test	2026-09-10T23:44:43.9900870Z test paste_honors_bracketed_paste_mode ... ok
+checks	Test	2026-09-10T23:44:43.9902390Z test render_terminal_copies_text_style_wide_cells_and_cursor ... ok
+checks	Test	2026-09-10T23:44:43.9903510Z test render_terminal_crossterm_roundtrip_clears_replaced_text ... ok
+checks	Test	2026-09-10T23:44:43.9904510Z test runtime_paste_event_becomes_selected_session_input ... ok
+checks	Test	2026-09-10T23:44:43.9972390Z test palette::typed_branch_missing_from_hints_is_refused_not_replaced ... ok
+checks	Test	2026-09-10T23:44:43.9973800Z test sidebar::agent_hook_sidebar_states_are_literal ... ok
+checks	Test	2026-09-10T23:44:44.0041000Z test sidebar::agent_hook_selected_metadata_reports_activity_and_lifecycle ... ok
+checks	Test	2026-09-10T23:44:44.0042380Z test sidebar::agent_hook_summary_updates_drive_animation ... ok
+checks	Test	2026-09-10T23:44:44.0108110Z test sidebar::collapse_and_mouse_hits_use_current_visible_tree ... ok
+checks	Test	2026-09-10T23:44:44.0109570Z test sidebar::context_sidebar_updates_and_expires ... ok
+checks	Test	2026-09-10T23:44:44.0175330Z test sidebar::context_sidebar_unknown_and_over_capacity ... ok
+checks	Test	2026-09-10T23:44:44.0176900Z test sidebar::dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible ... ok
+checks	Test	2026-09-10T23:44:44.0241850Z test sidebar::dashboard_layout ... ok
+checks	Test	2026-09-10T23:44:44.0243090Z test sidebar::empty_pane_click_preserves_the_assigned_wire_focus ... ok
+checks	Test	2026-09-10T23:44:44.0244250Z test sidebar::dashboard_geometry_remains_drawable_at_target_and_tiny_sizes ... ok
+checks	Test	2026-09-10T23:44:44.0308570Z test sidebar::empty_workspace_selection_does_not_cover_a_retained_terminal ... ok
+checks	Test	2026-09-10T23:44:44.0375020Z test sidebar::long_sidebar_names_clip_to_one_screen_line ... ok
+checks	Test	2026-09-10T23:44:44.0376430Z test sidebar::fifty_session_selection_scrolls_tree_and_mouse_hits_viewport ... ok
+checks	Test	2026-09-10T23:44:44.0377490Z test sidebar::shrinking_dashboard_keeps_selected_tree_row_visible ... ok
+checks	Test	2026-09-10T23:44:44.0378530Z test sidebar::selected_session_uses_three_full_width_sidebar_lines ... ok
+checks	Test	2026-09-10T23:44:44.0479180Z test sidebar::sidebar_container_click_keeps_focus_on_another_assigned_pane ... ok
+checks	Test	2026-09-10T23:44:44.0566140Z test sidebar::sidebar_glyphs_and_columns_match_the_reference_tree ... ok
+checks	Test	2026-09-10T23:44:44.0568040Z test sidebar::sidebar_animates_only_explicitly_busy_sessions ... ok
+checks	Test	2026-09-10T23:44:44.0568700Z test sidebar::sidebar_labels_select_without_toggling_and_work_in_terminal_mode ... ok
+checks	Test	2026-09-10T23:44:44.0569300Z test sidebar::sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names ... ok
+checks	Test	2026-09-10T23:44:44.0570090Z test sidebar::ux_live_metadata_is_readable_and_preserves_selection ... ok
+checks	Test	2026-09-10T23:44:44.0570650Z test split::divider_gesture_releases_all_application_buttons_without_resizing ... ok
+checks	Test	2026-09-10T23:44:44.0571260Z test split::divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged ... ok
+checks	Test	2026-09-10T23:44:44.0571830Z test split::incomplete_final_ok_marks_panes_failed_and_refreshes ... ok
+checks	Test	2026-09-10T23:44:44.0572370Z test split::pane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane ... ok
+checks	Test	2026-09-10T23:44:44.0572900Z test split::settings_error_survives_the_geometry_ack ... ok
+checks	Test	2026-09-10T23:44:44.0573410Z test split::split_error_is_cleared_by_the_view_the_next_selection_requests ... ok
+checks	Test	2026-09-10T23:44:44.0577990Z test split::divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins ... ok
+checks	Test	2026-09-10T23:44:44.0591820Z test split::split_error_survives_mouse_cleanup_ack ... ok
+checks	Test	2026-09-10T23:44:44.0592340Z test split::split_layout_geometry_and_narrow_fallback ... ok
+checks	Test	2026-09-10T23:44:44.1230890Z test split::split_layout_renders_independent_cells_and_cursor ... ok
+checks	Test	2026-09-10T23:44:44.1233370Z test split::split_preserves_history_copy_and_paused_input ... ok
+checks	Test	2026-09-10T23:44:44.1235960Z test split::split_review_absent_a_screen_cannot_authorize_reassigned_parser ... ok
+checks	Test	2026-09-10T23:44:44.1238630Z test split::split_review_cancels_inflight_history_copy_before_focus_change ... ok
+checks	Test	2026-09-10T23:44:44.1242480Z test split::split_review_close_reopen_does_not_authorize_recreated_parser ... ok
+checks	Test	2026-09-10T23:44:44.1245470Z test split::split_review_discarded_pending_view_refreshes_before_late_receipts ... ok
+checks	Test	2026-09-10T23:44:44.1249310Z test split::split_review_focus_select_and_close_revoke_public_input_until_setview_ok ... ok
+checks	Test	2026-09-10T23:44:44.1252700Z test split::split_review_keeps_history_a_while_b_changes_and_cancels_late_work ... ok
+checks	Test	2026-09-10T23:44:44.3022190Z test palette::workspace_branch_mode_uses_local_branches_and_preserves_edits ... ok
+checks	Test	2026-09-10T23:44:44.3025180Z test split::split_review_pending_a_b_a_preserves_received_parser_before_ok ... ok
+checks	Test	2026-09-10T23:44:44.3030190Z test split::split_review_pending_view_completes_after_focus_and_geometry_return ... ok
+checks	Test	2026-09-10T23:44:44.3033100Z test split::split_review_preserves_nonfirst_survivor_on_hierarchy_removal ... ok
+checks	Test	2026-09-10T23:44:44.3039750Z test split::split_review_readiness_requires_matching_targets_and_cancels_resize_copy ... ok
+checks	Test	2026-09-10T23:44:44.3043560Z test split::split_review_replaces_a_b_a_and_rejects_old_completions ... ok
+checks	Test	2026-09-10T23:44:44.3050150Z test split::split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion ... ok
+checks	Test	2026-09-10T23:44:44.3053140Z test split::split_review_terminal_modes_use_each_panes_parser ... ok
+checks	Test	2026-09-10T23:44:44.3056510Z test split::split_review_unfocused_removal_preserves_focused_history_capture ... ok
+checks	Test	2026-09-10T23:44:44.3058800Z test split::split_state_focus_and_close_preserve_sessions ... ok
+checks	Test	2026-09-10T23:44:44.3060840Z test split::split_state_ignores_stale_revisions_and_removed_sessions ... ok
+checks	Test	2026-09-10T23:44:44.3062540Z test split::split_state_modes_and_input_are_local ... ok
+checks	Test	2026-09-10T23:44:44.3158980Z test split::ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes ... ok
+checks	Test	2026-09-10T23:44:44.4045980Z test split::split_error_survives_a_screen_dirty_refresh ... ok
+checks	Test	2026-09-10T23:44:44.5318760Z test split::split_review_matching_view_error_disables_input_until_a_new_view_is_ready ... ok
+checks	Test	2026-09-10T23:44:44.5348100Z test split::view_request_ids_are_released_on_final_response ... ok
+checks	Test	2026-09-10T23:44:44.5351790Z test terminal_guard_restores_before_prior_hook_callback ... ok
+checks	Test	2026-09-10T23:44:44.5403550Z test terminal_guard_restores_each_enabled_mode_once_on_normal_return_and_unwind ... ok
+checks	Test	2026-09-10T23:44:44.5405640Z test terminal_guard_rolls_back_modes_when_a_later_enter_write_fails ... ok
+checks	Test	2026-09-10T23:44:44.6485010Z test split::view_error_on_changed_view_does_not_spin ... ok
+checks	Test	2026-09-10T23:44:44.7550540Z test split::view_error_on_unchanged_view_retries_once_after_backoff ... ok
+checks	Test	2026-09-10T23:44:44.7553080Z 
+checks	Test	2026-09-10T23:44:44.7554210Z test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+checks	Test	2026-09-10T23:44:44.7555800Z 
+checks	Test	2026-09-10T23:44:44.7577780Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_protocol-eb9c147f31fa9c3b)
+checks	Test	2026-09-10T23:44:44.7858410Z 
+checks	Test	2026-09-10T23:44:44.7858860Z running 22 tests
+checks	Test	2026-09-10T23:44:44.7918980Z test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+checks	Test	2026-09-10T23:44:44.7920090Z test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+checks	Test	2026-09-10T23:44:44.7926710Z test codec::tests::agent_report_round_trip_and_redaction ... ok
+checks	Test	2026-09-10T23:44:44.7932580Z test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+checks	Test	2026-09-10T23:44:44.7934810Z test codec::tests::appended_resource_requests_round_trip ... ok
+checks	Test	2026-09-10T23:44:44.7935850Z test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+checks	Test	2026-09-10T23:44:44.7936760Z test codec::tests::pause_resume_requests_round_trip ... ok
+checks	Test	2026-09-10T23:44:44.7937550Z test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+checks	Test	2026-09-10T23:44:44.7938370Z test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+checks	Test	2026-09-10T23:44:44.7939220Z test codec::tests::preamble_round_trip ... ok
+checks	Test	2026-09-10T23:44:44.7939870Z test codec::tests::split_view_frames_round_trip ... ok
+checks	Test	2026-09-10T23:44:44.7940780Z test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+checks	Test	2026-09-10T23:44:44.7941880Z test context::tests::context_claude_projection ... ok
+checks	Test	2026-09-10T23:44:44.7942950Z test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+checks	Test	2026-09-10T23:44:44.7944100Z test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+checks	Test	2026-09-10T23:44:44.7944960Z test context::tests::context_json_validation ... ok
+checks	Test	2026-09-10T23:44:44.7945580Z test context::tests::context_semantics ... ok
+checks	Test	2026-09-10T23:44:44.7946500Z test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+checks	Test	2026-09-10T23:44:44.7947530Z test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+checks	Test	2026-09-10T23:44:44.7948460Z test wire::tests::validate_rejects_oversized_panes ... ok
+checks	Test	2026-09-10T23:44:44.7949470Z test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+checks	Test	2026-09-10T23:44:44.7991800Z test codec::tests::history_page_round_trip_and_size_bound ... ok
+checks	Test	2026-09-10T23:44:44.7992340Z 
+checks	Test	2026-09-10T23:44:44.7993380Z test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+checks	Test	2026-09-10T23:44:44.7994080Z 
+checks	Test	2026-09-10T23:44:44.7997850Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_runtime-88f795331a274858)
+checks	Test	2026-09-10T23:44:44.8223920Z 
+checks	Test	2026-09-10T23:44:44.8224360Z running 99 tests
+checks	Test	2026-09-10T23:44:44.8337110Z test config::tests::corrupt_registry_is_reported_and_not_replaced ... ok
+checks	Test	2026-09-10T23:44:44.8361450Z test config::tests::present_empty_registry_is_reported_and_not_replaced ... ok
+checks	Test	2026-09-10T23:44:44.8438000Z test config::tests::registry_round_trip_preserves_projects_and_workspaces ... ok
+checks	Test	2026-09-10T23:44:44.8442820Z test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... ok
+checks	Test	2026-09-10T23:44:44.8443780Z test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+checks	Test	2026-09-10T23:44:44.8444420Z test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+checks	Test	2026-09-10T23:44:44.8445250Z test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+checks	Test	2026-09-10T23:44:44.8450420Z test server::reporting_queue::tests::sender_drop_cannot_be_lost_between_empty_and_wait ... ok
+checks	Test	2026-09-10T23:44:44.8546730Z test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+checks	Test	2026-09-10T23:44:44.9088330Z test agent_runner::tests::invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching ... ok
+checks	Test	2026-09-10T23:44:44.9794500Z test agent_runner::tests::invocation_channel_accepts_exact_payload_limit ... ok
+checks	Test	2026-09-10T23:44:44.9797850Z test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+checks	Test	2026-09-10T23:44:45.0752290Z test server::tests::accept_loop_survives_thread_spawn_failure ... ok
+checks	Test	2026-09-10T23:44:45.1134650Z test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+checks	Test	2026-09-10T23:44:45.2469300Z test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+checks	Test	2026-09-10T23:44:45.2676950Z test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+checks	Test	2026-09-10T23:44:45.4486400Z test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+checks	Test	2026-09-10T23:44:45.4487730Z test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+checks	Test	2026-09-10T23:44:45.5904780Z test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+checks	Test	2026-09-10T23:44:45.5923910Z test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+checks	Test	2026-09-10T23:44:45.7324870Z test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+checks	Test	2026-09-10T23:44:45.7551570Z test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+checks	Test	2026-09-10T23:44:45.7614090Z test server::tests::control_and_refresh_failures_preserve_both_causes ... ok
+checks	Test	2026-09-10T23:44:47.7812930Z test server::tests::accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked ... ok
+checks	Test	2026-09-10T23:44:47.7819130Z test server::tests::dashboard_overflow_closes_affected_connection ... ok
+checks	Test	2026-09-10T23:44:47.7819790Z test server::tests::dashboard_overflow_does_not_clear_replacement_slot ... ok
+checks	Test	2026-09-10T23:44:47.7824380Z test server::tests::dashboard_shutdown_completes_when_response_sink_is_closed ... ok
+checks	Test	2026-09-10T23:44:47.7967990Z test server::tests::close_failure_retains_record_until_cleanup_can_finish ... ok
+checks	Test	2026-09-10T23:44:47.8037300Z test server::tests::dashboard_slot_is_released_when_registration_panics ... ok
+checks	Test	2026-09-10T23:44:47.8071330Z test server::tests::dashboard_snapshot_counts_messages_terminal_and_dirty_separately ... ok
+checks	Test	2026-09-10T23:44:49.8417310Z test server::tests::history_capture_orders_with_output ... ok
+checks	Test	2026-09-10T23:44:49.8481750Z test server::tests::current_owner_rejects_hidden_input_and_unknown_view_session ... ok
+checks	Test	2026-09-10T23:44:50.9710790Z test server::tests::dashboard_shutdown_waits_for_stalled_writer_completion ... ok
+checks	Test	2026-09-10T23:44:50.9716070Z test server::tests::hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink ... ok
+checks	Test	2026-09-10T23:44:53.9891540Z test server::tests::history_page_overflow_disconnects_without_parser_wait ... ok
+checks	Test	2026-09-10T23:44:53.9899290Z test server::tests::history_owner_and_token_isolation ... ok
+checks	Test	2026-09-10T23:44:54.1007540Z test server::tests::kill_and_close_refresh_failures_keep_exited_records ... ok
+checks	Test	2026-09-10T23:44:54.1858180Z test server::tests::kill_failure_cleanup_retains_original_group_after_leader_exit ... ok
+checks	Test	2026-09-10T23:44:54.2551070Z test server::tests::late_response_does_not_reach_a_replacement_dashboard ... ok
+checks	Test	2026-09-10T23:44:54.2552880Z test server::tests::lifecycle_response_preserves_error_chain_and_code ... ok
+checks	Test	2026-09-10T23:44:55.0834530Z test server::tests::invalid_view_preserves_populated_geometry_and_pty_sizes ... ok
+checks	Test	2026-09-10T23:44:56.3049990Z test server::tests::oversized_set_view_returns_invalid_request_without_resizing ... ok
+checks	Test	2026-09-10T23:44:56.3369740Z test server::tests::kill_session_termination_failure_revokes_and_retains_session ... ok
+checks	Test	2026-09-10T23:45:00.4894630Z test server::tests::partial_resize_connection_delivers_error_before_owner_close ... ok
+checks	Test	2026-09-10T23:45:00.4959960Z test server::tests::pending_output_does_not_evict_dashboard_on_lifecycle_event ... ok
+checks	Test	2026-09-10T23:45:00.4964400Z test server::tests::raw_event_and_dispatch_queues_reject_the_65th_item ... ok
+checks	Test	2026-09-10T23:45:00.5367990Z test server::tests::partial_resize_failure_does_not_restore_revision_after_owner_replacement ... ok
+checks	Test	2026-09-10T23:45:00.5887830Z test server::tests::registration_publishes_the_session_before_its_events_can_arrive ... ok
+checks	Test	2026-09-10T23:45:00.5890860Z test server::tests::relative_bound_socket_validates_spawn_and_child_cwd_is_distinct ... ok
+checks	Test	2026-09-10T23:45:00.7736480Z test server::tests::session_output_flows_while_another_session_spawns ... ok
+checks	Test	2026-09-10T23:45:01.6329900Z test server::tests::partial_resize_blocked_writer_times_out_and_closes_owner ... ok
+checks	Test	2026-09-10T23:45:01.6547280Z test server::tests::set_view_drops_a_session_removed_before_publication ... ok
+checks	Test	2026-09-10T23:45:04.7190510Z test server::tests::resize_is_rejected_for_a_split_view ... ok
+checks	Test	2026-09-10T23:45:05.0124840Z test server::tests::session_refresh_dispatch_failures_disconnect_without_blocking ... ok
+checks	Test	2026-09-10T23:45:05.7591020Z test server::tests::set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames ... ok
+checks	Test	2026-09-10T23:45:05.7756220Z test server::tests::shutdown_termination_failure_is_partial_and_server_remains_available ... ok
+checks	Test	2026-09-10T23:45:05.8265420Z test server::tests::shutdown_without_kill_rejects_paused_session ... ok
+checks	Test	2026-09-10T23:45:05.8277580Z test server::tests::split_delivery_dirty_revisions_are_isolated ... ok
+checks	Test	2026-09-10T23:45:07.0420270Z test server::tests::set_view_publishes_without_an_unfocused_pane_removed_before_publication ... ok
+checks	Test	2026-09-10T23:45:07.0447670Z test server::tests::split_delivery_snapshots_precede_increments ... ok
+checks	Test	2026-09-10T23:45:07.1146230Z test server::tests::stale_geometry_does_not_overwrite_replacement_size ... ok
+checks	Test	2026-09-10T23:45:07.1147260Z test server::tests::terminal_delivery_is_final_entry_and_closing_stays_sticky ... ok
+checks	Test	2026-09-10T23:45:09.9454480Z test server::tests::split_delivery_rejects_stale_owner_and_input ... ok
+checks	Test	2026-09-10T23:45:09.9457850Z test server::tests::uncommitted_partial_failure_does_not_publish_hierarchy ... ok
+checks	Test	2026-09-10T23:45:10.0791680Z test server::tests::shutdown_refresh_failure_keeps_exited_record_and_server_available ... ok
+checks	Test	2026-09-10T23:45:11.4805580Z test server::tests::terminal_frame_survives_a_concurrent_lifecycle_event ... ok
+checks	Test	2026-09-10T23:45:11.4808730Z test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+checks	Test	2026-09-10T23:45:11.5327580Z test session::shell_prompt::tests::compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone ... ok
+checks	Test	2026-09-10T23:45:11.5330300Z test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+checks	Test	2026-09-10T23:45:11.5331390Z test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+checks	Test	2026-09-10T23:45:11.5332310Z test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+checks	Test	2026-09-10T23:45:11.5819770Z test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+checks	Test	2026-09-10T23:45:11.9876730Z test session::tests::compact_zsh_prompt_preserves_config_and_reports_failure ... ok
+checks	Test	2026-09-10T23:45:12.0025580Z test server::tests::view_publication_aborts_when_owner_disconnects_during_resize ... ok
+checks	Test	2026-09-10T23:45:12.0134120Z test session::tests::final_output_is_parsed_before_session_becomes_removable ... ok
+checks	Test	2026-09-10T23:45:12.0154230Z test session::tests::group_leader_timeout_override_keeps_the_default_bound ... ok
+checks	Test	2026-09-10T23:45:12.0665790Z test session::tests::pause_resume_exit_event_cannot_be_overwritten ... ok
+checks	Test	2026-09-10T23:45:12.1407860Z test server::tests::view_revision_floor_survives_exit_and_removal ... ok
+checks	Test	2026-09-10T23:45:12.1409270Z test session::tests::pause_resume_rejects_unsafe_group ... ok
+checks	Test	2026-09-10T23:45:12.2017080Z test session::tests::pause_resume_terminate_runs_term_handler ... ok
+checks	Test	2026-09-10T23:45:12.2193360Z test session::tests::pause_resume_terminate_serializes_competing_controls ... ok
+checks	Test	2026-09-10T23:45:12.4089420Z test session::tests::pause_resume_phase_and_input_admission ... ok
+checks	Test	2026-09-10T23:45:12.4093920Z test session::tests::group_leader_timeout_kills_the_child ... ok
+checks	Test	2026-09-10T23:45:12.4983920Z test session::tests::terminate_reaps_group_after_transient_sigcont_permission ... ok
+checks	Test	2026-09-10T23:45:12.5421350Z test session::tests::resize_reaches_the_child_tty ... ok
+checks	Test	2026-09-10T23:45:12.6005780Z test session::tests::terminate_removes_the_whole_process_group ... ok
+checks	Test	2026-09-10T23:45:12.7039050Z test session::tests::shell_round_trip_updates_the_current_screen ... ok
+checks	Test	2026-09-10T23:45:12.8042510Z test session::tests::terminate_retains_sigcont_permission_error_when_group_remains ... ok
+checks	Test	2026-09-10T23:45:12.9019830Z test task_manager::tests::cancellation_waits_for_admission_to_publish_its_worker ... ok
+checks	Test	2026-09-10T23:45:12.9066880Z test session::tests::terminate_retains_sigcont_permission_error_for_live_group ... ok
+checks	Test	2026-09-10T23:45:12.9072450Z test task_manager::tests::cleanup_reports_retained_directory_without_registry_ownership ... ok
+checks	Test	2026-09-10T23:45:12.9154770Z test task_manager::tests::corrupt_run_file_does_not_block_open ... ok
+checks	Test	2026-09-10T23:45:13.0067130Z test task_manager::tests::graceful_shutdown_refuses_a_run_crossing_admission ... ok
+checks	Test	2026-09-10T23:45:13.0736820Z test session::tests::terminate_removes_job_control_subgroups ... ok
+checks	Test	2026-09-10T23:45:13.0754410Z test task_runner::tests::reused_pid_cannot_claim_process_group_or_children ... ok
+checks	Test	2026-09-10T23:45:13.0770090Z test task_runner::tests::surviving_member_preserves_owned_group_after_leader_exits ... ok
+checks	Test	2026-09-10T23:45:13.0795740Z test tasks::tests::prune_keeps_recent_runs_and_the_newest_per_task ... ok
+checks	Test	2026-09-10T23:45:13.0822430Z test task_manager::tests::tick_does_not_reread_terminal_runs ... ok
+checks	Test	2026-09-10T23:45:13.1811930Z test task_manager::tests::workspace_removal_protects_admitted_tasks_before_run_metadata_is_written ... ok
+checks	Test	2026-09-10T23:45:13.1813180Z 
+checks	Test	2026-09-10T23:45:13.1813610Z test result: ok. 99 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.36s
+checks	Test	2026-09-10T23:45:13.1814080Z 
+checks	Test	2026-09-10T23:45:13.1818190Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_terminal-009029b079e34b42)
+checks	Test	2026-09-10T23:45:13.1871700Z 
+checks	Test	2026-09-10T23:45:13.1881040Z running 6 tests
+checks	Test	2026-09-10T23:45:13.1881540Z test history::tests::history_bounds_reject_bad_ranges ... ok
+checks	Test	2026-09-10T23:45:13.1882150Z test history::tests::history_partial_escape_survives_capture ... ok
+checks	Test	2026-09-10T23:45:13.1883070Z test history::tests::history_alternate_screen_has_no_transcript ... ok
+checks	Test	2026-09-10T23:45:13.1883690Z test history::tests::history_resize_keeps_old_width ... ok
+checks	Test	2026-09-10T23:45:13.1884630Z test history::tests::history_tiles_preserve_wide_combining_and_wrap ... ok
+checks	Test	2026-09-10T23:45:13.1890120Z test history::tests::history_retention_is_frozen_and_evicts_oldest ... ok
+checks	Test	2026-09-10T23:45:13.1890590Z 
+checks	Test	2026-09-10T23:45:13.1891190Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Test	2026-09-10T23:45:13.1892080Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_tui-47a0a44abc6dcc69)
+checks	Test	2026-09-10T23:45:13.1892390Z 
+checks	Test	2026-09-10T23:45:13.2015430Z 
+checks	Test	2026-09-10T23:45:13.2016090Z running 50 tests
+checks	Test	2026-09-10T23:45:13.2082980Z test dashboard::copy::tests::copy_clipboard_emits_osc52 ... ok
+checks	Test	2026-09-10T23:45:13.2092050Z test dashboard::agents::tests::custom_override_replaces_the_custom_entry ... ok
+checks	Test	2026-09-10T23:45:13.2093680Z test dashboard::agents::tests::detects_executables_then_shell_then_custom ... ok
+checks	Test	2026-09-10T23:45:13.2101520Z test dashboard::copy::tests::history_copy_append_normalizes_wide_cells_and_preserves_spaces ... ok
+checks	Test	2026-09-10T23:45:13.2104420Z test dashboard::copy::tests::history_copy_append_rejects_malformed_cells_and_byte_overflow ... ok
+checks	Test	2026-09-10T23:45:13.2106300Z test dashboard::copy::tests::copy_clipboard_rejects_invalid_payload_and_io_failure ... ok
+checks	Test	2026-09-10T23:45:13.2111110Z test dashboard::copy::tests::history_copy_job_streams_overlapping_tiles_and_soft_wraps ... ok
+checks	Test	2026-09-10T23:45:13.4825280Z test dashboard::git_hints::tests::detached_head_yields_no_base_suggestion ... ok
+checks	Test	2026-09-10T23:45:13.5167640Z test dashboard::git_hints::tests::missing_origin_uses_master_then_current_head ... ok
+checks	Test	2026-09-10T23:45:13.9634640Z test dashboard::git_hints::tests::timeout_reaps_owned_child_and_output_is_bounded ... ok
+checks	Test	2026-09-10T23:45:13.9702200Z test dashboard::git_hints::tests::sole_non_origin_remote_provides_the_base ... ok
+checks	Test	2026-09-10T23:45:13.9857440Z test dashboard::palette::mouse_tests::mouse_cursor_uses_rendered_emoji_grapheme_width ... ok
+checks	Test	2026-09-10T23:45:14.0118280Z test dashboard::palette::mouse_tests::mouse_form_focus_unicode_edit_and_cancel ... ok
+checks	Test	2026-09-10T23:45:14.0164640Z test dashboard::palette::mouse_tests::mouse_actions_search_and_confirmation_pending_guard ... ok
+checks	Test	2026-09-10T23:45:14.0200520Z test dashboard::palette::mouse_tests::mouse_narrow_form_scroll_reaches_hidden_fields ... ok
+checks	Test	2026-09-10T23:45:14.0265250Z test dashboard::palette::mouse_tests::mouse_pick_value_edits_at_visible_cursor ... ok
+checks	Test	2026-09-10T23:45:14.0361970Z test dashboard::palette::mouse_tests::mouse_scrolled_picker_accepts_visible_option ... ok
+checks	Test	2026-09-10T23:45:14.0485440Z test dashboard::palette::mouse_tests::mouse_submit_from_first_field_and_outside_overlay_guard ... ok
+checks	Test	2026-09-10T23:45:14.0561420Z test dashboard::palette::mouse_tests::mouse_menu_back_and_close_without_clickthrough ... ok
+checks	Test	2026-09-10T23:45:14.0662290Z test dashboard::git_hints::tests::branches_and_remote_default_from_real_repository ... ok
+checks	Test	2026-09-10T23:45:14.0663400Z test dashboard::palette::mouse_tests::mouse_tiny_overlay_controls_remain_visible ... ok
+checks	Test	2026-09-10T23:45:14.0664110Z test dashboard::palette::mouse_tests::mouse_text_search_and_narrow_unicode_cursor ... ok
+checks	Test	2026-09-10T23:45:14.0664820Z test dashboard::picker::tests::expand_path_resolves_tilde_and_keeps_absolute ... ok
+checks	Test	2026-09-10T23:45:14.0683930Z test dashboard::picker::tests::git_dirs_sort_first_and_hidden_needs_dot_segment ... ok
+checks	Test	2026-09-10T23:45:14.0684620Z test dashboard::picker::tests::listing_is_cached_until_input_changes ... ok
+checks	Test	2026-09-10T23:45:14.0810530Z test dashboard::palette::mouse_tests::mouse_submit_from_project_survives_waiting_for_git_suggestions_once ... ok
+checks	Test	2026-09-10T23:45:14.0831840Z test dashboard::palette::mouse_tests::mouse_toggle_and_scrolled_path_row ... ok
+checks	Test	2026-09-10T23:45:14.0933290Z test dashboard::picker::tests::slash_prefix_lists_filesystem_root ... ok
+checks	Test	2026-09-10T23:45:14.0934370Z test dashboard::picker::tests::tilde_prefix_lists_code_and_tab_completes ... ok
+checks	Test	2026-09-10T23:45:14.1083250Z test dashboard::tests::completed_history_copy_emits_once_through_the_writer_adapter ... ok
+checks	Test	2026-09-10T23:45:14.1085260Z test dashboard::tests::copy_selection_joins_soft_wraps_and_preserves_unicode ... ok
+checks	Test	2026-09-10T23:45:14.1086450Z test dashboard::tests::copy_selection_moves_over_wide_cells_and_clamps ... ok
+checks	Test	2026-09-10T23:45:14.1087140Z test dashboard::tests::dashboard_input_boundary_defers_after_a_bounded_ready_batch ... ok
+checks	Test	2026-09-10T23:45:14.1087940Z test dashboard::tests::dashboard_input_boundary_reports_detach_from_a_processed_event ... ok
+checks	Test	2026-09-10T23:45:14.1098900Z test dashboard::settings::tests::invalid_file_yields_defaults_and_error ... ok
+checks	Test	2026-09-10T23:45:14.1099640Z test dashboard::tests::dashboard_input_boundary_separates_deferred_input_from_idle_emission ... ok
+checks	Test	2026-09-10T23:45:14.1100350Z test dashboard::tests::dashboard_output_wake_interrupts_idle_wait ... ok
+checks	Test	2026-09-10T23:45:14.1101000Z test dashboard::tests::dashboard_surfaces_hello_refusal_and_reader_disconnect ... ok
+checks	Test	2026-09-10T23:45:14.1101640Z test dashboard::tests::dashboard_wait_reports_input_and_output_together ... ok
+checks	Test	2026-09-10T23:45:14.1103110Z test dashboard::tests::failed_history_copy_writer_preserves_selection_for_retry ... ok
+checks	Test	2026-09-10T23:45:14.1103820Z test dashboard::settings::tests::loads_overrides_and_expands_picker_roots ... ok
+checks	Test	2026-09-10T23:45:14.1104470Z test dashboard::tests::dashboard_reader_reconciles_two_pane_burst_at_ack_boundary ... ok
+checks	Test	2026-09-10T23:45:14.1105160Z test dashboard::tests::hints_name_targets_and_explain_disabled_session_actions ... ok
+checks	Test	2026-09-10T23:45:14.1106260Z test dashboard::tests::initial_selection_completes_zero_target_view_on_ok ... ok
+checks	Test	2026-09-10T23:45:14.1107550Z test dashboard::tests::initial_selection_does_not_complete_after_wrong_screen_and_ok ... ok
+checks	Test	2026-09-10T23:45:14.1108250Z test dashboard::tests::initial_selection_ignores_wrong_screen_before_matching_ok ... ok
+checks	Test	2026-09-10T23:45:14.1110980Z test dashboard::tests::hierarchy_removal_clears_a_parked_wheel_deferral ... ok
+checks	Test	2026-09-10T23:45:14.1114100Z test dashboard::tests::mouse_release_precedes_the_replacement_view_request ... ok
+checks	Test	2026-09-10T23:45:14.1140770Z test dashboard::tests::panic_hook_ignores_non_main_threads ... ok
+checks	Test	2026-09-10T23:45:14.1403960Z test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... ok
+checks	Test	2026-09-10T23:45:14.1404430Z 
+checks	Test	2026-09-10T23:45:14.1404690Z test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+checks	Test	2026-09-10T23:45:14.1405020Z 
+checks	Doc tests	﻿2026-09-10T23:45:14.1595870Z ##[group]Run cargo test --workspace --doc
+checks	Doc tests	2026-09-10T23:45:14.1596400Z ^[[36;1mcargo test --workspace --doc^[[0m
+checks	Doc tests	2026-09-10T23:45:14.1753910Z shell: /bin/bash -e {0}
+checks	Doc tests	2026-09-10T23:45:14.1754170Z env:
+checks	Doc tests	2026-09-10T23:45:14.1754440Z   CARGO_TERM_COLOR: always
+checks	Doc tests	2026-09-10T23:45:14.1754730Z   CARGO_HOME: /Users/runner/.cargo
+checks	Doc tests	2026-09-10T23:45:14.1755030Z   CARGO_INCREMENTAL: 0
+checks	Doc tests	2026-09-10T23:45:14.1755270Z   CACHE_ON_FAILURE: true
+checks	Doc tests	2026-09-10T23:45:14.1755480Z ##[endgroup]
+checks	Doc tests	2026-09-10T23:45:14.7555280Z ^[[1m^[[92m   Compiling^[[0m ovrcr-protocol v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+checks	Doc tests	2026-09-10T23:45:17.1410550Z ^[[1m^[[92m   Compiling^[[0m ovrcr-terminal v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+checks	Doc tests	2026-09-10T23:45:17.3184780Z ^[[1m^[[92m   Compiling^[[0m ovrcr-tui v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+checks	Doc tests	2026-09-10T23:45:17.3768250Z ^[[1m^[[92m   Compiling^[[0m ovrcr-runtime v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+checks	Doc tests	2026-09-10T23:45:18.5309110Z ^[[1m^[[92m   Compiling^[[0m ovrcr v0.1.0 (/Users/runner/work/ovrcr/ovrcr)
+checks	Doc tests	2026-09-10T23:45:21.3299790Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 7.06s
+checks	Doc tests	2026-09-10T23:45:21.3378420Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr
+checks	Doc tests	2026-09-10T23:45:21.4663020Z 
+checks	Doc tests	2026-09-10T23:45:21.4663330Z running 0 tests
+checks	Doc tests	2026-09-10T23:45:21.4663530Z 
+checks	Doc tests	2026-09-10T23:45:21.4665300Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Doc tests	2026-09-10T23:45:21.4665670Z 
+checks	Doc tests	2026-09-10T23:45:21.4676420Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_protocol
+checks	Doc tests	2026-09-10T23:45:21.6702100Z 
+checks	Doc tests	2026-09-10T23:45:21.6702540Z running 0 tests
+checks	Doc tests	2026-09-10T23:45:21.6702780Z 
+checks	Doc tests	2026-09-10T23:45:21.6703000Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Doc tests	2026-09-10T23:45:21.6703410Z 
+checks	Doc tests	2026-09-10T23:45:21.6712610Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_runtime
+checks	Doc tests	2026-09-10T23:45:21.7631100Z 
+checks	Doc tests	2026-09-10T23:45:21.7631520Z running 0 tests
+checks	Doc tests	2026-09-10T23:45:21.7631840Z 
+checks	Doc tests	2026-09-10T23:45:21.7632150Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Doc tests	2026-09-10T23:45:21.7632550Z 
+checks	Doc tests	2026-09-10T23:45:21.7643460Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_terminal
+checks	Doc tests	2026-09-10T23:45:21.7942670Z 
+checks	Doc tests	2026-09-10T23:45:21.7942990Z running 0 tests
+checks	Doc tests	2026-09-10T23:45:21.7943230Z 
+checks	Doc tests	2026-09-10T23:45:21.7943550Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Doc tests	2026-09-10T23:45:21.7943900Z 
+checks	Doc tests	2026-09-10T23:45:21.7952770Z ^[[1m^[[92m   Doc-tests^[[0m ovrcr_tui
+checks	Doc tests	2026-09-10T23:45:21.8948660Z 
+checks	Doc tests	2026-09-10T23:45:21.8949170Z running 0 tests
+checks	Doc tests	2026-09-10T23:45:21.8949430Z 
+checks	Doc tests	2026-09-10T23:45:21.8949650Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Doc tests	2026-09-10T23:45:21.8950040Z 
+checks	Post Run Swatinem/rust-cache@v2	﻿2026-09-10T23:45:21.9066530Z Post job cleanup.
+checks	Post Run Swatinem/rust-cache@v2	2026-09-10T23:45:22.2122220Z Cache up-to-date.
+checks	Post Run actions/checkout@v4	﻿2026-09-10T23:45:22.2257660Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.2258830Z Post job cleanup.
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3070480Z [command]/opt/homebrew/bin/git version
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3148800Z git version 2.55.0
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3165760Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/6aa4df73-29be-41bd-9dcb-963b23d84b97/.gitconfig'
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3173180Z Temporarily overriding HOME='/Users/runner/work/_temp/6aa4df73-29be-41bd-9dcb-963b23d84b97' before making global git config changes
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3174470Z Adding repository directory to the temporary git global config as a safe directory
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3178000Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/ovrcr/ovrcr
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3244270Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3297750Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.3991230Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.4037650Z http.https://github.com/.extraheader
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.4043750Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.4101550Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.4746510Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+checks	Post Run actions/checkout@v4	2026-09-10T23:45:22.4802700Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+checks	Complete job	﻿2026-09-10T23:45:22.5519620Z Cleaning up orphan processes
+checks	Complete job	2026-09-10T23:45:23.1777490Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
