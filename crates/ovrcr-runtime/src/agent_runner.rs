@@ -307,6 +307,9 @@ impl InvocationChannel {
                 }
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        if stream.set_nonblocking(false).is_err() {
+                            continue;
+                        }
                         let started = Instant::now();
                         let auth_deadline = started + Duration::from_millis(200);
                         let mut received = [0u8; 65];
@@ -418,5 +421,61 @@ impl Drop for InvocationChannel {
     fn drop(&mut self) {
         drop(self.initialize.take());
         self.complete(std::time::Instant::now() + Duration::from_secs(2));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn invocation_channel_accepts_exact_payload_limit() {
+        let mut channel = InvocationChannel::new().unwrap();
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        channel.start(Some(Box::new(move |event| match event {
+            HookEvent::Request { input, .. } => {
+                assert_eq!(input.len(), 65_536);
+                handler_calls.fetch_add(1, Ordering::SeqCst);
+                b"accepted\n".to_vec()
+            }
+            _ => Vec::new(),
+        })));
+        let mut stream = UnixStream::connect(&channel.path).unwrap();
+        stream
+            .write_all(format!("{}\n", channel.token).as_bytes())
+            .unwrap();
+        stream.write_all(&65_536_u32.to_be_bytes()).unwrap();
+        stream.write_all(&vec![b'x'; 65_536]).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert_eq!(response, "accepted\n");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching() {
+        let mut channel = InvocationChannel::new().unwrap();
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        channel.start(Some(Box::new(move |event| {
+            if matches!(event, HookEvent::Request { .. }) {
+                handler_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            Vec::new()
+        })));
+        let mut stream = UnixStream::connect(&channel.path).unwrap();
+        stream
+            .write_all(format!("{}\n", channel.token).as_bytes())
+            .unwrap();
+        stream.write_all(&65_537_u32.to_be_bytes()).unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        assert!(response.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

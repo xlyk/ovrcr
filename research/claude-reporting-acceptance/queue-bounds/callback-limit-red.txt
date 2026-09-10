@@ -1,0 +1,12 @@
+command: cargo test -p ovrcr-runtime invocation_channel_
+host: macOS, outside sandbox
+exit: 101
+executed: 2
+passed: 1
+failed: 1
+
+invocation_channel_accepts_exact_payload_limit failed at the client write of the
+65,536-byte payload with BrokenPipe (os error 32). The 65,537-byte rejection
+case passed. The accepted stream inherited nonblocking behavior, so the reader
+treated a transient WouldBlock during the valid large payload as a terminal
+read failure.
