@@ -35,11 +35,11 @@ Files: `crates/ovrcr-tui/src/dashboard/{mod,state,render}.rs`, a focused mouse m
 
 Interfaces: preserve public `pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects>` compatibility; introduce a dashboard-owned geometry method so all live callers consume the same split preference. Mouse entry remains `Dashboard::mouse_action(MouseEvent, Rect) -> DashboardAction`.
 
-- [ ] Add failing event-path assertions: terminal-mode click changes focus without Input bytes; sidebar label selects without collapsing, disclosure toggles; wheel uses scrolled rows; divider drag changes both desired sizes and disables input until acknowledgement; no-op drag preserves readiness; tiny/nonzero-origin layouts and focus loss end drag safely.
-- [ ] Run focused tests and retain the expected behavioral failures.
-- [ ] Implement gesture routing before terminal forwarding, shared split geometry, clamped divider drag, and sidebar controls. Reuse `focus_pane`, view coalescing and held release paths.
-- [ ] Verify affected TUI suites and self-review; commit only stage files.
-- [ ] Independent review of committed diff and evidence, then correct findings.
+- [x] Add failing event-path assertions: terminal-mode click changes focus without Input bytes; sidebar label selects without collapsing, disclosure toggles; wheel uses scrolled rows; divider drag changes both desired sizes and disables input until acknowledgement; no-op drag preserves readiness; tiny/nonzero-origin layouts and focus loss end drag safely.
+- [x] Run focused tests and retain the expected behavioral failures.
+- [x] Implement gesture routing before terminal forwarding, shared split geometry, clamped divider drag, and sidebar controls. Reuse `focus_pane`, view coalescing and held release paths.
+- [x] Verify affected TUI suites and self-review; commit only stage files.
+- [x] Independent review of committed diff and evidence, then correct findings.
 
 ## Task 2: Palette, forms, menus and discoverability
 
@@ -47,10 +47,10 @@ Files: `dashboard/{palette,picker,whichkey,hints,render,state}.rs`, focused pale
 
 Interfaces: add `Dashboard::palette_mouse(MouseEvent, Rect) -> DashboardAction`; route it from `mouse_action` while palette is open and keep capture enabled. Reuse palette commands/request generation; keyboard and mouse text edits share the same cursor state.
 
-- [ ] Write failing tests using rendered cell coordinates: select nonactive field; Unicode cursor insertion/deletion; toggle; select scrolled pick/path row; Submit/Cancel; search action; pending request/confirmation/outside overlay handling; narrow form scrolling.
-- [ ] Run RED tests, implement shared render/hit geometry and text editing cursor, rerun to GREEN.
-- [ ] Add visible clickable action entry points so mouse users can open menus/forms without keyboard shortcuts; preserve compact dense layout.
-- [ ] Verify affected suites, self-review, commit and independently review.
+- [x] Write failing tests using rendered cell coordinates: select nonactive field; Unicode cursor insertion/deletion; toggle; select scrolled pick/path row; Submit/Cancel; search action; pending request/confirmation/outside overlay handling; narrow form scrolling.
+- [x] Run RED tests, implement shared render/hit geometry and text editing cursor, rerun to GREEN.
+- [x] Add visible clickable action entry points so mouse users can open menus/forms without keyboard shortcuts; preserve compact dense layout.
+- [x] Verify affected suites, self-review, commit and independently review.
 
 ## Task 3: Tasks and Copy/History
 
@@ -58,15 +58,21 @@ Files: `crates/ovrcr-tui/src/task_tui.rs`, `dashboard/{copy,state,render}.rs`, t
 
 Interfaces: Tasks mouse input returns existing task actions through dashboard dispatch. Copy/History mouse selection uses existing captured-session and clipboard lifecycle, without separate selection or request ownership.
 
-- [ ] Add failing assertions for Tasks list selection/scroll, editor fields/cursor/pickers, task controls/confirmation, transcript scrolling; Copy/History drag including wide characters, captured identity, resize and stale clipboard completion; Copy/Close controls and overlay priority.
-- [ ] Run RED tests; implement render-consistent hit testing and reuse existing actions; rerun GREEN.
-- [ ] Verify focused suites, self-review, commit and independent review.
+- [x] Add failing assertions for Tasks list selection/scroll, editor fields/cursor/pickers, task controls/confirmation, transcript scrolling; Copy/History drag including wide characters, captured identity, resize and stale clipboard completion; Copy/Close controls and overlay priority.
+- [x] Run RED tests; implement render-consistent hit testing and reuse existing actions; rerun GREEN.
+- [x] Verify focused suites, self-review, commit and independent review.
 
 ## Task 4: Integration and acceptance
 
 Files: `docs/dashboard.md`, `docs/testing-computer-use.md`, acceptance tests if needed, this plan's checkpoint, work diary.
 
-- [ ] Update mouse reference and GUI acceptance procedure to cover each approved interaction.
-- [ ] Run `rtk proxy cargo test --workspace --all-targets --all-features`, `rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings`, `rtk proxy cargo fmt --all -- --check`, and `rtk proxy git diff --check` once at the integrated checkpoint.
-- [ ] Exercise actual GUI: switch panes from active terminal, drag divider and verify real PTY sizes, collapse/scroll tree, edit/submit/cancel forms, task controls, Copy/History drag, and application mouse forwarding. Preserve independent evidence for unavailable platforms or checks.
+- [x] Update mouse reference and GUI acceptance procedure to cover each approved interaction.
+- [x] Run `rtk proxy cargo test --workspace --all-targets --all-features`, `rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings`, `rtk proxy cargo fmt --all -- --check`, and `rtk proxy git diff --check` once at the integrated checkpoint.
+- [x] Exercise actual GUI: switch panes from active terminal, drag divider and verify real PTY sizes, collapse/scroll tree, edit/submit/cancel forms, task controls, Copy/History drag, and application mouse forwarding. Preserve independent evidence for unavailable platforms or checks.
 - [ ] Independently review final committed branch against contract; correct findings, update checkpoint and work diary. Do not merge or push without authorization.
+
+## Acceptance checkpoint
+
+Implementation through `fbd6dc7` has passed all three task reviews. Workspace gates: 540 tests passed, 6 ignored across 21 test binaries; Clippy with warnings denied, formatting, and diff checks passed. The ignored cases include helper entry points, optional installed-Pi probes, and an RSS measurement.
+
+Native macOS acceptance used owned disposable fixtures: menu/pane focus, divider widths checked with kernel `stty size`, narrow-window pane restoration, sidebar collapse/scroll, forms and path/toggle controls, Tasks save/pause/resume/delete confirmation, Copy/History drag and Close, frozen History during new live output, and application SGR press/release. All fixture processes, groups, sockets and roots were cleaned. Native clipboard delivery, provider execution, and Linux UI behavior remain unverified; selection and clipboard lifecycle have automated coverage. Evidence is retained under `.superpowers/sdd/2026-09-09-first-class-mouse/`.

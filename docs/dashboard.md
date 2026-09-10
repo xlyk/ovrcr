@@ -19,8 +19,8 @@ a copy is pending and `Esc Back` otherwise.
 | History | `PageUp` in Browse, or wheel-up over a pane | `Esc`, `q`, or `Ctrl-g` |
 
 Terminal mode is the only mode that sends input to the PTY, and `Ctrl-g` is the
-only key it intercepts. There is no key popup in Terminal mode; press `Ctrl-g`
-first.
+only key it intercepts. Click the title bar's Actions control to open the palette
+or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts.
 
 ## Browse keys
 
@@ -158,21 +158,39 @@ reports it; see [agent reporting](agent-reporting.md).
 
 ## Mouse
 
-In Browse mode:
+In Browse and Terminal modes:
 
 - Clicking a session row selects it.
-- Clicking a project or workspace row selects it and toggles its collapse state.
-- Clicking inside a terminal focuses that pane.
+- Clicking a project or workspace label selects it. Clicking its disclosure arrow
+  expands or collapses it.
+- Scrolling over the sidebar scrolls its visible rows.
+- Clicking inside a terminal focuses that pane for typing. A click that changes
+  focus is consumed by the dashboard.
+- Dragging the divider between two panes changes their widths. Each visible pane
+  keeps at least 20 columns. The split proportion survives window resizing and
+  the temporary single-pane layout used in narrow windows.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
   move one row; wheel-down at the newest row returns to the live pane.
 
 In Terminal mode, mouse events reach the focused live pane only when that
 application has requested a tracking mode (X10, 1000, 1002, or 1003). Enabling
-SGR encoding alone forwards nothing. Coordinates are pane cells; clicks outside
-the pane are ignored, not clamped. Held buttons are released on the previous
-session before `Ctrl-g`, a selection change, or a resize. When the focused
+SGR encoding alone forwards nothing. Coordinates are pane cells; dashboard
+controls outside the pane handle their own clicks. Held buttons are released on
+the previous session before `Ctrl-g`, a selection change, or a resize. When the focused
 application has not requested tracking, wheel-up over the pane opens History
 instead.
+
+In Copy and History, drag across the painted terminal cells to select text.
+History's wheel scrolling moves through the frozen capture. The title bar's
+Copy control copies the selection, and Close returns to the dashboard. A new
+selection replaces the previous one and cancels an unfinished History copy.
+Pane metadata, status rows, and controls are outside the selectable text.
+
+Tasks supports clicking rows, fields, picker options, and footer actions.
+Scroll over the task list, run list, or transcript to move that view. Footer
+actions wrap in short or narrow layouts; save, cancel, and destructive
+confirmation use the same actions as the keyboard. See
+[scheduled tasks](scheduled-tasks.md#manage-tasks-in-the-tui).
 
 ## Key encoding
 
@@ -225,7 +243,8 @@ keys leave the popup open. Relevant actions that are waiting for screen readines
 remain dimmed, with the reason in the detail area below the keys.
 
 Copy and History retain their direct movement/selection menus, including
-`Space v` to set an anchor. Terminal input mode has no popup.
+`Space v` to set an anchor. The title bar's Menu control also opens the menu
+from Terminal mode. Popup Back and Close controls support mouse navigation.
 
 Popup actions reuse the hint table's target descriptions and the existing action
 handlers. The palette and direct-key footer retain their original shortcuts.
@@ -249,10 +268,17 @@ one `Switch terminal: <project> / <workspace> / <name> (#id)` per session, and
 the remaining key-popup actions by name.
 
 Within a form: on a pick list, Up/Down move the highlight and `Tab` or `Enter`
-accepts. On a text field, `Tab` or the arrow keys move between fields, and
-`Enter` advances and submits at the last field. `Ctrl-u` clears a field;
-`Backspace` deletes its last character. Input stays in the palette while it is
-open.
+accepts. On a text field, `Tab`, Up, and Down move between fields, and
+`Enter` advances and submits at the last field. Left/Right and Home/End move
+the text cursor; Backspace and Delete remove text beside it. `Ctrl-u` clears
+a field. Click a field to focus it and position its cursor, click options or
+toggles to choose them, and use the wheel to scroll lists and long forms.
+Visible Submit and Cancel controls work from any field. Input stays in the
+palette while it is open.
+
+Click a search result to open it, or select it and click Open. Confirmations
+have separate Confirm and Cancel controls; clicking outside an open palette
+does not activate the terminal behind it.
 
 All existing-project and workspace fields use the same searchable picker,
 including removal forms and the scheduled-task editor. Type to filter, use

@@ -129,6 +129,50 @@ Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_root
 
 ## 3. Mouse forwarding and wheel history
 
+### Dashboard controls
+
+Run these checks with the mouse for navigation; use the keyboard only to enter
+text. Save a screenshot and accessibility text after each changed view. Repeat
+the form and menu checks in a short window to exercise scrolling and clipping.
+
+1. Open the action menu with its visible control and open a second terminal pane.
+   Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
+   `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
+   intended pane. Switch directly from an active terminal without `Ctrl-g`.
+2. Drag the divider left and right. In each pane run `rtk proxy stty size` and
+   compare the reported columns with the drawn terminal width. Make the window
+   too narrow for both panes, widen it again, and confirm assignments and the
+   chosen split survive. Release the drag outside the terminal and confirm the
+   next click works normally.
+3. Click a project or workspace label to select it without collapsing it. Click
+   its disclosure arrow to collapse and expand it. Scroll the sidebar and select
+   a row that was initially offscreen. Confirm the selected target by its name.
+4. Open a creation form from the visible action menu. Click a nonactive field,
+   edit in the middle of its value, choose a pick-list option, and operate any
+   toggle. Browse a directory through the path picker. Use Cancel, reopen, and
+   submit a disposable terminal; prove input with a separate `MOUSE_FORM_OK`
+   output line. Cancel a destructive confirmation and confirm its target remains.
+5. Open Tasks using mouse controls. Select and scroll its rows, open an editor,
+   click fields and a project choice, and cancel. Exercise task controls only on
+   a task owned by this fixture; inspect confirmation targets before proceeding.
+6. Print a line containing `ASCII 界🙂 tail`, open Copy from the action menu, drag
+   across the text, and use Copy. Paste into an owned fixture input and compare
+   the selected text. Open History, scroll, select text, and close it through its
+   visible control. Confirm new live output does not rewrite the frozen view.
+7. While a form or menu is open, click outside it over a terminal. Confirm the
+   click does not reach the terminal. Repeat a focus-changing click with Vim
+   mouse tracking enabled: the click selects the other pane without moving that
+   application's cursor. A subsequent click inside the focused Vim pane should
+   reach Vim as described below.
+
+Keep these observations separate from automated test results. If the computer-use
+tool cannot perform a drag or inspect the clipboard, mark that check unverified
+and retain any available automated evidence. Selection highlighting and emitted
+OSC52 bytes do not prove clipboard delivery; test paste in a terminal that handles
+OSC52 when the GUI helper cannot deliver it.
+
+### Application forwarding
+
 Stay on `consigint / auth-handoff / local` in terminal mode. Move the pointer over the terminal pane, not the sidebar or footer, and scroll the wheel up. History should open at the tail (`HISTORY` in the footer). Wheel down at the newest row returns to the live prompt.
 
 In the same or another live pane, run `vim -n -u NONE`, then `:set mouse=a`. Click in the buffer: the Vim cursor moves to that cell. Wheel should scroll Vim; History must stay closed. `:set mouse=` then wheel up while Vim is still running must not open History (alternate screen). Quit Vim before repeating the plain-shell History check.
