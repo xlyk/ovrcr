@@ -559,7 +559,9 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             let metadata_hint = dashboard.history.as_ref().map_or_else(
                 || {
                     selected
-                        .and_then(|session| provider_metrics(session, now_unix_ms))
+                        .and_then(|session| {
+                            provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
+                        })
                         .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width)))
                 },
                 |view| history_hint(view, dashboard.focused_size()),
@@ -753,7 +755,9 @@ fn render_split_metadata(
         frame.render_widget(
             Paragraph::new(
                 session
-                    .and_then(|session| provider_metrics(session, now_unix_ms))
+                    .and_then(|session| {
+                        provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
+                    })
                     .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width))),
             )
             .style(Style::default().fg(MUTED).bg(BASE)),
@@ -1014,7 +1018,7 @@ fn provider_activity(session: &SessionSummary) -> String {
     format!(" {state} {quality}")
 }
 
-fn provider_metrics(session: &SessionSummary, now: u64) -> Option<String> {
+fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<String> {
     let agent = session.agent.as_ref()?;
     let Some(metrics) = &agent.metrics else {
         return Some("tokens —  cost —".into());
@@ -1067,12 +1071,17 @@ fn provider_metrics(session: &SessionSummary, now: u64) -> Option<String> {
             )
         },
     );
-    Some(format!(
+    let full = format!(
         "tokens {}{partial} {tokens}{}  cost {amount}{}",
         scope(usage.value.scope),
         age(metrics.usage_received_unix_ms, usage.freshness),
         age(metrics.cost_received_unix_ms, cost.freshness)
-    ))
+    );
+    if Line::raw(&full).width() > width {
+        Some(full.replacen(" estimate ", " est ", 1))
+    } else {
+        Some(full)
+    }
 }
 
 fn label_color(label: &str) -> Color {

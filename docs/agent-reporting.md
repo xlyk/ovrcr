@@ -25,6 +25,10 @@ conversation cost. Missing values are unknown, while explicit zero remains zero.
 Component ages are independent. Native source freshness is uncertain; receiving a
 callback does not prove it is the newest provider sample.
 
+The dashboard keeps the full `estimate` label when the metrics row fits. In a
+narrow or split pane it uses `est` so scoped cost and both component freshness
+labels remain visible.
+
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
 Reporting transport can be connected while usage or cost is unknown. A conversation

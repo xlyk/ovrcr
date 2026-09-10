@@ -1342,6 +1342,33 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     let text = drawn(&dashboard, now, 240);
     assert_eq!(text.matches("tokens conv partial 25 stale").count(), 2);
     assert_eq!(text.matches("cost inv estimate $0.00").count(), 2);
+    for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+        let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
+        metrics.sample.usage.value.input_tokens = Some(711_653);
+        metrics.sample.usage.value.output_tokens = Some(1);
+        metrics.sample.cost.value = Some(UsageCost {
+            usd_ticks: 4_700_000_000,
+            kind: CostKind::Estimated,
+            scope: UsageScope::Conversation,
+        });
+        metrics.cost_received_unix_ms = 1;
+    }
+    let pane_widths: Vec<_> = super::pane_rects(
+        Rect::new(0, 0, 166, 24),
+        dashboard.panes.len(),
+        dashboard.focused_pane,
+    )
+    .into_iter()
+    .map(|pane| pane.metadata.width)
+    .collect();
+    assert_eq!(pane_widths, [62, 63]);
+    let text = drawn(&dashboard, now, 166);
+    assert_eq!(
+        text.matches("tokens conv partial 711654 stale  cost conv est $0.47 stale")
+            .count(),
+        2,
+        "split metrics must preserve both freshness labels: {text}"
+    );
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()
