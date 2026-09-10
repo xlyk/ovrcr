@@ -1,0 +1,27 @@
+Command: rtk proxy cargo clippy -p ovrcr-tui --all-targets -- -D warnings
+Base: 8586a2574dc4de5562fd1451bcf63154848644a8 + dashboard diff
+Exit: 0
+    Checking libc v0.2.189
+    Checking smallvec v1.16.0
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Checking errno v0.3.14
+    Checking mio v1.2.3
+    Checking parking_lot_core v0.9.12
+    Checking num_threads v0.1.7
+    Checking filedescriptor v0.8.3
+    Checking getrandom v0.4.3
+    Checking time v0.3.55
+    Checking signal-hook-registry v1.4.8
+    Checking rustix v1.1.4
+    Checking parking_lot v0.12.5
+    Checking signal-hook v0.3.18
+    Checking signal-hook-mio v0.2.5
+    Checking ratatui-widgets v0.3.2
+    Checking crossterm v0.29.0
+    Checking tempfile v3.27.0
+    Checking ratatui-macros v0.7.2
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+    Checking ratatui-crossterm v0.1.2
+    Checking ratatui v0.30.2
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.85s
