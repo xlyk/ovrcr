@@ -1,0 +1,89 @@
+Command: rtk proxy cargo test --offline --manifest-path /private/tmp/ovrcr-task5-pure/Cargo.toml
+Baseline: bbd76dc0db534989c76765fa2b227ea40b8c7403 plus owned uncommitted file
+     Locking 67 packages to latest Rust 1.98.0 compatible versions
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling fnv v1.0.7
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+   Compiling autocfg v1.5.1
+   Compiling serde_core v1.0.229
+   Compiling core-foundation-sys v0.8.7
+   Compiling zmij v1.0.23
+   Compiling heck v0.5.0
+   Compiling serde v1.0.229
+   Compiling siphasher v1.0.3
+   Compiling chrono-tz v0.10.4
+   Compiling virtue v0.0.18
+   Compiling anyhow v1.0.104
+   Compiling serde_json v1.0.151
+   Compiling phf_shared v0.12.1
+   Compiling iana-time-zone v0.1.65
+   Compiling itoa v1.0.18
+   Compiling phf v0.12.1
+   Compiling unty v0.0.4
+   Compiling memchr v2.8.3
+   Compiling num-traits v0.2.19
+   Compiling bincode_derive v2.0.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.5
+   Compiling chrono v0.4.45
+   Compiling serde_derive v1.0.229
+   Compiling darling_core v0.20.11
+   Compiling strum_macros v0.27.2
+   Compiling darling_macro v0.20.11
+   Compiling strum v0.27.2
+   Compiling darling v0.20.11
+   Compiling bincode v2.0.1
+   Compiling derive_builder_core v0.20.2
+   Compiling derive_builder_macro v0.20.2
+   Compiling derive_builder v0.20.2
+   Compiling croner v3.0.1
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-task5-pure v0.0.0 (/private/tmp/ovrcr-task5-pure)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.74s
+     Running unittests /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs (/private/tmp/ovrcr-task5-pure/target/debug/deps/ovrcr_task5_pure-3d6e89b9e7b4f80a)
+
+running 5 tests
+test tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+test tests::replacement_replay_and_distinct_requests_do_not_double_count ... FAILED
+test tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... FAILED
+test tests::statusline_context_and_exact_cost_preserve_unknowns ... FAILED
+test tests::missing_usage_components_are_unknown_until_replaced ... FAILED
+
+failures:
+
+---- tests::replacement_replay_and_distinct_requests_do_not_double_count stdout ----
+
+thread 'tests::replacement_replay_and_distinct_requests_do_not_double_count' (31847439) panicked at /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs:104:9:
+assertion failed: totals.apply_record(&record("m", "r", 10)).unwrap()
+
+---- tests::cost_rounds_original_decimal_ties_even_and_checks_overflow stdout ----
+
+thread 'tests::cost_rounds_original_decimal_ties_even_and_checks_overflow' (31847437) panicked at /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs:82:63:
+called `Result::unwrap()` on an `Err` value: not implemented
+
+---- tests::statusline_context_and_exact_cost_preserve_unknowns stdout ----
+
+thread 'tests::statusline_context_and_exact_cost_preserve_unknowns' (31847440) panicked at /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs:53:63:
+called `Result::unwrap()` on an `Err` value: not implemented
+
+---- tests::missing_usage_components_are_unknown_until_replaced stdout ----
+
+thread 'tests::missing_usage_components_are_unknown_until_replaced' (31847438) panicked at /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs:128:9:
+assertion failed: totals.apply_record(&incomplete).unwrap()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::cost_rounds_original_decimal_ties_even_and_checks_overflow
+    tests::missing_usage_components_are_unknown_until_replaced
+    tests::replacement_replay_and_distinct_requests_do_not_double_count
+    tests::statusline_context_and_exact_cost_preserve_unknowns
+
+test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+
+Exit status: 101

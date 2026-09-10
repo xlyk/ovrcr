@@ -1,0 +1,27 @@
+Command: rtk proxy cargo clippy --offline --manifest-path /private/tmp/ovrcr-task5-pure/Cargo.toml --all-targets -- -D warnings
+Baseline: bbd76dc0db534989c76765fa2b227ea40b8c7403 plus owned uncommitted file
+    Checking core-foundation-sys v0.8.7
+    Checking siphasher v1.0.3
+    Checking itoa v1.0.18
+    Checking unty v0.0.4
+    Checking serde_core v1.0.229
+    Checking zmij v1.0.23
+    Checking memchr v2.8.3
+    Checking num-traits v0.2.19
+    Checking anyhow v1.0.104
+    Checking strum v0.27.2
+    Checking derive_builder v0.20.2
+    Checking phf_shared v0.12.1
+    Checking iana-time-zone v0.1.65
+    Checking phf v0.12.1
+    Checking chrono v0.4.45
+    Checking croner v3.0.1
+    Checking chrono-tz v0.10.4
+    Checking serde v1.0.229
+    Checking serde_json v1.0.151
+    Checking bincode v2.0.1
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Checking ovrcr-task5-pure v0.0.0 (/private/tmp/ovrcr-task5-pure)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
+
+Exit status: 0
