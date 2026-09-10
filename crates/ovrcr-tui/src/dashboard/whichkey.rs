@@ -266,6 +266,7 @@ impl Dashboard {
             {
                 return None;
             }
+            self.cancel_mouse_gesture();
             self.whichkey = Some(WhichKey {
                 pending_leader: key.code == KeyCode::Char(' '),
                 browsing: Some(0),

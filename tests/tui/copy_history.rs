@@ -4498,6 +4498,94 @@ fn copy_mouse_release_position_and_focus_loss_bound_the_gesture() {
 }
 
 #[test]
+fn whichkey_acquisition_cancels_copy_and_history_drags() {
+    use ovrcr::tui::DashboardAction;
+
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    let mut copy = screen_ready_dashboard(b"abcdef");
+    copy.key(KeyCode::Char('['));
+    let copy_area = copy.outer_area;
+    let copy_pane = copy.pane_rects(copy_area)[0].terminal;
+    copy.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            copy_pane.x,
+            copy_pane.y,
+        ),
+        copy_area,
+    );
+    copy.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('?'),
+        KeyModifiers::NONE,
+    )));
+    copy.event_action(Event::Mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        copy_pane.x + 5,
+        copy_pane.y,
+    )));
+    copy.key(KeyCode::Esc);
+    copy.mouse_action(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            copy_pane.x + 5,
+            copy_pane.y,
+        ),
+        copy_area,
+    );
+    assert_eq!(
+        copy.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("a")
+    );
+
+    let (_, mut frozen, _) = numbered_history();
+    let mut history = screen_ready_dashboard(b"");
+    let DashboardAction::Request(begin) = history.key(KeyCode::PageUp) else {
+        panic!("history begin");
+    };
+    let requests = history.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::HistoryOpened(frozen.opened().clone()),
+    });
+    pump_frozen_history(&mut history, &mut frozen, requests);
+    let history_area = history.outer_area;
+    let history_pane = history.pane_rects(history_area)[0].terminal;
+    history.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            history_pane.x + 1,
+            history_pane.y + 1,
+        ),
+        history_area,
+    );
+    let before = history.history.as_ref().unwrap().copy_range().unwrap();
+    history.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('?'),
+        KeyModifiers::NONE,
+    )));
+    history.event_action(Event::Mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        history_pane.x + 4,
+        history_pane.y + 2,
+    )));
+    history.key(KeyCode::Esc);
+    history.mouse_action(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            history_pane.x + 4,
+            history_pane.y + 2,
+        ),
+        history_area,
+    );
+    assert_eq!(history.history.as_ref().unwrap().copy_range(), Some(before));
+}
+
+#[test]
 fn history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let mut d = screen_ready_dashboard(b"");

@@ -265,6 +265,7 @@ fn accept_pick(field: &mut Field) -> bool {
 
 impl Dashboard {
     pub(super) fn open_palette(&mut self) -> DashboardAction {
+        self.cancel_mouse_gesture();
         self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
@@ -284,6 +285,7 @@ impl Dashboard {
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
+        self.cancel_mouse_gesture();
         self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
@@ -452,6 +454,7 @@ impl Dashboard {
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
+        self.cancel_mouse_gesture();
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -476,6 +479,7 @@ impl Dashboard {
         else {
             return DashboardAction::None;
         };
+        self.cancel_mouse_gesture();
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -493,6 +497,7 @@ impl Dashboard {
         if project.is_empty() || (workspace && name.is_empty()) {
             return DashboardAction::None;
         }
+        self.cancel_mouse_gesture();
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }

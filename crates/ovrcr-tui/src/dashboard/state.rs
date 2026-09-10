@@ -1103,6 +1103,7 @@ impl Dashboard {
                         if let Some(begin) = self.history_begin_request.as_mut() {
                             begin.cancelled = true;
                         }
+                        self.cancel_mouse_gesture();
                         let (project, _) = self.creation_context();
                         self.tasks = Some(TasksView::with_projects(&self.hierarchy, &project));
                         return DashboardAction::Redraw;
