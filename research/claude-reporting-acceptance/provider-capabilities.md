@@ -1,6 +1,6 @@
 # Additional Claude capability certification
 
-Discovery checkpoint: 2026-09-10. Installed `/Users/xlyk/.local/bin/claude --version` returned [`2.1.267 (Claude Code)`](provider-discovery/claude-version.txt). Production source is unchanged from `cad39ab`. This record starts remaining Task 5; it does not complete native certification or enable any new behavior. Existing observed/partial support remains intact.
+Discovery checkpoint: 2026-09-10. Installed `/Users/xlyk/.local/bin/claude --version` returned [`2.1.267 (Claude Code)`](provider-discovery/claude-version.txt). This Task 5 discovery unit changes no production source; retained provider fixtures were captured against the revisions named in those fixtures. This record starts remaining Task 5; it does not complete native certification or enable any new behavior. Existing observed/partial support remains intact.
 
 Current official [hooks](https://code.claude.com/docs/en/hooks) and [status-line](https://code.claude.com/docs/en/statusline) documentation was refreshed on this date and compared with [installed CLI help](provider-discovery/claude-2.1.267-help.txt). Rolling documentation is not version-pinned evidence. Stop still allows continuation. Rolling documentation describes fork events for foreground and background copies; this has not been verified for both forms on the pinned build. Status-line token counters describe current context; its cost field is an estimate. None of these facts establishes a complete final accounting boundary.
 
