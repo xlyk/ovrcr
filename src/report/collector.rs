@@ -196,6 +196,21 @@ impl CollectorController {
         };
         let result = unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
         if result != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            // macOS may report EPERM for a group containing only its zombie
+            // leader. Reap our child, then verify absence without signaling an
+            // unanchored PGID. An exited leader alone does not prove cleanup.
+            if Instant::now() >= deadline {
+                bail!("collector cleanup deadline");
+            }
+            let pgid = child.id() as i32;
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                self.child = None;
+                if unsafe { libc::kill(-pgid, 0) } == -1
+                    && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    return Ok(());
+                }
+            }
             bail!("collector group cleanup unavailable");
         }
         loop {

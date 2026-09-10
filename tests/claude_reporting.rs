@@ -402,3 +402,44 @@ fn collector_launch_clears_inherited_environment() {
     assert_eq!(value, "clean");
     println!("owned environment probe PID/PGID {pid} cleaned");
 }
+
+#[test]
+fn collector_cancel_reaps_an_exited_group_before_confirming_absence() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.jsonl");
+    fs::write(&path, "").unwrap();
+    let mut helper = launch(&path);
+    caught_up(&mut helper);
+    let pid = helper.process_id().unwrap() as i32;
+    assert_eq!(unsafe { libc::kill(-pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let state = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .unwrap();
+        assert!(state.status.success());
+        if String::from_utf8_lossy(&state.stdout)
+            .trim()
+            .starts_with('Z')
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "owned child did not exit");
+        std::thread::yield_now();
+    }
+    let result = helper.cancel(Instant::now() + Duration::from_secs(2));
+    drop(helper);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(Instant::now() < deadline, "owned child not reaped");
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+    assert_gone(pid);
+    println!("owned exited helper PID/PGID {pid} reaped while parent alive; cancel={result:?}");
+    assert!(result.is_ok(), "exited-group cancellation failed");
+}
