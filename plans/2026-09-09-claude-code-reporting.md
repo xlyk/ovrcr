@@ -70,10 +70,10 @@ Fixture manifest example:
 
 **Interfaces:** Implement the design's `AgentBinding`, `ProviderReport`, `ActivitySample`, `MetricsSample`, `UsageTotals` and associated enums. Implement the shared design’s `ReserveAgent`, conditional `BindAgent`, atomic `FinalizeAgent` and conditional `ReleaseAgent` protocol, including request-ID retry/status semantics and a distinct supervisor secret. Runtime epochs survive release for the PTY lifetime; hooks cannot reserve/bind/release through their report channel. `AgentUpdate::Provider` carries the report. Only Claude needs an adapter now.
 
-- [ ] Add failing dispatcher assertions for wrong capability/session, old generation, old unbind, A→B→A, delayed attachment and reports after exit. Assert rejection changes neither displayed values nor freshness.
-- [ ] Add races for delayed initial reservation, stale bind after replacement, duplicate request-ID retry and reservation-response loss. Require the stale request to fail without allocating a fresh generation; reserve may never replace an active lease.
-- [ ] Add codec validation/round trips for all new variants, redacted capability Debug, IDs over 256 bytes/control characters, invalid subsets, negative/fractional/overflowing values and unknown enum values.
-- [ ] Add separate-stream ordering assertions and atomic metrics replacement:
+- [x] Add failing dispatcher assertions for wrong capability/session, old generation, old unbind, A→B→A, delayed attachment and reports after exit. Assert rejection changes neither displayed values nor freshness.
+- [x] Add races for delayed initial reservation, stale bind after replacement, duplicate request-ID retry and reservation-response loss. Require the stale request to fail without allocating a fresh generation; reserve may never replace an active lease.
+- [x] Add codec validation/round trips for all new variants, redacted capability Debug, IDs over 256 bytes/control characters, invalid subsets, negative/fractional/overflowing values and unknown enum values.
+- [x] Add separate-stream ordering assertions and atomic metrics replacement:
 
 ```text
 Bind A/generation 1; activity revision 8 busy; metrics revision 20 accepted.
@@ -83,10 +83,10 @@ Bind B/generation 2, then A/generation 3.
 Stop or unbind for A/generation 1 => rejected; generation 3 survives.
 ```
 
-- [ ] Define `Measurement<T>`, identified versus uncertain freshness, separately stored component age, and binding-scoped health as in the revised shared schema. Test transcript-only progress preserving context/cost age, conflicting reuse of a source revision, explicit null clearing, collector loss and late supervisor-disconnect cleanup. Report-connection closure alone is not a health event.
-- [ ] Implement under the existing state lock and publication path. Reject legacy updates while the new binding is active; preserve legacy behavior otherwise. Do not let attachment reset later busy/error observations.
-- [ ] Bump wire version from 4 and update all constructors/exhaustive matches, root facades and optional-feature callers. Incompatible peers must fail explicitly.
-- [ ] Run `rtk proxy cargo test -p ovrcr-protocol --lib` and focused runtime tests with an `agent_report` filter that executes nonzero tests. Save behavioral RED and passing evidence separately; missing-type compiler failures are not behavioral proof. Review and commit the shared unit.
+- [x] Define `Measurement<T>`, identified versus uncertain freshness, separately stored component age, and binding-scoped health as in the revised shared schema. Test transcript-only progress preserving context/cost age, conflicting reuse of a source revision, explicit null clearing, collector loss and late supervisor-disconnect cleanup. Report-connection closure alone is not a health event.
+- [x] Implement under the existing state lock and publication path. Reject legacy updates while the new binding is active; preserve legacy behavior otherwise. Do not let attachment reset later busy/error observations.
+- [x] Bump wire version from 4 and update all constructors/exhaustive matches, root facades and optional-feature callers. Incompatible peers must fail explicitly.
+- [x] Run `rtk proxy cargo test -p ovrcr-protocol --lib` and focused runtime tests with an `agent_report` filter that executes nonzero tests. Save behavioral RED and passing evidence separately; missing-type compiler failures are not behavioral proof. Review and commit the shared unit.
 
 ## Task 3: Establish invocation ownership and supervised collection
 
