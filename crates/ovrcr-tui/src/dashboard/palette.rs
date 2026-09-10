@@ -85,7 +85,8 @@ pub(super) struct Palette {
     error: Option<String>,
     workspace_acknowledged: bool,
     suggestions: Suggestions,
-    submit_when_ready: bool,
+    // Some(true) retains explicit whole-form Submit; Some(false) replays Enter.
+    submit_when_ready: Option<bool>,
     cursor: super::text_cursor::TextCursor,
     scroll: Option<usize>,
 }
@@ -150,14 +151,14 @@ impl Palette {
             error: None,
             workspace_acknowledged: false,
             suggestions: Suggestions::default(),
-            submit_when_ready: false,
+            submit_when_ready: None,
             cursor: Default::default(),
             scroll: None,
         }
     }
 
     fn insert(&mut self, text: &str) {
-        if self.pending.is_some() || self.submit_when_ready {
+        if self.pending.is_some() || self.submit_when_ready.is_some() {
             return;
         }
         self.scroll = None;
@@ -293,7 +294,7 @@ impl Dashboard {
             error: None,
             workspace_acknowledged: false,
             suggestions: Suggestions::default(),
-            submit_when_ready: false,
+            submit_when_ready: None,
             cursor: Default::default(),
             scroll: None,
         });
@@ -423,28 +424,31 @@ impl Dashboard {
             } => palette.suggestions.cache.contains_key(&fields[0].value),
             _ => false,
         };
-        let mut submit = palette.submit_when_ready && ready;
+        let mut submit = palette.submit_when_ready.filter(|_| ready);
         let mut refused = false;
-        if submit {
-            palette.submit_when_ready = false;
+        if submit.is_some() {
+            palette.submit_when_ready = None;
             // The hints arrived after the user pressed Enter, so they never saw
             // this list. Make them confirm anything but what they typed.
             if let Some(label) = unconfirmed_pick(&palette.page) {
                 palette.error = Some(format!("{label} not found in repository"));
-                submit = false;
+                submit = None;
                 refused = true;
             }
         }
         self.palette = Some(palette);
-        let request = if submit {
-            match self.palette_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+        let request = if let Some(submit_all) = submit {
+            match self.palette_key_with_submit(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                submit_all,
+            ) {
                 DashboardAction::Request(request) => Some(request),
                 _ => None,
             }
         } else {
             None
         };
-        (was_loading || submit || refused, request)
+        (was_loading || submit.is_some() || refused, request)
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
@@ -633,16 +637,17 @@ impl Dashboard {
             }
             if x < cancel.saturating_sub(1)
                 && palette.pending.is_none()
-                && !palette.submit_when_ready
+                && palette.submit_when_ready.is_none()
             {
-                let action =
-                    self.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
-                self.refresh_active_path_listing();
-                return action;
+                return self.palette_key_with_submit(
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    true,
+                );
             }
             return DashboardAction::Redraw;
         }
-        if palette.pending.is_some() || palette.submit_when_ready || !body.contains(point) {
+        if palette.pending.is_some() || palette.submit_when_ready.is_some() || !body.contains(point)
+        {
             return DashboardAction::None;
         }
         let (lines, targets, scroll) = self.palette_body(body);
@@ -755,7 +760,11 @@ impl Dashboard {
     }
 
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
-        let action = self.palette_key_inner(key, false);
+        self.palette_key_with_submit(key, false)
+    }
+
+    fn palette_key_with_submit(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
+        let action = self.palette_key_inner(key, submit);
         self.refresh_active_path_listing();
         action
     }
@@ -776,7 +785,7 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         // Other keys wait for the running request so a submit cannot repeat.
-        if palette.pending.is_some() || palette.submit_when_ready {
+        if palette.pending.is_some() || palette.submit_when_ready.is_some() {
             self.palette = Some(palette);
             return DashboardAction::Redraw;
         }
@@ -1013,7 +1022,7 @@ impl Dashboard {
                             palette.error =
                                 Some(format!("{} not found in available choices", field.label));
                         }
-                        palette.submit_when_ready = false;
+                        palette.submit_when_ready = None;
                         self.palette = Some(palette);
                         return action;
                     }
@@ -1035,7 +1044,7 @@ impl Dashboard {
                         if matches!(command, Command::CreateWorkspace)
                             && !palette.suggestions.cache.contains_key(&fields[0].value)
                         {
-                            palette.submit_when_ready = true;
+                            palette.submit_when_ready = Some(submit);
                             self.palette = Some(palette);
                             return action;
                         }
@@ -1680,7 +1689,7 @@ impl Dashboard {
             "Working…"
         } else if let Some(error) = &palette.error {
             error
-        } else if palette.submit_when_ready {
+        } else if palette.submit_when_ready.is_some() {
             "Waiting for Git suggestions before creating… · Esc cancel"
         } else if let Some(note) = &palette.suggestions.note {
             note
@@ -2090,5 +2099,53 @@ mod mouse_tests {
             panic!()
         };
         assert_eq!(fields[1].value, "aZ");
+    }
+    #[test]
+    fn mouse_submit_from_project_survives_waiting_for_git_suggestions_once() {
+        let mut d = dashboard();
+        d.open_create_workspace();
+        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+            panic!()
+        };
+        fields[0].value = "demo".into();
+        fields[0].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+            label: "demo".into(),
+            value: "demo".into(),
+        }]));
+        d.palette_paste("deferred");
+        click(&mut d, "Project", 0, 100, 30);
+        assert!(!matches!(
+            click(&mut d, "[Submit]", 1, 100, 30),
+            DashboardAction::Request(_)
+        ));
+        assert!(d.poll_palette().1.is_none(), "inspection is still pending");
+        // Supply the awaited suggestion result deterministically; exercise the
+        // production idle-poll replay, without a timing-dependent Git worker.
+        let palette = d.palette.as_mut().unwrap();
+        palette.suggestions.cache.insert(
+            "demo".into(),
+            Ok(super::super::git_hints::Hints {
+                branches: vec!["develop".into()],
+                base: "develop".into(),
+            }),
+        );
+        palette.suggestions.inspect = None;
+        let (_, request) = d.poll_palette();
+        let message =
+            request.expect("explicit Submit must survive the suggestion wait from Project");
+        assert!(
+            matches!(message.request, Request::CreateWorkspace { project, name, branch: BranchRequest::New { base, .. } } if project == "demo" && name == "deferred" && base == "develop")
+        );
+        assert!(
+            d.poll_palette().1.is_none(),
+            "later polls cannot repeat the request"
+        );
+        assert!(
+            !matches!(
+                click(&mut d, "[Submit]", 1, 100, 30),
+                DashboardAction::Request(_)
+            ),
+            "pending request cannot repeat on click"
+        );
     }
 }
