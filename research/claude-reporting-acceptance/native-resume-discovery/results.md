@@ -62,3 +62,5 @@ The minimum affected verification is:
 4. one native 2.1.267 integration run from the implemented revision proving bound identity, carried Partial conversation history, synchronous callbacks, foreground ownership, ordinary exit, and task-owned cleanup.
 
 No later provider version, continue form, in-process switch, fork form, Complete accounting, or Confirmed activity transition is part of this source certification.
+
+Independent review approved source-only commit `36b3f5960e4b4f27931e1224597d2b06e0cf0e9d`. The reviewer independently checked JSON validity, identity/history relationships, the missing-start failure, cleanup assertions, collector schema descriptions, and committed whitespace. Runtime implementation and native integration remain separate gates.

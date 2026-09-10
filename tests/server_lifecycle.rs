@@ -7588,6 +7588,10 @@ fn agent_admission_native_helper() {
                 }
             }
             "wrong" => payload["session_id"] = "wrong-conversation".into(),
+            "resume-root" => payload["source"] = "resume".into(),
+            "missing-source" => {
+                payload.as_object_mut().unwrap().remove("source");
+            }
             "child" => payload["agent_id"] = "child-1".into(),
             "malformed-child" => payload["agent_id"] = serde_json::Value::Null,
             "empty-child" => payload["agent_id"] = "".into(),
@@ -7601,6 +7605,7 @@ fn agent_admission_native_helper() {
                 payload["source"] = "fork".into();
                 payload["session_id"] = "uncertified-other-root".into();
             }
+            "resume-transition" => payload["source"] = "resume".into(),
             "compact" => {
                 payload["hook_event_name"] = "SessionStart".into();
                 payload["source"] = "compact".into();
@@ -7914,6 +7919,189 @@ fn agent_admission_private_claude_route_binds_once_and_clear_retains_lease() {
 fn agent_admission_branch_freezes_without_replacement_or_reopening() {
     assert_initial_admission("branch", None);
 }
+
+#[test]
+fn agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "resume-admission-setup");
+    let native = fixture._root.path().join("claude");
+    std::fs::write(
+        &native,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit 0; fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("resume-admission-probe");
+    let transcript = fixture._root.path().join("resumed-root.jsonl");
+    let expected = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+    let summary = fixture.create_session_summary(
+        "resume-admission",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$7" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$5" OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" --resume "$3" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf RESUME_ADMISSION_FINISHED; IFS= read -r done"#.into(),
+            "resume-admission-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            expected.into(),
+            probe.clone().into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            transcript.into_os_string(),
+            fixture.socket.clone().into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
+        format!(
+            "--resume\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
+    assert!(fixture.session_summary(summary.id).agent.is_none());
+
+    for (index, command) in ["wrong", "child", "missing-source", "root", "resume-root"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if command != "resume-root" {
+            assert!(
+                fixture.session_summary(summary.id).agent.is_none(),
+                "{command} admitted the resumed conversation"
+            );
+        }
+    }
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("matching resume root did not bind");
+    assert_eq!(bound.binding.conversation, expected);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        if current.metrics.as_ref().is_some_and(|metrics| {
+            metrics.sample.usage.value.input_tokens == Some(10)
+                && metrics.sample.usage.value.output_tokens == Some(1)
+        }) {
+            assert_eq!(
+                current.metrics.unwrap().sample.usage.value.scope,
+                ovrcr::protocol::UsageScope::Conversation
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "pre-invocation transcript usage was not collected"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    for (index, command) in [
+        "activity:UserPromptSubmit:A",
+        "activity:Stop:A",
+        "grow-transcript",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 5));
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        if current.metrics.as_ref().is_some_and(|metrics| {
+            metrics.sample.usage.value.input_tokens == Some(60)
+                && metrics.sample.usage.value.output_tokens == Some(6)
+        }) {
+            assert_eq!(
+                current.activity.unwrap().state,
+                ovrcr::session::AgentActivity::Idle
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "new resumed-turn transcript record was not counted once"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "compact".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=8");
+    let compact = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(compact.binding, bound.binding);
+    assert_eq!(
+        compact.health.state,
+        ovrcr::protocol::ReporterHealth::Connected
+    );
+
+    for (index, command) in ["resume-transition", "clear", "branch", "resume-root"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(
+            current.health.state,
+            ovrcr::protocol::ReporterHealth::Unavailable
+        );
+    }
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "RESUME_ADMISSION_FINISHED");
+}
+
 fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>) {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();

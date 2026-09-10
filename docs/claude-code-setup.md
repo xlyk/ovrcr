@@ -1,8 +1,11 @@
 # Set up Claude Code reporting
 
-Use Claude Code **2.1.267** and a fresh interactive invocation. Resume, continue,
-print mode, background/fork mode, and in-process conversation switching are not
-supported reporting paths. See the [support matrix](agent-reporting-support.md)
+Use Claude Code **2.1.267** and an interactive foreground invocation. OVRCR
+supports a fresh invocation or an initial resume using the separate-token form
+`--resume UUID`, where `UUID` is the known canonical lowercase RFC 4122 UUIDv4.
+Short `-r`, equals syntax, picker/name/search values, positional prompts,
+continue, print mode, background/fork mode, and in-process conversation switching
+are not supported reporting paths. See the [support matrix](agent-reporting-support.md)
 for evidence and remaining acceptance gaps.
 
 ## Compose the settings
@@ -43,6 +46,19 @@ Launch the supervisor inside an OVRCR session:
 ```sh
 ovrcr new --project demo --workspace hooks --name agent -- ovrcr agent run --provider claude -- claude
 ```
+
+To resume a known conversation, preserve the native Claude arguments exactly:
+
+```sh
+ovrcr new --project demo --workspace hooks --name resumed -- ovrcr agent run --provider claude -- claude --resume 5ebc5f9b-54b5-4928-9955-dc81c23743dd
+```
+
+OVRCR does not add `--session-id` to this form. Reporting binds only after a
+matching root `SessionStart` callback with `source=resume` supplies its transcript
+path. Existing
+recognized assistant rows in that transcript remain partial conversation usage;
+new distinct rows are added once, while estimated status-line cost remains an
+independent measurement.
 
 Use one root agent per PTY. The supervisor preserves Claude's terminal and native
 exit behavior. Missing reporting transport lets Claude run without tracking;

@@ -1919,6 +1919,42 @@ fn agent_run_preserves_native_argv_stdio_and_exit_without_server() {
 }
 
 #[test]
+fn claude_doctor_reports_only_the_certified_initial_resume_form() {
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("claude");
+    std::fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '2.1.267 (Claude Code)\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .args(["agent", "doctor", "claude", "--json", "--executable"])
+        .arg(&executable);
+    let output = run_cli_bounded(command).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["supported_version"], "2.1.267");
+    assert_eq!(value["probe_status"], "supported");
+    assert_eq!(value["capabilities"]["initial_invocation"]["fresh"], true);
+    assert_eq!(
+        value["capabilities"]["initial_invocation"]["resume"],
+        "explicit_canonical_lowercase_uuid_v4"
+    );
+    assert_eq!(
+        value["capabilities"]["initial_invocation"]["continue"],
+        false
+    );
+    assert_eq!(value["capabilities"]["initial_invocation"]["fork"], false);
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
 fn agent_run_unavailable_server_passes_native_help_version_and_signal_exit() {
     use std::os::unix::process::ExitStatusExt;
     let root = tempfile::tempdir().unwrap();

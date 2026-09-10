@@ -148,7 +148,8 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
             }
         }
         eprintln!(
-            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with Claude Code 2.1.267; supplied settings do not prove effective enterprise/plugin configuration. Launcher inside an OVRCR session: {} agent run --provider claude -- claude",
+            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with Claude Code 2.1.267; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher: {} agent run --provider claude -- claude --resume UUID",
+            quote(&executable),
             quote(&executable)
         );
         eprintln!(
@@ -293,7 +294,7 @@ pub(super) fn doctor(
                         "bound"
                     }
                     None => {
-                        remediation.push("Start Claude with ovrcr agent run --provider claude -- claude inside this OVRCR session.".into());
+                        remediation.push("Start Claude with ovrcr agent run --provider claude -- claude, or resume a known canonical UUIDv4 with claude --resume UUID, inside this OVRCR session.".into());
                         "unbound"
                     }
                 },
@@ -315,7 +316,7 @@ pub(super) fn doctor(
         "probe_status":if supported { "supported" } else { "unsupported_or_unavailable" },
         "configuration":{"status":configuration, "effective_configuration":"unverified", "issues":issues},
         "session_status":session_status, "binding":binding, "source_health":health,
-        "capabilities":{"activity":"observed", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
+        "capabilities":{"initial_invocation":{"fresh":true,"resume":"explicit_canonical_lowercase_uuid_v4","continue":false,"fork":false}, "activity":"observed", "settled_completion":"unverified", "usage":"recognized_root_transcript_records_partial", "complete_accounting":false, "context":"statusline_source_reported"},
         "remediation":remediation
     })).map_err(RuntimeError::internal)?);
     Ok(())

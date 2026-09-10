@@ -20,17 +20,24 @@ pub fn receiver(
     lease: Option<InvocationLease>,
     argv: &mut Vec<OsString>,
 ) -> ovrcr_runtime::agent_runner::HookHandler {
-    let expected = if lease.is_some() && eligible(argv) && pinned_version(&argv[0]) {
-        fresh_uuid().ok()
+    let launch = if lease.is_some() && eligible(argv) && pinned_version(&argv[0]) {
+        eligible_launch(argv).and_then(|launch| match launch {
+            EligibleLaunch::Fresh => fresh_uuid()
+                .ok()
+                .map(|conversation| (conversation, InitialSource::Startup)),
+            EligibleLaunch::Resume(conversation) => Some((conversation, InitialSource::Resume)),
+        })
     } else {
         None
     };
-    if let Some(expected) = &expected {
+    if let Some((expected, InitialSource::Startup)) = &launch {
         argv.splice(
             1..1,
             [OsString::from("--session-id"), OsString::from(expected)],
         );
         eprintln!("agent awaiting certified startup");
+    } else if matches!(launch.as_ref(), Some((_, InitialSource::Resume))) {
+        eprintln!("agent awaiting certified resume");
     } else if lease.is_some() {
         eprintln!("agent admission unavailable; running native command");
     } else {
@@ -38,7 +45,10 @@ pub fn receiver(
     }
     let mut receiver = Receiver {
         lease,
-        expected,
+        expected: launch
+            .as_ref()
+            .map(|(conversation, _)| conversation.clone()),
+        initial_source: launch.map(|(_, source)| source),
         phase: Phase::Waiting,
         prompt: None,
         activity_revision: 0,
@@ -74,8 +84,16 @@ fn eligible(argv: &[OsString]) -> bool {
     eligible_argv(argv)
 }
 fn eligible_argv(argv: &[OsString]) -> bool {
+    eligible_launch(argv).is_some()
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EligibleLaunch {
+    Fresh,
+    Resume(String),
+}
+fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
     if argv.first().and_then(|arg| Path::new(arg).file_name()) != Some(OsStr::new("claude")) {
-        return false;
+        return None;
     }
     let values = [
         "--model",
@@ -97,26 +115,36 @@ fn eligible_argv(argv: &[OsString]) -> bool {
     ];
     let mut index = 1;
     let mut prompt = false;
+    let mut resume = None;
     while index < argv.len() {
-        let Some(arg) = argv[index].to_str() else {
-            return false;
-        };
+        let arg = argv[index].to_str()?;
         if arg == "--" {
-            return !prompt && argv.len() == index + 2;
+            return (resume.is_none() && !prompt && argv.len() == index + 2)
+                .then_some(EligibleLaunch::Fresh);
         }
         if arg.starts_with('-') {
             let (name, value) = arg
                 .split_once('=')
                 .map_or((arg, None), |(name, value)| (name, Some(value)));
-            if values.contains(&name) {
+            if name == "--resume" {
+                if value.is_some() || resume.is_some() {
+                    return None;
+                }
+                index += 1;
+                let value = argv.get(index).and_then(|value| value.to_str())?;
+                if !canonical_uuid_v4(value) {
+                    return None;
+                }
+                resume = Some(value.to_owned());
+            } else if values.contains(&name) {
                 if value.is_none() {
                     index += 1;
                     if index >= argv.len() || argv[index].as_encoded_bytes().starts_with(b"-") {
-                        return false;
+                        return None;
                     }
                 }
             } else if !flags.contains(&name) || value.is_some() {
-                return false;
+                return None;
             }
         } else {
             // Explicit -- permits a prompt that otherwise resembles a management command.
@@ -144,13 +172,31 @@ fn eligible_argv(argv: &[OsString]) -> bool {
                 "upgrade",
             ];
             if prompt || COMMANDS.contains(&arg) {
-                return false;
+                return None;
             }
             prompt = true;
         }
         index += 1;
     }
-    true
+    match (resume, prompt) {
+        (Some(conversation), false) => Some(EligibleLaunch::Resume(conversation)),
+        (None, _) => Some(EligibleLaunch::Fresh),
+        (Some(_), true) => None,
+    }
+}
+fn canonical_uuid_v4(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && [8, 13, 18, 23]
+            .into_iter()
+            .all(|index| bytes[index] == b'-')
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            [8, 13, 18, 23].contains(&index)
+                || byte.is_ascii_digit()
+                || (b'a'..=b'f').contains(byte)
+        })
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
 }
 pub fn pinned_version(executable: &OsStr) -> bool {
     let mut command = Command::new(executable);
@@ -255,9 +301,23 @@ enum Phase {
     Bound,
     Closed,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InitialSource {
+    Startup,
+    Resume,
+}
+impl InitialSource {
+    fn matches(self, source: &str) -> bool {
+        matches!(
+            (self, source),
+            (Self::Startup, "startup") | (Self::Resume, "resume")
+        )
+    }
+}
 struct Receiver {
     lease: Option<InvocationLease>,
     expected: Option<String>,
+    initial_source: Option<InitialSource>,
     phase: Phase,
     prompt: Option<String>,
     activity_revision: u64,
@@ -303,7 +363,17 @@ impl Receiver {
         else {
             return b"admission-ignored\n".to_vec();
         };
-        let transition = matches!(&event.kind, ClaudeEventKind::SessionStart { source } if matches!(source.as_str(), "clear" | "resume" | "fork"));
+        let initial_start = matches!(
+            &event.kind,
+            ClaudeEventKind::SessionStart { source }
+                if matches!(self.phase, Phase::Waiting | Phase::Binding { .. })
+                    && self.initial_source.is_some_and(|expected| expected.matches(source))
+                    && event.session == expected
+                    && (self.initial_source != Some(InitialSource::Resume)
+                        || event.transcript_path.is_some())
+        );
+        let transition = matches!(&event.kind, ClaudeEventKind::SessionStart { source } if matches!(source.as_str(), "clear" | "resume" | "fork"))
+            && !initial_start;
         if event.session != expected && !transition {
             return b"admission-ignored\n".to_vec();
         }
@@ -349,7 +419,7 @@ impl Receiver {
             }
             return b"admission-accepted\n".to_vec();
         }
-        if !matches!(&event.kind, ClaudeEventKind::SessionStart { source } if source == "startup") {
+        if !initial_start {
             return b"admission-ignored\n".to_vec();
         }
         let Some(lease) = &mut self.lease else {
@@ -777,6 +847,7 @@ mod tests {
                 capability: [0; 32],
             }),
             expected: Some("expected".into()),
+            initial_source: Some(InitialSource::Startup),
             phase: Phase::Bound,
             prompt: None,
             activity_revision: 0,
@@ -874,7 +945,118 @@ mod tests {
     }
 
     #[test]
+    fn initial_admission_argv_accepts_only_certified_explicit_uuid_resume() {
+        let uuid = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+        let resume = args(&[
+            "claude",
+            "--resume",
+            uuid,
+            "--model",
+            "sonnet",
+            "--strict-mcp-config",
+        ]);
+        assert_eq!(
+            eligible_launch(&resume),
+            Some(EligibleLaunch::Resume(uuid.into()))
+        );
+
+        for arguments in [
+            vec!["claude", "--resume"],
+            vec!["claude", "-r", uuid],
+            vec!["claude", "--resume=5ebc5f9b-54b5-4928-9955-dc81c23743dd"],
+            vec!["claude", "--resume", "5EBC5F9B-54B5-4928-9955-DC81C23743DD"],
+            vec![
+                "claude",
+                "--resume",
+                "{5ebc5f9b-54b5-4928-9955-dc81c23743dd}",
+            ],
+            vec!["claude", "--resume", "5ebc5f9b54b549289955dc81c23743dd"],
+            vec!["claude", "--resume", "00000000-0000-0000-0000-000000000000"],
+            vec!["claude", "--resume", "5ebc5f9b-54b5-3928-9955-dc81c23743dd"],
+            vec!["claude", "--resume", "5ebc5f9b-54b5-4928-7955-dc81c23743dd"],
+            vec!["claude", "--resume", uuid, "--resume", uuid],
+            vec!["claude", "--resume", uuid, "prompt"],
+            vec!["claude", "--resume", uuid, "--continue"],
+            vec!["claude", "--resume", uuid, "--fork-session", uuid],
+            vec!["claude", "--resume", uuid, "--session-id", uuid],
+            vec!["claude", "--resume", uuid, "--background"],
+            vec!["claude", "--resume", uuid, "--print"],
+        ] {
+            assert!(!eligible_argv(&args(&arguments)), "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn initial_resume_rejects_wrong_child_missing_source_and_end_without_binding() {
+        fn waiting_resume() -> Receiver {
+            Receiver {
+                lease: None,
+                expected: Some("5ebc5f9b-54b5-4928-9955-dc81c23743dd".into()),
+                initial_source: Some(InitialSource::Resume),
+                phase: Phase::Waiting,
+                prompt: None,
+                activity_revision: 0,
+                metrics: None,
+                metrics_revision: 0,
+                health_revision: 0,
+                source_health: None,
+                transcript_path: None,
+                collector: None,
+                cost_watermark: None,
+                collector_caught_up: false,
+            }
+        }
+        let envelope = |payload| {
+            serde_json::to_vec(&serde_json::json!({
+                "provider":"claude",
+                "origin":"claude-hook",
+                "payload":payload,
+            }))
+            .unwrap()
+        };
+        let deadline = || Instant::now() + Duration::from_secs(1);
+        for payload in [
+            serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"}),
+            serde_json::json!({"hook_event_name":"SessionStart","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"}),
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl","agent_id":"child"}),
+            serde_json::json!({"hook_event_name":"SessionEnd","reason":"other","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd"}),
+        ] {
+            let mut receiver = waiting_resume();
+            assert_eq!(
+                receiver.handle(&envelope(payload), deadline()),
+                b"admission-ignored\n"
+            );
+            assert!(matches!(receiver.phase, Phase::Waiting));
+        }
+        for payload in [
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"wrong-conversation","transcript_path":"/exact/root.jsonl"}),
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd"}),
+        ] {
+            let mut receiver = waiting_resume();
+            assert_eq!(
+                receiver.handle(&envelope(payload), deadline()),
+                b"admission-ignored\n"
+            );
+            assert!(matches!(receiver.phase, Phase::Closed));
+        }
+    }
+
+    #[test]
     fn initial_admission_lost_bind_reply_uses_original_operation_status() {
+        assert_bind_reply_status(InitialSource::Startup, true);
+    }
+
+    #[test]
+    fn initial_resume_lost_bind_reply_uses_original_operation_status() {
+        assert_bind_reply_status(InitialSource::Resume, true);
+    }
+
+    #[test]
+    fn initial_resume_failed_bind_status_closes_without_rebinding() {
+        assert_bind_reply_status(InitialSource::Resume, false);
+    }
+
+    fn assert_bind_reply_status(initial_source: InitialSource, recover: bool) {
         use ovrcr_protocol::{
             AgentBinding, AgentProvider, AgentSecret, ClientMessage, Request, ServerMessage,
             SupervisorAuth, exchange_preamble, read_frame, write_frame,
@@ -931,7 +1113,14 @@ mod tests {
                 &mut reattached,
                 &ServerMessage::Response {
                     request_id: status.request_id,
-                    response: Response::AgentOperation(AgentOperationResult::Bound(returned)),
+                    response: if recover {
+                        Response::AgentOperation(AgentOperationResult::Bound(returned))
+                    } else {
+                        Response::Error {
+                            code: ovrcr_protocol::ErrorCode::Conflict,
+                            message: "fixture rejected binding status".into(),
+                        }
+                    },
                 },
             )
             .unwrap();
@@ -947,6 +1136,7 @@ mod tests {
         let mut receiver = Receiver {
             lease: Some(lease),
             expected: Some("expected".into()),
+            initial_source: Some(initial_source),
             phase: Phase::Waiting,
             prompt: None,
             activity_revision: 0,
@@ -959,24 +1149,49 @@ mod tests {
             cost_watermark: None,
             collector_caught_up: false,
         };
-        let input=br#"{"provider":"claude","origin":"claude-hook","payload":{"hook_event_name":"SessionStart","source":"startup","session_id":"expected"}}"#;
+        let transcript = root.path().join("resume.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+        let input = serde_json::to_vec(&serde_json::json!({
+            "provider":"claude",
+            "origin":"claude-hook",
+            "payload":{
+                "hook_event_name":"SessionStart",
+                "source":match initial_source {
+                    InitialSource::Startup => "startup",
+                    InitialSource::Resume => "resume",
+                },
+                "session_id":"expected",
+                "transcript_path":transcript,
+            }
+        }))
+        .unwrap();
         assert_eq!(
-            receiver.handle(input, Instant::now() + Duration::from_millis(30)),
+            receiver.handle(&input, Instant::now() + Duration::from_millis(30)),
             b"admission-unavailable\n"
         );
         assert!(matches!(receiver.phase, Phase::Binding { .. }));
         assert_eq!(
-            receiver.handle(input, Instant::now() + Duration::from_secs(1)),
-            b"admission-accepted\n"
+            receiver.handle(&input, Instant::now() + Duration::from_secs(1)),
+            if recover {
+                b"admission-accepted\n".as_slice()
+            } else {
+                b"admission-unavailable\n".as_slice()
+            }
         );
-        assert_eq!(
-            receiver.lease.as_ref().unwrap().binding.as_ref(),
-            Some(&binding)
-        );
-        assert_eq!(
-            receiver.handle(input, Instant::now() + Duration::from_secs(1)),
-            b"admission-ignored\n"
-        );
+        if recover {
+            assert_eq!(
+                receiver.lease.as_ref().unwrap().binding.as_ref(),
+                Some(&binding)
+            );
+        } else {
+            assert!(matches!(receiver.phase, Phase::Closed));
+        }
+        if recover && initial_source == InitialSource::Startup {
+            assert_eq!(
+                receiver.handle(&input, Instant::now() + Duration::from_secs(1)),
+                b"admission-ignored\n"
+            );
+        }
         server.join().unwrap();
     }
 
@@ -1111,6 +1326,7 @@ mod tests {
                 capability: [0; 32],
             }),
             expected: Some("expected".into()),
+            initial_source: Some(InitialSource::Startup),
             phase: Phase::Bound,
             prompt: None,
             activity_revision: 0,

@@ -31,4 +31,4 @@ Task 7 receives no certified differing correction, complete category set, or fin
 
 Further native work must capture only attributable identities and numeric measurements in sanitized evidence, preserve the one-second callback and absolute two-second completion budgets, and keep failed or unavailable checks visible.
 
-Independent discovery review confirmed the pre-existing distinctions on 2026-09-10. The initial explicit UUID resume source contract awaits independent source review before implementation; integrated native acceptance remains a separate gate.
+Independent discovery review confirmed the pre-existing distinctions on 2026-09-10. Independent review approved the initial explicit UUID resume source contract at `36b3f59`; runtime implementation and integrated native acceptance remain separate gates.

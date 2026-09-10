@@ -81,6 +81,6 @@ The [integrated local and hosted results](final-integrated/results.md) record th
 The focused socket-owner reconciliation ran
 `rtk cargo test -p ovrcr-runtime server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup -- --exact --nocapture`
 from the `c2fb7ea` working tree with the added reason assertion. It passed one
-test with 98 filtered out. The raw terminal capture is retained at
-`/tmp/ovrcr-supervisor-disconnect-20260910.txt`; it is outside the repository
+test with 98 filtered out. The RTK-compressed terminal capture is retained at
+[retained capture](part2-proof/supervisor-disconnect.txt); it is outside the repository
 because the coordinator owns staged evidence files.
