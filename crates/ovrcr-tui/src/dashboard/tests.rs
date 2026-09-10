@@ -1212,7 +1212,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 pid: Some(1),
                 started_unix_ms: now,
                 phase: SessionPhase::Running,
-                activity: AgentActivity::Idle,
+                activity: AgentActivity::Busy,
                 context_usage: Some(ContextUsageSnapshot {
                     report: ContextUsageReport {
                         source: ContextSource::Generic,
@@ -1286,7 +1286,12 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .collect()
     }
     let text = drawn(&dashboard, now, 180);
-    for expected in ["idle observed", "ctx —", "tokens conv partial 25", "cost —"] {
+    for expected in [
+        "agent idle observed",
+        "ctx —",
+        "tokens conv partial 25",
+        "cost —",
+    ] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
     assert!(!text.contains("99%"));
@@ -1306,7 +1311,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     metrics.sample.context.value.used_tokens = Some(50);
     let text = drawn(&dashboard, now, 180);
     for expected in [
-        "idle confirmed",
+        "agent idle confirmed",
         "ctx 50%",
         "tokens conv partial 25 stale",
         "cost inv $0.00",
@@ -1322,7 +1327,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     metrics.sample.cost.value.as_mut().unwrap().kind = CostKind::Estimated;
     metrics.sample.context.freshness = MeasurementFreshness::Uncertain;
     let text = drawn(&dashboard, now, 180);
-    for expected in ["unavailable", "estimate $0.00", "50% uncertain"] {
+    for expected in ["agent unavailable", "estimate $0.00", "50% uncertain"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
     for width in [1, 2, 10, 40, 80] {

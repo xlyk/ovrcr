@@ -520,12 +520,17 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
                     Span::raw("")
                 } else {
-                    let label = match session.activity {
-                        AgentActivity::Unknown => "agent unknown",
-                        AgentActivity::Idle => "agent idle",
-                        AgentActivity::Busy => "agent busy",
-                        AgentActivity::WaitingInput => "agent waiting input",
-                        AgentActivity::Error => "agent error",
+                    let label = if session.agent.is_some() {
+                        format!("agent{}", provider_activity(session))
+                    } else {
+                        match session.activity {
+                            AgentActivity::Unknown => "agent unknown",
+                            AgentActivity::Idle => "agent idle",
+                            AgentActivity::Busy => "agent busy",
+                            AgentActivity::WaitingInput => "agent waiting input",
+                            AgentActivity::Error => "agent error",
+                        }
+                        .to_owned()
                     };
                     Span::styled(format!("  {label}"), Style::default().fg(TEAL))
                 };

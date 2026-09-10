@@ -16,3 +16,10 @@ The existing second metadata row shows `tokens conv partial 25  cost inv estimat
 - attempt06: changed-file rustfmt check and diff check: exit 0.
 
 The new actual-draw regression covers quality, independent stale usage with current context/cost, partial tokens (including avoiding cache double count), unknown context after clear, absent bound metrics with legacy data retained, absent/zero/estimated cost, uncertainty, unavailable health, no binding identifier disclosure, tiny widths, and both split metadata rows. These are headless rendering checks, not native macOS/Linux GUI acceptance. Narrow panes clip metadata through existing Ratatui bounds; full details require sufficient width or CLI inspection.
+
+
+## Native review correction: selected header activity
+
+Coordinator native screenshot/accessibility evidence `task7-gui/04-synthetic-metrics.*` showed sidebar `idle observed` but selected header plain `agent idle`. The selected header still used the legacy activity field. It now uses the same managed activity/quality/health helper as the sidebar whenever an agent snapshot exists, retaining the legacy rendering for unbound sessions. Split layout was not redesigned.
+
+Attempt07 is actual-draw RED with legacy Busy deliberately conflicting with managed Idle/Observed. The regression specifically requires header strings `agent idle observed`, `agent idle confirmed`, and `agent unavailable`. Attempt08: all38 owning-library tests passed. Attempt09: all17 root sidebar tests passed, including existing unbound legacy metadata/lifecycle assertions. Attempt10 owning clippy passed; attempt11 diff check passed. Coordinator owns final GUI rebuild/recapture; these checks alone are not native acceptance.
