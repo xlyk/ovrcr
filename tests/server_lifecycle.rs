@@ -7161,6 +7161,11 @@ fn agent_run_native_exec_helper() {
     }
     let expected_watch = std::env::var_os("OVRCR_EXPECT_WATCH_SOCKET").unwrap();
     let private_listener = std::env::var_os("OVRCR_AGENT_SOCKET").unwrap();
+    std::fs::write(
+        probe.with_extension("socket"),
+        Path::new(&private_listener).as_os_str().as_bytes(),
+    )
+    .unwrap();
     let expected_watch = Path::new(&expected_watch).as_os_str().as_bytes();
     let private_listener = Path::new(&private_listener).as_os_str().as_bytes();
     let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
@@ -7275,6 +7280,29 @@ fn agent_run_native_exec_helper() {
     println!("NATIVE_EXEC_STDIN={}", input.trim_end());
 }
 
+fn owned_collector_group(supervisor_pid: libc::pid_t) -> libc::pid_t {
+    let processes = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid=,command="])
+        .output()
+        .unwrap();
+    assert!(processes.status.success());
+    let children: Vec<_> = String::from_utf8(processes.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|row| {
+            let mut fields = row.split_whitespace();
+            let pid = fields.next()?.parse::<libc::pid_t>().ok()?;
+            let parent = fields.next()?.parse::<libc::pid_t>().ok()?;
+            let group = fields.next()?.parse::<libc::pid_t>().ok()?;
+            (parent == supervisor_pid && fields.any(|arg| arg == "__agent-collector"))
+                .then_some((pid, group))
+        })
+        .collect();
+    assert_eq!(children.len(), 1, "expected one task-owned collector");
+    assert_eq!(children[0].0, children[0].1, "collector must own its group");
+    children[0].1
+}
+
 #[test]
 fn agent_run_supervisor_sigkill_releases_reporting_watch() {
     use ovrcr::protocol::{
@@ -7352,6 +7380,8 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         .clone()
         .expect("proxy did not observe the root binding");
     assert_eq!(old_binding, old_snapshot.binding);
+    let collector_pgid = owned_collector_group(supervisor_pid);
+    fixture.process_groups.lock().unwrap().push(collector_pgid);
 
     assert_eq!(unsafe { libc::kill(supervisor_pid, libc::SIGKILL) }, 0);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -7369,6 +7399,10 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         );
         thread::park_timeout(Duration::from_millis(5));
     };
+    assert!(
+        wait_group_absent(collector_pgid, Duration::from_secs(2)),
+        "collector group survived supervisor death"
+    );
     assert_eq!(disconnected.health.state, ReporterHealth::Unavailable);
     assert_ne!(
         disconnected.metrics.unwrap().sample.usage.value.coverage,
@@ -7495,6 +7529,18 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
 
     assert_eq!(unsafe { libc::kill(-native_pgid, libc::SIGKILL) }, 0);
     assert!(wait_group_absent(native_pgid, Duration::from_secs(2)));
+    let callback_socket =
+        PathBuf::from(std::fs::read_to_string(probe.with_extension("socket")).unwrap());
+    let callback_directory = callback_socket.parent().unwrap();
+    assert!(
+        callback_directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("ovrcr-a-")
+    );
+    std::fs::remove_dir_all(callback_directory).unwrap();
+    assert!(!callback_directory.exists());
     assert_eq!(
         fixture.request(Request::KillSession {
             session: summary.id,
