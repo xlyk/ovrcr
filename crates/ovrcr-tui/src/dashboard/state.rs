@@ -2256,6 +2256,7 @@ impl Dashboard {
                 request_id,
                 response,
             } => match response {
+                Response::AgentOperation(_) => {}
                 Response::Hierarchy(hierarchy) => outgoing.extend(self.update_hierarchy(hierarchy)),
                 Response::Screen {
                     session,

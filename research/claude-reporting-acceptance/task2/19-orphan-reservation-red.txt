@@ -1,0 +1,26 @@
+command: rtk proxy cargo test -p ovrcr-runtime --lib agent_report_reservation_connection_loss -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.07s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-e053d05bcb14d016)
+
+running 1 test
+agent reporting fixture owned pid/pgid=94597
+
+thread 'server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot' (30853158) panicked at crates/ovrcr-runtime/src/server/tests.rs:6070:9:
+assertion `left == right` failed: lost reservation connection must release even before bind/Hello
+  left: AgentOperation(Reserved(AgentReservation { epoch: 1, lease: [redacted] }))
+ right: AgentOperation(Released)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+agent reporting fixture cleaned pgid=94597
+test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... FAILED
+
+failures:
+
+failures:
+    server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 88 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`

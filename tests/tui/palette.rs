@@ -1154,6 +1154,8 @@ fn created_session_enters_terminal_mode() {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,

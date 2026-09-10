@@ -1,0 +1,14 @@
+command: rtk proxy cargo test -p ovrcr-runtime --lib agent_reporting -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.86s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-e053d05bcb14d016)
+
+running 2 tests
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.01s

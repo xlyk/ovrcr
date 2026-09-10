@@ -122,6 +122,7 @@ impl DashboardView {
 pub enum AgentUpdate {
     Activity(AgentActivity),
     Context(ContextUsageReport),
+    Provider(crate::ProviderReport),
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +255,13 @@ pub enum Request {
     SetView {
         view: DashboardView,
     },
+    ReserveAgent(crate::ReserveAgent),
+    Supervisor(crate::SupervisorRequest),
+    AgentStatus {
+        auth: crate::SupervisorAuth,
+        operation: String,
+    },
+    SupervisorHello(crate::SupervisorAuth),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +324,7 @@ pub enum Response {
     Task(Box<TaskResponse>),
     HistoryOpened(HistoryOpened),
     HistoryRows(HistoryRows),
+    AgentOperation(crate::AgentOperationResult),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,6 +372,8 @@ mod wire_snapshot {
             started_unix_ms: 3,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
+            agent: None,
+            agent_epoch: 0,
             context_usage: Some(ContextUsageSnapshot {
                 report: ContextUsageReport {
                     source: ContextSource::Generic,
@@ -689,6 +700,18 @@ mod wire_snapshot {
                 .iter()
                 .map(|(n, v)| (format!("TaskRequest::{n}"), encode(v))),
         );
+        all.extend(
+            crate::agent::tests::request_fixtures()
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (format!("AgentRequest::{i}"), encode(v))),
+        );
+        all.extend(
+            crate::agent::tests::response_fixtures()
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (format!("AgentResponse::{i}"), encode(v))),
+        );
         all
     }
 
@@ -728,13 +751,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020101700177016e016c0102030000010000000104010506",
+            "020101700177016e016c01020300000000010000000104010506",
         ),
         ("Response::Screen", "03010301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010101700177016e016c0102030000010000000104010506",
+            "0500010101700177016e016c01020300000000010000000104010506",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -748,12 +771,59 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "020103"),
         (
             "ServerEvent::SessionChanged",
-            "030101700177016e016c0102030000010000000104010506",
+            "030101700177016e016c01020300000000010000000104010506",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),
         ("TaskRequest::Cancel", "0e01"),
         ("TaskRequest::Clean", "0f0101"),
+        (
+            "AgentRequest::0",
+            "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600",
+        ),
+        (
+            "AgentRequest::1",
+            "1d01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        ),
+        (
+            "AgentRequest::2",
+            "1c01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70",
+        ),
+        (
+            "AgentRequest::3",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76",
+        ),
+        (
+            "AgentRequest::4",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a016400076669787475726501036f6e650101000000010a0105010301020101076669787475726501036f6e6501010001000101076669787475726501036f6e65010100",
+        ),
+        (
+            "AgentRequest::5",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601",
+        ),
+        (
+            "AgentRequest::6",
+            "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
+        ),
+        (
+            "AgentRequest::7",
+            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010100020101047475726e",
+        ),
+        (
+            "AgentRequest::8",
+            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010100010a016400076669787475726501036f6e650101000000010a0105010301020101076669787475726501036f6e6501010001000101076669787475726501036f6e65010100",
+        ),
+        (
+            "AgentRequest::9",
+            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
+        ),
+        (
+            "AgentResponse::0",
+            "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+        ),
+        ("AgentResponse::1", "0a010003696e7604636f6e7601"),
+        ("AgentResponse::2", "0a02"),
+        ("AgentResponse::3", "0a03"),
     ];
 
     #[test]

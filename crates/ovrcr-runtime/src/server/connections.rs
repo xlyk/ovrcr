@@ -48,6 +48,24 @@ fn await_view_completion(receiver: Receiver<DispatchCompletion>) -> Response {
     }
 }
 
+struct SupervisorOwnership {
+    state: Arc<ServerState>,
+    session: SessionId,
+    identity: Arc<()>,
+}
+impl Drop for SupervisorOwnership {
+    fn drop(&mut self) {
+        // This is outside the dispatcher; preserve lifecycle delivery when its queue is full.
+        let _ = self
+            .state
+            .dispatch
+            .send(DispatchMessage::AgentDisconnected {
+                session: self.session,
+                owner: self.identity.clone(),
+            });
+    }
+}
+
 pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream) {
     // Complete the version handshake before any frame. Probes that connect
     // and drop, and clients built from other sources, are simply closed.
@@ -60,6 +78,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
     }
     let mut role = ClientRole::Control;
     let mut ownership: Option<DashboardOwnership> = None;
+    let mut supervisor: Option<SupervisorOwnership> = None;
     let dashboard_sink = DashboardSink::new();
     let mut writer: Option<JoinHandle<()>> = None;
     while !state.shutdown.load(Ordering::Acquire) {
@@ -67,6 +86,66 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             Ok(message) => message,
             Err(_) => break,
         };
+        if let Some(session) = match &message.request {
+            Request::SupervisorHello(auth) => Some(auth.session),
+            Request::ReserveAgent(reserve) => Some(reserve.session),
+            _ => None,
+        } {
+            if ownership.is_some()
+                || supervisor
+                    .as_ref()
+                    .is_some_and(|owned| owned.session != session)
+            {
+                let _ = send_direct(
+                    &mut stream,
+                    message.request_id,
+                    error_response(ErrorCode::Conflict, "connection already has an owner"),
+                );
+                break;
+            }
+            let identity = supervisor
+                .as_ref()
+                .map_or_else(|| Arc::new(()), |owned| owned.identity.clone());
+            let response = handle_request_with_id(
+                &state,
+                &mut role,
+                message.request.clone(),
+                message.request_id,
+                Some(&identity),
+            );
+            let accepted = matches!(
+                response,
+                Response::Ok
+                    | Response::AgentOperation(ovrcr_protocol::AgentOperationResult::Reserved(_))
+            );
+            if accepted && supervisor.is_none() {
+                supervisor = Some(SupervisorOwnership {
+                    state: state.clone(),
+                    session,
+                    identity,
+                });
+            }
+            if send_direct(&mut stream, message.request_id, response).is_err() || !accepted {
+                break;
+            }
+            continue;
+        }
+        if supervisor.is_some()
+            && !matches!(
+                message.request,
+                Request::Supervisor(_) | Request::AgentStatus { .. }
+            )
+        {
+            let _ = send_direct(
+                &mut stream,
+                message.request_id,
+                error_response(
+                    ErrorCode::InvalidRequest,
+                    "dedicated supervisor connection accepts only supervisor requests",
+                ),
+            );
+            break;
+        }
         if matches!(message.request, Request::DashboardHello) {
             if writer.is_some() {
                 let (completion, result) = mpsc::sync_channel(1);
@@ -296,10 +375,11 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         if !delivered {
             break;
         }
-        if matches!(role, ClientRole::Control) {
+        if matches!(role, ClientRole::Control) && supervisor.is_none() {
             break;
         }
     }
+    drop(supervisor);
     drop(ownership);
     dashboard_sink.close();
     if let Some(writer) = writer {
@@ -351,6 +431,27 @@ pub(super) fn handle_request_with_id(
                 );
                 Response::Ok
             }),
+        request @ (Request::ReserveAgent(_)
+        | Request::Supervisor(_)
+        | Request::AgentStatus { .. }
+        | Request::SupervisorHello(_)) => {
+            let (completion, result) = mpsc::sync_channel(1);
+            match state.dispatch.try_send(DispatchMessage::AgentCommand {
+                request,
+                owner: owner.cloned(),
+                completion,
+            }) {
+                Ok(()) => result.recv().unwrap_or_else(|_| {
+                    error_response(ErrorCode::Internal, "dispatcher is unavailable")
+                }),
+                Err(mpsc::TrySendError::Full(_)) => {
+                    error_response(ErrorCode::Conflict, "dispatcher queue is full")
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    error_response(ErrorCode::Internal, "dispatcher is unavailable")
+                }
+            }
+        }
         Request::AgentReport(report) => {
             let (completion, result) = mpsc::sync_channel(1);
             match state

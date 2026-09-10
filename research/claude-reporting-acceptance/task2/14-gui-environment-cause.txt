@@ -1,0 +1,4 @@
+The broad workspace run stopped at GUI fixture setup before the remaining suites. This is not a native acceptance pass.
+Retained server.log:
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-uv8y7w/server.sock
+Internal: bind server socket /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-uv8y7w/server.sock: Operation not permitted (os error 1)

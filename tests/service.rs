@@ -349,6 +349,8 @@ fn service_install_refuses_when_sessions_exist() {
                         phase: SessionPhase::Running,
                         activity: AgentActivity::Idle,
                         context_usage: None,
+                        agent: None,
+                        agent_epoch: 0,
                     }],
                 },
                 other => panic!("install sent {other:?}"),

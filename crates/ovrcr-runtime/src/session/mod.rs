@@ -14,6 +14,7 @@ pub use ovrcr_protocol::{AgentActivity, SessionId, SessionPhase, SessionSummary,
 
 mod io;
 mod process;
+mod reporting;
 use io::{read_pty, wait_for_child};
 use process::*;
 
@@ -171,6 +172,7 @@ pub enum SessionEvent {
 }
 
 struct SessionState {
+    reporting: reporting::ReportingState,
     phase: SessionPhase,
     pid: Option<u32>,
     activity: AgentActivity,
@@ -411,8 +413,11 @@ impl Session {
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
+                agent: None,
+                agent_epoch: 0,
             },
             state: Mutex::new(SessionState {
+                reporting: reporting::ReportingState::default(),
                 phase: SessionPhase::Running,
                 pid: Some(pid),
                 activity: AgentActivity::Unknown,
@@ -485,6 +490,28 @@ impl Session {
         summary.pid = state.pid;
         summary.activity = state.activity;
         summary.context_usage = state.context_usage.clone();
+        summary.agent_epoch = state.reporting.epoch;
+        summary.agent = state.reporting.snapshot.clone();
+        if let Some(agent) = &summary.agent {
+            summary.activity = agent
+                .activity
+                .as_ref()
+                .map_or(AgentActivity::Unknown, |a| a.state);
+            summary.context_usage = agent.metrics.as_ref().map(|metrics| ContextUsageSnapshot {
+                report: ovrcr_protocol::context::ContextUsageReport {
+                    source: if agent.binding.provider == ovrcr_protocol::AgentProvider::Claude {
+                        ovrcr_protocol::context::ContextSource::ClaudeCodeStatusline
+                    } else {
+                        ovrcr_protocol::context::ContextSource::Generic
+                    },
+                    model: metrics.sample.model.clone(),
+                    conversation: Some(agent.binding.conversation.clone()),
+                    used_tokens: metrics.sample.context.value.used_tokens,
+                    capacity_tokens: metrics.sample.context.value.capacity_tokens,
+                },
+                received_unix_ms: metrics.context_received_unix_ms,
+            });
+        }
         summary
     }
 
@@ -576,6 +603,7 @@ impl Session {
                 state.phase = phase;
                 state.pid = None;
                 state.activity = AgentActivity::Unknown;
+                state.reporting.lost("pty_exited_before_finalization");
                 state.hook_capability = None;
                 self.state_changed.notify_all();
             }
@@ -591,11 +619,19 @@ impl Session {
         {
             bail!("agent report rejected");
         }
+        if state.reporting.active()
+            && state.reporting.snapshot.is_some()
+            && !matches!(report.update, AgentUpdate::Provider(_))
+        {
+            bail!("legacy reports rejected while supervisor is active");
+        }
         match &report.update {
+            AgentUpdate::Provider(provider) => state.reporting.apply(provider, false),
             AgentUpdate::Activity(activity) => {
                 let mut next_order = state.activity_order;
                 next_order.accept(report.sequence)?;
-                let changed = state.activity != *activity;
+                let changed = state.reporting.snapshot.is_some() || state.activity != *activity;
+                state.reporting.snapshot = None;
                 state.activity_order = next_order;
                 state.activity = *activity;
                 Ok(changed)
@@ -611,7 +647,9 @@ impl Session {
                         .unwrap_or_default()
                         .as_millis() as u64,
                 };
-                let changed = state.context_usage.as_ref() != Some(&snapshot);
+                let changed = state.reporting.snapshot.is_some()
+                    || state.context_usage.as_ref() != Some(&snapshot);
+                state.reporting.snapshot = None;
                 state.context_order = next_order;
                 state.context_usage = Some(snapshot);
                 Ok(changed)
@@ -620,7 +658,9 @@ impl Session {
     }
 
     pub fn revoke_hook_capability(&self) {
-        self.state.lock().unwrap().hook_capability = None;
+        let mut state = self.state.lock().unwrap();
+        state.reporting.lost("capability_revoked");
+        state.hook_capability = None;
     }
 
     pub fn current_screen(&self) -> Vec<u8> {

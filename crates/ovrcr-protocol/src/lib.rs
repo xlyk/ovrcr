@@ -1,3 +1,5 @@
+pub mod agent;
+pub use agent::*;
 mod codec;
 pub mod context;
 mod registry;

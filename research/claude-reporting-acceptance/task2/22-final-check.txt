@@ -1,0 +1,5 @@
+command: rtk proxy cargo clippy -p ovrcr-protocol -p ovrcr-runtime --all-targets -- -D warnings
+base revision (Task2 working tree): 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s

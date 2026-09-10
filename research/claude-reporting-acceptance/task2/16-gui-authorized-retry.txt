@@ -1,0 +1,15 @@
+command: rtk proxy cargo test -p ovrcr --bin ovrcr-gui --all-features command_palette_opens_when_another_control_has_focus -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.27s
+     Running unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-91f170ab804c11a7)
+
+running 1 test
+test command_palette_opens_when_another_control_has_focus ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 3.30s

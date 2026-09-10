@@ -53,6 +53,8 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
+                agent: None,
+                agent_epoch: 0,
             }],
         }],
     });
@@ -862,6 +864,8 @@ fn mouse_release_precedes_the_replacement_view_request() {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
@@ -983,6 +987,8 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
