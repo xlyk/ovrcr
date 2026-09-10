@@ -41,3 +41,9 @@ Attempt08 captured a named-root explicit-UUID startup and background child event
 ## Task3 partial mechanics reviewed
 
 Mechanics commit `32336e7` and correction `590b5d2` were independently reviewed. The only blocker (private reporting-channel setup aborting native execution) is resolved; fallback releases the lease before native spawn and strips all inherited reporting variables. Saved gates include 24 CLI, 3 report and 90 runtime tests, two original lifecycle tests, then three targeted CLI and three lifecycle correction tests; affected compilation/lint/fmt passed. See task3/results.md, p1-channel-failopen.md and review.md. Provider admission, collector and full Task3 acceptance remain open.
+
+## Initial admission reviewed; native managed run
+
+Initial implementation `de8cd87` plus correction `665831a2` passed independent rereview. Product REDs demonstrate lost-Bind/clear, failed Health publication, and probe-descendant cleanup defects before correction; fixture failures are separated in task3-admission/review-corrections.md. Correction gates: lifecycle6, root library6, focused CLI3, affected check/clippy/fmt.
+
+Managed native attempt09 used that exact clean source. Claude2.1.267 initial startup bound the matching conversation at generation1; an actual assistant response appeared. Native /clear preserved the old binding with unavailable identity health while Claude continued; /exit returned code0. All recorded fixture-owned groups and server/socket were cleaned up. The first attempt exited1 at the trust selector due pasted control input and is retained as a fixture failure. This is macOS PTY evidence, not GUI/Linux/activity/metrics/finalization acceptance. Task4 activity work now starts; full Task3 checkboxes remain open.

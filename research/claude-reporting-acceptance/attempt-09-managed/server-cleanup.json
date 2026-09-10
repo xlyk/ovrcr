@@ -1,0 +1,35 @@
+[
+  {
+    "kind": "pid",
+    "id": 7086,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 7086,
+    "state": "absent"
+  },
+  {
+    "kind": "pid",
+    "id": 7084,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 7084,
+    "state": "absent"
+  },
+  {
+    "kind": "pid",
+    "id": 9760,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 9760,
+    "state": "absent"
+  },
+  {
+    "socket_exists": false
+  }
+]

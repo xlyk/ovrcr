@@ -1,0 +1,4 @@
+Observed native assistant output, distinct from prompt echo:
+⏺ OVRCR_MANAGED_OK
+Native version banner: Claude Code v2.1.267
+terminal read exit=0
