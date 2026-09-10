@@ -1,0 +1,15 @@
+{
+  "attempt": 3,
+  "kind": "native_cli_escalated",
+  "version": "2.1.267",
+  "result": "Reached isolated onboarding login selection; no authenticated conversation or hook capture",
+  "config": "/private/tmp/ovrcr-claude-contract-20260910/config",
+  "cleanup": {
+    "owned_pids": [
+      98073,
+      98075,
+      98076
+    ],
+    "result": "all absent in privileged ps check after scoped TERM"
+  }
+}

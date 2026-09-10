@@ -1,0 +1,8 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/synthetic/claude/projects/fixture/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/synthetic/workspace",
+  "hook_event_name": "SessionEnd",
+  "prompt_id": "00000000-0000-4000-8000-000000000011",
+  "reason": "prompt_input_exit"
+}

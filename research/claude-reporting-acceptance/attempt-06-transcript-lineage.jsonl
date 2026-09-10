@@ -1,0 +1,95 @@
+{"type": "mode", "sessionId": "id-1"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-2", "parentUuid": null, "sessionId": "id-1"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-3", "parentUuid": "id-2", "sessionId": "id-1"}
+{"type": "system", "subtype": "local_command", "isSidechain": false, "version": "2.1.267", "uuid": "id-4", "parentUuid": "id-3", "sessionId": "id-1"}
+{"type": "file-history-snapshot"}
+{"type": "last-prompt", "sessionId": "id-1"}
+{"type": "cost-state", "sessionId": "id-1"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-5", "parentUuid": "id-4", "sessionId": "id-1", "promptId": "id-6"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-7", "parentUuid": "id-5", "sessionId": "id-1", "promptId": "id-6"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-8", "parentUuid": "id-7", "sessionId": "id-1", "promptId": "id-6"}
+{"type": "mode", "sessionId": "id-9"}
+{"type": "permission-mode", "sessionId": "id-9"}
+{"type": "atis-latch", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-10", "parentUuid": null, "sessionId": "id-9", "promptId": "id-11"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-12", "parentUuid": "id-10", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-13", "parentUuid": "id-12", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-14", "parentUuid": "id-13", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-15", "parentUuid": "id-14", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-16", "parentUuid": "id-15", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-17", "parentUuid": "id-16", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-18", "parentUuid": "id-17", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-19", "parentUuid": "id-18", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-20", "parentUuid": "id-19", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "last-prompt", "sessionId": "id-9"}
+{"type": "mode", "sessionId": "id-9"}
+{"type": "permission-mode", "sessionId": "id-9"}
+{"type": "atis-latch", "sessionId": "id-9"}
+{"type": "ai-title", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-21", "parentUuid": "id-20", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-22", "parentUuid": "id-21", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": false, "uuid": "id-23", "parentUuid": "id-22", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "turn_duration", "isSidechain": false, "version": "2.1.267", "durationMs": 1604, "uuid": "id-24", "parentUuid": "id-23", "sessionId": "id-9"}
+{"type": "last-prompt", "sessionId": "id-9"}
+{"type": "ai-title", "sessionId": "id-9"}
+{"type": "mode", "sessionId": "id-9"}
+{"type": "permission-mode", "sessionId": "id-9"}
+{"type": "atis-latch", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-25", "parentUuid": "id-24", "sessionId": "id-9", "promptId": "id-26"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-27", "parentUuid": "id-25", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-28", "parentUuid": "id-27", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": false, "uuid": "id-29", "parentUuid": "id-28", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "turn_duration", "isSidechain": false, "version": "2.1.267", "durationMs": 1995, "uuid": "id-30", "parentUuid": "id-29", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-31", "parentUuid": "id-30", "sessionId": "id-9", "promptId": "id-32"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-33", "parentUuid": "id-31", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-34", "parentUuid": "id-33", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-35", "parentUuid": "id-34", "sessionId": "id-9", "session_id": "id-9", "promptId": "id-32"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-36", "parentUuid": "id-35", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": true, "uuid": "id-37", "parentUuid": "id-36", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-38", "parentUuid": "id-37", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-39", "parentUuid": "id-38", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": false, "uuid": "id-40", "parentUuid": "id-39", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "turn_duration", "isSidechain": false, "version": "2.1.267", "durationMs": 3745, "uuid": "id-41", "parentUuid": "id-40", "sessionId": "id-9"}
+{"type": "cost-state", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-42", "parentUuid": "id-41", "sessionId": "id-9", "promptId": "id-43"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-44", "parentUuid": "id-42", "sessionId": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-45", "parentUuid": "id-44", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-46", "parentUuid": "id-45", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-47", "parentUuid": "id-46", "sessionId": "id-9", "session_id": "id-9", "promptId": "id-43"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-48", "parentUuid": "id-47", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-49", "parentUuid": "id-48", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-50", "parentUuid": "id-49", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": false, "uuid": "id-51", "parentUuid": "id-50", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "turn_duration", "isSidechain": false, "version": "2.1.267", "durationMs": 4177, "uuid": "id-52", "parentUuid": "id-51", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-53", "parentUuid": "id-52", "sessionId": "id-9", "promptId": "id-54"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-55", "parentUuid": "id-53", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-56", "parentUuid": "id-55", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-57", "parentUuid": "id-56", "sessionId": "id-9", "session_id": "id-9", "promptId": "id-54"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-58", "parentUuid": "id-57", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-59", "parentUuid": "id-58", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "stop_hook_summary", "isSidechain": false, "version": "2.1.267", "preventedContinuation": false, "hasOutput": false, "uuid": "id-60", "parentUuid": "id-59", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "system", "subtype": "turn_duration", "isSidechain": false, "version": "2.1.267", "durationMs": 3547, "uuid": "id-61", "parentUuid": "id-60", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "cost-state", "sessionId": "id-9"}
+{"type": "last-prompt", "sessionId": "id-9"}
+{"type": "cost-state", "sessionId": "id-9"}
+{"type": "ai-title", "sessionId": "id-9"}
+{"type": "mode", "sessionId": "id-9"}
+{"type": "file-history-snapshot"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-62", "parentUuid": "id-61", "sessionId": "id-9", "promptId": "id-63"}
+{"type": "attachment", "isSidechain": false, "version": "2.1.267", "uuid": "id-64", "parentUuid": "id-62", "sessionId": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "uuid": "id-65", "parentUuid": "id-64", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "assistant", "isSidechain": false, "version": "2.1.267", "isAbortedMidStream": true, "uuid": "id-66", "parentUuid": "id-65", "sessionId": "id-9", "session_id": "id-9"}
+{"type": "user", "isSidechain": false, "version": "2.1.267", "uuid": "id-67", "parentUuid": "id-66", "sessionId": "id-9", "session_id": "id-9", "promptId": "id-63", "interruptedMessageId": "id-68"}
+{"type": "file-history-snapshot"}
+{"type": "cost-state", "sessionId": "id-9"}
+{"type": "last-prompt", "sessionId": "id-9"}
+{"type": "permission-mode", "sessionId": "id-9"}
+{"type": "atis-latch", "sessionId": "id-9"}
+{"type": "cost-state", "sessionId": "id-9"}
