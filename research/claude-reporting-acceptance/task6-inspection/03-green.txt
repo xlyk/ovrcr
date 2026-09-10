@@ -1,0 +1,41 @@
+command: rtk proxy cargo test -p ovrcr --test resource_cli managed_usage_inspection -- --nocapture
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+error[E0599]: no method named `poll` found for struct `admission::Receiver` in the current scope
+   --> src/report/admission.rs:58:56
+    |
+ 58 |             HookEvent::Poll { deadline } => { receiver.poll(deadline); Vec::new() },
+    |                                                        ^^^^ method not found in `admission::Receiver`
+...
+252 | struct Receiver {
+    | --------------- method `poll` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following trait defines an item `poll`, perhaps you need to implement it:
+            candidate #1: `Future`
+
+error[E0599]: no method named `native_completed` found for struct `admission::Receiver` in the current scope
+   --> src/report/admission.rs:59:67
+    |
+ 59 |             HookEvent::NativeCompleted { deadline } => { receiver.native_completed(deadline); Vec::new() },
+    |                                                                   ^^^^^^^^^^^^^^^^ method not found in `admission::Receiver`
+...
+252 | struct Receiver {
+    | --------------- method `native_completed` not found for this struct
+
+error[E0599]: no method named `statusline` found for mutable reference `&mut admission::Receiver` in the current scope
+   --> src/report/admission.rs:280:22
+    |
+280 |                 self.statusline(raw.payload.get().as_bytes(), deadline);
+    |                      ^^^^^^^^^^ method not found in `&mut admission::Receiver`
+
+error[E0599]: no method named `start_collector` found for mutable reference `&mut admission::Receiver` in the current scope
+   --> src/report/admission.rs:378:22
+    |
+378 |                 self.start_collector(deadline);
+    |                      ^^^^^^^^^^^^^^^ method not found in `&mut admission::Receiver`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `ovrcr` (lib) due to 4 previous errors
+
+exit=101

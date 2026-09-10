@@ -148,6 +148,9 @@ fn run(cli: Cli) -> AppResult<()> {
             command: SessionCommand::Context { id },
         } => inspect_session_context(id),
         Command::Session {
+            command: SessionCommand::Usage { id },
+        } => inspect_session_usage(id),
+        Command::Session {
             command: SessionCommand::Remove { id },
         } => mutate_without_start(
             Request::RemoveSession {

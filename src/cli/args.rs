@@ -223,6 +223,8 @@ pub(super) struct NewArgs {
 #[derive(Subcommand)]
 pub(super) enum SessionCommand {
     Context { id: u64 },
+    /// Inspect managed activity, usage, cost, and source ages as JSON.
+    Usage { id: u64 },
     Remove { id: u64 },
 }
 

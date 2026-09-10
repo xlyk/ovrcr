@@ -1,0 +1,27 @@
+command: rtk proxy cargo test -p ovrcr --test resource_cli managed_usage_inspection -- --nocapture
+
+running 1 test
+test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... FAILED
+
+failures:
+
+failures:
+    managed_usage_inspection_preserves_scope_unknowns_and_component_ages
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 3.00s
+
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
+     Running tests/resource_cli.rs (target/debug/deps/resource_cli-c61e6e00e04d209d)
+
+thread 'managed_usage_inspection_preserves_scope_unknowns_and_component_ages' (32067336) panicked at tests/resource_cli.rs:761:9:
+error: unrecognized subcommand 'usage'
+
+Usage: ovrcr session [OPTIONS] <COMMAND>
+
+For more information, try '--help'.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p ovrcr --test resource_cli`
+
+exit=101

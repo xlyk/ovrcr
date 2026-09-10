@@ -2,7 +2,7 @@ use anyhow::Context;
 use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
 use ovrcr::context::context_is_stale;
 use ovrcr::protocol::{BranchRequest, CreateSessionRequest, ErrorCode, Request, Response};
-use ovrcr::session::{SessionId, SessionPhase};
+use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
 use serde_json::json;
 use std::io::Write;
 
@@ -243,19 +243,7 @@ fn find_workspace<'a>(
 }
 
 pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {
-    let response = request_without_start(Request::List)?;
-    let Response::Hierarchy(snapshot) = response else {
-        return Err(unexpected_response(response));
-    };
-    let session = snapshot
-        .projects
-        .into_iter()
-        .flat_map(|project| project.workspaces)
-        .flat_map(|workspace| workspace.sessions)
-        .find(|session| session.id == SessionId(id))
-        .ok_or_else(|| {
-            RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}"))
-        })?;
+    let session = listed_session(id)?;
     let now_unix_ms = now_unix_ms();
     let exited = matches!(session.phase, SessionPhase::Exited { .. });
     print_json(&json!({
@@ -266,4 +254,29 @@ pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {
             .as_ref()
             .map(|sample| context_is_stale(sample, now_unix_ms, exited)),
     }))
+}
+
+pub(super) fn inspect_session_usage(id: u64) -> AppResult<()> {
+    let session = listed_session(id)?;
+    print_json(&json!({
+        "session": id,
+        "agent": session.agent,
+        "agent_epoch": session.agent_epoch,
+        "reporting_unavailable": reporting_unavailable(&session),
+        "measurement_age_ms": measurement_age_ms(&session, now_unix_ms()),
+    }))
+}
+
+fn listed_session(id: u64) -> AppResult<SessionSummary> {
+    let response = request_without_start(Request::List)?;
+    let Response::Hierarchy(snapshot) = response else {
+        return Err(unexpected_response(response));
+    };
+    snapshot
+        .projects
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}")))
 }
