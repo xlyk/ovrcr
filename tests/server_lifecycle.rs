@@ -7539,6 +7539,32 @@ fn agent_admission_native_helper() {
                 payload["reason"] = "logout".into();
             }
             "root" | "foreign" | "generic" => {}
+            value if value.starts_with("activity:") => {
+                let parts: Vec<_> = value.split(':').collect();
+                payload["hook_event_name"] = parts[1].into();
+                if parts[2] != "missing" {
+                    payload["prompt_id"] = parts[2].into();
+                }
+                if parts.get(3) == Some(&"child") {
+                    payload["agent_id"] = "child".into();
+                }
+                if parts.get(3) == Some(&"wrong") {
+                    payload["session_id"] = "foreign".into();
+                }
+                if parts.get(3) == Some(&"malformed") {
+                    payload["prompt_id"] = serde_json::Value::Null;
+                }
+                if parts[1] == "StopFailure" {
+                    payload["error"] = "rate_limit".into();
+                }
+                payload["notification_type"] = if parts.get(3) == Some(&"generic") {
+                    "idle_prompt"
+                } else {
+                    "permission_prompt"
+                }
+                .into();
+                payload["stop_hook_active"] = true.into();
+            }
             _ => panic!("unknown admission fixture instruction"),
         }
         if line == "foreign" {
@@ -7590,6 +7616,7 @@ enum AdmissionFault {
     LostBind,
     RejectHealth,
     RejectStatus,
+    RejectActivity,
 }
 struct AdmissionProxy {
     path: std::path::PathBuf,
@@ -7652,6 +7679,7 @@ impl AdmissionProxy {
                                         }),
                                         AdmissionFault::RejectHealth
                                     ) | (Request::AgentStatus { .. }, AdmissionFault::RejectStatus)
+                                        | (Request::AgentReport(_), AdmissionFault::RejectActivity)
                                 );
                                 if reject {
                                     if matches!(fault, AdmissionFault::RejectHealth) {
@@ -7688,7 +7716,10 @@ impl AdmissionProxy {
                                     })
                                 );
                                 if is_bind
-                                    && !matches!(fault, AdmissionFault::RejectHealth)
+                                    && matches!(
+                                        fault,
+                                        AdmissionFault::LostBind | AdmissionFault::RejectStatus
+                                    )
                                     && !dropped.swap(true, Ordering::SeqCst)
                                 {
                                     continue;
@@ -8108,4 +8139,209 @@ exit 19
         fixture.wait_terminal_contains(summary.id, "UNCHANGED_EXIT=19");
         fixture.wait_exited(summary.id);
     }
+}
+
+#[test]
+fn private_claude_activity_tracks_only_current_root_prompt_observations() {
+    assert_claude_activity(false);
+}
+#[test]
+fn private_claude_activity_delivery_failure_disconnects_without_stopping_native() {
+    assert_claude_activity(true);
+}
+fn assert_claude_activity(fail_delivery: bool) {
+    use ovrcr::protocol::{AgentActivity, SampleQuality};
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "activity-setup");
+    let proxy = fail_delivery.then(|| {
+        AdmissionProxy::new(
+            fixture._root.path().join("activity-proxy.sock"),
+            fixture.socket.clone(),
+            AdmissionFault::RejectActivity,
+        )
+    });
+    let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("activity-probe");
+    let summary = fixture.create_session_summary("activity", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4"; "$1" agent run --provider claude -- "$2"; printf ACTIVITY_FINISHED; IFS= read -r done"#.into(),
+        "activity-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.into_os_string(), std::env::current_exe().unwrap().into_os_string(), reporting_socket.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    let cases = [
+        ("root", None, 0, None),
+        (
+            "activity:UserPromptSubmit:A",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:child",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:wrong",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:malformed",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        ("root", Some(AgentActivity::Busy), 1, Some("A")),
+        (
+            "activity:PermissionRequest:A",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Notification:A:generic",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Notification:A",
+            Some(AgentActivity::WaitingInput),
+            2,
+            Some("A"),
+        ),
+        ("activity:Stop:A", Some(AgentActivity::Idle), 3, Some("A")),
+        (
+            "activity:PreToolUse:A",
+            Some(AgentActivity::Busy),
+            4,
+            Some("A"),
+        ),
+        (
+            "activity:UserPromptSubmit:B",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        ("activity:Stop:A", Some(AgentActivity::Busy), 5, Some("B")),
+        (
+            "activity:Notification:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:StopFailure:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:Stop:missing",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:PostToolUse:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:StopFailure:B",
+            Some(AgentActivity::Error),
+            6,
+            Some("B"),
+        ),
+        (
+            "activity:PostToolUseFailure:B",
+            Some(AgentActivity::Busy),
+            7,
+            Some("B"),
+        ),
+        ("clear", Some(AgentActivity::Busy), 7, Some("B")),
+        ("activity:Stop:B", Some(AgentActivity::Busy), 7, Some("B")),
+        (
+            "activity:UserPromptSubmit:C",
+            Some(AgentActivity::Busy),
+            7,
+            Some("B"),
+        ),
+    ];
+    for (index, (command, state, revision, turn)) in cases.into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+        if fail_delivery && index == 1 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+                if snapshot.health.state == ovrcr::protocol::ReporterHealth::Unavailable {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "failed delivery left reporter connected"
+                );
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            assert_eq!(snapshot.activity_revision, 0);
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: "activity:UserPromptSubmit:B".into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+            let closed = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(closed.binding, snapshot.binding);
+            assert_eq!(closed.activity_revision, 0);
+            assert_eq!(
+                closed.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+            break;
+        }
+        assert_eq!(snapshot.activity_revision, revision, "{command}");
+        assert_eq!(
+            snapshot.activity.as_ref().map(|a| a.state),
+            state,
+            "{command}"
+        );
+        if let Some(activity) = snapshot.activity {
+            assert_eq!(activity.quality, SampleQuality::Observed);
+            assert_eq!(activity.turn.as_deref(), turn);
+        }
+        assert_eq!(snapshot.binding.generation, 1);
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ACTIVITY_FINISHED");
 }

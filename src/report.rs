@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod claude;
 
 use crate::protocol::{
     AgentReport, AgentUpdate, ClientMessage, ErrorCode, Request, Response, ServerMessage,
@@ -450,8 +451,33 @@ pub struct InvocationLease {
     socket: std::path::PathBuf,
     binding: Option<ovrcr_protocol::AgentBinding>,
     next_request: u64,
+    capability: [u8; 32],
 }
 impl InvocationLease {
+    fn publish_activity(
+        &self,
+        report: ovrcr_protocol::ProviderReport,
+        deadline: Instant,
+    ) -> Result<()> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        let response = agent_exchange(
+            &mut stream,
+            1,
+            Request::AgentReport(AgentReport {
+                session: self.auth.session,
+                capability: self.capability,
+                sequence: None,
+                update: AgentUpdate::Provider(report),
+            }),
+            deadline,
+        )?;
+        if response != Response::Ok {
+            bail!("activity publication unavailable");
+        }
+        Ok(())
+    }
+
     fn command(
         &mut self,
         operation: String,
@@ -590,6 +616,7 @@ pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
                     socket: identity.socket.clone(),
                     binding: None,
                     next_request: 2,
+                    capability: identity.capability,
                     auth: SupervisorAuth {
                         session: identity.session,
                         lease: reservation.lease,

@@ -1,5 +1,8 @@
 //! Initial-only Claude admission. Provider interpretation stays outside runtime.
-use super::InvocationLease;
+use super::{
+    InvocationLease,
+    claude::{ClaudeEventKind, parse_claude_hook},
+};
 use ovrcr_protocol::{
     AgentCommand, AgentObservation, AgentOperationResult, HealthSample, ProviderReport,
     ReporterHealth, Response,
@@ -37,6 +40,8 @@ pub fn receiver(
         lease,
         expected,
         phase: Phase::Waiting,
+        prompt: None,
+        activity_revision: 0,
     };
     Box::new(move |input, deadline| receiver.handle(input, deadline))
 }
@@ -233,6 +238,8 @@ struct Receiver {
     lease: Option<InvocationLease>,
     expected: Option<String>,
     phase: Phase,
+    prompt: Option<String>,
+    activity_revision: u64,
 }
 impl Receiver {
     fn handle(&mut self, input: &[u8], deadline: Instant) -> Vec<u8> {
@@ -247,38 +254,64 @@ impl Receiver {
         {
             return b"admission-ignored\n".to_vec();
         }
-        let Some(payload) = request.get("payload").and_then(|v| v.as_object()) else {
+        let Some(payload) = request.get("payload") else {
             return b"admission-ignored\n".to_vec();
         };
-        if payload.contains_key("agent_id") {
-            return b"admission-ignored\n".to_vec();
-        }
-        let event = payload
-            .get("hook_event_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if event.starts_with("Subagent") {
-            return b"admission-ignored\n".to_vec();
-        }
-        let source = payload.get("source").and_then(|v| v.as_str()).unwrap_or("");
-        let Some(session) = payload
-            .get("session_id")
-            .and_then(|v| v.as_str())
-            .filter(|value| !value.is_empty())
+        let Ok(Some(event)) = parse_claude_hook(&serde_json::to_vec(payload).unwrap_or_default())
         else {
             return b"admission-ignored\n".to_vec();
         };
-        let transition = event == "SessionStart" && matches!(source, "clear" | "resume" | "fork");
-        if session != expected && !transition {
+        let transition = matches!(&event.kind, ClaudeEventKind::SessionStart { source } if matches!(source.as_str(), "clear" | "resume" | "fork"));
+        if event.session != expected && !transition {
             return b"admission-ignored\n".to_vec();
         }
-        let clear = event == "SessionEnd"
-            && payload.get("reason").and_then(|v| v.as_str()) == Some("clear");
+        let clear = matches!(&event.kind, ClaudeEventKind::SessionEnd { reason } if reason.as_deref() == Some("clear"));
         if transition || clear {
             self.freeze(deadline);
             return b"admission-ignored\n".to_vec();
         }
-        if event != "SessionStart" || source != "startup" {
+        if let Some(state) = event.kind.activity() {
+            if !matches!(self.phase, Phase::Bound) {
+                return b"admission-ignored\n".to_vec();
+            }
+            let Some(prompt) = event.prompt else {
+                return b"admission-ignored\n".to_vec();
+            };
+            // Supported synchronous UserPromptSubmit hooks establish observed turn identity.
+            // Opaque prompt IDs and transport revisions are not certified source ordering.
+            if matches!(event.kind, ClaudeEventKind::Prompt) {
+                self.prompt = Some(prompt.clone());
+            } else if self.prompt.as_ref() != Some(&prompt) {
+                return b"admission-ignored\n".to_vec();
+            }
+            let Some(lease) = &self.lease else {
+                return b"admission-unavailable\n".to_vec();
+            };
+            let Some(binding) = lease.binding.clone() else {
+                return b"admission-unavailable\n".to_vec();
+            };
+            self.activity_revision += 1;
+            let report = ProviderReport {
+                binding,
+                revision: self.activity_revision,
+                observation: AgentObservation::Activity(ovrcr_protocol::ActivitySample {
+                    state,
+                    quality: ovrcr_protocol::SampleQuality::Observed,
+                    turn: Some(prompt),
+                }),
+            };
+            if lease.publish_activity(report, deadline).is_err() {
+                // Delivery uncertainty cannot leave a connected reporter claiming continuity.
+                self.phase = Phase::Closed;
+                if let Some(lease) = self.lease.take() {
+                    let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+                    drop(lease);
+                }
+                return b"admission-unavailable\n".to_vec();
+            }
+            return b"admission-accepted\n".to_vec();
+        }
+        if !matches!(&event.kind, ClaudeEventKind::SessionStart { source } if source == "startup") {
             return b"admission-ignored\n".to_vec();
         }
         let Some(lease) = &mut self.lease else {
@@ -514,11 +547,14 @@ mod tests {
             socket: path,
             binding: None,
             next_request: 2,
+            capability: [0; 32],
         };
         let mut receiver = Receiver {
             lease: Some(lease),
             expected: Some("expected".into()),
             phase: Phase::Waiting,
+            prompt: None,
+            activity_revision: 0,
         };
         let input=br#"{"provider":"claude","origin":"claude-hook","payload":{"hook_event_name":"SessionStart","source":"startup","session_id":"expected"}}"#;
         assert_eq!(

@@ -1,0 +1,30 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-cfec07582b757f52)
+
+running 9 tests
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... FAILED
+test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+
+failures:
+
+---- report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status stdout ----
+
+thread 'report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status' (31880491) panicked at src/report/admission.rs:490:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+error: test failed, to rerun pass `-p ovrcr --lib`
