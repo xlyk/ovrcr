@@ -5940,6 +5940,10 @@ mod agent_reporting {
         });
         let lost = f.session.summary().agent.unwrap();
         assert_eq!(lost.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            lost.health.reason.as_deref(),
+            Some("supervisor_disconnected")
+        );
         assert_eq!(lost.activity.unwrap().state, AgentActivity::WaitingInput);
         assert_eq!(
             lost.metrics.unwrap().sample.usage.value.coverage,

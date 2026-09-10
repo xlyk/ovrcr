@@ -64,7 +64,7 @@ A release of the narrower contract is a separate user decision. This plan does n
 
 **Interfaces:** Keep the wire protocol unchanged. Prefer colocated tests for private counters. Where the existing in-process load server needs access, add an opt-in `acceptance-diagnostics` feature with a read-only aggregate `ReportingQueueSnapshot { pending_items: usize, pending_bytes: usize, peak_items: usize, peak_bytes: usize, rejected: u64 }` per real queue. No payloads, secrets, report IDs or public CLI diagnostics. Counters observe actual enqueue/dequeue/drop boundaries; they do not become another admission authority.
 
-- [ ] Inventory each actual bounded channel/buffer: dispatcher 64 entries; runtime raw events 64; dashboard 64; collector one request/response, payload 65,536 plus framing; private callback input 65,536 and actual listener/backlog semantics. State separately what is kernel-buffered, connection-limited, or byte-bounded. Do not apply the old collector 256/1MiB ceiling to unrelated terminal-output queues.
+- [x] Inventory each actual bounded channel/buffer: dispatcher 64 entries; runtime raw events 64; dashboard 64; collector one request/response, payload 65,536 plus framing; private callback input 65,536 and actual listener/backlog semantics. State separately what is kernel-buffered, connection-limited, or byte-bounded. Do not apply the old collector 256/1MiB ceiling to unrelated terminal-output queues.
 - [x] Add deterministic saturation regressions using a barrier to stop the consumer before filling. Capture actual occupancy while blocked, then admit one extra producer. Include dequeue, failed send, disconnect and teardown so diagnostic counts return to zero without underflow.
 
 ```rust
@@ -246,6 +246,11 @@ and open gaps.
   macOS and Linux 50-session loads. Hosted Linux recorded `somaxconn=4096`.
   Kernel socket-buffer memory and a full heap/RSS maximum remain exclusions, so the
   task's overall proof is not complete.
+- The runtime ownership-guard regression covers supervisor socket-owner disconnect,
+  including the exact `supervisor_disconnected` reason, retained Partial metrics, a
+  replacement reservation, and rejection of late cleanup. It does not simulate a
+  literal supervisor-process kill. Provider exec descriptor inheritance also remains
+  without a direct assertion.
 - Task 3 has native evidence for actual output, two turns, approval and tool paths,
   continuation, compaction, source/collector loss, detach/reattach, exit, and cleanup in
   [native-remaining](../research/claude-reporting-acceptance/native-remaining/results.md)
@@ -273,9 +278,14 @@ and open gaps.
   `d12abda` proved real child tool-failure and `SubagentStop` isolation.
 
 Independent final evidence review approved `2d18bb0` on 2026-09-10, and the
-existing work diary was extended. Draft PR 55's initial CI passed at `d12abda`;
-CI for the final documentation head remains pending. These completed review and
+existing work diary was extended. Draft PR 55 run 34520248256 passed all three
+jobs at documentation head `c2fb7ea`; the PR remains open, draft, and mergeable.
+The current default `claude` executable is 2.1.268, while retained discovery and
+native evidence verify 2.1.267; the supported-version contract therefore remains
+exactly 2.1.267. A read-only Docker information check timed out after five seconds
+on 2026-09-10, so the historical task-owned container/image cleanup remains
+unverified; no shared-service restart was attempted. These completed review and
 documentation actions do not close the provider-source, arbitrary child API
 `StopFailure`, complete child-accounting, native null-context, full-heap, kernel
-socket-buffer accounting, or local Docker cleanup gaps. PR 55 remains a draft;
-merge and release are not authorized.
+socket-buffer accounting, or local Docker cleanup gaps. Merge and release are not
+authorized.

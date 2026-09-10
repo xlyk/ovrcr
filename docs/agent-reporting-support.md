@@ -1,6 +1,6 @@
 # Agent reporting support record
 
-Claude contract review date: 2026-09-10. The installed executable was verified as **2.1.267** by the Task 1 coordinator. No minimum supported version is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
+Claude contract review date: 2026-09-10. Retained discovery and native evidence verify **2.1.267**. The current default executable is 2.1.268, which is unsupported by this exact-version contract; no minimum version or version-range support is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
 
 The [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md) reconciles this rolling record with the delivered callers, assertions, tested revisions and native evidence. It splits passing parts from open provider and platform clauses.
 
@@ -121,8 +121,9 @@ complete.
 
 Requirement reconciliation is complete. Application queue saturation, overflow,
 automatic helper-loss propagation, and the macOS 50-session load passed. That work
-does not bound the kernel listen backlog or prove a full heap maximum; those Task 2
-exclusions remain open.
+records configured listen-backlog ceilings of 128 on macOS and 4096 on the hosted
+Linux runner. It does not measure kernel socket-buffer memory or prove a full heap
+maximum; those Task 2 exclusions remain open.
 
 Private PR 55 run 34518312559 passed all three jobs at exact revision `d12abda`.
 The Linux suite passed 607 tests with 11 intentional ignores across 23 binaries;
@@ -131,9 +132,9 @@ The isolated Linux capacity case passed 30,000 reports, 3,000 stale rejections,
 five collector failures, the original latency/RSS thresholds, application queue
 bounds, and cleanup of all 50 helpers and 50 PTYs. See the
 [reviewed hosted results](../research/claude-reporting-acceptance/linux/hosted-34518312559/results.md).
-The earlier local Docker interruption is historical, although its task-owned
-container and image still await cleanup without an authorized shared-service
-restart.
+The earlier local Docker interruption is historical. A read-only Docker information
+check timed out after five seconds on 2026-09-10, so its task-owned container and
+image cleanup remains unverified. No shared-service restart was attempted.
 
 The integrated macOS all-features suite at `d12abda` passed 633 tests with 11
 intentional ignores across 24 binaries; clippy and formatting passed and doctests
@@ -159,10 +160,11 @@ null-current-context observation remains open, as do broader transition forms.
 These gaps preserve Partial usage and Observed activity; no evidence here supports
 Complete accounting or Confirmed settling.
 
-PR 55 is a mergeable draft. It has not been merged or released. Task 4 is
-complete at `d12abda`, but Task 9 final contract review and this documentation
-unit remain open. Hosted queue measurements exclude kernel socket-buffer memory,
-and sampled RSS does not prove a full heap maximum. A targeted
+PR 55 remains open, draft, and mergeable. Run 34520248256 passed all three jobs
+at documentation head `c2fb7ea`; the PR has not been merged or released. Task 4
+is complete at `d12abda`, and independent final contract review plus documentation
+closeout are complete. Hosted queue measurements exclude kernel socket-buffer
+memory, and sampled RSS does not prove a full heap maximum. A targeted
 [native child run](../research/claude-reporting-acceptance/native-child/results.md)
 proved that real child `PreToolUse`, `PostToolUseFailure`, and `SubagentStop` leave
 root binding, activity, health, and usage unchanged. An arbitrary child API
