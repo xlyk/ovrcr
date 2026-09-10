@@ -865,3 +865,270 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
     v.event(ctrl('s'));
     assert_eq!(v.take_request(), Some(expected));
 }
+
+fn task_mouse(
+    d: &mut Dashboard,
+    kind: crossterm::event::MouseEventKind,
+    x: u16,
+    y: u16,
+    area: Rect,
+) -> DashboardAction {
+    d.mouse_action(
+        crossterm::event::MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    )
+}
+fn task_click_text(d: &mut Dashboard, text: &str, width: u16, height: u16) -> DashboardAction {
+    task_click_text_at(d, text, Rect::new(0, 0, width, height))
+}
+fn task_click_text_at(d: &mut Dashboard, text: &str, area: Rect) -> DashboardAction {
+    let mut terminal = Terminal::with_options(
+        TestBackend::new(area.right(), area.bottom()),
+        ratatui::TerminalOptions {
+            viewport: ratatui::Viewport::Fixed(area),
+        },
+    )
+    .unwrap();
+    terminal
+        .draw(|f| draw_tasks(f, d.tasks.as_ref().unwrap()))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let row = (x..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>();
+            if row.starts_with(text) {
+                return task_mouse(
+                    d,
+                    crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                    x,
+                    y,
+                    area,
+                );
+            }
+        }
+    }
+    panic!("missing visible task control {text}");
+}
+
+#[test]
+fn task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let mut d = ready_dashboard();
+    let mut v = fixture();
+    v.tasks = (1..=30)
+        .map(|id| Task {
+            id: TaskId(id),
+            spec: spec(),
+            enabled: true,
+            next_due_at: None,
+        })
+        .collect();
+    d.tasks = Some(v);
+    let area = Rect::new(0, 0, 120, 12);
+    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 20, 4, area);
+    task_click_text(&mut d, "r run", 120, 12);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Enqueue(TaskId(2)))
+    );
+    for _ in 0..12 {
+        task_mouse(&mut d, MouseEventKind::ScrollDown, 20, 5, area);
+    }
+    // The selected row is kept at the bottom; click the first visible row.
+    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 20, 3, area);
+    task_click_text(&mut d, "d del", 120, 12);
+    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
+    task_click_text(&mut d, "n no", 120, 12);
+    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
+    task_click_text(&mut d, "d del", 120, 12);
+    task_click_text(&mut d, "y yes", 120, 12);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Delete(TaskId(9)))
+    );
+    assert!(d.mouse_capture_required());
+}
+#[test]
+fn task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once() {
+    let mut d = ready_dashboard();
+    d.tasks = Some(fixture());
+    task_click_text(&mut d, "e edit", 120, 24);
+    task_click_text(&mut d, "Model: ", 120, 24);
+    d.event_action(ctrl('a'));
+    d.event_action(Event::Paste("provider/a界z".into()));
+    task_click_text(&mut d, "界", 120, 24);
+    d.event_action(key(KeyCode::Char('X')));
+    task_click_text(&mut d, "world", 120, 24);
+    d.event_action(key(KeyCode::Char('!')));
+    task_click_text(&mut d, "Ctrl-s save", 120, 24);
+    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+        panic!("update request")
+    };
+    assert_eq!(spec.model, "provider/aX界z");
+    assert_eq!(spec.prompt, "hello\n!world");
+    task_click_text(&mut d, "Ctrl-s save", 120, 24);
+    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
+    task_click_text(&mut d, "Esc cancel", 120, 24);
+    assert!(d.tasks.as_ref().unwrap().editor.is_none());
+}
+#[test]
+fn task_mouse_project_picker_and_transcript_wheel_use_visible_rows() {
+    use crossterm::event::MouseEventKind;
+    let mut d = ready_dashboard();
+    let hierarchy = HierarchySnapshot {
+        projects: (0..14)
+            .map(|i| ProjectSummary {
+                name: format!("project-{i:02}"),
+                workspaces: vec![],
+            })
+            .collect(),
+    };
+    let mut v = TasksView::with_projects(&hierarchy, "project-00");
+    v.tasks = fixture().tasks;
+    d.tasks = Some(v);
+    task_click_text(&mut d, "e edit", 120, 24);
+    task_click_text(&mut d, "Target", 120, 24);
+    d.event_action(ctrl('a'));
+    d.event_action(Event::Paste("git".into()));
+    task_click_text(&mut d, "Project", 120, 24);
+    for _ in 0..10 {
+        task_mouse(
+            &mut d,
+            MouseEventKind::ScrollDown,
+            10,
+            6,
+            Rect::new(0, 0, 120, 24),
+        );
+    }
+    task_click_text(&mut d, "project-05", 120, 24);
+    task_click_text(&mut d, "Ctrl-s save", 120, 24);
+    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+        panic!("update")
+    };
+    assert!(matches!(spec.target,TaskTarget::Git{project,..} if project=="project-05"));
+    task_click_text(&mut d, "Esc cancel", 120, 24);
+    task_click_text(&mut d, "h/H history/all", 120, 24);
+    let v = d.tasks.as_mut().unwrap();
+    v.transcript.append(
+        b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
+        100,
+        false,
+    );
+    task_mouse(
+        &mut d,
+        MouseEventKind::ScrollUp,
+        10,
+        17,
+        Rect::new(0, 0, 120, 24),
+    );
+    assert_eq!(d.tasks.as_ref().unwrap().transcript.scroll, 1);
+    task_mouse(
+        &mut d,
+        MouseEventKind::ScrollDown,
+        10,
+        17,
+        Rect::new(0, 0, 120, 24),
+    );
+    assert_eq!(d.tasks.as_ref().unwrap().transcript.scroll, 0);
+}
+
+#[test]
+fn task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let mut d = ready_dashboard();
+    let mut v = fixture();
+    v.tasks[0].spec.prompt = "zero\none\ntwo\nthree\nfour\nlong 界 tail".into();
+    d.tasks = Some(v);
+    let area = Rect::new(7, 5, 42, 14);
+    task_click_text_at(&mut d, "e edit", area);
+    // Navigate to Prompt so the small viewport is scrolled there.
+    for _ in 0..11 {
+        d.event_action(key(KeyCode::Tab));
+    }
+    task_click_text_at(&mut d, "界", area);
+    d.event_action(key(KeyCode::Char('X')));
+    // A click outside the offset frame must not move the editor cursor.
+    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 1, 1, area);
+    d.event_action(key(KeyCode::Char('Y')));
+    task_click_text_at(&mut d, "Ctrl-s save", area);
+    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+        panic!("save")
+    };
+    assert_eq!(spec.prompt, "zero\none\ntwo\nthree\nfour\nlong XY界 tail");
+    task_click_text_at(&mut d, "Esc cancel", area);
+    task_click_text_at(&mut d, "c limit", area);
+    d.event_action(key(KeyCode::Char('2')));
+    task_click_text_at(&mut d, "Enter save", area);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Concurrency(Some(2)))
+    );
+    task_click_text_at(&mut d, "p pause/resume", area);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Pause(TaskId(1)))
+    );
+}
+#[test]
+fn task_mouse_run_rows_cancel_and_cleanup_use_selected_run() {
+    let mut d = ready_dashboard();
+    d.tasks = Some(fixture());
+    task_click_text(&mut d, "h/H history/all", 120, 24);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::ListRuns(Some(TaskId(1))))
+    );
+    let mut store = TaskStore::default();
+    let task = store.create(spec(), 0).unwrap();
+    let template = store.enqueue(task.id, RunTrigger::Manual, 1).unwrap();
+    let runs = (1..=3)
+        .map(|id| {
+            let mut run = template.clone();
+            run.id = RunId(id);
+            run.status = RunStatus::Running;
+            run
+        })
+        .collect();
+    d.tasks.as_mut().unwrap().receive(
+        &TaskRequest::ListRuns(Some(TaskId(1))),
+        Ok(TaskResponse::Runs(runs)),
+    );
+    d.tasks.as_mut().unwrap().take_request();
+    task_mouse(
+        &mut d,
+        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        10,
+        3,
+        Rect::new(0, 0, 120, 24),
+    );
+    assert!(matches!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::ReadLog {
+            id: RunId(2),
+            offset: 0,
+            ..
+        })
+    ));
+    task_click_text(&mut d, "x cancel run", 120, 24);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Cancel(RunId(2)))
+    );
+    task_click_text(&mut d, "d cleanup", 120, 24);
+    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
+    task_click_text(&mut d, "y yes", 120, 24);
+    assert_eq!(
+        d.tasks.as_mut().unwrap().take_request(),
+        Some(TaskRequest::Clean {
+            id: RunId(2),
+            confirmed: true
+        })
+    );
+}

@@ -299,6 +299,124 @@ fn whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks() {
 }
 
 #[test]
+fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
+    use ovrcr::tui::DashboardAction;
+
+    let cases = [
+        (
+            "palette",
+            KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE),
+        ),
+        (
+            "which-key",
+            KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE),
+        ),
+        (
+            "tasks",
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        ),
+    ];
+    for (name, key) in cases {
+        let area = Rect::new(0, 0, 120, 40);
+        let mut dashboard = dashboard_fixture();
+        assert!(dashboard.split_pane());
+        let split = dashboard
+            .view_request(area, 70)
+            .unwrap()
+            .expect("split should request both panes");
+        acknowledge_all_view_targets(&mut dashboard, split);
+        let focused = focused_terminal_rect(&dashboard, area);
+        let divider = dashboard
+            .pane_rects(area)
+            .first()
+            .expect("left pane")
+            .terminal
+            .right();
+
+        assert_eq!(
+            dashboard.event_action(Event::Mouse(mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ))),
+            DashboardAction::Redraw,
+            "{name} setup"
+        );
+        assert_ne!(
+            dashboard.event_action(Event::Key(key)),
+            DashboardAction::None,
+            "{name} keyboard intent"
+        );
+        dashboard.event_action(Event::Mouse(mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            60,
+            20,
+            KeyModifiers::NONE,
+        )));
+        dashboard.event_action(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+
+        assert_eq!(
+            dashboard.event_action(Event::Mouse(click_in(
+                focused,
+                MouseEventKind::Down(MouseButton::Left),
+                2,
+                3,
+            ))),
+            DashboardAction::Redraw,
+            "{name} must release divider ownership"
+        );
+        assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal, "{name}");
+        assert_eq!(
+            dashboard.event_action(Event::Mouse(click_in(
+                focused,
+                MouseEventKind::Drag(MouseButton::Left),
+                3,
+                3,
+            ))),
+            DashboardAction::None,
+            "{name} post-dismissal drag"
+        );
+        assert!(
+            dashboard.view_request(area, 71).unwrap().is_none(),
+            "{name}"
+        );
+    }
+
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let focused = focused_terminal_rect(&dashboard, area);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(focused, MouseEventKind::Down(MouseButton::Right), 2, 3,),
+            area,
+        ),
+        DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
+    );
+    assert!(matches!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                105,
+                0,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        DashboardAction::Request(_)
+    ));
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("opening Actions should release the application button");
+    assert!(matches!(
+        cleanup.request,
+        Request::Input { session: SessionId(1), bytes }
+            if bytes == b"\x1b[<2;3;4m"
+    ));
+}
+
+#[test]
 fn tasks_hotkey_cancels_pending_history_like_control_t() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::PageUp);
@@ -1555,7 +1673,7 @@ fn click_whichkey_text(
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: area.x + 2,
+            column: area.x + if sidebar { 4 } else { 2 },
             row,
             modifiers: KeyModifiers::NONE,
         },

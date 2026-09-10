@@ -1,8 +1,6 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, history_page_covers};
-use super::{
-    Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size, pane_rects,
-};
+use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot, format_context};
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
@@ -17,6 +15,45 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub(super) fn action_controls(area: Rect) -> (Rect, Rect) {
+    let title = dashboard_layout(area).title;
+    let x = title.right().saturating_sub(16).max(title.x);
+    let actions = Rect::new(
+        x,
+        title.y,
+        title.right().saturating_sub(x).min(9),
+        title.height,
+    );
+    let menu_x = x.saturating_add(10).min(title.right());
+    let menu = Rect::new(
+        menu_x,
+        title.y,
+        title.right().saturating_sub(menu_x).min(6),
+        title.height,
+    );
+    (actions, menu)
+}
+
+pub(super) fn capture_controls(area: Rect) -> (Rect, Rect) {
+    let title = dashboard_layout(area).title;
+    let x = title.right().saturating_sub(16).max(title.x);
+    let copy = if title.width >= 14 {
+        Rect::new(x, title.y, 6, title.height)
+    } else {
+        Rect::default()
+    };
+    let close = if title.width >= 7 {
+        Rect::new(title.right() - 7, title.y, 7, title.height)
+    } else {
+        Rect::default()
+    };
+    (copy, close)
+}
+
+pub(super) fn history_content_rect(area: Rect) -> Rect {
+    Rect::new(area.x, area.y, area.width.min(256), area.height.min(64))
+}
 
 #[derive(Clone, Copy)]
 struct DashboardLayout {
@@ -121,7 +158,7 @@ pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection)
 }
 
 pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
-    let bounded = Rect::new(area.x, area.y, area.width.min(256), area.height.min(64));
+    let bounded = history_content_rect(area);
     for row in 0..area.height {
         for col in 0..area.width {
             let cell = frame
@@ -226,7 +263,7 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
     }
 }
 
-fn history_cell_at(
+pub(super) fn history_cell_at(
     view: &HistoryView,
     row: u32,
     col: u16,
@@ -439,9 +476,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 },
             )],
             TreeRow::Workspace { .. } => &[(2, MAUVE)],
-            TreeRow::Session { id }
-                if row_line == 0 && dashboard.focused_session() != Some(*id) =>
-            {
+            TreeRow::Session { id } if row_line == 0 && dashboard.action_session() != Some(*id) => {
                 &[(
                     2,
                     if dashboard.session_is_busy(*id) {
@@ -460,7 +495,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         }
     }
 
-    let rects = pane_rects(frame.area(), dashboard.panes.len(), dashboard.focused_pane);
+    let rects = dashboard.pane_rects(frame.area());
     let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
     let split_separator = dashboard.panes.len() == 2 && rects.len() == 2;
     if split_separator {
@@ -639,6 +674,28 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         Paragraph::new(footer).style(Style::default().bg(CRUST)),
         layout.footer,
     );
+    if matches!(dashboard.mode, InputMode::Browse | InputMode::Terminal) {
+        let (actions, menu) = action_controls(frame.area());
+        frame.render_widget(
+            Paragraph::new("[Actions]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            actions,
+        );
+        frame.render_widget(
+            Paragraph::new("[Menu]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            menu,
+        );
+    }
+    if matches!(dashboard.mode, InputMode::Copy | InputMode::History) {
+        let (copy, close) = capture_controls(frame.area());
+        frame.render_widget(
+            Paragraph::new("[Copy]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            copy,
+        );
+        frame.render_widget(
+            Paragraph::new("[Close]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            close,
+        );
+    }
     dashboard.draw_start_screen(frame);
     dashboard.draw_palette(frame);
     dashboard.draw_whichkey(frame);
@@ -649,7 +706,8 @@ impl Dashboard {
         if self.mode != InputMode::Browse || self.focused_session().is_some() {
             return;
         }
-        let Some(rect) = pane_rects(frame.area(), self.panes.len(), self.focused_pane)
+        let Some(rect) = self
+            .pane_rects(frame.area())
             .into_iter()
             .find(|r| r.pane_index == self.focused_pane)
         else {
@@ -905,7 +963,7 @@ fn tree_line_text(
                     base_style,
                 );
             };
-            let selected = dashboard.focused_session() == Some(*id);
+            let selected = dashboard.action_session() == Some(*id);
             let label = if session.name == "local" {
                 "terminal"
             } else {

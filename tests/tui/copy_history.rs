@@ -4301,3 +4301,361 @@ fn ux_history_footer_names_the_actual_escape_action() {
         assert!(text.contains(label), "{text}");
     }
 }
+
+#[test]
+fn copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut d = screen_ready_dashboard("a界z".as_bytes());
+    d.key(KeyCode::Char('['));
+    let area = d.outer_area;
+    let pane = d.pane_rects(area)[0].terminal;
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert!(d.mouse_capture_required());
+    d.mouse_action(
+        mouse(MouseEventKind::Down(MouseButton::Left), pane.x + 2, pane.y),
+        area,
+    );
+    d.mouse_action(
+        mouse(MouseEventKind::Drag(MouseButton::Left), pane.x + 3, pane.y),
+        area,
+    );
+    d.mouse_action(
+        mouse(MouseEventKind::Up(MouseButton::Left), pane.x + 3, pane.y),
+        area,
+    );
+    assert_eq!(
+        d.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("界z")
+    );
+    let action = d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.right() - 16,
+            area.y,
+        ),
+        area,
+    );
+    assert_eq!(action, ovrcr::tui::DashboardAction::CopyText("界z".into()));
+    assert_eq!(d.focused_session(), Some(SessionId(1)));
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.right() - 6,
+            area.y,
+        ),
+        area,
+    );
+    assert!(d.copy.is_none());
+    assert_eq!(d.mode, ovrcr::tui::InputMode::Browse);
+}
+#[test]
+fn history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let (_, mut frozen, _) = numbered_history();
+    let mut d = screen_ready_dashboard(b"");
+    let begin = d.key(KeyCode::PageUp);
+    let ovrcr::tui::DashboardAction::Request(begin) = begin else {
+        panic!("begin")
+    };
+    let requests = d.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::HistoryOpened(frozen.opened().clone()),
+    });
+    pump_frozen_history(&mut d, &mut frozen, requests);
+    let area = d.outer_area;
+    let pane = d.pane_rects(area)[0].terminal;
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+    let top = d.history.as_ref().unwrap().top;
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            pane.x + 1,
+            pane.y + 1,
+        ),
+        area,
+    );
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            pane.x + 4,
+            pane.y + 2,
+        ),
+        area,
+    );
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            pane.x + 4,
+            pane.y + 2,
+        ),
+        area,
+    );
+    let range = d.history.as_ref().unwrap().copy_range().unwrap();
+    assert_eq!(
+        range.anchor,
+        HistoryCopyPoint {
+            row: top + 1,
+            col: 1
+        }
+    );
+    assert_eq!(
+        range.cursor,
+        HistoryCopyPoint {
+            row: top + 2,
+            col: 4
+        }
+    );
+    let action = d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.right() - 16,
+            area.y,
+        ),
+        area,
+    );
+    if let ovrcr::tui::DashboardAction::Request(request) = action {
+        pump_frozen_history(&mut d, &mut frozen, vec![request]);
+    }
+    assert!(d.history.as_ref().unwrap().copy_completion.is_some());
+    // New selection invalidates a queued clipboard completion before it can emit.
+    d.mouse_action(
+        mouse(MouseEventKind::Down(MouseButton::Left), pane.x + 3, pane.y),
+        area,
+    );
+    assert!(!write_completed_history_copy(&mut d, &mut Vec::new()));
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            area.right() - 6,
+            area.y,
+        ),
+        area,
+    );
+    assert!(d.history.is_none());
+}
+
+#[test]
+fn copy_mouse_release_position_and_focus_loss_bound_the_gesture() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut d = screen_ready_dashboard(b"abcdef");
+    d.key(KeyCode::Char('['));
+    let area = d.outer_area;
+    let pane = d.pane_rects(area)[0].terminal;
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+    d.mouse_action(
+        mouse(MouseEventKind::Down(MouseButton::Left), pane.x, pane.y),
+        area,
+    );
+    d.mouse_action(
+        mouse(MouseEventKind::Up(MouseButton::Left), pane.x + 2, pane.y),
+        area,
+    );
+    assert_eq!(
+        d.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("abc")
+    );
+    d.mouse_action(
+        mouse(MouseEventKind::Drag(MouseButton::Left), pane.x + 5, pane.y),
+        area,
+    );
+    assert_eq!(
+        d.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("abc")
+    );
+    d.mouse_action(
+        mouse(MouseEventKind::Down(MouseButton::Left), pane.x + 1, pane.y),
+        area,
+    );
+    d.event_action(Event::FocusLost);
+    d.event_action(Event::FocusGained);
+    d.mouse_action(
+        mouse(MouseEventKind::Drag(MouseButton::Left), pane.x + 5, pane.y),
+        area,
+    );
+    assert_eq!(
+        d.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("b")
+    );
+    // This is the view synchronization called by the shared client resize path.
+    d.view_request(Rect::new(area.x, area.y, area.width + 1, area.height), 900)
+        .unwrap();
+    assert!(d.copy.is_none());
+}
+
+#[test]
+fn whichkey_acquisition_cancels_copy_and_history_drags() {
+    use ovrcr::tui::DashboardAction;
+
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    let mut copy = screen_ready_dashboard(b"abcdef");
+    copy.key(KeyCode::Char('['));
+    let copy_area = copy.outer_area;
+    let copy_pane = copy.pane_rects(copy_area)[0].terminal;
+    copy.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            copy_pane.x,
+            copy_pane.y,
+        ),
+        copy_area,
+    );
+    copy.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('?'),
+        KeyModifiers::NONE,
+    )));
+    copy.event_action(Event::Mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        copy_pane.x + 5,
+        copy_pane.y,
+    )));
+    copy.key(KeyCode::Esc);
+    copy.mouse_action(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            copy_pane.x + 5,
+            copy_pane.y,
+        ),
+        copy_area,
+    );
+    assert_eq!(
+        copy.copy.as_ref().unwrap().selected_text().as_deref(),
+        Some("a")
+    );
+
+    let (_, mut frozen, _) = numbered_history();
+    let mut history = screen_ready_dashboard(b"");
+    let DashboardAction::Request(begin) = history.key(KeyCode::PageUp) else {
+        panic!("history begin");
+    };
+    let requests = history.handle_server_message(ServerMessage::Response {
+        request_id: begin.request_id,
+        response: Response::HistoryOpened(frozen.opened().clone()),
+    });
+    pump_frozen_history(&mut history, &mut frozen, requests);
+    let history_area = history.outer_area;
+    let history_pane = history.pane_rects(history_area)[0].terminal;
+    history.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            history_pane.x + 1,
+            history_pane.y + 1,
+        ),
+        history_area,
+    );
+    let before = history.history.as_ref().unwrap().copy_range().unwrap();
+    history.event_action(Event::Key(KeyEvent::new(
+        KeyCode::Char('?'),
+        KeyModifiers::NONE,
+    )));
+    history.event_action(Event::Mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        history_pane.x + 4,
+        history_pane.y + 2,
+    )));
+    history.key(KeyCode::Esc);
+    history.mouse_action(
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            history_pane.x + 4,
+            history_pane.y + 2,
+        ),
+        history_area,
+    );
+    assert_eq!(history.history.as_ref().unwrap().copy_range(), Some(before));
+}
+
+#[test]
+fn history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut d = screen_ready_dashboard(b"");
+    let area = Rect::new(7, 5, 340, 90);
+    d.view_request(area, 900).unwrap();
+    let mut view = ovrcr::tui::HistoryView::new(history_opened(100), 5);
+    view.left = 7;
+    let mut cells = vec![history_cell("x", 1); 300];
+    cells[8] = history_cell("界", 2);
+    cells[9] = history_cell("", 0);
+    cells[262] = history_cell("界", 2);
+    cells[263] = history_cell("", 0);
+    view.pages.push_back(HistoryRows {
+        session: SessionId(1),
+        snapshot: HistorySnapshotId(7),
+        start_row: 0,
+        start_col: 0,
+        rows: (0..100)
+            .map(|_| HistoryRow {
+                width: 300,
+                cells: cells.clone(),
+                wrapped: false,
+            })
+            .collect(),
+    });
+    d.history = Some(view);
+    d.mode = ovrcr::tui::InputMode::History;
+    let pane = d.pane_rects(area)[0].terminal;
+    let mouse = |kind, x, y| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            pane.x + 2,
+            pane.y + 1,
+        ),
+        area,
+    );
+    d.mouse_action(
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            pane.x + 3,
+            pane.y + 2,
+        ),
+        area,
+    );
+    let range = d.history.as_ref().unwrap().copy_range().unwrap();
+    assert_eq!(range.anchor, HistoryCopyPoint { row: 6, col: 8 });
+    assert_eq!(range.cursor, HistoryCopyPoint { row: 7, col: 10 });
+    // Metadata, clipped wide glyph, columns beyond 256, and rows beyond 64 are not painted text.
+    for (x, y) in [
+        (pane.x, pane.y - 1),
+        (pane.x + 255, pane.y),
+        (pane.x + 256, pane.y),
+        (pane.x, pane.y + 64),
+    ] {
+        assert_eq!(
+            d.mouse_action(mouse(MouseEventKind::Down(MouseButton::Left), x, y), area),
+            ovrcr::tui::DashboardAction::None
+        );
+        assert_eq!(d.history.as_ref().unwrap().copy_range(), Some(range));
+    }
+    let session = d.history.as_ref().unwrap().opened.session;
+    d.view_request(Rect::new(7, 5, 100, 20), 901).unwrap();
+    assert_eq!(d.history.as_ref().unwrap().copy_range(), Some(range));
+    assert_eq!(d.history.as_ref().unwrap().opened.session, session);
+    d.select_session(SessionId(5));
+    assert!(d.history.is_none());
+}

@@ -75,8 +75,8 @@ impl KeyHint {
 }
 
 impl Dashboard {
-    // A container selection has no session assignment. Session context comes
-    // directly from the focused pane; it is never mirrored in another store.
+    // A container selection can retain a wire-focused pane, but actions still
+    // target the selected container until the user selects a session again.
     pub(super) fn creation_context(&self) -> (String, String) {
         match &self.selected_container {
             Some(TreeRow::Project { name }) => (name.clone(), String::new()),
@@ -311,7 +311,7 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
         ];
     }
     let selected = dashboard
-        .focused_session()
+        .action_session()
         .and_then(|id| find_session(dashboard, id));
     let (project, workspace) = dashboard.creation_context();
     let target = selected
