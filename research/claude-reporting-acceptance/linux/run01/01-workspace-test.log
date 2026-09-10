@@ -1,0 +1,184 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libc v0.2.189
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+   Compiling heck v0.5.0
+   Compiling cfg-if v1.0.4
+   Compiling serde_core v1.0.229
+   Compiling itoa v1.0.18
+   Compiling bitflags v2.13.1
+   Compiling fnv v1.0.7
+   Compiling autocfg v1.5.1
+   Compiling unicode-width v0.2.2
+   Compiling unicode-segmentation v1.13.3
+   Compiling anyhow v1.0.104
+   Compiling siphasher v1.0.3
+   Compiling foldhash v0.2.0
+   Compiling iana-time-zone v0.1.65
+   Compiling allocator-api2 v0.2.21
+   Compiling serde v1.0.229
+   Compiling equivalent v1.0.2
+   Compiling thiserror v1.0.69
+   Compiling zmij v1.0.23
+   Compiling memchr v2.8.3
+   Compiling rustversion v1.0.23
+   Compiling num-traits v0.2.19
+   Compiling phf_shared v0.12.1
+   Compiling serde_json v1.0.151
+   Compiling rustix v1.1.4
+   Compiling log v0.4.34
+   Compiling virtue v0.0.18
+   Compiling chrono-tz v0.10.4
+   Compiling thiserror v2.0.20
+   Compiling signal-hook v0.3.18
+   Compiling phf v0.12.1
+   Compiling either v1.18.0
+   Compiling unty v0.0.4
+   Compiling linux-raw-sys v0.12.1
+   Compiling hashbrown v0.17.1
+   Compiling hashbrown v0.16.1
+   Compiling instability v0.3.13
+   Compiling itertools v0.14.0
+   Compiling parking_lot_core v0.9.12
+   Compiling ryu v1.0.23
+   Compiling static_assertions v1.1.0
+   Compiling bincode_derive v2.0.1
+   Compiling arrayvec v0.7.8
+   Compiling convert_case v0.10.0
+   Compiling syn v2.0.119
+   Compiling syn v3.0.5
+   Compiling chrono v0.4.45
+   Compiling vte v0.15.0
+   Compiling critical-section v1.2.0
+   Compiling smallvec v1.16.0
+   Compiling castaway v0.2.4
+   Compiling lru v0.18.4
+   Compiling indoc v2.0.7
+   Compiling compact_str v0.9.1
+   Compiling scopeguard v1.2.0
+   Compiling vt100 v0.16.2
+   Compiling lock_api v0.4.14
+   Compiling powerfmt v0.2.0
+   Compiling getrandom v0.4.3
+   Compiling time-core v0.1.9
+   Compiling errno v0.3.14
+   Compiling mio v1.2.3
+   Compiling signal-hook-registry v1.4.8
+   Compiling litrs v1.0.0
+   Compiling deranged v0.5.8
+   Compiling num-conv v0.2.2
+   Compiling cfg_aliases v0.1.1
+   Compiling num_threads v0.1.7
+   Compiling winnow v1.0.4
+   Compiling nix v0.28.0
+   Compiling unicode-truncate v2.0.1
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling document-features v0.2.12
+   Compiling parking_lot v0.12.5
+   Compiling signal-hook-mio v0.2.5
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling line-clipping v0.3.8
+   Compiling winnow v0.7.15
+   Compiling time v0.3.55
+   Compiling base64 v0.22.1
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling utf8parse v0.2.2
+   Compiling option-ext v0.2.0
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling anstyle-parse v1.0.0
+   Compiling dirs-sys v0.5.0
+   Compiling serial2 v0.2.38
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling shell-words v1.1.1
+   Compiling downcast-rs v1.2.1
+   Compiling tempfile v3.27.0
+   Compiling colorchoice v1.0.5
+   Compiling directories v6.0.0
+   Compiling clap_lex v1.1.0
+   Compiling anstream v1.0.0
+   Compiling clap_builder v4.6.6
+   Compiling darling_core v0.20.11
+   Compiling darling_core v0.24.1
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling thiserror-impl v1.0.69
+   Compiling strum_macros v0.27.2
+   Compiling strum_macros v0.28.0
+   Compiling derive_more-impl v2.1.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.20
+   Compiling clap_derive v4.6.4
+   Compiling derive_more v2.1.1
+   Compiling filedescriptor v0.8.3
+   Compiling crossterm v0.29.0
+   Compiling darling_macro v0.20.11
+   Compiling portable-pty v0.9.0
+   Compiling kasuari v0.4.12
+   Compiling clap v4.6.6
+   Compiling strum v0.27.2
+   Compiling darling_macro v0.24.1
+   Compiling strum v0.28.0
+   Compiling ratatui-core v0.1.2
+   Compiling darling v0.20.11
+   Compiling derive_builder_core v0.20.2
+   Compiling darling v0.24.1
+   Compiling derive_builder_macro v0.20.2
+   Compiling bincode v2.0.1
+   Compiling derive_builder v0.20.2
+   Compiling croner v3.0.1
+   Compiling ratatui-widgets v0.3.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ovrcr-protocol v0.1.0 (/workspace/crates/ovrcr-protocol)
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling ovrcr-terminal v0.1.0 (/workspace/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/workspace/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/workspace/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/workspace)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.32s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-cc1f3bfe925e66f0)
+
+running 21 tests
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... FAILED
+test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+
+failures:
+
+---- report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit stdout ----
+
+thread 'report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit' (5712) panicked at src/report/admission.rs:1095:13:
+version probe left its descendant after leader exit 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit
+
+test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+error: test failed, to rerun pass `-p ovrcr --lib`
