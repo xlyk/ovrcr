@@ -31,3 +31,9 @@ Independent contract review permits Task3 launcher mechanics after Task2 review:
 ## Task2 reviewed checkpoint
 
 Task2 completed in `17548373cc210d3c7ebc4e3a6e2a9efcb4b0a2a5`. Independent reviewer verified that exact commit against `6d273eb7b6c035e48f4128092ad5977c71f6b587`, traced socket/dispatcher paths and assertions, and found no blocking issues. No additional reviewer tests ran. Final protocol22/runtime90, affected Clippy, workspace compilation, fmt and diff gates passed; full workspace regression remains incomplete. See task2/results.md and task2/review.md. Task1 certification remains open. Proceed with Task3 partial launcher mechanics under the boundary above.
+
+## Task3 mechanics and fresh-start evidence
+
+Task3 mechanics began after Task2 review. Child-owned process group with foreground handoff/restoration is approved; existing runtime pause/termination already signals attached terminal groups. Tests must exercise those real runtime paths. Missing reporting environment/server runs the native command with one reporting-unavailable diagnostic and no server autostart; explicit ownership conflict prevents spawn. Native argv is unchanged in this partial unit. It exposes no provider binding, transcript reads or metrics.
+
+Attempt08 captured a named-root explicit-UUID startup and background child events with full field-name inventories. Independent source/evidence review permits the narrow initial startup discriminator pending real invocation routing tests. It does not certify foreground-child tool hooks, background conversation forks, in-process switches, confirmed settling or full accounting. Native PID/PGID94134 exited and were verified absent. See attempt-08-summary.md and initial-admission-contract.md.

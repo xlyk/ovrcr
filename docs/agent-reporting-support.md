@@ -62,3 +62,7 @@ Authentication was authorized and succeeded after the earlier blocked attempt. [
 [Attempt 07](../research/claude-reporting-acceptance/attempt-07-summary.md) observed same-conversation compaction and a foreground branch with a new ID. The restricted fixture refused background fork, so that case remains unverified. The approved fallback remains unavailable identity for ambiguous transitions.
 
 Task2 shared runtime work is permitted by the plan's source-or-named-blocker gate. It does not certify a Claude adapter: initial foreground admission, complete final accounting and confirmed settling remain independent provider gates.
+
+## Initial startup evidence follow-up
+
+[Attempt08](../research/claude-reporting-acceptance/attempt-08-summary.md) observed a supervisor-selected UUID on a named root startup, with `agent_type` present and `agent_id` absent. Child lifecycle events carried the same session ID and a distinct `agent_id`, including cases with an empty `agent_type`. Independent review permits implementing this narrow startup discriminator, subject to actual invocation-routing tests and explicit launch-option eligibility. Initial startup remains uncertified until those tests pass; the earlier unsupported-switch limitations remain.
