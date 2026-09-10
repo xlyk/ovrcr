@@ -269,11 +269,13 @@ and open gaps.
   intentional ignores across 24 binaries; Linux passed 607 with 11 ignores across
   23. Clippy and formatting passed on both, while doctest commands executed zero
   tests. The contemporaneously clean native run passed two turns, 62-column metrics,
-  reattachment, exit, and cleanup. These results do not close provider, arbitrary child API StopFailure, complete child accounting,
-  native-null-context, full-heap, or kernel socket-buffer accounting gaps. Task 9
-  A targeted native child run at unchanged `d12abda` proved real child tool-failure
-  and `SubagentStop` isolation; arbitrary child API `StopFailure` remains open. Task 9
-  final contract review and documentation closeout remain open; PR 55 is mergeable,
-  but merge and release have not been authorized.
+  reattachment, exit, and cleanup. A targeted native child run at unchanged
+  `d12abda` proved real child tool-failure and `SubagentStop` isolation.
 
-Independent final evidence review approved `2d18bb0` on 2026-09-10. The existing work diary was extended. These completed review/documentation actions do not close the remaining provider, native null-context, arbitrary child API-error, total-memory, or local Docker cleanup gaps. PR #55 remains a draft; merge and release are not authorized.
+Independent final evidence review approved `2d18bb0` on 2026-09-10, and the
+existing work diary was extended. Draft PR 55's initial CI passed at `d12abda`;
+CI for the final documentation head remains pending. These completed review and
+documentation actions do not close the provider-source, arbitrary child API
+`StopFailure`, complete child-accounting, native null-context, full-heap, kernel
+socket-buffer accounting, or local Docker cleanup gaps. PR 55 remains a draft;
+merge and release are not authorized.
