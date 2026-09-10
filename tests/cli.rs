@@ -1873,3 +1873,101 @@ impl Drop for CleanupGuard<'_> {
         }
     }
 }
+
+#[test]
+fn agent_run_preserves_native_argv_stdio_and_exit_without_server() {
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("native with spaces");
+    std::fs::write(&executable, "#!/bin/sh\nprintf 'ARG:%s\\n' \"$1\"\nIFS= read -r line\nprintf 'IN:%s\\n' \"$line\"\nprintf NATIVE_ERROR >&2\nexit 7\n").unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .args(["agent", "run", "--provider", "claude", "--"])
+        .arg(&executable)
+        .arg("literal $x spaces --flag")
+        .env_remove("OVRCR_HOOK_SOCKET")
+        .env_remove("OVRCR_SESSION_ID")
+        .env_remove("OVRCR_HOOK_TOKEN")
+        .stdin(Stdio::piped());
+    let mut captured = spawn_captured(command).unwrap();
+    captured
+        .child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"native input\n")
+        .unwrap();
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.stdout,
+        b"ARG:literal $x spaces --flag\nIN:native input\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).ends_with("NATIVE_ERROR"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr)
+            .matches("reporting unavailable")
+            .count(),
+        1
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn agent_run_unavailable_server_passes_native_help_version_and_signal_exit() {
+    use std::os::unix::process::ExitStatusExt;
+    let root = tempfile::tempdir().unwrap();
+    for argument in ["--help", "--version"] {
+        let mut command = isolated_command(&root);
+        command
+            .args([
+                "agent",
+                "run",
+                "--provider",
+                "claude",
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf '%s' \"$1\"",
+                "native",
+                argument,
+            ])
+            .env("OVRCR_HOOK_SOCKET", root.path().join("absent.sock"))
+            .env("OVRCR_SESSION_ID", "1")
+            .env("OVRCR_HOOK_TOKEN", "ab".repeat(32));
+        let mut captured = spawn_captured(command).unwrap();
+        let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(5)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, argument.as_bytes());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr)
+                .matches("reporting unavailable")
+                .count(),
+            1
+        );
+        assert!(!root.path().join("server.sock").exists());
+    }
+    let mut command = isolated_command(&root);
+    command
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/bin/sh",
+            "-c",
+            "kill -TERM $$",
+        ])
+        .env_remove("OVRCR_HOOK_SOCKET")
+        .env_remove("OVRCR_SESSION_ID")
+        .env_remove("OVRCR_HOOK_TOKEN");
+    let mut captured = spawn_captured(command).unwrap();
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(5)).unwrap();
+    assert_eq!(output.status.signal(), Some(libc::SIGTERM));
+}

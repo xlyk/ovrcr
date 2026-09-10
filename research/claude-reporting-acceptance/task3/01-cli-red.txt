@@ -1,0 +1,33 @@
+command: rtk proxy cargo test -p ovrcr --test cli agent_run -- --nocapture
+base revision (Task3 working tree): 406734fd39a57d81138c0603bfd8044726727ae2
+exit: 101
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.69s
+     Running tests/cli.rs (target/debug/deps/cli-b86f5d1537cce9b7)
+
+running 1 test
+
+thread 'agent_run_preserves_native_argv_stdio_and_exit_without_server' (31021321) panicked at tests/cli.rs:1889:5:
+assertion `left == right` failed: error: unrecognized subcommand 'agent'
+
+Usage: ovrcr [OPTIONS] [COMMAND]
+
+For more information, try '--help'.
+
+  left: Some(2)
+ right: Some(7)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test agent_run_preserves_native_argv_stdio_and_exit_without_server ... FAILED
+
+failures:
+
+failures:
+    agent_run_preserves_native_argv_stdio_and_exit_without_server
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.55s
+
+error: test failed, to rerun pass `-p ovrcr --test cli`

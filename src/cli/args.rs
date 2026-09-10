@@ -27,6 +27,11 @@ pub(super) struct Cli {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
+    /// Run a native agent with invocation supervision.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     /// Run the server in the foreground (normally started on demand).
     Server,
     /// Manage scheduled Pi tasks.
@@ -249,4 +254,14 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
         "error" => Ok(AgentActivity::Error),
         _ => Err("must be one of: unknown, idle, busy, waiting-input, error".into()),
     }
+}
+
+#[derive(Subcommand)]
+pub(super) enum AgentCommand {
+    Run {
+        #[arg(long, value_parser = ["claude"])]
+        provider: String,
+        #[arg(last = true, required = true)]
+        argv: Vec<OsString>,
+    },
 }

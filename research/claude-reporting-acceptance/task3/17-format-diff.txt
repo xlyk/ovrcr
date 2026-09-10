@@ -1,0 +1,8 @@
+Command: cargo fmt --all -- --check
+Revision: 8108941 + Task3 working tree
+
+Exit: 0
+Command: git diff --check
+Revision: 8108941 + Task3 working tree
+
+Exit: 0

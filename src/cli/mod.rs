@@ -1,3 +1,4 @@
+mod agent;
 mod args;
 mod output;
 mod report;
@@ -66,6 +67,7 @@ fn run(cli: Cli) -> AppResult<()> {
         .map_err(RuntimeError::internal);
     };
     match command {
+        Command::Agent { command } => agent::run(command),
         Command::Task(args) => {
             ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
         }

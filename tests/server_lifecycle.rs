@@ -7094,3 +7094,349 @@ impl Drop for CliLifecycleGuard {
         }
     }
 }
+
+#[test]
+#[ignore = "native child fixture launched through agent run"]
+fn agent_run_native_helper() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    let path = std::path::PathBuf::from(std::env::var_os("OVRCR_NATIVE_PROBE").unwrap());
+    let interrupts = Arc::new(AtomicUsize::new(0));
+    let terminated = Arc::new(AtomicBool::new(false));
+    let count = interrupts.clone();
+    unsafe {
+        signal_hook::low_level::register(libc::SIGINT, move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    signal_hook::flag::register(libc::SIGTERM, terminated.clone()).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "{} {} {} {}\n",
+            std::process::id(),
+            unsafe { libc::getpgrp() },
+            unsafe { libc::getppid() },
+            unsafe { libc::tcgetpgrp(0) }
+        ),
+    )
+    .unwrap();
+    assert!(std::env::var_os("OVRCR_HOOK_SOCKET").is_none());
+    assert!(std::env::var_os("OVRCR_SESSION_ID").is_none());
+    assert!(std::env::var_os("OVRCR_HOOK_TOKEN").is_none());
+    let endpoint = std::env::var_os("OVRCR_AGENT_SOCKET").expect("private invocation endpoint");
+    let token = std::env::var("OVRCR_AGENT_TOKEN").expect("private invocation token");
+    use std::os::unix::fs::PermissionsExt as _;
+    assert_eq!(
+        std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(std::path::Path::new(&endpoint).parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    std::fs::write(path.with_extension("endpoint"), endpoint.as_encoded_bytes()).unwrap();
+    let mut wrong = UnixStream::connect(&endpoint).unwrap();
+    wrong
+        .write_all(format!("{}\n", "0".repeat(64)).as_bytes())
+        .unwrap();
+    let mut rejected = String::new();
+    wrong.read_to_string(&mut rejected).unwrap();
+    assert!(rejected.is_empty(), "incorrect token authenticated");
+    let mut callback = UnixStream::connect(endpoint).unwrap();
+    use std::io::{Read as _, Write as _};
+    callback.write_all(format!("{token}\n").as_bytes()).unwrap();
+    let mut response = String::new();
+    callback.read_to_string(&mut response).unwrap();
+    assert_eq!(response, "admission-unavailable\n");
+    let report = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args(["report", "activity", "--state", "busy"])
+        .output()
+        .unwrap();
+    assert!(!report.status.success());
+    assert!(
+        String::from_utf8_lossy(&report.stderr).contains("admission is unavailable"),
+        "{report:?}"
+    );
+    let mut modes: libc::termios = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::tcgetattr(0, &mut modes) }, 0);
+    modes.c_lflag |= libc::ECHO;
+    assert_eq!(unsafe { libc::tcsetattr(0, libc::TCSANOW, &modes) }, 0);
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::ioctl(0, libc::TIOCGWINSZ, &mut size) }, 0);
+    assert_eq!((size.ws_row, size.ws_col), (40, 120));
+    println!("NATIVE_READY");
+    let mut last = 0;
+    loop {
+        if terminated.load(Ordering::SeqCst) {
+            println!("NATIVE_TERM");
+            std::process::exit(23);
+        }
+        let next = interrupts.load(Ordering::SeqCst);
+        if next != last {
+            std::fs::write(path.with_extension("interrupts"), next.to_string()).unwrap();
+            println!("NATIVE_INTERRUPTS={next}");
+            last = next;
+        }
+        let mut poll = libc::pollfd {
+            fd: 0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut poll, 1, 20) } > 0 {
+            let mut bytes = [0u8; 128];
+            let n = unsafe { libc::read(0, bytes.as_mut_ptr().cast(), bytes.len()) };
+            if n > 0 {
+                assert_eq!(unsafe { libc::tcgetattr(0, &mut modes) }, 0);
+                assert_ne!(
+                    modes.c_lflag & libc::ECHO,
+                    0,
+                    "native modes must survive job-control stop"
+                );
+                println!(
+                    "NATIVE_INPUT={}",
+                    String::from_utf8_lossy(&bytes[..n as usize]).trim()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-run-setup");
+    let probe = fixture._root.path().join("native-probe");
+    let summary = fixture.create_session_summary("agent-run", vec![
+        "sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3.identity"; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf SHELL_RESTORED; exit "$code""#.into(),
+        "agent-run-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        1,
+        "reserve before native spawn"
+    );
+    assert!(
+        fixture.session_summary(summary.id).agent.is_none(),
+        "admission remains unavailable"
+    );
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    let (pid, pgid, launcher, foreground) = (values[0], values[1], values[2], values[3]);
+    assert_eq!(pgid, pid, "native must own its process group");
+    assert_ne!(pgid, summary.pid.unwrap() as i32);
+    assert_eq!(
+        foreground, pgid,
+        "native owns inherited terminal foreground"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{3}".into(),
+            submit: false
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INTERRUPTS=1");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-interrupt".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-interrupt");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("interrupts")).unwrap(),
+        "1"
+    );
+    let peer = PausePeer {
+        pid,
+        pgid,
+        address: probe.clone(),
+        preexit_marker: String::new(),
+    };
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{1a}".into(),
+            submit: false
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&peer, Duration::from_secs(2));
+    wait_peer_stopped(
+        &PausePeer {
+            pid: launcher,
+            pgid: summary.pid.unwrap() as i32,
+            address: probe.clone(),
+            preexit_marker: String::new(),
+        },
+        Duration::from_secs(2),
+    );
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-continue".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-continue");
+    assert_eq!(
+        fixture.request(Request::PauseSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&peer, Duration::from_secs(2));
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-runtime-resume".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-runtime-resume");
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let invoke = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+        command
+            .args([
+                "agent",
+                "run",
+                "--provider",
+                "claude",
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf SECOND_NATIVE",
+            ])
+            .env("OVRCR_HOOK_SOCKET", identity[0])
+            .env("OVRCR_SESSION_ID", identity[1])
+            .env("OVRCR_HOOK_TOKEN", identity[2]);
+        command
+    };
+    let conflict = invoke().output().unwrap();
+    assert!(
+        !conflict.status.success(),
+        "active reservation must refuse native spawn"
+    );
+    assert!(
+        conflict.stdout.is_empty(),
+        "conflicting native command spawned"
+    );
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 1);
+    assert_eq!(unsafe { libc::kill(launcher, libc::SIGTERM) }, 0);
+    fixture.wait_terminal_contains(summary.id, "WRAPPER_FINISHED=23");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("before")).unwrap(),
+        std::fs::read_to_string(probe.with_extension("after")).unwrap(),
+        "restore shell termios"
+    );
+    let failed = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/definitely-missing-ovrcr-native",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let reused = invoke().output().unwrap();
+    assert!(
+        reused.status.success(),
+        "released lease must permit next invocation: {:?}",
+        reused
+    );
+    assert_eq!(reused.stdout, b"SECOND_NATIVE");
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 3);
+    assert!(fixture.session_summary(summary.id).agent.is_none());
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "SHELL_RESTORED");
+    let endpoint = std::fs::read_to_string(probe.with_extension("endpoint")).unwrap();
+    assert!(
+        !std::path::Path::new(&endpoint).exists(),
+        "private invocation socket remains"
+    );
+    println!(
+        "AGENT_OWNERSHIP native_pid={pid} native_pgid={pgid} launcher_pid={launcher} session_pgid={} private_endpoint_removed=true",
+        summary.pid.unwrap()
+    );
+    assert!(
+        wait_group_absent(pgid, Duration::from_secs(2)),
+        "native group remains"
+    );
+}
+
+#[test]
+fn agent_run_runtime_kill_reaches_owned_native_group() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-kill-setup");
+    let probe = fixture._root.path().join("kill-probe");
+    let summary=fixture.create_session_summary("agent-kill",vec![
+        "sh".into(),"-c".into(),r#"export OVRCR_NATIVE_PROBE="$3"; exec "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture"#.into(),
+        "agent-kill-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),std::env::current_exe().unwrap().into_os_string(),probe.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(values[0], values[1]);
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(values[1], Duration::from_secs(2)));
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as i32,
+        Duration::from_secs(2)
+    ));
+}

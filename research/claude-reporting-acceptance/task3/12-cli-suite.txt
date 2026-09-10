@@ -1,0 +1,38 @@
+Command: cargo test -p ovrcr --test cli
+Revision: 8108941 + Task3 working tree
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.96s
+     Running tests/cli.rs (target/debug/deps/cli-b86f5d1537cce9b7)
+
+running 24 tests
+test context_inspect_missing_session_fails ... ok
+test agent_hook_cli_requires_identity_without_starting_server ... ok
+test malformed_offline_registry_is_reported_without_replacing_it ... ok
+test new_and_existing_branch_flags_are_exclusive ... ok
+test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+test pause_resume_cli_requires_id ... ok
+test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+test resource_aliases_are_visible_and_parse_as_commands ... ok
+test terminal_workspace_filter_requires_project ... ok
+test runtime_errors_include_the_cause_chain ... ok
+test version_flag_prints_package_version ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpUgp7jZ/repo/.git/
+test mutations_do_not_start_a_server ... ok
+test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+[main (root-commit) ced7991] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+test agent_hook_cli_reaches_managed_session ... ok
+test context_helper_reports_from_managed_pty ... ok
+test context_helper_invalid_input_has_no_effect ... ok
+test context_inspect_reports_unknown_and_sample ... ok
+test session_command_keeps_arguments_after_separator ... ok
+test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+test context_helper_missing_server_does_not_start_one ... ok
+test agent_hook_cli_timeout_is_bounded ... ok
+test requests_time_out_against_a_wedged_server ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.61s
+Exit: 0

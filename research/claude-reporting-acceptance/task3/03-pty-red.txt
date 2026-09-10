@@ -1,0 +1,31 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_owns_native_group -- --nocapture
+Revision: 406734f + Task3 working tree
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.35s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLfqWqy/repo/.git/
+[main (root-commit) 8fbcf26] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLfqWqy/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLfqWqy/server.sock
+
+thread 'agent_run_owns_native_group_and_restores_terminal_after_forwarded_term' (31079723) panicked at tests/server_lifecycle.rs:7139:5:
+assertion `left == right` failed: native must own its process group
+  left: 29837
+ right: 29889
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... FAILED
+
+failures:
+
+failures:
+    agent_run_owns_native_group_and_restores_terminal_after_forwarded_term
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 1.34s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101
