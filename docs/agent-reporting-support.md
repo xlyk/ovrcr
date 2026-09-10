@@ -170,3 +170,21 @@ proved that real child `PreToolUse`, `PostToolUseFailure`, and `SubagentStop` le
 root binding, activity, health, and usage unchanged. An arbitrary child API
 `StopFailure`, complete child accounting, and native null-current-context timing
 remain unverified.
+
+## Part 2 explicit UUID resume, 2026-09-10
+
+The narrow initial separate-token `--resume <canonical-lowercase-UUIDv4>` form is
+implemented and independently reviewed at `9585271`. It preserves native argv,
+requires matching root resume intent, and permanently closes admission on a
+contradictory initial startup. Fresh positional prompt support remains intact.
+The [integrated native run](../research/claude-reporting-acceptance/native-resume-integrated/results.md)
+from that clean tracked revision imported one old recognized usage row and added
+one new row, retained Partial / Conversation and Observed labels, exited normally,
+and verified all recorded processes/groups and disposable paths removed.
+
+Local macOS gates passed 639 tests with 11 ignored, Clippy and formatting; the
+doctest command succeeded with zero doctests. Earlier probe failures and the
+interrupted disk-full run remain in the [local gate record](../research/claude-reporting-acceptance/part2-final/results.md).
+The full milestone remains blocked by the other provider-source and memory proof
+gaps. Continue, alternate resume forms, and in-process transitions remain disabled.
+The supported executable remains exactly 2.1.267; default 2.1.268 is unsupported.
