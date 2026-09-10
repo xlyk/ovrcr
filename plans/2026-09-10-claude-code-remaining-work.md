@@ -225,10 +225,10 @@ Reporter loss, silence and process exit: never synthesize settled(B).
 
 **Files:** remaining matrix, both plans, support/setup/CLI docs, final evidence, existing task diary. Product changes only for findings returned to their original worker.
 
-- [ ] Review every enabled capability against exact source, actual caller, behavioral assertions and native/platform evidence. Each unresolved source gap stays visible. Distinguish internal-counter proof, sampled RSS, real provider coverage and GUI checks.
+- [x] Review every enabled capability against exact source, actual caller, behavioral assertions and native/platform evidence. Each unresolved source gap stays visible. Distinguish internal-counter proof, sampled RSS, real provider coverage and GUI checks.
 - [x] After relevant code corrections, run the final macOS all-features workspace tests/clippy/fmt once, Linux headless gates, doc tests and `rtk proxy git diff --check`. Repeat only affected checks after later relevant changes; don't rerun paid provider cases for prose edits.
 - [x] Run a final native smoke from one built revision covering initial binding, two turns, metrics, reattachment and exit/cleanup; repeat expanded capabilities only if enabled. Preserve failed attempts and revision provenance.
-- [ ] Update evidence-backed checkboxes and extend the existing work diary. Declare the limited supported contract or full contract accurately; releasing a smaller contract requires the user's explicit scope decision.
+- [x] Update evidence-backed checkboxes and extend the existing work diary. Declare the limited supported contract or full contract accurately; releasing a smaller contract requires the user's explicit scope decision.
 - [x] Prepare a concise PR description with supported version/forms, changed behavior, verification and remaining limits. Push/open a PR only when authorized; merge and release require their own authorization.
 
 **Full completion criterion:** All required provider sources are certified, enabled routes pass native and Linux acceptance, queue/load limits are proved, final review has no blockers, and documentation matches the shipped capabilities. If a provider dependency remains absent, report the exact blocked capability rather than claiming this full milestone complete.
@@ -275,3 +275,5 @@ and open gaps.
   and `SubagentStop` isolation; arbitrary child API `StopFailure` remains open. Task 9
   final contract review and documentation closeout remain open; PR 55 is mergeable,
   but merge and release have not been authorized.
+
+Independent final evidence review approved `2d18bb0` on 2026-09-10. The existing work diary was extended. These completed review/documentation actions do not close the remaining provider, native null-context, arbitrary child API-error, total-memory, or local Docker cleanup gaps. PR #55 remains a draft; merge and release are not authorized.
