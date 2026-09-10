@@ -32,6 +32,26 @@ pub(super) fn action_controls(area: Rect) -> (Rect, Rect) {
     (actions, menu)
 }
 
+pub(super) fn capture_controls(area: Rect) -> (Rect, Rect) {
+    let title = dashboard_layout(area).title;
+    let x = title.right().saturating_sub(16).max(title.x);
+    let copy = if title.width >= 14 {
+        Rect::new(x, title.y, 6, title.height)
+    } else {
+        Rect::default()
+    };
+    let close = if title.width >= 7 {
+        Rect::new(title.right() - 7, title.y, 7, title.height)
+    } else {
+        Rect::default()
+    };
+    (copy, close)
+}
+
+pub(super) fn history_content_rect(area: Rect) -> Rect {
+    Rect::new(area.x, area.y, area.width.min(256), area.height.min(64))
+}
+
 #[derive(Clone, Copy)]
 struct DashboardLayout {
     title: Rect,
@@ -135,7 +155,7 @@ pub fn render_copy(frame: &mut Frame<'_>, area: Rect, selection: &CopySelection)
 }
 
 pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
-    let bounded = Rect::new(area.x, area.y, area.width.min(256), area.height.min(64));
+    let bounded = history_content_rect(area);
     for row in 0..area.height {
         for col in 0..area.width {
             let cell = frame
@@ -240,7 +260,7 @@ pub fn render_history(frame: &mut Frame<'_>, area: Rect, view: &HistoryView) {
     }
 }
 
-fn history_cell_at(
+pub(super) fn history_cell_at(
     view: &HistoryView,
     row: u32,
     col: u16,
@@ -649,6 +669,17 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         frame.render_widget(
             Paragraph::new("[Menu]").style(Style::default().bg(CRUST).fg(MAUVE)),
             menu,
+        );
+    }
+    if matches!(dashboard.mode, InputMode::Copy | InputMode::History) {
+        let (copy, close) = capture_controls(frame.area());
+        frame.render_widget(
+            Paragraph::new("[Copy]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            copy,
+        );
+        frame.render_widget(
+            Paragraph::new("[Close]").style(Style::default().bg(CRUST).fg(MAUVE)),
+            close,
         );
     }
     dashboard.draw_start_screen(frame);

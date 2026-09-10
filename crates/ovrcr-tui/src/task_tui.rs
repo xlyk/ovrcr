@@ -1,8 +1,11 @@
 //! Dedicated scheduled-task interface. Network work stays outside the input/render loop.
 use crate::TaskRequestFn;
 use crate::dashboard::picker::PickList;
+use crate::dashboard::text_cursor::TextCursor;
 use anyhow::{Context, Result, bail};
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ovrcr_protocol::HierarchySnapshot;
 use ovrcr_protocol::task::{
     Run, RunId, Schedule, Task, TaskId, TaskRequest, TaskResponse, TaskSpec, TaskTarget,
@@ -149,6 +152,7 @@ const LABELS: [&str; 12] = [
 ];
 pub struct TaskEditor {
     projects: PickList,
+    project_cursor: TextCursor,
     id: Option<TaskId>,
     submitted: Option<TaskRequest>,
     fields: Vec<String>,
@@ -218,11 +222,156 @@ impl TaskEditor {
         let cursor = fields[0].len();
         Self {
             projects,
+            project_cursor: TextCursor::default(),
             id: task.map(|t| t.id),
             submitted: None,
             fields,
             field: 0,
             cursor,
+        }
+    }
+    fn rects(&self, inner: Rect) -> Vec<(usize, Rect, Rect)> {
+        let first = if inner.height < 14 {
+            self.field
+                .saturating_sub(inner.height.saturating_sub(3) as usize)
+        } else {
+            0
+        };
+        let mut y = inner.y;
+        let mut result = Vec::new();
+        for i in first..LABELS.len() {
+            if y >= inner.bottom() {
+                break;
+            }
+            let height = if i == 11 {
+                inner
+                    .height
+                    .saturating_sub(11)
+                    .max(1)
+                    .min(inner.bottom() - y)
+            } else {
+                1
+            };
+            let rect = Rect::new(inner.x, y, inner.width, height);
+            y += height;
+            let count = if i == 2 && self.field == i {
+                inner.bottom().saturating_sub(y).min(8)
+            } else {
+                0
+            };
+            let count = if count > 0 {
+                self.projects.lines(count as usize).0.len() as u16
+            } else {
+                0
+            };
+            let picks = Rect::new(inner.x, y, inner.width, count);
+            y += count;
+            result.push((i, rect, picks));
+        }
+        result
+    }
+    fn mouse(&mut self, mouse: MouseEvent, inner: Rect) {
+        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+        for (i, rect, picks) in self.rects(inner) {
+            if picks.contains(point) {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.projects.move_selection(-1),
+                    MouseEventKind::ScrollDown => self.projects.move_selection(1),
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        let start = self
+                            .projects
+                            .selected
+                            .saturating_sub(picks.height.saturating_sub(1) as usize);
+                        self.projects.selected = start + usize::from(mouse.row - picks.y);
+                        if self.accept_project() {
+                            self.field = 3;
+                            self.cursor = self.fields[3].len();
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
+            if !rect.contains(point) {
+                continue;
+            }
+            if matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ) {
+                self.field = self
+                    .field
+                    .saturating_add_signed(if mouse.kind == MouseEventKind::ScrollUp {
+                        -1
+                    } else {
+                        1
+                    })
+                    .min(11);
+                self.cursor = self.fields[self.field].len();
+                return;
+            }
+            if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+                return;
+            }
+            let selected = self.field == i;
+            if i == 2 {
+                if selected {
+                    self.project_cursor.click(
+                        &self.projects.query,
+                        rect.width.saturating_sub(11) as usize,
+                        mouse.column.saturating_sub(rect.x + 11) as usize,
+                    );
+                }
+                self.field = i;
+                return;
+            }
+            let prefix = if i == 11 { 10 } else { LABELS[i].width() + 4 };
+            let mut start = 0;
+            let mut text = self.fields[i].as_str();
+            let cursor = if selected { self.cursor } else { 0 };
+            if i == 11 {
+                let cursor_line = text[..cursor].bytes().filter(|b| *b == b'\n').count();
+                let first = if selected {
+                    cursor_line.saturating_sub(rect.height.saturating_sub(1) as usize)
+                } else {
+                    0
+                };
+                let line = first + usize::from(mouse.row - rect.y);
+                let Some(line_text) = text.split('\n').nth(line) else {
+                    return;
+                };
+                start = text.split_inclusive('\n').take(line).map(str::len).sum();
+                text = line_text;
+                if selected && line == cursor_line {
+                    let visible = visible_input(
+                        text,
+                        cursor - start,
+                        rect.width.saturating_sub(prefix as u16) as usize,
+                    )
+                    .0;
+                    start += text.len() - visible.len();
+                    text = visible;
+                }
+            } else if selected {
+                let visible = visible_input(
+                    text,
+                    cursor,
+                    rect.width.saturating_sub(prefix as u16) as usize,
+                )
+                .0;
+                start = text.len() - visible.len();
+                text = visible;
+            }
+            self.cursor = start
+                + TextCursor::byte_at_column(
+                    text,
+                    mouse
+                        .column
+                        .saturating_sub(rect.x.saturating_add(prefix as u16))
+                        as usize,
+                );
+            self.field = i;
+            return;
         }
     }
     fn spec(&self) -> Result<TaskSpec> {
@@ -276,13 +425,26 @@ impl TaskEditor {
     fn edit(&mut self, event: Event) {
         if self.field == 2 {
             match &event {
-                Event::Paste(text) => self.projects.on_insert(&text.replace(['\r', '\n'], " ")),
+                Event::Paste(text) => {
+                    self.project_cursor
+                        .insert(&mut self.projects.query, &text.replace(['\r', '\n'], " "));
+                    self.projects.selected = 0;
+                }
                 Event::Key(key) => match key.code {
                     KeyCode::Up => self.projects.move_selection(-1),
                     KeyCode::Down => self.projects.move_selection(1),
-                    KeyCode::Backspace => self.projects.on_backspace(),
+                    KeyCode::Backspace
+                    | KeyCode::Delete
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Home
+                    | KeyCode::End => {
+                        self.project_cursor.key(&mut self.projects.query, key.code);
+                        self.projects.selected = 0;
+                    }
                     KeyCode::Char('a' | 'u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         self.projects.query.clear();
+                        self.project_cursor = TextCursor::default();
                         self.projects.selected = 0;
                     }
                     KeyCode::Char(c)
@@ -290,7 +452,9 @@ impl TaskEditor {
                             .modifiers
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                     {
-                        self.projects.on_insert(&c.to_string())
+                        self.project_cursor
+                            .insert(&mut self.projects.query, &c.to_string());
+                        self.projects.selected = 0;
                     }
                     KeyCode::Tab | KeyCode::Enter => {
                         if self.accept_project() || self.fields[1].trim() != "git" {
@@ -447,6 +611,160 @@ impl Default for TasksView {
     }
 }
 impl TasksView {
+    fn footer_text(&self) -> &'static str {
+        if self.confirmation.is_some() {
+            "n no  y yes  Enter/Esc no"
+        } else if self.concurrency_input.is_some() {
+            "Esc cancel  Enter save  Backspace delete"
+        } else if let Some(editor) = &self.editor {
+            if editor.field == 2 {
+                "Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear"
+            } else {
+                "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline"
+            }
+        } else if self.history {
+            if self.runs.get(self.selected_run).is_some() {
+                "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup"
+            } else {
+                "Esc tasks"
+            }
+        } else if self.tasks.get(self.selected).is_some() {
+            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit  H all history"
+        } else {
+            "Esc back  n new  h all history  c limit"
+        }
+    }
+    fn controls(&self, footer: Rect) -> Vec<(Rect, &'static str)> {
+        let mut result = Vec::new();
+        let mut x = footer.x;
+        let mut row = 0;
+        for hint in self.footer_text().split("  ") {
+            let width = hint.width() as u16;
+            if width > footer.width {
+                continue;
+            }
+            if x.saturating_add(width) > footer.right() {
+                x = footer.x;
+                row += 1;
+            }
+            if row >= footer.height {
+                break;
+            }
+            result.push((Rect::new(x, footer.bottom() - 1 - row, width, 1), hint));
+            x = x.saturating_add(width + 2);
+        }
+        result
+    }
+    fn rects(&self, area: Rect) -> [Rect; 5] {
+        let rows = self.controls(Rect::new(0, 0, area.width, u16::MAX));
+        let height = rows.last().map_or(1, |(rect, _)| u16::MAX - rect.y);
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(u16::from(self.concurrency_input.is_some())),
+            Constraint::Length(1),
+            Constraint::Length(height.min(area.height.saturating_sub(4).max(1))),
+        ])
+        .areas(area)
+    }
+    /// Mouse controls dispatch through the same event guards as keyboard actions.
+    pub fn mouse(&mut self, mouse: MouseEvent, area: Rect) -> bool {
+        let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+        let [_, body, _, _, footer] = self.rects(area);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some((_, hint)) = self
+                .controls(footer)
+                .into_iter()
+                .find(|(rect, _)| rect.contains(point))
+        {
+            let (code, modifiers) = match hint.split(' ').next().unwrap_or("") {
+                "Esc" | "Enter/Esc" => (KeyCode::Esc, KeyModifiers::NONE),
+                "Ctrl-s" => (KeyCode::Char('s'), KeyModifiers::CONTROL),
+                "Ctrl-a" => (KeyCode::Char('a'), KeyModifiers::CONTROL),
+                "Ctrl-u" => (KeyCode::Char('u'), KeyModifiers::CONTROL),
+                "Tab/Enter" | "Enter" => (KeyCode::Enter, KeyModifiers::NONE),
+                "Tab/Shift-Tab" => (KeyCode::Tab, KeyModifiers::NONE),
+                "Shift-Tab" => (KeyCode::BackTab, KeyModifiers::SHIFT),
+                "Backspace" => (KeyCode::Backspace, KeyModifiers::NONE),
+                "End" => (KeyCode::End, KeyModifiers::NONE),
+                "↑/↓" => (KeyCode::Down, KeyModifiers::NONE),
+                "PgUp/PgDn" => (KeyCode::PageUp, KeyModifiers::NONE),
+                token => (
+                    KeyCode::Char(token.chars().next().unwrap_or(' ')),
+                    KeyModifiers::NONE,
+                ),
+            };
+            return self.event(Event::Key(KeyEvent::new(code, modifiers)));
+        }
+        if self.confirmation.is_some() || self.concurrency_input.is_some() {
+            return false;
+        }
+        if let Some(editor) = &mut self.editor {
+            if editor.submitted.is_none() {
+                editor.mouse(mouse, block("").inner(body));
+            }
+            return false;
+        }
+        let (list, header) = if self.history {
+            (history_rects(body)[0], 0)
+        } else {
+            (body, 1)
+        };
+        let mut inner = block("").inner(list);
+        inner.y = inner.y.saturating_add(header);
+        inner.height = inner.height.saturating_sub(header);
+        if inner.contains(point) {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => self.move_selection(-1),
+                MouseEventKind::ScrollDown => self.move_selection(1),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let selected = if self.history {
+                        self.selected_run
+                    } else {
+                        self.selected
+                    };
+                    let start = selected.saturating_sub(inner.height.saturating_sub(1) as usize);
+                    let index = start + usize::from(mouse.row - inner.y);
+                    let len = if self.history {
+                        self.runs.len()
+                    } else {
+                        self.tasks.len()
+                    };
+                    if index < len {
+                        self.move_selection(index as isize - selected as isize);
+                    }
+                }
+                _ => {}
+            }
+        } else if self.history && block("").inner(history_rects(body)[1]).contains(point) {
+            let log = block("").inner(history_rects(body)[1]);
+            let max = self
+                .wrapped_transcript(&self.transcript_text(), log.width)
+                .len()
+                .saturating_sub(log.height as usize);
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.transcript.scroll = self.transcript.scroll.saturating_add(1).min(max)
+                }
+                MouseEventKind::ScrollDown => {
+                    self.transcript.scroll = self.transcript.scroll.saturating_sub(1)
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    fn transcript_text(&self) -> String {
+        let mut text = self.transcript.text().to_owned();
+        if let Some(error) = self
+            .runs
+            .get(self.selected_run)
+            .and_then(|r| r.error.as_ref())
+        {
+            text.push_str(&format!("\n[error: {error}]"));
+        }
+        text
+    }
     pub fn with_projects(hierarchy: &HierarchySnapshot, preferred: &str) -> Self {
         Self {
             projects: PickList::projects(hierarchy, preferred),
@@ -804,6 +1122,14 @@ impl TaskWorker {
     }
 }
 
+fn history_rects(body: Rect) -> [Rect; 2] {
+    Layout::vertical([
+        Constraint::Length((body.height / 3).max(4)),
+        Constraint::Min(1),
+    ])
+    .areas(body)
+}
+
 fn visible_input(text: &str, cursor: usize, width: usize) -> (&str, usize) {
     let before = &text[..cursor];
     let mut column = Line::raw(before).width();
@@ -868,14 +1194,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         ),
         area,
     );
-    let [title, body, concurrency, status, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-        Constraint::Length(u16::from(view.concurrency_input.is_some())),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    let [title, body, concurrency, status, footer] = view.rects(area);
     frame.render_widget(
         Paragraph::new(format!(
             " OVRCR  Tasks  │ concurrency: {}",
@@ -888,13 +1207,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         ),
         title,
     );
-    let footer_text;
     if let Some(editor) = &view.editor {
-        footer_text = if editor.field == 2 {
-            "Esc cancel  Ctrl-s save  ↑/↓ pick  Tab/Enter accept  Shift-Tab back  Ctrl-u clear"
-        } else {
-            "Esc cancel  Ctrl-s save  Tab/Shift-Tab field  Ctrl-a clear  Enter newline"
-        };
         let outer = block(if editor.id.is_some() {
             " Edit task "
         } else {
@@ -902,51 +1215,27 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         });
         let inner = outer.inner(body);
         frame.render_widget(outer, body);
-        // Scroll the field list on short terminals so every field remains reachable.
-        let prompt_height = inner.height.saturating_sub(11).max(1);
-        let first = if inner.height < 14 {
-            editor
-                .field
-                .saturating_sub(inner.height.saturating_sub(3) as usize)
-        } else {
-            0
-        };
-        let mut y = inner.y;
-        for (i, label) in LABELS.iter().enumerate().skip(first) {
-            if y >= inner.bottom() {
-                break;
-            }
-            let height = if i == 11 {
-                prompt_height.min(inner.bottom() - y)
-            } else {
-                1
-            };
-            let rect = Rect::new(inner.x, y, inner.width, height);
+        for (i, rect, picks) in editor.rects(inner) {
+            let label = LABELS[i];
+            let height = rect.height;
             let selected = editor.field == i;
             let marker = if selected { ">" } else { " " };
             if i == 2 && selected {
-                let value = if editor.projects.query.is_empty() {
-                    &editor.fields[2]
-                } else {
-                    &editor.projects.query
-                };
-                frame.render_widget(Paragraph::new(format!("› Project: {value}▏")), rect);
-                let count = inner.bottom().saturating_sub(y + 1).min(8) as usize;
-                if count > 0 {
-                    let (lines, selected) = editor.projects.lines(count);
-                    let height = lines.len() as u16;
-                    frame.render_widget(
-                        Paragraph::new(lines),
-                        Rect::new(inner.x, y + 1, inner.width, height),
-                    );
+                let (value, _) = editor.project_cursor.display(
+                    &editor.projects.query,
+                    rect.width.saturating_sub(11) as usize,
+                );
+                frame.render_widget(Paragraph::new(format!("› Project: {value}")), rect);
+                if picks.height > 0 {
+                    let (lines, selected) = editor.projects.lines(picks.height as usize);
+                    frame.render_widget(Paragraph::new(lines), picks);
                     frame.set_cursor_position((
-                        inner
+                        picks
                             .x
                             .saturating_add(2)
-                            .min(inner.right().saturating_sub(1)),
-                        y + 1 + selected as u16,
+                            .min(picks.right().saturating_sub(1)),
+                        picks.y + selected as u16,
                     ));
-                    y += height;
                 }
             } else if i == 11 {
                 let prefix = format!("{marker} Prompt: ");
@@ -1036,19 +1325,9 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
                     ));
                 }
             }
-            y += height;
         }
     } else if view.history {
-        footer_text = if view.runs.get(view.selected_run).is_some() {
-            "Esc tasks  ↑/↓ run  PgUp/PgDn transcript  End follow  x cancel run  d cleanup"
-        } else {
-            "Esc tasks"
-        };
-        let [history, log] = Layout::vertical([
-            Constraint::Length((body.height / 3).max(4)),
-            Constraint::Min(1),
-        ])
-        .areas(body);
+        let [history, log] = history_rects(body);
         let mut rows = view
             .runs
             .iter()
@@ -1097,14 +1376,7 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         let outer = block(&title);
         let inner = outer.inner(log);
         frame.render_widget(outer, log);
-        let mut text = view.transcript.text().to_owned();
-        if let Some(error) = view
-            .runs
-            .get(view.selected_run)
-            .and_then(|r| r.error.as_ref())
-        {
-            text.push_str(&format!("\n[error: {error}]"));
-        }
+        let text = view.transcript_text();
         // Pre-wrap so line scrolling and following work for long streamed paragraphs.
         let lines = view.wrapped_transcript(&text, inner.width);
         let start = lines
@@ -1123,11 +1395,6 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
             inner,
         );
     } else {
-        footer_text = if view.tasks.get(view.selected).is_some() {
-            "Esc back  n new  h/H history/all  e edit  p pause/resume  r run  d del  c limit"
-        } else {
-            "Esc back  n new  h all history  c limit"
-        };
         let mut rows = vec![Line::raw(
             "   ID  STATE    NAME                 SCHEDULE / NEXT (UTC)",
         )];
@@ -1169,25 +1436,12 @@ pub fn draw_tasks(frame: &mut Frame<'_>, view: &TasksView) {
         Paragraph::new(view.message.as_str()).style(Style::default().fg(Color::Rgb(249, 226, 175))),
         status,
     );
-    let footer_text = if view.confirmation.is_some() {
-        "n no  y yes  Enter/Esc no"
-    } else if view.concurrency_input.is_some() {
-        "Esc cancel  Enter save  Backspace delete"
-    } else {
-        footer_text
-    };
-    let mut hints = String::new();
-    for hint in footer_text.split("  ") {
-        let separator = if hints.is_empty() { "" } else { "  " };
-        if hints.width() + separator.len() + hint.width() <= usize::from(footer.width) {
-            hints.push_str(separator);
-            hints.push_str(hint);
-        }
+    for (rect, hint) in view.controls(footer) {
+        frame.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(Color::Rgb(166, 173, 200))),
+            rect,
+        );
     }
-    frame.render_widget(
-        Paragraph::new(hints).style(Style::default().fg(Color::Rgb(166, 173, 200))),
-        footer,
-    );
     if let Some(request) = &view.confirmation {
         let text = match request {
             TaskRequest::Delete(id) => {

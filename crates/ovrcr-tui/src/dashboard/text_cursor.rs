@@ -19,6 +19,19 @@ fn boundaries(text: &str) -> Vec<usize> {
         .collect()
 }
 impl TextCursor {
+    /// Place a byte cursor on a rendered grapheme, including wide/combining cells.
+    pub(crate) fn byte_at_column(text: &str, column: usize) -> usize {
+        let mut used = 0;
+        for pair in boundaries(text).windows(2) {
+            let width = text[pair[0]..pair[1]].width();
+            if column < used + width {
+                return pair[0];
+            }
+            used += width;
+        }
+        text.len()
+    }
+
     fn position(self, text: &str) -> usize {
         let requested = self.0.unwrap_or(text.len()).min(text.len());
         boundaries(text)

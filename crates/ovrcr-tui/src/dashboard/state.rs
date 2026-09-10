@@ -84,6 +84,7 @@ pub struct HistoryView {
     pub cursor_target: Option<HistoryCursorTarget>,
     cursor_reveal: bool,
     pub anchor: Option<HistoryCopyPoint>,
+    dragging: bool,
     pub copy_job: Option<HistoryCopyJob>,
     pub copy_completion: Option<HistoryCopyCompletion>,
 }
@@ -105,6 +106,7 @@ impl HistoryView {
             })),
             cursor_reveal: false,
             anchor: None,
+            dragging: false,
             copy_job: None,
             copy_completion: None,
         }
@@ -1831,8 +1833,11 @@ impl Dashboard {
         if self.palette.is_some() {
             return self.palette_mouse(mouse, area);
         }
-        if self.tasks.is_some() {
-            return DashboardAction::None;
+        if let Some(tasks) = &mut self.tasks {
+            if tasks.mouse(mouse, area) {
+                self.tasks = None;
+            }
+            return DashboardAction::Redraw;
         }
         if self.whichkey.is_some() {
             return self.whichkey_mouse(mouse, area);
@@ -1856,6 +1861,9 @@ impl Dashboard {
                     .whichkey_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE))
                     .unwrap_or(DashboardAction::Redraw);
             }
+        }
+        if matches!(self.mode, InputMode::Copy | InputMode::History) {
+            return self.capture_mouse_action(mouse, area);
         }
         if let Some(action) = self.pane_mouse_action(mouse, area) {
             return action;
@@ -1887,14 +1895,14 @@ impl Dashboard {
             return true;
         }
         if self.tasks.is_some() {
-            return false;
+            return true;
         }
         if self.whichkey.is_some() {
             return true;
         }
         match self.mode {
             InputMode::Browse | InputMode::History => true,
-            InputMode::Copy => false,
+            InputMode::Copy => true,
             InputMode::Terminal => self.mouse_focused,
         }
     }
@@ -1902,6 +1910,12 @@ impl Dashboard {
     pub fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
         self.mouse.split_dragging = false;
+        if let Some(copy) = &mut self.copy {
+            copy.dragging = false;
+        }
+        if let Some(history) = &mut self.history {
+            history.dragging = false;
+        }
     }
 
     pub fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
@@ -2247,6 +2261,139 @@ impl Dashboard {
             DashboardAction::Request(request) => Some(request),
             _ => None,
         }
+    }
+
+    fn capture_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let (copy, close) = super::render::capture_controls(area);
+            if point_in_rect(mouse, close) {
+                if self.mode == InputMode::History {
+                    return self.leave_history();
+                }
+                self.cancel_copy(None);
+                return DashboardAction::Redraw;
+            }
+            if point_in_rect(mouse, copy) {
+                let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+                return if self.mode == InputMode::History {
+                    self.history_key_action(key)
+                } else {
+                    self.copy_key_action(key)
+                };
+            }
+        }
+        let Some(mut inner) = self
+            .pane_rects(area)
+            .into_iter()
+            .find(|pane| pane.pane_index == self.focused_pane)
+            .map(|pane| pane.terminal)
+        else {
+            return DashboardAction::None;
+        };
+        if self.mode == InputMode::Copy {
+            let Some(copy) = &mut self.copy else {
+                return DashboardAction::None;
+            };
+            let (rows, cols) = copy.screen.size();
+            inner.width = inner.width.min(cols);
+            inner.height = inner.height.min(rows);
+            let dragging = copy.dragging;
+            if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+                copy.dragging = false;
+            }
+            if !point_in_rect(mouse, inner) {
+                return DashboardAction::None;
+            }
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    copy.point_at(super::copy::CopyPoint {
+                        row: mouse.row - inner.y,
+                        col: mouse.column - inner.x,
+                    });
+                    copy.anchor = Some(copy.cursor);
+                    copy.dragging = true;
+                }
+                MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+                    if dragging =>
+                {
+                    copy.point_at(super::copy::CopyPoint {
+                        row: mouse.row - inner.y,
+                        col: mouse.column - inner.x,
+                    });
+                }
+                _ => return DashboardAction::None,
+            }
+            self.copy_notice = None;
+            return DashboardAction::Redraw;
+        }
+        inner = super::render::history_content_rect(inner);
+        let dragging = self.history.as_ref().is_some_and(|view| view.dragging);
+        if let Some(view) = &mut self.history
+            && mouse.kind == MouseEventKind::Up(MouseButton::Left)
+        {
+            view.dragging = false;
+        }
+        if !point_in_rect(mouse, inner) {
+            return DashboardAction::None;
+        }
+        if is_wheel(mouse.kind) {
+            return self.history_wheel_action(mouse, area);
+        }
+        let size = history_view_size(self.focused_size());
+        let Some(view) = &mut self.history else {
+            return DashboardAction::None;
+        };
+        let starting = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        if !starting
+            && !(matches!(
+                mouse.kind,
+                MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+            ) && dragging)
+        {
+            return DashboardAction::None;
+        }
+        let point = HistoryCopyPoint {
+            row: view.top.saturating_add(u32::from(mouse.row - inner.y)),
+            col: view.left.saturating_add(mouse.column - inner.x),
+        };
+        // Only painted, loaded cells can start a gesture. This keeps page arrival
+        // from creating an anchor after a release or a click on an empty row.
+        let painted = super::render::history_cell_at(view, point.row, point.col).is_some_and(
+            |(_, row, cell)| {
+                point.col < row.width
+                    && (cell.width != 2 || mouse.column + 1 < inner.right())
+                    && (cell.width != 0 || mouse.column > inner.x)
+            },
+        );
+        if !painted {
+            return DashboardAction::None;
+        }
+        view.copy_job = None;
+        view.copy_completion = None;
+        if starting {
+            view.anchor = None;
+            view.dragging = false;
+        }
+        view.cursor_target = Some(HistoryCursorTarget::At(point));
+        view.cursor_reveal = false;
+        match view.resolve_cursor(size) {
+            Ok(true) => {
+                if starting {
+                    view.anchor = view.cursor.map(|cursor| cursor.point);
+                    view.dragging = view.anchor.is_some();
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.copy_notice = Some(error.to_string());
+                return DashboardAction::Redraw;
+            }
+        }
+        self.history_page_error = false;
+        self.error = None;
+        self.copy_notice = None;
+        self.history_request_if_needed()
+            .map_or(DashboardAction::Redraw, DashboardAction::Request)
     }
 
     fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {

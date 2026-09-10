@@ -131,16 +131,6 @@ impl PickList {
         self.filtered().get(self.selected).copied()
     }
 
-    pub fn on_insert(&mut self, text: &str) {
-        self.query.push_str(text);
-        self.selected = 0;
-    }
-
-    pub fn on_backspace(&mut self) {
-        self.query.pop();
-        self.selected = 0;
-    }
-
     pub fn select_value(&mut self, value: &str) {
         if let Some(index) = self.filtered().iter().position(|item| item.value == value) {
             self.selected = index;
