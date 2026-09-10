@@ -114,6 +114,23 @@ pub struct PaneRects {
 }
 
 pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects> {
+    pane_rects_with_preference(area, pane_count, focused, None)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SplitPreference {
+    left: u16,
+    available: u16,
+}
+
+const MIN_SPLIT_PANE_WIDTH: u16 = 20;
+
+fn pane_rects_with_preference(
+    area: Rect,
+    pane_count: usize,
+    focused: usize,
+    preference: Option<SplitPreference>,
+) -> Vec<PaneRects> {
     let pane_count = pane_count.min(2);
     if pane_count == 0 {
         return Vec::new();
@@ -139,7 +156,16 @@ pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRect
         }];
     }
     let available = right.width - 1;
-    let left_width = available / 2;
+    let left_width = preference
+        .filter(|preference| preference.available > 0)
+        .map(|preference| {
+            let scaled = (u32::from(available) * u32::from(preference.left)
+                + u32::from(preference.available) / 2)
+                / u32::from(preference.available);
+            u16::try_from(scaled).unwrap_or(available)
+        })
+        .unwrap_or(available / 2)
+        .clamp(MIN_SPLIT_PANE_WIDTH, available - MIN_SPLIT_PANE_WIDTH);
     let right_width = available - left_width;
     vec![
         PaneRects {
@@ -177,6 +203,7 @@ pub(super) struct MouseForwarding {
     pub(super) held: [Option<HeldMouse>; 3],
     pub(super) last_motion: Option<MouseEvent>,
     pub(super) pending_cleanup: Option<ClientMessage>,
+    pub(super) split_dragging: bool,
 }
 
 pub struct Dashboard {
@@ -198,6 +225,7 @@ pub struct Dashboard {
     pub history: Option<HistoryView>,
     pub history_begin_request: Option<PendingHistoryBegin>,
     pub(super) mouse: MouseForwarding,
+    pub(super) split_preference: Option<SplitPreference>,
     pub(super) mouse_focused: bool,
     /// Pane index whose history a wheel tick asked for while that pane was still loading.
     pub(super) deferred_history_at_tail: Option<usize>,

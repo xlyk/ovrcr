@@ -544,13 +544,13 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
             .contains(&ovrcr::tui::TreeRow::Session { id: SessionId(5) })
     );
     dashboard.toggle_selected_group();
-    let mouse = |row| MouseEvent {
+    let mouse = |column, row| MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: 4,
+        column,
         row,
         modifiers: KeyModifiers::NONE,
     };
-    let action = dashboard.mouse_action(mouse(2), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(2, 2), Rect::new(0, 0, 120, 40));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     assert!(
         !dashboard
@@ -565,27 +565,73 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
         .map(|column| terminal.backend().buffer()[(column, 2)].symbol())
         .collect::<String>();
     assert!(collapsed_workspace.contains('▶'));
-    let action = dashboard.mouse_action(mouse(2), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(2, 2), Rect::new(0, 0, 120, 40));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    let action = dashboard.mouse_action(mouse(6), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(4, 6), Rect::new(0, 0, 120, 40));
     assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    let action = dashboard.mouse_action(mouse(1), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(0, 1), Rect::new(0, 0, 120, 40));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     assert!(dashboard.collapsed_projects.contains("consigint"));
     let action = dashboard.mouse_action(
         MouseEvent {
             column: 60,
-            ..mouse(6)
+            ..mouse(4, 6)
         },
         Rect::new(0, 0, 120, 40),
     );
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
-        dashboard.mouse_action(mouse(6), Rect::new(0, 0, 120, 40)),
-        ovrcr::tui::DashboardAction::None
+        dashboard.mouse_action(mouse(4, 6), Rect::new(0, 0, 120, 40)),
+        ovrcr::tui::DashboardAction::Redraw
     );
+}
+
+#[test]
+fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
+    let area = Rect::new(0, 0, 120, 40);
+    let click = |column, row| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    let mut project = dashboard_fixture();
+    project.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        project.mouse_action(click(5, 1), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(project.focused_session().is_none());
+    assert!(!project.collapsed_projects.contains("consigint"));
+
+    let mut project_disclosure = dashboard_fixture();
+    project_disclosure.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        project_disclosure.mouse_action(click(0, 1), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(project_disclosure.collapsed_projects.contains("consigint"));
+    assert_eq!(project_disclosure.focused_session(), Some(SessionId(1)));
+
+    let mut workspace = dashboard_fixture();
+    workspace.mode = ovrcr::tui::InputMode::Terminal;
+    assert_eq!(
+        workspace.mouse_action(click(5, 2), area),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(workspace.focused_session().is_none());
+    assert!(workspace.collapsed_workspaces.is_empty());
+
+    let mut session = dashboard_fixture();
+    session.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(matches!(
+        session.mouse_action(click(6, 3), area),
+        ovrcr::tui::DashboardAction::Request(_)
+    ));
+    assert_eq!(session.focused_session(), Some(SessionId(5)));
 }
 
 #[test]
@@ -653,6 +699,40 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         }
         assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     }
+
+    for _ in 0..50 {
+        dashboard.move_selection(-1);
+    }
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    for _ in 0..3 {
+        assert_eq!(
+            dashboard.mouse_action(
+                MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: 4,
+                    row: 10,
+                    modifiers: KeyModifiers::NONE,
+                },
+                Rect::new(0, 0, 120, 40),
+            ),
+            ovrcr::tui::DashboardAction::Redraw
+        );
+    }
+    let action = dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 6,
+            row: 3,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert!(matches!(
+        action,
+        ovrcr::tui::DashboardAction::Request(_) | ovrcr::tui::DashboardAction::Redraw
+    ));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
 }
 
 #[test]

@@ -314,6 +314,50 @@ fn browse_click_in_pane_focuses_without_bytes() {
 }
 
 #[test]
+fn terminal_click_focuses_other_pane_without_forwarding() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 60)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    assert!(dashboard.focus_pane(0));
+    let focused = dashboard
+        .view_request(area, 61)
+        .unwrap()
+        .expect("focus should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, focused);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+
+    let other = pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("other pane")
+        .terminal;
+    let action = dashboard.mouse_action(
+        click_in(other, MouseEventKind::Down(MouseButton::Left), 2, 3),
+        area,
+    );
+
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert!(dashboard.take_mouse_cleanup().is_none());
+    assert!(dashboard.input_request(vec![b'x'], 62).is_none());
+    assert!(dashboard.mouse_capture_required());
+}
+
+#[test]
+fn terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 20, cols: 80 });
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.focused_session().is_none());
+    assert!(dashboard.mouse_capture_required());
+}
+
+#[test]
 fn press_outside_rectangle_is_not_clamped() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
@@ -363,6 +407,33 @@ fn leaving_the_rectangle_releases_at_last_valid_cell() {
             mouse_event(
                 MouseEventKind::Drag(MouseButton::Left),
                 inner.x.saturating_sub(1),
+                inner.y + 3,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4m".to_vec())
+    );
+}
+
+#[test]
+fn dragging_tracked_mouse_into_sidebar_releases_application_button() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = focused_terminal_rect(&dashboard, area);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                10,
                 inner.y + 3,
                 KeyModifiers::NONE,
             ),

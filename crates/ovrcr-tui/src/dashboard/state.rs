@@ -559,6 +559,7 @@ impl Dashboard {
             history: None,
             history_begin_request: None,
             mouse: super::MouseForwarding::default(),
+            split_preference: None,
             mouse_focused: true,
             deferred_history_at_tail: None,
             tree_offset: 0,
@@ -678,7 +679,7 @@ impl Dashboard {
     }
 
     fn desired_view(&self) -> RequestedView {
-        let rects = super::pane_rects(self.outer_area, self.panes.len(), self.focused_pane);
+        let rects = self.pane_rects(self.outer_area);
         let mut targets = Vec::new();
         for rect in rects {
             let Some(pane) = self.panes.get(rect.pane_index) else {
@@ -761,7 +762,7 @@ impl Dashboard {
                 .requested_view
                 .as_ref()
                 .is_some_and(|requested| Self::same_view(requested, &desired));
-        let rects = super::pane_rects(area, self.panes.len(), self.focused_pane);
+        let rects = self.pane_rects(area);
         let desired_sessions = desired
             .targets
             .iter()
@@ -1825,17 +1826,25 @@ impl Dashboard {
         if self.whichkey.is_some() {
             return self.whichkey_mouse(mouse, area);
         }
+        if !self.mouse_focused {
+            return DashboardAction::None;
+        }
+        if let Some(action) = self.pane_mouse_action(mouse, area) {
+            return action;
+        }
+        if let Some(action) = self.sidebar_mouse_action(mouse, area) {
+            return action;
+        }
         match self.mode {
             InputMode::Copy => DashboardAction::None,
             InputMode::History => self.history_wheel_action(mouse, area),
             InputMode::Browse => {
-                if is_wheel(mouse.kind) {
-                    if let Some(action) = self.pane_wheel_history(mouse, area) {
-                        return action;
-                    }
-                    return DashboardAction::None;
+                if is_wheel(mouse.kind)
+                    && let Some(action) = self.pane_wheel_history(mouse, area)
+                {
+                    return action;
                 }
-                self.browse_mouse_action(mouse, area)
+                DashboardAction::None
             }
             InputMode::Terminal => self.terminal_mouse_action(mouse, area),
         }
@@ -1855,61 +1864,174 @@ impl Dashboard {
         match self.mode {
             InputMode::Browse | InputMode::History => true,
             InputMode::Copy => false,
-            InputMode::Terminal => self.input_is_allowed(),
+            InputMode::Terminal => self.mouse_focused,
         }
     }
 
     pub fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
+        self.mouse.split_dragging = false;
     }
 
     pub fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
         self.mouse.pending_cleanup.take()
     }
 
-    fn browse_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return DashboardAction::None;
-        }
-        for pane in super::pane_rects(area, self.panes.len(), self.focused_pane) {
-            if point_in_rect(mouse, pane.terminal) {
-                self.focus_pane(pane.pane_index);
-                return DashboardAction::Redraw;
-            }
+    pub fn pane_rects(&self, area: Rect) -> Vec<super::PaneRects> {
+        super::pane_rects_with_preference(
+            area,
+            self.panes.len(),
+            self.focused_pane,
+            self.split_preference,
+        )
+    }
+
+    fn sidebar_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
+        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
+            return None;
         }
         let sidebar = sidebar_area(area);
         if !point_in_rect(mouse, sidebar) {
-            return DashboardAction::None;
+            return None;
         }
-        let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
-        let rows = self.visible_rows();
-        let Some((row, _)) = tree_line_at(&rows, row_index) else {
-            return DashboardAction::None;
-        };
-        match row.clone() {
-            TreeRow::Session { id } => {
-                self.select_session(id);
-                self.request_selected()
-            }
-            TreeRow::Project { name } => {
-                self.select_container(TreeRow::Project { name: name.clone() });
-                if !self.collapsed_projects.remove(&name) {
-                    self.collapsed_projects.insert(name);
+        match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let rows = self.visible_rows();
+                let max_offset = tree_line_count(&rows).saturating_sub(usize::from(sidebar.height));
+                let next = if mouse.kind == MouseEventKind::ScrollUp {
+                    self.tree_offset.saturating_sub(1)
+                } else {
+                    self.tree_offset.saturating_add(1).min(max_offset)
+                };
+                if next == self.tree_offset {
+                    Some(DashboardAction::None)
+                } else {
+                    self.tree_offset = next;
+                    Some(DashboardAction::Redraw)
                 }
-                DashboardAction::Redraw
             }
-            TreeRow::Workspace { project, name } => {
-                self.select_container(TreeRow::Workspace {
-                    project: project.clone(),
-                    name: name.clone(),
-                });
-                let key = (project, name);
-                if !self.collapsed_workspaces.remove(&key) {
-                    self.collapsed_workspaces.insert(key);
+            MouseEventKind::Down(MouseButton::Left) => {
+                let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
+                let rows = self.visible_rows();
+                let (row, _) = tree_line_at(&rows, row_index)?;
+                let row = row.clone();
+                let column = mouse.column.saturating_sub(sidebar.x);
+                match row {
+                    TreeRow::Session { id } => {
+                        self.select_session(id);
+                        Some(self.request_selected())
+                    }
+                    TreeRow::Project { name } if column == 0 => {
+                        if !self.collapsed_projects.remove(&name) {
+                            self.collapsed_projects.insert(name);
+                        }
+                        self.clamp_tree_offset(usize::from(sidebar.height));
+                        Some(DashboardAction::Redraw)
+                    }
+                    TreeRow::Workspace { project, name } if column == 2 => {
+                        let key = (project, name);
+                        if !self.collapsed_workspaces.remove(&key) {
+                            self.collapsed_workspaces.insert(key);
+                        }
+                        self.clamp_tree_offset(usize::from(sidebar.height));
+                        Some(DashboardAction::Redraw)
+                    }
+                    row @ (TreeRow::Project { .. } | TreeRow::Workspace { .. }) => {
+                        self.select_container(row);
+                        Some(DashboardAction::Redraw)
+                    }
                 }
-                DashboardAction::Redraw
+            }
+            _ => None,
+        }
+    }
+
+    fn clamp_tree_offset(&mut self, viewport_height: usize) {
+        let max_offset = tree_line_count(&self.visible_rows()).saturating_sub(viewport_height);
+        self.tree_offset = self.tree_offset.min(max_offset);
+    }
+
+    fn pane_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> Option<DashboardAction> {
+        if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
+            return None;
+        }
+        if self.mouse.split_dragging {
+            return match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    Some(if self.resize_split(area, mouse.column) {
+                        DashboardAction::Redraw
+                    } else {
+                        DashboardAction::None
+                    })
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.mouse.split_dragging = false;
+                    Some(DashboardAction::Redraw)
+                }
+                _ => Some(DashboardAction::None),
+            };
+        }
+
+        let rects = self.pane_rects(area);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && rects.len() == 2
+            && mouse.column == rects[0].terminal.right()
+        {
+            let sidebar = sidebar_area(area);
+            if mouse.row >= sidebar.y && mouse.row < sidebar.bottom() {
+                self.mouse.split_dragging = true;
+                return Some(DashboardAction::Redraw);
             }
         }
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && let Some(pane) = rects
+                .iter()
+                .find(|pane| point_in_rect(mouse, pane.terminal))
+        {
+            if self.mode == InputMode::Browse {
+                self.focus_pane(pane.pane_index);
+                return Some(DashboardAction::Redraw);
+            }
+            if pane.pane_index != self.focused_pane {
+                self.focus_pane(pane.pane_index);
+                self.mode = InputMode::Terminal;
+                return Some(DashboardAction::Redraw);
+            }
+        }
+        None
+    }
+
+    fn resize_split(&mut self, area: Rect, column: u16) -> bool {
+        let rects = self.pane_rects(area);
+        if rects.len() != 2 {
+            self.mouse.split_dragging = false;
+            return false;
+        }
+        let available = rects[0]
+            .terminal
+            .width
+            .saturating_add(rects[1].terminal.width);
+        let left = column.saturating_sub(rects[0].terminal.x).clamp(
+            super::MIN_SPLIT_PANE_WIDTH,
+            available - super::MIN_SPLIT_PANE_WIDTH,
+        );
+        if left == rects[0].terminal.width {
+            return false;
+        }
+        self.split_preference = Some(super::SplitPreference { left, available });
+        for rect in self.pane_rects(area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+            }
+        }
+        self.queue_held_releases();
+        self.pending_user_view_change = true;
+        self.invalidate_view_readiness();
+        true
     }
 
     fn select_container(&mut self, row: TreeRow) {
@@ -1959,7 +2081,8 @@ impl Dashboard {
     }
 
     fn forward_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        let Some(inner) = super::pane_rects(area, self.panes.len(), self.focused_pane)
+        let Some(inner) = self
+            .pane_rects(area)
             .into_iter()
             .find(|pane| pane.pane_index == self.focused_pane)
             .map(|pane| pane.terminal)
@@ -2053,7 +2176,8 @@ impl Dashboard {
         if mouse.kind != MouseEventKind::ScrollUp {
             return None;
         }
-        let pane = super::pane_rects(area, self.panes.len(), self.focused_pane)
+        let pane = self
+            .pane_rects(area)
             .into_iter()
             .find(|pane| point_in_rect(mouse, pane.terminal))?;
         if pane.pane_index != self.focused_pane && self.focus_pane(pane.pane_index) {
@@ -2077,7 +2201,8 @@ impl Dashboard {
     }
 
     fn history_wheel_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        let Some(inner) = super::pane_rects(area, self.panes.len(), self.focused_pane)
+        let Some(inner) = self
+            .pane_rects(area)
             .into_iter()
             .find(|pane| pane.pane_index == self.focused_pane)
             .map(|pane| pane.terminal)

@@ -1,8 +1,6 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, history_page_covers};
-use super::{
-    Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size, pane_rects,
-};
+use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::context::format_context;
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
@@ -457,7 +455,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         }
     }
 
-    let rects = pane_rects(frame.area(), dashboard.panes.len(), dashboard.focused_pane);
+    let rects = dashboard.pane_rects(frame.area());
     let split_hidden = dashboard.panes.len() == 2 && rects.len() == 1;
     let split_separator = dashboard.panes.len() == 2 && rects.len() == 2;
     if split_separator {
@@ -635,7 +633,8 @@ impl Dashboard {
         if self.mode != InputMode::Browse || self.focused_session().is_some() {
             return;
         }
-        let Some(rect) = pane_rects(frame.area(), self.panes.len(), self.focused_pane)
+        let Some(rect) = self
+            .pane_rects(frame.area())
             .into_iter()
             .find(|r| r.pane_index == self.focused_pane)
         else {

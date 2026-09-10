@@ -1553,7 +1553,7 @@ fn click_whichkey_text(
     dashboard.mouse_action(
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: area.x + 2,
+            column: area.x + if sidebar { 4 } else { 2 },
             row,
             modifiers: KeyModifiers::NONE,
         },
