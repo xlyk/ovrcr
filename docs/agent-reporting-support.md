@@ -110,3 +110,40 @@ approval and full provider/platform release gates remain open.
 
 
 2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. Earlier pending trust/cleanup statements are historical; provider completeness and Linux gates remain open.
+
+## Remaining-work checkpoint, 2026-09-10
+
+The [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md)
+is the current row-level record of implementation, tests, revisions, platforms,
+native evidence, and gaps. The dated [remaining-work plan](../plans/2026-09-10-claude-code-remaining-work.md)
+tracks the same evidence at task level without declaring the broader milestone
+complete.
+
+Requirement reconciliation is complete. Application queue saturation, overflow,
+automatic helper-loss propagation, and the macOS 50-session load passed. That work
+does not bound the kernel listen backlog or prove a full heap maximum; those Task 2
+exclusions remain open.
+
+Actual Linux baseline tests, clippy, formatting, and doc tests passed after the CI
+job was added. The revised Linux load attempt is blocked because Docker became
+unavailable, so Linux capacity acceptance remains open. The final macOS
+all-features suite at `366c5d3` passed 599 tests with 11 intentional ignores. The
+affected TUI suite at `7ec5634` passed all 38 tests, and full clippy and formatting
+checks passed.
+
+Native supported-route evidence is split between
+[native-remaining](../research/claude-reporting-acceptance/native-remaining/results.md)
+and [native-final](../research/claude-reporting-acceptance/native-final/results.md).
+The latter records a real invalid-model `StopFailure` as Error/Observed and a
+following valid Sonnet turn as Idle/Observed with actual output on the same
+binding. It also retains the split-pane clipping failure from `ba7d560`. The
+reviewed correction through `7ec5634` passed the [final single-build native smoke](../research/claude-reporting-acceptance/native-corrected/results.md): two turns, full uncertainty labels at 62 columns, detach/reattach, exit, and cleanup.
+
+The reviewed [provider capability table](../research/claude-reporting-acceptance/provider-capabilities.md)
+did not find sources that certify settled completion, complete accounting, a
+final-source boundary, or the wider conversation transitions. Tasks 7 and 8 are
+therefore blocked rather than implemented. Same-ID compaction has a runtime
+regression, and native compaction observed explicit zero current usage. A native
+null-current-context observation remains open, as do broader transition forms.
+These gaps preserve Partial usage and Observed activity; no evidence here supports
+Complete accounting or Confirmed settling.

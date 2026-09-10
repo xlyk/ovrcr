@@ -1,0 +1,385 @@
+{
+  "before": {
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "e74d41f0-30dc-447d-9ba8-e86f87e42e5a"
+      },
+      "activity_revision": 31,
+      "binding": {
+        "conversation": "2c357ea6-c6ce-4f1f-abe1-7e16762a0a2e",
+        "generation": 1,
+        "invocation": "68fd8021ced30044a205f635b7d764d8a2108982ce17842164bce8b7e8974e42",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 2,
+      "metrics": {
+        "context_received_unix_ms": 1789064477656,
+        "cost_received_unix_ms": 1789064477656,
+        "received_unix_ms": 1789065039786,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 50042
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 4493476000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 688400,
+              "cache_write_tokens": 21929,
+              "coverage": "Partial",
+              "input_tokens": 710359,
+              "output_tokens": 1295,
+              "reasoning_output_tokens": null,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789064477656
+      },
+      "metrics_revision": 34
+    },
+    "agent_epoch": 1,
+    "measurement_age_ms": {
+      "context": 609662,
+      "cost": 609662,
+      "usage": 609662
+    },
+    "reporting_unavailable": false,
+    "session": 13
+  },
+  "missing_observations": [
+    {
+      "agent": {
+        "activity": {
+          "quality": "Observed",
+          "state": "Idle",
+          "turn": "e74d41f0-30dc-447d-9ba8-e86f87e42e5a"
+        },
+        "activity_revision": 31,
+        "binding": {
+          "conversation": "2c357ea6-c6ce-4f1f-abe1-7e16762a0a2e",
+          "generation": 1,
+          "invocation": "68fd8021ced30044a205f635b7d764d8a2108982ce17842164bce8b7e8974e42",
+          "provider": "Claude"
+        },
+        "health": {
+          "reason": null,
+          "state": "Connected"
+        },
+        "health_revision": 2,
+        "metrics": {
+          "context_received_unix_ms": 1789064477656,
+          "cost_received_unix_ms": 1789064477656,
+          "received_unix_ms": 1789065039786,
+          "sample": {
+            "context": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "capacity_tokens": 1000000,
+                "quality": "Observed",
+                "used_tokens": 50042
+              }
+            },
+            "cost": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "kind": "Estimated",
+                "scope": "Conversation",
+                "usd_ticks": 4493476000
+              }
+            },
+            "model": "claude-sonnet-5",
+            "usage": {
+              "freshness": "Uncertain",
+              "source": "claude_root_transcript",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "cache_read_tokens": 688400,
+                "cache_write_tokens": 21929,
+                "coverage": "Partial",
+                "input_tokens": 710359,
+                "output_tokens": 1295,
+                "reasoning_output_tokens": null,
+                "scope": "Conversation"
+              }
+            }
+          },
+          "usage_received_unix_ms": 1789064477656
+        },
+        "metrics_revision": 34
+      },
+      "agent_epoch": 1,
+      "measurement_age_ms": {
+        "context": 609670,
+        "cost": 609670,
+        "usage": 609670
+      },
+      "reporting_unavailable": false,
+      "session": 13
+    },
+    {
+      "agent": {
+        "activity": {
+          "quality": "Observed",
+          "state": "Idle",
+          "turn": "e74d41f0-30dc-447d-9ba8-e86f87e42e5a"
+        },
+        "activity_revision": 31,
+        "binding": {
+          "conversation": "2c357ea6-c6ce-4f1f-abe1-7e16762a0a2e",
+          "generation": 1,
+          "invocation": "68fd8021ced30044a205f635b7d764d8a2108982ce17842164bce8b7e8974e42",
+          "provider": "Claude"
+        },
+        "health": {
+          "reason": null,
+          "state": "Connected"
+        },
+        "health_revision": 2,
+        "metrics": {
+          "context_received_unix_ms": 1789064477656,
+          "cost_received_unix_ms": 1789064477656,
+          "received_unix_ms": 1789065039786,
+          "sample": {
+            "context": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "capacity_tokens": 1000000,
+                "quality": "Observed",
+                "used_tokens": 50042
+              }
+            },
+            "cost": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "kind": "Estimated",
+                "scope": "Conversation",
+                "usd_ticks": 4493476000
+              }
+            },
+            "model": "claude-sonnet-5",
+            "usage": {
+              "freshness": "Uncertain",
+              "source": "claude_root_transcript",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "cache_read_tokens": 688400,
+                "cache_write_tokens": 21929,
+                "coverage": "Partial",
+                "input_tokens": 710359,
+                "output_tokens": 1295,
+                "reasoning_output_tokens": null,
+                "scope": "Conversation"
+              }
+            }
+          },
+          "usage_received_unix_ms": 1789064477656
+        },
+        "metrics_revision": 34
+      },
+      "agent_epoch": 1,
+      "measurement_age_ms": {
+        "context": 609783,
+        "cost": 609783,
+        "usage": 609783
+      },
+      "reporting_unavailable": false,
+      "session": 13
+    },
+    {
+      "agent": {
+        "activity": {
+          "quality": "Observed",
+          "state": "Idle",
+          "turn": "e74d41f0-30dc-447d-9ba8-e86f87e42e5a"
+        },
+        "activity_revision": 31,
+        "binding": {
+          "conversation": "2c357ea6-c6ce-4f1f-abe1-7e16762a0a2e",
+          "generation": 1,
+          "invocation": "68fd8021ced30044a205f635b7d764d8a2108982ce17842164bce8b7e8974e42",
+          "provider": "Claude"
+        },
+        "health": {
+          "reason": "source_unavailable",
+          "state": "Unavailable"
+        },
+        "health_revision": 3,
+        "metrics": {
+          "context_received_unix_ms": 1789064477656,
+          "cost_received_unix_ms": 1789064477656,
+          "received_unix_ms": 1789065039786,
+          "sample": {
+            "context": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "capacity_tokens": 1000000,
+                "quality": "Observed",
+                "used_tokens": 50042
+              }
+            },
+            "cost": {
+              "freshness": "Uncertain",
+              "source": "claude_statusline",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "kind": "Estimated",
+                "scope": "Conversation",
+                "usd_ticks": 4493476000
+              }
+            },
+            "model": "claude-sonnet-5",
+            "usage": {
+              "freshness": "Uncertain",
+              "source": "claude_root_transcript",
+              "source_revision": null,
+              "source_sequence": null,
+              "value": {
+                "cache_read_tokens": 688400,
+                "cache_write_tokens": 21929,
+                "coverage": "Partial",
+                "input_tokens": 710359,
+                "output_tokens": 1295,
+                "reasoning_output_tokens": null,
+                "scope": "Conversation"
+              }
+            }
+          },
+          "usage_received_unix_ms": 1789064477656
+        },
+        "metrics_revision": 34
+      },
+      "agent_epoch": 1,
+      "measurement_age_ms": {
+        "context": 609894,
+        "cost": 609894,
+        "usage": 609894
+      },
+      "reporting_unavailable": true,
+      "session": 13
+    }
+  ],
+  "after": {
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "e74d41f0-30dc-447d-9ba8-e86f87e42e5a"
+      },
+      "activity_revision": 31,
+      "binding": {
+        "conversation": "2c357ea6-c6ce-4f1f-abe1-7e16762a0a2e",
+        "generation": 1,
+        "invocation": "68fd8021ced30044a205f635b7d764d8a2108982ce17842164bce8b7e8974e42",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 4,
+      "metrics": {
+        "context_received_unix_ms": 1789064477656,
+        "cost_received_unix_ms": 1789064477656,
+        "received_unix_ms": 1789065039786,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 50042
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 4493476000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 688400,
+              "cache_write_tokens": 21929,
+              "coverage": "Partial",
+              "input_tokens": 710359,
+              "output_tokens": 1295,
+              "reasoning_output_tokens": null,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789064477656
+      },
+      "metrics_revision": 34
+    },
+    "agent_epoch": 1,
+    "measurement_age_ms": {
+      "context": 610127,
+      "cost": 610127,
+      "usage": 610127
+    },
+    "reporting_unavailable": false,
+    "session": 13
+  },
+  "source_restored": true
+}

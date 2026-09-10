@@ -1,0 +1,188 @@
+{
+  "pids": [
+    {
+      "id": 8725,
+      "state": "absent"
+    },
+    {
+      "id": 52790,
+      "state": "absent"
+    },
+    {
+      "id": 52792,
+      "state": "absent"
+    },
+    {
+      "id": 52797,
+      "state": "absent"
+    },
+    {
+      "id": 52798,
+      "state": "absent"
+    },
+    {
+      "id": 52870,
+      "state": "absent"
+    },
+    {
+      "id": 52999,
+      "state": "absent"
+    },
+    {
+      "id": 53058,
+      "state": "absent"
+    },
+    {
+      "id": 53090,
+      "state": "absent"
+    },
+    {
+      "id": 53154,
+      "state": "absent"
+    },
+    {
+      "id": 53226,
+      "state": "absent"
+    },
+    {
+      "id": 53236,
+      "state": "absent"
+    },
+    {
+      "id": 53243,
+      "state": "absent"
+    },
+    {
+      "id": 53253,
+      "state": "absent"
+    },
+    {
+      "id": 53263,
+      "state": "absent"
+    },
+    {
+      "id": 53270,
+      "state": "absent"
+    },
+    {
+      "id": 53276,
+      "state": "absent"
+    },
+    {
+      "id": 53277,
+      "state": "absent"
+    },
+    {
+      "id": 59699,
+      "state": "absent"
+    },
+    {
+      "id": 59705,
+      "state": "absent"
+    },
+    {
+      "id": 61273,
+      "state": "absent"
+    },
+    {
+      "id": 89531,
+      "state": "absent"
+    },
+    {
+      "id": 89535,
+      "state": "absent"
+    },
+    {
+      "id": 89561,
+      "state": "absent"
+    },
+    {
+      "id": 95877,
+      "state": "absent"
+    },
+    {
+      "id": 96843,
+      "state": "absent"
+    },
+    {
+      "id": 98389,
+      "state": "absent"
+    }
+  ],
+  "pgids": [
+    {
+      "id": 52790,
+      "state": "absent"
+    },
+    {
+      "id": 53058,
+      "state": "absent"
+    },
+    {
+      "id": 53090,
+      "state": "absent"
+    },
+    {
+      "id": 53154,
+      "state": "absent"
+    },
+    {
+      "id": 53226,
+      "state": "absent"
+    },
+    {
+      "id": 53236,
+      "state": "absent"
+    },
+    {
+      "id": 53243,
+      "state": "absent"
+    },
+    {
+      "id": 53253,
+      "state": "absent"
+    },
+    {
+      "id": 53263,
+      "state": "absent"
+    },
+    {
+      "id": 53270,
+      "state": "absent"
+    },
+    {
+      "id": 53276,
+      "state": "absent"
+    },
+    {
+      "id": 53277,
+      "state": "absent"
+    },
+    {
+      "id": 59699,
+      "state": "absent"
+    },
+    {
+      "id": 59705,
+      "state": "absent"
+    },
+    {
+      "id": 89531,
+      "state": "absent"
+    },
+    {
+      "id": 89535,
+      "state": "absent"
+    },
+    {
+      "id": 89561,
+      "state": "absent"
+    },
+    {
+      "id": 95877,
+      "state": "absent"
+    }
+  ],
+  "directory_exists": false,
+  "socket_exists": false
+}

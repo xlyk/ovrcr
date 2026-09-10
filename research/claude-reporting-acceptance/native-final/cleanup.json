@@ -1,0 +1,192 @@
+{
+  "pids": [
+    {
+      "id": 46136,
+      "state": "absent"
+    },
+    {
+      "id": 46208,
+      "state": "absent"
+    },
+    {
+      "id": 46228,
+      "state": "absent"
+    },
+    {
+      "id": 46257,
+      "state": "absent"
+    },
+    {
+      "id": 46299,
+      "state": "absent"
+    },
+    {
+      "id": 48173,
+      "state": "absent"
+    },
+    {
+      "id": 48206,
+      "state": "absent"
+    },
+    {
+      "id": 48312,
+      "state": "absent"
+    },
+    {
+      "id": 48372,
+      "state": "absent"
+    },
+    {
+      "id": 48483,
+      "state": "absent"
+    },
+    {
+      "id": 48585,
+      "state": "absent"
+    },
+    {
+      "id": 48611,
+      "state": "absent"
+    },
+    {
+      "id": 48634,
+      "state": "absent"
+    },
+    {
+      "id": 48653,
+      "state": "absent"
+    },
+    {
+      "id": 48673,
+      "state": "absent"
+    },
+    {
+      "id": 48698,
+      "state": "absent"
+    },
+    {
+      "id": 48715,
+      "state": "absent"
+    },
+    {
+      "id": 48718,
+      "state": "absent"
+    },
+    {
+      "id": 54942,
+      "state": "absent"
+    },
+    {
+      "id": 54946,
+      "state": "absent"
+    },
+    {
+      "id": 55997,
+      "state": "absent"
+    },
+    {
+      "id": 58157,
+      "state": "absent"
+    },
+    {
+      "id": 67256,
+      "state": "absent"
+    },
+    {
+      "id": 70265,
+      "state": "absent"
+    },
+    {
+      "id": 70269,
+      "state": "absent"
+    },
+    {
+      "id": 70294,
+      "state": "absent"
+    },
+    {
+      "id": 71949,
+      "state": "absent"
+    }
+  ],
+  "pgids": [
+    {
+      "id": 46136,
+      "state": "absent"
+    },
+    {
+      "id": 48312,
+      "state": "absent"
+    },
+    {
+      "id": 48372,
+      "state": "absent"
+    },
+    {
+      "id": 48483,
+      "state": "absent"
+    },
+    {
+      "id": 48585,
+      "state": "absent"
+    },
+    {
+      "id": 48611,
+      "state": "absent"
+    },
+    {
+      "id": 48634,
+      "state": "absent"
+    },
+    {
+      "id": 48653,
+      "state": "absent"
+    },
+    {
+      "id": 48673,
+      "state": "absent"
+    },
+    {
+      "id": 48698,
+      "state": "absent"
+    },
+    {
+      "id": 48715,
+      "state": "absent"
+    },
+    {
+      "id": 48718,
+      "state": "absent"
+    },
+    {
+      "id": 54942,
+      "state": "absent"
+    },
+    {
+      "id": 54946,
+      "state": "absent"
+    },
+    {
+      "id": 55997,
+      "state": "absent"
+    },
+    {
+      "id": 67256,
+      "state": "absent"
+    },
+    {
+      "id": 70265,
+      "state": "absent"
+    },
+    {
+      "id": 70269,
+      "state": "absent"
+    },
+    {
+      "id": 70294,
+      "state": "absent"
+    }
+  ],
+  "directory_exists": false,
+  "socket_exists": false
+}

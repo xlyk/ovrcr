@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 9m  agent busy observed
+  ▼ auth-handoff                       │tokens conv partial 661589 stale  cost conv estimate $0.43 stale
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 89531  elapsed: 9m  agent busy observed
+		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 661589 stale  cost conv estimate $0.43 stale
+		6 text (settable)   - local                              │  30. OVRCR_CANCEL_PROBE
+		7 text (settable)      ├ terminal                        │  31. OVRCR_CANCEL_PROBE
+		8 text (settable)      └ run 14m  ctx —                  │  32. OVRCR_CANCEL_PROBE
+		9 text (settable)   - review auth handoff                │  33. OVRCR_CANCEL_PROBE
+		10 text (settable)      ├ grok / grok-4.6                 │  34. OVRCR_CANCEL_PROBE
+		11 text (settable)      └ run 14m  ctx —                  │  35. OVRCR_CANCEL_PROBE
+		12 text (settable)     claude-native-ready                │  36. OVRCR_CANCEL_PROBE
+		13 text (settable)      ├ python3 unavailable             │  37. OVRCR_CANCEL_PROBE
+		14 text (settable)      └ run 11m  ctx —~ uncertain       │  38. OVRCR_CANCEL_PROBE
+		15 text (settable)   ⠸ claude-acceptance                  │  39. OVRCR_CANCEL_PROBE
+		16 text (settable)      ├ python3 busy observed           │  40. OVRCR_CANCEL_PROBE
+		17 text (settable)      └ run 9m  ctx 4%~ uncertain       │  41. OVRCR_CANCEL_PROBE
+		18 text (settable)                                        │  42. OVRCR_CANCEL_PROBE
+		19 text (settable)   ▼ worktree-lifecycle                 │  43. OVRCR_CANCEL_PROBE
+		20 text (settable)   - local                              │  44. OVRCR_CANCEL_PROBE
+		21 text (settable)      ├ terminal                        │  45. OVRCR_CANCEL_PROBE
+		22 text (settable)      └ run 14m  ctx —                  │  46. OVRCR_CANCEL_PROBE
+		23 text (settable)   - implement lifecycle cleanup        │  47. OVRCR_CANCEL_PROBE
+		24 text (settable)      ├ claude / sonnet-4               │  48. OVRCR_CANCEL_PROBE
+		25 text (settable)      └ run 14m  ctx —                  │  49. OVRCR_CANCEL_PROBE
+		26 text (settable)   - review websocket shutdown          │  50. OVRCR_CANCEL_PROBE
+		27 text (settable)      ├ codex / gpt-5.4                 │  51. OVRCR_CANCEL_PROBE
+		28 text (settable)      └ run 14m  ctx —                  │  52. OVRCR_CANCEL_PROBE
+		29 text (settable)   - plan snapshot restore              │  53. OVRCR_CANCEL_PROBE
+		30 text (settable)      ├ pi / grok-4.6                   │  54. OVRCR_CANCEL_PROBE
+		31 text (settable)      └ run 14m  ctx —                  │  55. OVRCR_CANCEL_PROBE
+		32 text (settable)                                        │  56. OVRCR_CANCEL_PROBE
+		33 text (settable) ▼ 󰉋 spacelift-agent                    │  57. OVRCR_CANCEL_PROBE
+		34 text (settable)   ▼ pipeline-progress-v2               │  58. OVRCR_CANCEL_PROBE
+		35 text (settable)   - local                              │  59. OVRCR_CANCEL_PROBE
+		36 text (settable)      ├ terminal                        │  60. OVRCR_CANCEL_PROBE
+		37 text (settable)      └ run 14m  ctx —                  │  61. OVRCR_CANCEL_PROBE
+		38 text (settable)   - build pipeline progress            │  62. OVRCR_CANCEL_PROBE
+		39 text (settable)      ├ claude / opus-4                 │  63. OVRCR_CANCEL_PROBE
+		40 text (settable)      └ run 14m  ctx —                  │  64. OVRCR_CANCEL_PROBE
+		41 text (settable)                                        │  65. OVRCR_CANCEL_PROBE
+		42 text (settable)   ▼ scope-quality                      │  66. OVRCR_CANCEL_PROBE
+		43 text (settable)   - local                              │  67. OVRCR_CANCEL_PROBE
+		44 text (settable)      ├ terminal                        │  68. OVRCR_CANCEL_PROBE
+		45 text (settable)      └ run 14m  ctx —                  │  69. OVRCR_CANCEL_PROBE
+		46 text (settable)   - review scope quality               │  70. OVRCR_CANCEL_PROBE
+		47 text (settable)      ├ codex / gpt-5.4                 │  71. OVRCR_CANCEL_PROBE
+		48 text (settable)      └ run 14m  ctx —                  │  72. OVRCR_CANCEL_PROBE
+		49 text (settable)                                        │  73. OVRCR_CANCEL_PROBE
+		50 text (settable)                                        │  74. OVRCR_CANCEL_PROBE
+		51 text (settable)                                        │  75. OVRCR_CANCEL_PROBE
+		52 text (settable)                                        │  76. OVRCR_CANCEL_PROBE
+		53 text (settable)                                        │  77. OVRCR_CANCEL_PROBE
+		54 text (settable)                                        │  78. OVRCR_CANCEL_PROBE
+		55 text (settable)                                        │  79. OVRCR_C
+		56 text (settable)                                        │  ⎿  Interrupted · What should Claude do instead?
+		57 text (settable)                                        │
+		58 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		59 text (settable)                                        │❯ 
+		60 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		61 text (settable)                                        │  ctx 4%
+		62 text (settable)                                        │  ⏸ manual mode on · ← for agents
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 9m  agent busy observed
+  ▼ auth-handoff                       │tokens conv partial 661589 stale  cost conv estimate $0.43 stale
+  - local
