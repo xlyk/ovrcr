@@ -499,6 +499,8 @@ impl ServerState {
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(None),
         })
     }

@@ -2389,6 +2389,8 @@ fn test_state_with_dispatch(
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
                 sink: dashboard.as_ref().unwrap().clone(),
                 identity,
@@ -2431,6 +2433,8 @@ fn test_state_with_socket(
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(None),
         }),
         dispatch_receiver,
@@ -4586,6 +4590,8 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
         before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
         dashboard_slot: Mutex::new(None),
     });
     let dispatcher_state = Arc::clone(&state);
@@ -4798,6 +4804,8 @@ fn session_output_flows_while_another_session_spawns() {
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
         before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
         dashboard_slot: Mutex::new(Some(DashboardSlot {
             sink: sink.clone(),
             identity: owner.clone(),
