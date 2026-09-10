@@ -835,6 +835,9 @@ fn fifty_session_reporting_capacity() {
 #[test]
 #[ignore = "isolated Linux runner only: 50 collectors at raw/index limits"]
 fn fifty_collector_raw_index_and_sequential_json_high_water() {
+    // Work ends by ten minutes, leaving 100 seconds for the 50 two-second
+    // cancellations and more than three minutes before the CI step backstop.
+    let work_deadline = Instant::now() + Duration::from_secs(600);
     assert_eq!(
         std::env::consts::OS,
         "linux",
@@ -851,6 +854,7 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     File::create(&source).unwrap();
     let mut helpers: Vec<_> = (0..50)
         .map(|_| {
+            memory_work_remaining(work_deadline);
             CollectorController::spawn(
                 Path::new(env!("CARGO_BIN_EXE_ovrcr")),
                 CollectorSource {
@@ -867,11 +871,12 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     }
     let mut log = File::create(evidence.join("memory.csv")).unwrap();
     writeln!(log, "phase,kind,pid,rss_kib,vmhwm_kib").unwrap();
-    memory_eof_barrier(&mut helpers, 0, 0, &mut log, &pids, "empty");
+    memory_eof_barrier(&mut helpers, 0, 0, &mut log, &pids, "empty", work_deadline);
     memory_sample(&mut log, &pids, "empty50");
 
     let mut file = BufWriter::new(fs::OpenOptions::new().append(true).open(&source).unwrap());
     for id in 0..65_536 {
+        memory_work_remaining(work_deadline);
         // 112 fixed bytes + two 72-byte IDs = 256 charged bytes per entry.
         writeln!(file, "{}", memory_usage_record(id)).unwrap();
     }
@@ -883,6 +888,7 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
         &mut log,
         &pids,
         "index",
+        work_deadline,
     );
     memory_sample(&mut log, &pids, "index50");
 
@@ -896,6 +902,7 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     prefix.push_str(&"]".repeat(96));
     prefix.push_str(",\"fields\":{");
     for field in 0..65_536 {
+        memory_work_remaining(work_deadline);
         if field != 0 {
             prefix.push(',');
         }
@@ -910,6 +917,7 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     let mut remaining = RAW_BYTES - prefix.len() - SUFFIX.len();
     let padding = [b'x'; 65_536];
     while remaining != 0 {
+        memory_work_remaining(work_deadline);
         let count = remaining.min(padding.len());
         file.write_all(&padding[..count]).unwrap();
         remaining -= count;
@@ -917,13 +925,14 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     file.write_all(SUFFIX).unwrap();
     file.flush().unwrap();
     drop(prefix);
-    memory_eof_barrier(
+    let retained_usage = memory_eof_barrier(
         &mut helpers,
         65_536,
         16 * 1024 * 1024,
         &mut log,
         &pids,
         "raw",
+        work_deadline,
     );
     memory_sample(&mut log, &pids, "raw32m_index16m_all50");
 
@@ -934,15 +943,15 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
     drop(file);
     for (index, helper) in helpers.iter_mut().enumerate() {
         memory_safety_check();
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(15));
         let mut next_sample = Instant::now();
         loop {
+            memory_work_remaining(work_deadline);
             if let Some(snapshot) = helper.advance().unwrap() {
                 assert_eq!(snapshot.diagnostic.as_deref(), Some("accounting_limit"));
                 assert_eq!(snapshot.retained_identities, 65_536);
                 assert_eq!(snapshot.retained_bytes, 16 * 1024 * 1024);
-                assert_eq!(snapshot.usage.input_tokens, Some(65_536));
-                assert_eq!(snapshot.usage.output_tokens, Some(65_536));
+                assert_eq!(snapshot.usage, retained_usage[index]);
                 break;
             }
             assert!(
@@ -957,6 +966,7 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
         }
         memory_sample(&mut log, &pids, &format!("parsed_{index}"));
     }
+    memory_work_remaining(work_deadline);
     for helper in &mut helpers {
         helper
             .cancel(Instant::now() + Duration::from_secs(2))
@@ -983,8 +993,16 @@ fn fifty_collector_raw_index_and_sequential_json_high_water() {
 fn memory_usage_record(id: usize) -> serde_json::Value {
     let id = format!("{id:072}");
     serde_json::json!({"type":"assistant","sessionId":"root","isSidechain":false,
-        "requestId":id,"message":{"id":id,"usage":{"input_tokens":1,"output_tokens":1,
-        "cache_creation_input_tokens":0,"cache_read_input_tokens":0}}})
+        "requestId":id,"message":{"id":id,"usage":{"input_tokens":3,"output_tokens":5,
+        "cache_creation_input_tokens":1,"cache_read_input_tokens":2,
+        "output_tokens_details":{"thinking_tokens":4}}}})
+}
+
+fn memory_work_remaining(deadline: Instant) {
+    assert!(
+        Instant::now() < deadline,
+        "memory fixture exceeded its ten-minute work budget; cleaning up owned helpers"
+    );
 }
 
 fn memory_available_kib() -> u64 {
@@ -1057,13 +1075,15 @@ fn memory_eof_barrier(
     log: &mut File,
     pids: &[u32],
     phase: &str,
-) {
-    let deadline = Instant::now() + Duration::from_secs(180);
-    let mut ready = vec![false; helpers.len()];
+    work_deadline: Instant,
+) -> Vec<UsageTotals> {
+    let deadline = work_deadline.min(Instant::now() + Duration::from_secs(180));
+    let mut ready = vec![None; helpers.len()];
     let mut next_sample = Instant::now();
-    while ready.iter().any(|ready| !ready) {
+    while ready.iter().any(Option::is_none) {
+        memory_work_remaining(work_deadline);
         for (index, helper) in helpers.iter_mut().enumerate() {
-            if !ready[index]
+            if ready[index].is_none()
                 && let Some(snapshot) = helper.advance().unwrap()
             {
                 assert!(
@@ -1076,9 +1096,23 @@ fn memory_eof_barrier(
                     assert_eq!(snapshot.retained_bytes, charged);
                     assert_eq!(
                         snapshot.usage.input_tokens,
-                        (identities > 0).then_some(identities as u64)
+                        (identities > 0).then_some(393_216)
                     );
-                    ready[index] = true;
+                    if identities > 0 {
+                        assert_eq!(
+                            snapshot.usage,
+                            UsageTotals {
+                                scope: UsageScope::Conversation,
+                                coverage: UsageCoverage::Partial,
+                                input_tokens: Some(393_216),
+                                output_tokens: Some(327_680),
+                                cache_read_tokens: Some(131_072),
+                                cache_write_tokens: Some(65_536),
+                                reasoning_output_tokens: Some(262_144),
+                            }
+                        );
+                    }
+                    ready[index] = Some(snapshot.usage);
                 }
             }
         }
@@ -1092,4 +1126,5 @@ fn memory_eof_barrier(
         );
         thread::sleep(Duration::from_millis(1));
     }
+    ready.into_iter().map(Option::unwrap).collect()
 }
