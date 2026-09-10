@@ -10,18 +10,15 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             RuntimeError::internal(error)
         }
     })?;
-    let status = ovrcr::agent_runner::run_native(&argv, |available| {
+    let status = ovrcr::agent_runner::run_native(&argv, move |available, native_argv| {
         if !available {
             drop(lease.take());
-        }
-        if lease.is_some() {
-            eprintln!("agent admission unavailable; running native command");
-        } else {
             eprintln!("agent reporting unavailable; running native command");
+            return None;
         }
+        Some(ovrcr::report::admission::receiver(lease, native_argv))
     })
     .map_err(RuntimeError::internal)?;
-    drop(lease);
     if let Some(signal) = status.signal() {
         unsafe {
             libc::signal(signal, libc::SIG_DFL);

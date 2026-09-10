@@ -1,3 +1,5 @@
+pub mod admission;
+
 use crate::protocol::{
     AgentReport, AgentUpdate, ClientMessage, ErrorCode, Request, Response, ServerMessage,
     read_frame, write_frame,
@@ -445,7 +447,82 @@ impl Write for DeadlineIo<'_> {
 pub struct InvocationLease {
     stream: UnixStream,
     auth: ovrcr_protocol::SupervisorAuth,
+    socket: std::path::PathBuf,
+    binding: Option<ovrcr_protocol::AgentBinding>,
+    next_request: u64,
 }
+impl InvocationLease {
+    fn command(
+        &mut self,
+        operation: String,
+        command: ovrcr_protocol::AgentCommand,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::Supervisor(ovrcr_protocol::SupervisorRequest {
+                auth: self.auth.clone(),
+                operation,
+                command,
+            }),
+            deadline,
+        )
+    }
+    fn operation_status(&mut self, operation: String, deadline: Instant) -> Result<Response> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        if agent_exchange(
+            &mut stream,
+            1,
+            Request::SupervisorHello(self.auth.clone()),
+            deadline,
+        )? != Response::Ok
+        {
+            bail!("supervisor is unavailable");
+        }
+        self.stream = stream;
+        self.next_request = 2;
+        agent_exchange(
+            &mut self.stream,
+            2,
+            Request::AgentStatus {
+                auth: self.auth.clone(),
+                operation,
+            },
+            deadline,
+        )
+    }
+}
+
+pub fn send_claude_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    let path = std::env::var_os("OVRCR_AGENT_SOCKET").context("no private invocation channel")?;
+    let token = std::env::var("OVRCR_AGENT_TOKEN")
+        .ok()
+        .filter(|value| value.len() == 64)
+        .context("invalid private invocation token")?;
+    let payload: serde_json::Value = serde_json::from_slice(input)?;
+    let request = serde_json::to_vec(
+        &serde_json::json!({"provider":"claude","origin":"claude-hook","payload":payload}),
+    )?;
+    if request.len() > HOOK_INPUT_LIMIT {
+        bail!("hook input exceeds limit");
+    }
+    let mut stream = connect_deadline(Path::new(&path), deadline)?;
+    let mut io = DeadlineIo::new(&mut stream, deadline);
+    io.write_all(format!("{token}\n").as_bytes())?;
+    io.write_all(&(request.len() as u32).to_be_bytes())?;
+    io.write_all(&request)?;
+    let mut response = Vec::new();
+    io.take(64).read_to_end(&mut response)?;
+    if response == b"admission-accepted\n" || response == b"admission-ignored\n" {
+        Ok(())
+    } else {
+        bail!("agent admission is unavailable")
+    }
+}
+
 impl Drop for InvocationLease {
     fn drop(&mut self) {
         let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() else {
@@ -459,7 +536,7 @@ impl Drop for InvocationLease {
                 auth: self.auth.clone(),
                 operation,
                 command: ovrcr_protocol::AgentCommand::Release {
-                    expected_binding: None,
+                    expected_binding: self.binding.clone(),
                 },
             }),
             deadline,
@@ -510,6 +587,9 @@ pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
             Response::AgentOperation(AgentOperationResult::Reserved(reservation)) => {
                 Ok(Some(InvocationLease {
                     stream,
+                    socket: identity.socket.clone(),
+                    binding: None,
+                    next_request: 2,
                     auth: SupervisorAuth {
                         session: identity.session,
                         lease: reservation.lease,

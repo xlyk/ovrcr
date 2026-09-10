@@ -1,0 +1,35 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_ -- --nocapture
+Revision: 304a2e0 + initial admission
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 4 tests
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZgRnIm/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqTq9Dm/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOBqZD8/repo/.git/
+[main (root-commit) 82b33f5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 82b33f5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 82b33f5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOBqZD8/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqTq9Dm/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOBqZD8/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqTq9Dm/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZgRnIm/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZgRnIm/server.sock
+AGENT_OWNERSHIP native_pid=74558 native_pgid=74558 launcher_pid=74332 session_pgid=74325 private_endpoint_removed=true
+ovrcr server stopped
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+ovrcr server stopped
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 56 filtered out; finished in 1.61s
+Exit: 0

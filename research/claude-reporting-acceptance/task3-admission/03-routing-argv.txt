@@ -1,0 +1,28 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_admission_ -- --nocapture
+Revision: 304a2e0 + initial admission
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.95s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 3 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBLW9vw/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0kjaF4/repo/.git/
+[main (root-commit) 5681719] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 5681719] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0kjaF4/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0kjaF4/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBLW9vw/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBLW9vw/server.sock
+ovrcr server stopped
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+ovrcr server stopped
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 56 filtered out; finished in 3.15s
+Exit: 0

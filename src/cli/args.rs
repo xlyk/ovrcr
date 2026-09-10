@@ -258,6 +258,9 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
 
 #[derive(Subcommand)]
 pub(super) enum AgentCommand {
+    #[command(
+        long_about = "Run a native command with invocation supervision. Initial conversation admission supports only interactive Claude Code 2.1.267 with a fresh startup. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Only an eligible invocation with successful reporting setup receives a supervisor-selected --session-id."
+    )]
     Run {
         #[arg(long, value_parser = ["claude"])]
         provider: String,

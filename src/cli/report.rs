@@ -78,6 +78,12 @@ fn run_report_claude(stdin_json: bool, verbose: bool) -> AppResult<()> {
             return Ok(());
         }
     };
+    if std::env::var_os("OVRCR_AGENT_SOCKET").is_some() {
+        if app_report::send_claude_hook(&input, deadline).is_err() && verbose {
+            eprintln!("hook adapter: admission unavailable");
+        }
+        return Ok(());
+    }
     let activity = match app_report::claude_activity(&input) {
         Ok(activity) => activity,
         Err(_) => {

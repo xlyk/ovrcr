@@ -1,0 +1,35 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_admission_ -- --nocapture
+Revision: 304a2e0 + initial admission
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.21s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 4 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpD0qbcI/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXTpXKv/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptzURzX/repo/.git/
+[main (root-commit) e2c39c7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e2c39c7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e2c39c7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXTpXKv/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpD0qbcI/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXTpXKv/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpD0qbcI/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptzURzX/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptzURzX/server.sock
+ovrcr server stopped
+ovrcr server stopped
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+ovrcr server stopped
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 56 filtered out; finished in 3.25s
+Exit: 0

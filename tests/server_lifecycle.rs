@@ -7495,3 +7495,397 @@ fn agent_run_channel_failure_releases_reservation_before_native_fallback() {
     fixture.wait_terminal_contains(summary.id, "FALLBACK_EXIT=17");
     fixture.wait_exited(summary.id);
 }
+
+#[test]
+#[ignore = "native admission fixture launched through agent run"]
+fn agent_admission_native_helper() {
+    use std::io::{BufRead, Write};
+    let expected = std::env::var("OVRCR_TEST_UUID").unwrap();
+    let probe = std::path::PathBuf::from(std::env::var_os("OVRCR_TEST_PROBE").unwrap());
+    std::fs::write(&probe, &expected).unwrap();
+    std::fs::write(
+        probe.with_extension("channel"),
+        format!(
+            "{}\n{}\n",
+            std::env::var("OVRCR_AGENT_SOCKET").unwrap(),
+            std::env::var("OVRCR_AGENT_TOKEN").unwrap()
+        ),
+    )
+    .unwrap();
+    println!("ADMISSION_READY");
+    for (index, line) in std::io::stdin().lock().lines().enumerate() {
+        let line = line.unwrap();
+        if line == "exit" {
+            break;
+        }
+        let mut payload = serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected,"agent_type":"fixture-root"});
+        match line.as_str() {
+            "wrong" => payload["session_id"] = "wrong-conversation".into(),
+            "child" => payload["agent_id"] = "child-1".into(),
+            "malformed-child" => payload["agent_id"] = serde_json::Value::Null,
+            "empty-child" => payload["agent_id"] = "".into(),
+            "numeric-child" => payload["agent_id"] = 17.into(),
+            "child-event" => payload["hook_event_name"] = "SubagentStart".into(),
+            "clear" => {
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "clear".into();
+            }
+            "branch" => {
+                payload["source"] = "fork".into();
+                payload["session_id"] = "uncertified-other-root".into();
+            }
+            "end-other" => {
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "logout".into();
+            }
+            "root" | "foreign" | "generic" => {}
+            _ => panic!("unknown admission fixture instruction"),
+        }
+        if line == "foreign" {
+            let request = serde_json::to_vec(
+                &serde_json::json!({"provider":"pi","origin":"claude-hook","payload":payload}),
+            )
+            .unwrap();
+            let mut stream =
+                UnixStream::connect(std::env::var_os("OVRCR_AGENT_SOCKET").unwrap()).unwrap();
+            stream
+                .write_all(format!("{}\n", std::env::var("OVRCR_AGENT_TOKEN").unwrap()).as_bytes())
+                .unwrap();
+            stream
+                .write_all(&(request.len() as u32).to_be_bytes())
+                .unwrap();
+            stream.write_all(&request).unwrap();
+            let mut response = String::new();
+            std::io::Read::read_to_string(&mut stream, &mut response).unwrap();
+            assert_eq!(response, "admission-ignored\n");
+            println!("ADMISSION_CALLBACK={index}");
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+        if line == "generic" {
+            command.args(["report", "activity", "--state", "busy"]);
+        } else {
+            command.args(["report", "claude", "--stdin-json"]);
+        }
+        let mut callback = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        callback
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(serde_json::to_string(&payload).unwrap().as_bytes())
+            .unwrap();
+        let output = callback.wait_with_output().unwrap();
+        assert!(output.stdout.is_empty(), "hooks must be stdout silent");
+        println!("ADMISSION_CALLBACK={index}");
+    }
+}
+
+#[test]
+fn agent_admission_private_claude_route_binds_once_and_clear_retains_lease() {
+    assert_initial_admission("clear");
+}
+#[test]
+fn agent_admission_branch_freezes_without_replacement_or_reopening() {
+    assert_initial_admission("branch");
+}
+fn assert_initial_admission(closing_command: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "admission-setup");
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native,r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
+  printf '2.1.267 (Claude Code)\n'; exit 0
+fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("admission-probe");
+    let make_session = |name: &str, probe: &std::path::Path| {
+        fixture.create_session_summary(name,vec![
+        "sh".into(),"-c".into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
+        "admission-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),std::env::current_exe().unwrap().into_os_string(),probe.to_path_buf().into_os_string(),
+    ])
+    };
+    let summary = make_session("admission", &probe);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    let expected = std::fs::read_to_string(&probe).unwrap();
+    assert_eq!(expected.len(), 36, "supervisor must select a fresh UUID");
+    let argv = std::fs::read_to_string(probe.with_extension("argv")).unwrap();
+    assert_eq!(
+        argv,
+        format!(
+            "--session-id\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+        )
+    );
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 1);
+    for (index, command) in [
+        "wrong",
+        "child",
+        "malformed-child",
+        "empty-child",
+        "numeric-child",
+        "child-event",
+        "foreign",
+        "generic",
+        "root",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if command != "root" {
+            assert!(
+                fixture.session_summary(summary.id).agent.is_none(),
+                "{command} admitted"
+            );
+        }
+    }
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("eligible root must bind");
+    assert_eq!(bound.binding.conversation, expected);
+    assert!(bound.activity.is_none());
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let capability = parse_hook_capability(identity[2]).unwrap();
+    assert_eq!(
+        fixture.request(Request::AgentReport(ovrcr::protocol::AgentReport {
+            session: summary.id,
+            capability,
+            sequence: None,
+            update: ovrcr::protocol::AgentUpdate::Provider(ovrcr::protocol::ProviderReport {
+                binding: bound.binding.clone(),
+                revision: 9,
+                observation: ovrcr::protocol::AgentObservation::Activity(
+                    ovrcr::protocol::ActivitySample {
+                        state: ovrcr::session::AgentActivity::Busy,
+                        quality: ovrcr::protocol::SampleQuality::Observed,
+                        turn: None,
+                    }
+                ),
+            }),
+        })),
+        Response::Ok
+    );
+    for (index, command) in ["root", "end-other", closing_command, "root"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(current.activity_revision, 9);
+        if command == closing_command {
+            assert_eq!(
+                current.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+        }
+    }
+    let conflict = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf SHOULD_NOT_SPAWN",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    assert!(conflict.stdout.is_empty());
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_FINISHED");
+    if closing_command == "clear" {
+        use std::io::{Read, Write};
+        let old = std::fs::read_to_string(probe.with_extension("channel")).unwrap();
+        let old: Vec<_> = old.lines().collect();
+        assert!(
+            UnixStream::connect(old[0]).is_err(),
+            "completed invocation endpoint remains"
+        );
+        let next_probe = fixture._root.path().join("next-admission-probe");
+        let next = make_session("next-admission", &next_probe);
+        fixture.record_process_group(&next);
+        fixture.wait_terminal_contains(next.id, "ADMISSION_READY");
+        let next_uuid = std::fs::read_to_string(&next_probe).unwrap();
+        assert_ne!(next_uuid, expected);
+        let channel = std::fs::read_to_string(next_probe.with_extension("channel")).unwrap();
+        let channel: Vec<_> = channel.lines().collect();
+        let mut stale = UnixStream::connect(channel[0]).unwrap();
+        stale.write_all(format!("{}\n", old[1]).as_bytes()).unwrap();
+        let mut response = Vec::new();
+        stale.read_to_end(&mut response).unwrap();
+        assert!(response.is_empty());
+        assert!(
+            fixture.session_summary(next.id).agent.is_none(),
+            "old token admitted new invocation"
+        );
+        let mut old_payload = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["report", "claude", "--stdin-json"])
+            .env("OVRCR_AGENT_SOCKET", channel[0])
+            .env("OVRCR_AGENT_TOKEN", channel[1])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        old_payload.stdin.take().unwrap().write_all(serde_json::to_string(&serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected})).unwrap().as_bytes()).unwrap();
+        let old_output = old_payload.wait_with_output().unwrap();
+        assert!(old_output.status.success());
+        assert!(old_output.stdout.is_empty());
+        assert!(
+            fixture.session_summary(next.id).agent.is_none(),
+            "old UUID admitted new invocation"
+        );
+
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: next.id,
+                text: "root".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(next.id, "ADMISSION_CALLBACK=0");
+        assert_eq!(
+            fixture
+                .session_summary(next.id)
+                .agent
+                .unwrap()
+                .binding
+                .conversation,
+            next_uuid
+        );
+        assert_eq!(
+            fixture.session_summary(summary.id).agent.unwrap().binding,
+            bound.binding
+        );
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: next.id,
+                text: "exit".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(next.id, "ADMISSION_FINISHED");
+    }
+}
+
+#[test]
+fn agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "admission-argv-setup");
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native,r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
+  case "$OVRCR_TEST_VERSION" in
+    fail) exit 2;;
+    timeout) printf '%s' "$$" > "$OVRCR_TEST_PROBE.pid"; while :; do sleep 1; done;;
+    *) printf '%s (Claude Code)\n' "$OVRCR_TEST_VERSION";;
+  esac
+  exit 0
+fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+printf NATIVE_UNCHANGED
+IFS= read -r line
+exit 19
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let blocked = fixture._root.path().join("blocked-tempdir");
+    std::fs::write(&blocked, "file").unwrap();
+    for (index, (argument, version, mode)) in [
+        ("--resume=foreign", "2.1.267", "normal"),
+        ("--unknown-mode", "2.1.267", "normal"),
+        ("doctor", "2.1.267", "normal"),
+        ("--model=sonnet", "2.1.268", "normal"),
+        ("--model=sonnet", "fail", "normal"),
+        ("--model=sonnet", "timeout", "normal"),
+        ("--model=sonnet", "2.1.267", "blocked"),
+        ("--model=sonnet", "2.1.267", "missing"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let probe = fixture._root.path().join(format!("argv-{index}"));
+        let summary=fixture.create_session_summary(&format!("argv-{index}"),vec![
+            "sh".into(),"-c".into(),
+            r#"stty -echo; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_VERSION="$4" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-token; case "$6" in blocked) export TMPDIR="$7";; missing) unset OVRCR_HOOK_SOCKET OVRCR_SESSION_ID OVRCR_HOOK_TOKEN;; esac; "$1" agent run --provider claude -- "$2" "$5"; code=$?; printf 'UNCHANGED_EXIT=%s\n' "$code"; exit "$code""#.into(),
+            "argv-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),probe.clone().into_os_string(),version.into(),argument.into(),mode.into(),blocked.clone().into_os_string(),
+        ]);
+        fixture.record_process_group(&summary);
+        fixture.wait_terminal_contains_until(
+            summary.id,
+            "NATIVE_UNCHANGED",
+            Instant::now() + Duration::from_secs(4),
+        );
+        assert_eq!(
+            std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
+            format!("{argument}\n"),
+            "case {index}"
+        );
+        assert!(fixture.session_summary(summary.id).agent.is_none());
+        if version == "timeout" {
+            let pid = std::fs::read_to_string(probe.with_extension("pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(
+                wait_group_absent(pid, Duration::from_secs(2)),
+                "version probe group remained"
+            );
+        }
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "finish".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "UNCHANGED_EXIT=19");
+        fixture.wait_exited(summary.id);
+    }
+}

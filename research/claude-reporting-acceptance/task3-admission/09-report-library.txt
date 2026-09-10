@@ -1,0 +1,14 @@
+Command: cargo test -p ovrcr --lib
+Revision: 304a2e0 + initial admission
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-ec23741c41dca536)
+
+running 5 tests
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+Exit: 0

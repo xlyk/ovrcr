@@ -9,9 +9,14 @@ use std::{
     time::Duration,
 };
 
+pub type HookHandler = Box<dyn FnMut(&[u8], std::time::Instant) -> Vec<u8> + Send>;
+
 // All group signals happen while the unreaped direct child anchors this PGID.
-pub fn run_native(argv: &[OsString], channel_ready: impl FnOnce(bool)) -> Result<ExitStatus> {
-    let executable = argv.first().context("native command is required")?;
+pub fn run_native(
+    argv: &[OsString],
+    channel_ready: impl FnOnce(bool, &mut Vec<OsString>) -> Option<HookHandler>,
+) -> Result<ExitStatus> {
+    argv.first().context("native command is required")?;
     let mut signals = Signals::new([
         libc::SIGINT,
         libc::SIGTERM,
@@ -21,9 +26,14 @@ pub fn run_native(argv: &[OsString], channel_ready: impl FnOnce(bool)) -> Result
         libc::SIGTSTP,
     ])?;
     let terminal = Terminal::capture();
-    let channel = InvocationChannel::new().ok();
+    let mut channel = InvocationChannel::new().ok();
+    let mut argv = argv.to_vec();
     // The caller releases reporting ownership before an untracked native spawn.
-    channel_ready(channel.is_some());
+    let handler = channel_ready(channel.is_some(), &mut argv);
+    if let Some(channel) = &mut channel {
+        channel.start(handler);
+    }
+    let executable = argv.first().context("native command is required")?;
     let mut command = Command::new(executable);
     command
         .args(&argv[1..])
@@ -226,17 +236,11 @@ struct InvocationChannel {
     token: String,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    initialize: Option<std::sync::mpsc::SyncSender<Option<HookHandler>>>,
 }
 impl InvocationChannel {
     fn new() -> io::Result<Self> {
-        use std::{
-            io::{Read, Write},
-            os::unix::{fs::PermissionsExt, net::UnixListener},
-            sync::{
-                Arc,
-                atomic::{AtomicBool, Ordering},
-            },
-        };
+        use std::os::unix::{fs::PermissionsExt, net::UnixListener};
         let directory = tempfile::Builder::new().prefix("ovrcr-a-").tempdir()?;
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
         let path = directory.path().join("hook");
@@ -245,35 +249,57 @@ impl InvocationChannel {
         listener.set_nonblocking(true)?;
         let token = private_identifier()?;
         let expected = format!("{token}\n").into_bytes();
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_stop = stop.clone();
-        let thread = std::thread::spawn(move || {
-            while !thread_stop.load(Ordering::SeqCst) {
+        let (initialize, ready) = std::sync::mpsc::sync_channel::<Option<HookHandler>>(1);
+        // Start the receiver before reporting setup can authorize argv changes.
+        let thread = std::thread::Builder::new().spawn(move || {
+            use std::{io::Write, sync::atomic::Ordering, time::Instant};
+            let Ok(mut handler) = ready.recv() else {
+                return;
+            };
+            let stop = thread_stop;
+            while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-                        let _ = stream.set_write_timeout(Some(Duration::from_millis(200)));
+                        let started = Instant::now();
+                        let auth_deadline = started + Duration::from_millis(200);
                         let mut received = [0u8; 65];
-                        let deadline = std::time::Instant::now() + Duration::from_millis(200);
-                        let mut offset = 0;
-                        while offset < received.len() {
-                            let remaining =
-                                deadline.saturating_duration_since(std::time::Instant::now());
-                            if remaining.is_zero() {
-                                break;
-                            }
-                            if stream.set_read_timeout(Some(remaining)).is_err() {
-                                break;
-                            }
-                            match stream.read(&mut received[offset..]) {
-                                Ok(0) | Err(_) => break,
-                                Ok(count) => offset += count,
-                            }
+                        if read_private_bytes(&mut stream, &mut received, auth_deadline).is_err()
+                            || received.as_slice() != expected
+                        {
+                            continue;
                         }
-                        if offset == received.len() && received.as_slice() == expected {
-                            // This mechanics-only endpoint deliberately never accepts provider data.
-                            let _ = stream.write_all(b"admission-unavailable\n");
+                        let mut length = [0u8; 4];
+                        let response = if read_private_bytes(
+                            &mut stream,
+                            &mut length,
+                            auth_deadline,
+                        )
+                        .is_ok()
+                        {
+                            let length = u32::from_be_bytes(length) as usize;
+                            if length > 65_536 {
+                                continue;
+                            }
+                            let mut request = vec![0u8; length];
+                            if read_private_bytes(&mut stream, &mut request, auth_deadline).is_err()
+                            {
+                                continue;
+                            }
+                            if let Some(handler) = &mut handler {
+                                handler(&request, started + Duration::from_millis(800))
+                            } else {
+                                b"admission-unavailable\n".to_vec()
+                            }
+                        } else {
+                            b"admission-unavailable\n".to_vec()
+                        };
+                        if response.len() > 65_536 {
+                            continue;
                         }
+                        let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                        let _ = stream.write_all(&response);
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(10))
@@ -281,19 +307,48 @@ impl InvocationChannel {
                     Err(_) => break,
                 }
             }
-        });
+        })?;
         Ok(Self {
             _directory: directory,
             path,
             token,
             stop,
             thread: Some(thread),
+            initialize: Some(initialize),
         })
     }
+    fn start(&mut self, handler: Option<HookHandler>) {
+        if let Some(initialize) = self.initialize.take() {
+            let _ = initialize.send(handler);
+        }
+    }
+}
+fn read_private_bytes(
+    stream: &mut std::os::unix::net::UnixStream,
+    bytes: &mut [u8],
+    deadline: std::time::Instant,
+) -> io::Result<()> {
+    use std::io::Read;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        match stream.read(&mut bytes[offset..]) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => offset += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 impl Drop for InvocationChannel {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        drop(self.initialize.take());
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
