@@ -8369,3 +8369,52 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     );
     fixture.wait_terminal_contains(summary.id, "ACTIVITY_FINISHED");
 }
+
+#[test]
+fn fresh_pty_does_not_inherit_outer_managed_reporting_channel() {
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "fresh_pty_outer_channel_helper",
+            "--nocapture",
+        ])
+        .env("OVRCR_AGENT_SOCKET", root.path().join("stale-outer.sock"))
+        .env("OVRCR_AGENT_TOKEN", "7".repeat(64))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "isolated inherited environment fixture subprocess"]
+fn fresh_pty_outer_channel_helper() {
+    assert!(std::env::var_os("OVRCR_AGENT_SOCKET").is_some());
+    assert!(std::env::var_os("OVRCR_AGENT_TOKEN").is_some());
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "fresh-channel-setup");
+    let evidence = fixture._root.path().join("fresh-env");
+    let summary = fixture.create_session_summary("fresh-channel", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"printf '%s%s' "${OVRCR_AGENT_SOCKET+x}" "${OVRCR_AGENT_TOKEN+x}" > "$2"; "$1" report activity --state busy; printf FRESH_REPORT_FINISHED; IFS= read -r done"#.into(),
+        "fresh-report".into(), env!("CARGO_BIN_EXE_ovrcr").into(), evidence.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "FRESH_REPORT_FINISHED");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        ovrcr::session::AgentActivity::Busy,
+        "fresh capability must reach its own runtime instead of the outer private endpoint"
+    );
+    assert_eq!(
+        std::fs::read_to_string(evidence).unwrap(),
+        "",
+        "private outer channel must not reach a fresh PTY"
+    );
+}

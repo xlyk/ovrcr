@@ -353,6 +353,8 @@ impl Session {
         command.args(spec.argv.iter().skip(1));
         command.cwd(spec.cwd);
         let shell_startup = shell_prompt::configure(&mut command, &spec.argv)?;
+        command.env_remove("OVRCR_AGENT_SOCKET");
+        command.env_remove("OVRCR_AGENT_TOKEN");
         command.env_remove("OVRCR_HOOK_SOCKET");
         command.env_remove("OVRCR_SESSION_ID");
         command.env_remove("OVRCR_HOOK_TOKEN");
