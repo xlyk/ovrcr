@@ -1077,10 +1077,18 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
         age(metrics.usage_received_unix_ms, usage.freshness),
         age(metrics.cost_received_unix_ms, cost.freshness)
     );
-    if Line::raw(&full).width() > width {
-        Some(full.replacen(" estimate ", " est ", 1))
+    if Line::raw(&full).width() <= width {
+        return Some(full);
+    }
+    let compact = full.replacen(" estimate ", " est ", 1);
+    if Line::raw(&compact).width() <= width {
+        Some(compact)
     } else {
-        Some(full)
+        Some(
+            compact
+                .replacen("tokens ", "tok ", 1)
+                .replacen("  cost ", " cost ", 1),
+        )
     }
 }
 

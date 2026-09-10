@@ -1369,6 +1369,23 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         2,
         "split metrics must preserve both freshness labels: {text}"
     );
+    for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+        let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
+        metrics.sample.usage.value.input_tokens = Some(82_589);
+        metrics.sample.usage.value.output_tokens = Some(1);
+        metrics.sample.usage.freshness = MeasurementFreshness::Uncertain;
+        metrics.sample.cost.value.as_mut().unwrap().usd_ticks = 600_000_000;
+        metrics.sample.cost.freshness = MeasurementFreshness::Uncertain;
+        metrics.usage_received_unix_ms = now;
+        metrics.cost_received_unix_ms = now;
+    }
+    let text = drawn(&dashboard, now, 166);
+    assert_eq!(
+        text.matches("tok conv partial 82590 uncertain cost conv est $0.06 uncertain")
+            .count(),
+        2,
+        "62-column split metrics must preserve scope, values, and uncertainty: {text}"
+    );
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()

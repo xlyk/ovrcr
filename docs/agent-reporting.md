@@ -27,7 +27,9 @@ callback does not prove it is the newest provider sample.
 
 The dashboard keeps the full `estimate` label when the metrics row fits. In a
 narrow or split pane it uses `est` so scoped cost and both component freshness
-labels remain visible.
+labels remain visible. If that row is still too wide, it also shortens `tokens`
+to `tok` and removes one separator space while preserving the scopes, values,
+coverage, and freshness labels.
 
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
