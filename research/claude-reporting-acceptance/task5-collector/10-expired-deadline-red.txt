@@ -1,0 +1,23 @@
+Command: rtk proxy cargo test -p ovrcr --test claude_reporting collector_expired_deadline_transfers_reaping_ownership -- --exact --nocapture
+Original helper cleanup at06bed526 plus new regression and concurrent integration
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-42ec5856f1256076)
+
+running 1 test
+
+thread 'collector_expired_deadline_transfers_reaping_ownership' (32352467) panicked at tests/claude_reporting.rs:283:5:
+expired cancellation dropped unreaped owned PID 71758
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test collector_expired_deadline_transfers_reaping_ownership ... FAILED
+
+failures:
+
+failures:
+    collector_expired_deadline_transfers_reaping_ownership
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 2.64s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting`
+
+Exit status: 101

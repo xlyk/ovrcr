@@ -239,6 +239,58 @@ fn collector_drop_is_bounded_for_a_stalled_helper() {
 }
 
 #[test]
+fn collector_expired_deadline_transfers_reaping_ownership() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("root.jsonl");
+    fs::write(&path, "").unwrap();
+    let mut controller = launch(&path);
+    caught_up(&mut controller);
+    let pid = controller.process_id().unwrap() as i32;
+    stop_owned(pid);
+    let start = Instant::now();
+    let result = controller.cancel(start - Duration::from_secs(1));
+    drop(controller);
+    assert!(start.elapsed() < Duration::from_millis(250));
+
+    // Keep this parent alive. ESRCH proves the child was reaped, rather than
+    // merely killed and left as a zombie until launcher exit.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let reaped = loop {
+        if unsafe { libc::kill(pid, 0) } == -1 {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::yield_now();
+    };
+    if !reaped {
+        // Clean up the fixture's zombie after recording the failure; this is
+        // not the application cleanup assertion and never turns RED into GREEN.
+        let mut status = 0;
+        unsafe {
+            libc::waitpid(pid, &mut status, libc::WNOHANG);
+        }
+    }
+    assert!(
+        result.is_err(),
+        "expired cancellation must take the deferred path"
+    );
+    assert!(
+        reaped,
+        "expired cancellation dropped unreaped owned PID {pid}"
+    );
+    assert_gone(pid);
+    println!(
+        "owned expired-deadline helper PID/PGID {pid} eventually reaped while parent remains alive"
+    );
+}
+
+#[test]
 fn collector_raw_record_limit_preserves_prefix() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("root.jsonl");

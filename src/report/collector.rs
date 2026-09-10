@@ -199,6 +199,9 @@ impl CollectorController {
             bail!("collector group cleanup unavailable");
         }
         loop {
+            if Instant::now() >= deadline {
+                bail!("collector cleanup deadline");
+            }
             match child.try_wait() {
                 Ok(Some(_)) => {
                     self.child = None;
@@ -226,6 +229,14 @@ impl Drop for CollectorController {
             .cleanup_deadline
             .unwrap_or_else(|| Instant::now() + Duration::from_millis(100));
         let _ = self.cancel(deadline);
+        if let Some(mut child) = self.child.take() {
+            // Group signaling was attempted with an unreaped ownership anchor.
+            // Transfer the remaining wait instead of dropping that ownership or
+            // extending the caller's deadline. Dropping JoinHandle detaches it.
+            let _ = std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
     }
 }
 

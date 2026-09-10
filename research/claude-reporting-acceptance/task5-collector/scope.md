@@ -11,3 +11,7 @@ Cancellation signals the owned PGID before reaping its leader. Waiting uses the 
 Evidence: 01 is a compiling helper-skeleton RED with 4 failing tests; 02 has the first 4 real helper tests passing; 03 is a distinct concurrent receiver compile failure, not a behavioral regression. 04 passes 10 helper tests. 05 passes all 13 helper/file/process tests including both production index caps, the raw record cap and an environment-clearing probe. 06 records an unrelated receiver-test clippy warning; 07 passes all 10 pure tests; 08 passes owned lib/helper clippy with warnings denied; 09 passes owned formatting. Commands, counts and exits are retained in the separate logs.
 
 No live provider run was used for this helper acceptance. Complete accounting, certified final source completion, and 50-session/platform acceptance remain separate gates.
+
+## Expired-deadline review correction
+
+The original cleanup could drop a Child after two expired-deadline polls and leave a zombie while its launching parent stayed alive. Evidence 10 reproduces this with an actual stopped helper and a failing reaping assertion; fixture cleanup occurs only after recording that failure. Expired cancellation now deterministically takes the deferred path after group signaling. Drop transfers any remaining Child to a detached waiter instead of losing reaping ownership or adding a new caller wait budget. Evidence 11 passes the focused actual-process regression, retaining the parent until owned PID/PGID absence is established. The following regression/lint/format logs cover the correction.
