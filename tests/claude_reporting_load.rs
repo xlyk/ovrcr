@@ -1,0 +1,592 @@
+//! Opt-in real socket/PTY/helper capacity acceptance; run alone on a recorded host.
+use ovrcr::config::{Registry, save_registry_atomic};
+use ovrcr::protocol::*;
+use ovrcr::report::collector::{CollectorController, CollectorSource};
+use ovrcr::server::{ServerPaths, run_server};
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
+
+fn connect(path: &Path) -> UnixStream {
+    let s = connect_server(path).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    s.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+    s
+}
+fn send(s: &mut UnixStream, request: Request) -> Response {
+    let owner = matches!(
+        request,
+        Request::ReserveAgent(_) | Request::SupervisorHello(_) | Request::Shutdown { .. }
+    );
+    let path = s.peer_addr().unwrap().as_pathname().unwrap().to_owned();
+    write_frame(
+        s,
+        &ClientMessage {
+            request_id: 1,
+            request,
+        },
+    )
+    .unwrap();
+    let response = match read_frame::<ServerMessage>(s).unwrap() {
+        ServerMessage::Response {
+            request_id: 1,
+            response,
+        } => response,
+        other => panic!("unexpected {other:?}"),
+    };
+    if !owner {
+        *s = connect(&path);
+    }
+    response
+}
+struct Fixture {
+    root: tempfile::TempDir,
+    socket: PathBuf,
+    server: Option<thread::JoinHandle<()>>,
+}
+impl Fixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec!["config", "user.name", "Load Fixture"],
+            vec!["config", "user.email", "fixture@example.invalid"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&repo)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        fs::write(repo.join("README"), "fixture").unwrap();
+        for args in [["add", "README"], ["commit", "-mfixture"]] {
+            assert!(
+                Command::new("git")
+                    .args(args)
+                    .current_dir(&repo)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+        let socket = root.path().join("server.sock");
+        let registry = root.path().join("config.toml");
+        save_registry_atomic(&Registry::default(), &registry).unwrap();
+        let paths = ServerPaths {
+            socket: socket.clone(),
+        };
+        let server = Some(thread::spawn(move || run_server(paths, registry).unwrap()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !socket.exists() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(5));
+        }
+        let fixture = Self {
+            root,
+            socket,
+            server,
+        };
+        let mut control = connect(&fixture.socket);
+        assert_eq!(
+            send(
+                &mut control,
+                Request::AddProject {
+                    name: "load".into(),
+                    repo,
+                    workspace_root: fixture.root.path().join("workspaces")
+                }
+            ),
+            Response::Ok
+        );
+        assert_eq!(
+            send(
+                &mut control,
+                Request::CreateWorkspace {
+                    project: "load".into(),
+                    name: "work".into(),
+                    branch: BranchRequest::New {
+                        branch: "load".into(),
+                        base: "main".into()
+                    }
+                }
+            ),
+            Response::Ok
+        );
+        let Response::Inventory { sessions, .. } = send(&mut control, Request::Inspect) else {
+            panic!("initial inventory");
+        };
+        for session in sessions {
+            assert_eq!(
+                send(
+                    &mut control,
+                    Request::KillSession {
+                        session: session.id
+                    }
+                ),
+                Response::Ok
+            );
+        }
+        fixture
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let mut s = connect(&self.socket);
+        assert_eq!(send(&mut s, Request::Shutdown { kill: true }), Response::Ok);
+        self.server.take().unwrap().join().unwrap();
+    }
+}
+fn measure<T>(value: T) -> Measurement<T> {
+    Measurement {
+        value,
+        source: "synthetic-load".into(),
+        source_revision: None,
+        source_sequence: None,
+        freshness: MeasurementFreshness::Uncertain,
+    }
+}
+fn sample(index: usize, tick: u64, usage: UsageTotals) -> MetricsSample {
+    MetricsSample {
+        model: Some(format!("session-{index}")),
+        context: measure(ContextSample {
+            used_tokens: Some(tick),
+            capacity_tokens: Some(10000),
+            quality: SampleQuality::Observed,
+        }),
+        usage: measure(usage),
+        cost: measure(None),
+    }
+}
+// ps is outside the measured request path. Include the test/server process and
+// every descendant (PTY shells, helpers and ps), not just the daemon thread.
+fn resources() -> (u64, f64, usize) {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,rss=,%cpu="])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let rows: Vec<_> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let x: Vec<_> = line.split_whitespace().collect();
+            Some((
+                x.first()?.parse::<u32>().ok()?,
+                x.get(1)?.parse::<u32>().ok()?,
+                x.get(2)?.parse::<u64>().ok()?,
+                x.get(3)?.parse::<f64>().ok()?,
+            ))
+        })
+        .collect();
+    let mut ids = std::collections::HashSet::from([std::process::id()]);
+    loop {
+        let before = ids.len();
+        for (pid, ppid, _, _) in &rows {
+            if ids.contains(ppid) {
+                ids.insert(*pid);
+            }
+        }
+        if before == ids.len() {
+            break;
+        }
+    }
+    let owned: Vec<_> = rows.iter().filter(|r| ids.contains(&r.0)).collect();
+    (
+        owned.iter().map(|r| r.2).sum(),
+        owned.iter().map(|r| r.3).sum(),
+        owned.len(),
+    )
+}
+#[test]
+#[ignore = "50 real PTYs/helpers, production indices, 60 seconds; run explicitly alone"]
+fn fifty_session_reporting_capacity() {
+    let evidence = PathBuf::from(
+        std::env::var_os("OVRCR_LOAD_EVIDENCE").expect("set isolated evidence directory"),
+    );
+    fs::create_dir_all(&evidence).unwrap();
+    let mut resource_log = File::create(evidence.join("resources.csv")).unwrap();
+    writeln!(resource_log, "phase,second,rss_kib,cpu_percent,processes").unwrap();
+    let fixture = Fixture::new();
+    let mut control = connect(&fixture.socket);
+    let mut identities = Vec::new();
+    let mut owned_pids = File::create(evidence.join("owned-pids.csv")).unwrap();
+    writeln!(owned_pids, "kind,index,pid").unwrap();
+    let mut pty_pids = Vec::new();
+    for index in 0..50 {
+        let path = fixture.root.path().join(format!("identity-{index}"));
+        let Response::CreatedSession(session) = send(&mut control, Request::CreateSession(CreateSessionRequest {
+            project: "load".into(), workspace: "work".into(), name: format!("load-{index}"), label: None,
+            argv: vec!["sh".into(), "-c".into(), "printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(), "load".into(), path.clone().into_os_string()],
+        })) else { panic!("create session"); };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let token = loop {
+            if let Ok(token) = fs::read_to_string(&path)
+                && token.len() == 64
+            {
+                break token;
+            }
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(2));
+        };
+        let mut capability = [0; 32];
+        for (i, v) in capability.iter_mut().enumerate() {
+            *v = u8::from_str_radix(&token[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        let pid = session.pid.expect("live PTY PID");
+        pty_pids.push(pid);
+        writeln!(owned_pids, "pty,{index},{pid}").unwrap();
+        identities.push((session.id, capability));
+    }
+    let baseline = resources();
+    writeln!(
+        resource_log,
+        "empty50,0,{},{},{}",
+        baseline.0, baseline.1, baseline.2
+    )
+    .unwrap();
+    let source = fixture.root.path().join("production.jsonl");
+    let mut file = BufWriter::new(File::create(&source).unwrap());
+    for id in 0..65_537 {
+        writeln!(file, "{}", serde_json::json!({"type":"assistant","sessionId":"root","isSidechain":false,"requestId":id.to_string(),"message":{"id":id.to_string(),"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}})).unwrap();
+    }
+    file.flush().unwrap();
+    drop(file);
+    let mut helpers: Vec<_> = (0..50)
+        .map(|_| {
+            CollectorController::spawn(
+                Path::new(env!("CARGO_BIN_EXE_ovrcr")),
+                CollectorSource {
+                    path: source.clone(),
+                    conversation: "root".into(),
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+    for (index, helper) in helpers.iter().enumerate() {
+        writeln!(
+            owned_pids,
+            "collector,{index},{}",
+            helper.process_id().unwrap()
+        )
+        .unwrap();
+    }
+    owned_pids.flush().unwrap();
+    let mut ready = vec![None; 50];
+    let fill_start = Instant::now();
+    let mut fill_second = u64::MAX;
+    let mut fill_peak = baseline.0;
+    let deadline = fill_start + Duration::from_secs(120);
+    while ready.iter().any(Option::is_none) {
+        for (index, helper) in helpers.iter_mut().enumerate() {
+            if ready[index].is_none()
+                && let Some(s) = helper.advance().unwrap()
+            {
+                assert!(s.retained_identities <= 65_536 && s.retained_bytes <= 16 * 1024 * 1024);
+                if s.diagnostic.is_some() {
+                    assert_eq!(s.diagnostic.as_deref(), Some("accounting_limit"));
+                    ready[index] = Some(s);
+                }
+            }
+        }
+        let second = fill_start.elapsed().as_secs();
+        if second != fill_second {
+            let r = resources();
+            fill_peak = fill_peak.max(r.0);
+            writeln!(resource_log, "fill,{second},{},{},{}", r.0, r.1, r.2).unwrap();
+            resource_log.flush().unwrap();
+            assert!(
+                fill_peak.saturating_sub(baseline.0) < 3 * 1024 * 1024,
+                "RSS budget during fill"
+            );
+            fill_second = second;
+        }
+        assert!(Instant::now() < deadline, "production fill deadline");
+        thread::sleep(Duration::from_millis(1));
+    }
+    let mut bounds = File::create(evidence.join("accounting.csv")).unwrap();
+    writeln!(bounds, "session,identities,charged_bytes,diagnostic").unwrap();
+    for (index, snapshot) in ready.iter().enumerate() {
+        let s = snapshot.as_ref().unwrap();
+        assert_eq!(s.retained_identities, 65_536);
+        writeln!(
+            bounds,
+            "{index},{},{},{}",
+            s.retained_identities,
+            s.retained_bytes,
+            s.diagnostic.as_ref().unwrap()
+        )
+        .unwrap();
+    }
+    let full = resources();
+    writeln!(resource_log, "full50,0,{},{},{}", full.0, full.1, full.2).unwrap();
+    assert!(
+        full.0.saturating_sub(baseline.0) < 3 * 1024 * 1024,
+        "RSS budget before load"
+    );
+    let start = Instant::now() + Duration::from_secs(2);
+    let mut workers = Vec::new();
+    for (index, ((session, capability), mut helper)) in
+        identities.into_iter().zip(helpers).enumerate()
+    {
+        let socket = fixture.socket.clone();
+        let usage = ready[index].take().unwrap().usage;
+        workers.push(thread::spawn(move || {
+            let mut s = connect(&socket);
+            let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = send(
+                &mut s,
+                Request::ReserveAgent(ReserveAgent {
+                    session,
+                    capability: AgentSecret(capability),
+                    operation: "reserve".into(),
+                    expected_epoch: 0,
+                    invocation: format!("inv-{index}"),
+                    provider: AgentProvider::Claude,
+                }),
+            ) else {
+                panic!("reserve");
+            };
+            let auth = SupervisorAuth {
+                session,
+                lease: reservation.lease,
+            };
+            let mut owner = connect(&socket);
+            assert_eq!(
+                send(&mut owner, Request::SupervisorHello(auth.clone())),
+                Response::Ok
+            );
+            s = connect(&socket);
+            let Response::AgentOperation(AgentOperationResult::Bound(binding)) = send(
+                &mut s,
+                Request::Supervisor(SupervisorRequest {
+                    auth: auth.clone(),
+                    operation: "bind".into(),
+                    command: AgentCommand::Bind {
+                        expected_binding: None,
+                        conversation: format!("root-{index}"),
+                    },
+                }),
+            ) else {
+                panic!("bind");
+            };
+            let mut max_late = 0;
+            for tick in 1..=600 {
+                let scheduled = start + Duration::from_millis((tick - 1) * 100);
+                thread::sleep(scheduled.saturating_duration_since(Instant::now()));
+                max_late = max_late.max(
+                    Instant::now()
+                        .saturating_duration_since(scheduled)
+                        .as_micros(),
+                );
+                let report = |binding| {
+                    Request::AgentReport(AgentReport {
+                        session,
+                        capability,
+                        sequence: None,
+                        update: AgentUpdate::Provider(ProviderReport {
+                            binding,
+                            revision: tick,
+                            observation: AgentObservation::Metrics(Box::new(sample(
+                                index,
+                                tick,
+                                usage.clone(),
+                            ))),
+                        }),
+                    })
+                };
+                assert_eq!(send(&mut s, report(binding.clone())), Response::Ok);
+                if tick % 10 == 0 {
+                    let mut stale = binding.clone();
+                    stale.invocation = "stale".into();
+                    assert!(matches!(
+                        send(&mut s, report(stale)),
+                        Response::Error { .. }
+                    ));
+                }
+                if tick == 300 && index < 5 {
+                    unsafe {
+                        assert_eq!(
+                            libc::kill(-(helper.process_id().unwrap() as i32), libc::SIGKILL),
+                            0
+                        );
+                    }
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    loop {
+                        if helper.advance().is_err() {
+                            break;
+                        }
+                        assert!(Instant::now() < deadline);
+                        thread::yield_now();
+                    }
+                }
+                if tick == 1 || tick == 300 && index < 5 {
+                    assert_eq!(
+                        send(
+                            &mut s,
+                            Request::Supervisor(SupervisorRequest {
+                                auth: auth.clone(),
+                                operation: format!("health-{tick}"),
+                                command: AgentCommand::Health(ProviderReport {
+                                    binding: binding.clone(),
+                                    revision: tick,
+                                    observation: AgentObservation::Health(HealthSample {
+                                        state: ReporterHealth::Unavailable,
+                                        reason: Some(
+                                            if tick == 300 {
+                                                "collector_lost"
+                                            } else {
+                                                "accounting_limit"
+                                            }
+                                            .into()
+                                        )
+                                    })
+                                })
+                            })
+                        ),
+                        Response::AgentOperation(AgentOperationResult::HealthUpdated)
+                    );
+                }
+            }
+            assert!(
+                Instant::now() < start + Duration::from_secs(60),
+                "600 updates missed the 60-second window"
+            );
+            thread::sleep(
+                (start + Duration::from_secs(60)).saturating_duration_since(Instant::now()),
+            );
+            let pid = helper.process_id().unwrap() as i32;
+            let result = helper.cancel(Instant::now() + Duration::from_secs(2));
+            drop(helper);
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while unsafe { libc::kill(pid, 0) } == 0 {
+                assert!(Instant::now() < deadline, "owned helper {pid} not reaped");
+                thread::yield_now();
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+            println!("collector={index} pid={pid} reaped cancel={result:?}");
+            result.unwrap();
+            (index, max_late, owner)
+        }));
+    }
+    let mut latency = File::create(evidence.join("latency.csv")).unwrap();
+    writeln!(latency, "sample,elapsed_us").unwrap();
+    thread::sleep(start.saturating_duration_since(Instant::now()));
+    let mut times = Vec::new();
+    let mut peak = full.0.max(fill_peak);
+    let mut last_second = u64::MAX;
+    while start.elapsed() < Duration::from_secs(60) {
+        let now = Instant::now();
+        let Response::Inventory { sessions, .. } = send(&mut control, Request::Inspect) else {
+            panic!("inspect");
+        };
+        let micros = now.elapsed().as_micros();
+        writeln!(latency, "{},{}", times.len(), micros).unwrap();
+        times.push(micros);
+        let sessions: Vec<_> = sessions
+            .into_iter()
+            .filter(|s| s.name.starts_with("load-"))
+            .collect();
+        assert_eq!(sessions.len(), 50);
+        for session in sessions {
+            if let Some(agent) = session.agent
+                && let Some(metrics) = agent.metrics
+            {
+                assert_eq!(
+                    metrics.sample.model,
+                    Some(session.name.replacen("load-", "session-", 1))
+                );
+                assert_eq!(
+                    agent.binding.conversation,
+                    session.name.replacen("load-", "root-", 1)
+                );
+                assert_eq!(metrics.sample.usage.value.input_tokens, Some(65_536));
+                if start.elapsed() > Duration::from_secs(1) {
+                    assert_eq!(agent.health.state, ReporterHealth::Unavailable);
+                }
+            }
+        }
+        let second = start.elapsed().as_secs();
+        if second != last_second {
+            let r = resources();
+            peak = peak.max(r.0);
+            writeln!(resource_log, "load,{second},{},{},{}", r.0, r.1, r.2).unwrap();
+            resource_log.flush().unwrap();
+            assert!(
+                peak.saturating_sub(baseline.0) < 3 * 1024 * 1024,
+                "RSS budget"
+            );
+            last_second = second;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let mut owners = Vec::new();
+    for worker in workers {
+        let (index, late, owner) = worker.join().unwrap();
+        println!("session={index} reports=600 stale_rejected=60 max_schedule_late_us={late}");
+        owners.push(owner);
+    }
+    let Response::Inventory { sessions, .. } = send(&mut control, Request::Inspect) else {
+        panic!("final inventory");
+    };
+    let sessions: Vec<_> = sessions
+        .into_iter()
+        .filter(|s| s.name.starts_with("load-"))
+        .collect();
+    assert_eq!(sessions.len(), 50);
+    for session in sessions {
+        let index: usize = session.name.strip_prefix("load-").unwrap().parse().unwrap();
+        let agent = session.agent.expect("all 50 bindings must remain owned");
+        assert_eq!(agent.metrics_revision, 600);
+        assert_eq!(agent.binding.conversation, format!("root-{index}"));
+        let metrics = agent.metrics.unwrap();
+        assert_eq!(metrics.sample.model, Some(format!("session-{index}")));
+        assert_eq!(metrics.sample.context.value.used_tokens, Some(600));
+        assert_eq!(agent.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            agent.health.reason.as_deref(),
+            Some(if index < 5 {
+                "collector_lost"
+            } else {
+                "accounting_limit"
+            })
+        );
+    }
+    times.sort_unstable();
+    let p99 = times[(times.len() * 99).div_ceil(100) - 1];
+    let max = *times.last().unwrap();
+    println!(
+        "reports=30000 seconds=60 collectors=50 failed_collectors=5 controls={} p99_us={p99} max_us={max} baseline_kib={} peak_kib={peak} growth_kib={}",
+        times.len(),
+        baseline.0,
+        peak.saturating_sub(baseline.0)
+    );
+    assert!(p99 < 250_000 && max < 1_000_000, "control latency budget");
+    drop(owners);
+    drop(fixture);
+    for pid in pty_pids {
+        assert_eq!(
+            unsafe { libc::kill(pid as i32, 0) },
+            -1,
+            "owned PTY remains"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    println!("all 50 owned PTY PIDs absent after server shutdown");
+}

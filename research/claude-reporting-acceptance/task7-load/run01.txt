@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-aaad74af962a51f1)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbIqbXV/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbIqbXV/server.sock
+
+thread 'fifty_session_reporting_capacity' (32487742) panicked at tests/claude_reporting_load.rs:21:63:
+called `Result::unwrap()` on an `Err` value: write protocol frame length
+
+Caused by:
+    Broken pipe (os error 32)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test fifty_session_reporting_capacity ... FAILED
+
+failures:
+
+failures:
+    fifty_session_reporting_capacity
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting_load`

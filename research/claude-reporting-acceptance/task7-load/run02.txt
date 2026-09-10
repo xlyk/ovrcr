@@ -1,0 +1,274 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.00s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-aaad74af962a51f1)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRuD6wD/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRuD6wD/server.sock
+
+thread '<unnamed>' (32495762) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (32495760) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495763) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495761) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495766) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495768) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495764) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495785) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495769) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495780) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495777) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495789) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495767) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495771) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495779) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495791) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495782) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495801) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495775) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495772) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495805) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495765) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495784) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495787) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495793) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495814) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495796) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495800) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495803) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495795) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495798) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495806) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495823) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495820) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495812) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495828) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495808) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495809) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495831) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495832) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495816) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495835) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495826) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495833) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495821) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495811) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495818) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495829) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495819) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread '<unnamed>' (32495825) panicked at tests/claude_reporting_load.rs:143:13:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "supervisor lease is stale or invalid" }
+ right: Ok
+
+thread 'fifty_session_reporting_capacity' (32494160) panicked at tests/claude_reporting_load.rs:178:9:
+assertion `left == right` failed
+  left: 51
+ right: 50
+ovrcr server stopped
+test fifty_session_reporting_capacity ... FAILED
+
+failures:
+
+failures:
+    fifty_session_reporting_capacity
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.93s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting_load`

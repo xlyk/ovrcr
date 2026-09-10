@@ -1,0 +1,23 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.58s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-aaad74af962a51f1)
+
+running 1 test
+before cancel pid=82036 group_probe=-1 errno=Some(1) ps=82036 82034 82036 Z
+
+cancel=Err(collector group cleanup unavailable)
+owned pid=82036 reaped while parent alive
+
+thread 'killed_helper_cleanup_diagnosis' (32575253) panicked at tests/claude_reporting_load.rs:574:5:
+killed-helper cancellation failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test killed_helper_cleanup_diagnosis ... FAILED
+
+failures:
+
+failures:
+    killed_helper_cleanup_diagnosis
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 30.53s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting_load`
