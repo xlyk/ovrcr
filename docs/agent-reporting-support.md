@@ -109,7 +109,7 @@ was recaptured in the native GUI with synthetic reports; actual Claude trust
 approval and full provider/platform release gates remain open.
 
 
-2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. Earlier pending trust/cleanup statements are historical; provider completeness and Linux gates remain open.
+2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. At that checkpoint, provider completeness and Linux gates remained open; the current Linux status is recorded below.
 
 ## Remaining-work checkpoint, 2026-09-10
 
@@ -124,12 +124,23 @@ automatic helper-loss propagation, and the macOS 50-session load passed. That wo
 does not bound the kernel listen backlog or prove a full heap maximum; those Task 2
 exclusions remain open.
 
-Actual Linux baseline tests, clippy, formatting, and doc tests passed after the CI
-job was added. The revised Linux load attempt is blocked because Docker became
-unavailable, so Linux capacity acceptance remains open. The final macOS
-all-features suite at `366c5d3` passed 599 tests with 11 intentional ignores. The
-affected TUI suite at `7ec5634` passed all 38 tests, and full clippy and formatting
-checks passed.
+Private PR 55 run 34518312559 passed all three jobs at exact revision `d12abda`.
+The Linux suite passed 607 tests with 11 intentional ignores across 23 binaries;
+Linux clippy and formatting passed, and its doctest command executed zero tests.
+The isolated Linux capacity case passed 30,000 reports, 3,000 stale rejections,
+five collector failures, the original latency/RSS thresholds, application queue
+bounds, and cleanup of all 50 helpers and 50 PTYs. See the
+[reviewed hosted results](../research/claude-reporting-acceptance/linux/hosted-34518312559/results.md).
+The earlier local Docker interruption is historical, although its task-owned
+container and image still await cleanup without an authorized shared-service
+restart.
+
+The integrated macOS all-features suite at `d12abda` passed 633 tests with 11
+intentional ignores across 24 binaries; clippy and formatting passed and doctests
+executed zero tests. The contemporaneously clean
+[integrated native smoke](../research/claude-reporting-acceptance/native-integrated/results.md)
+passed two actual turns, full 62-column uncertainty labels, detach/reattach, exit,
+and cleanup of all 22 PIDs and 16 process groups.
 
 Native supported-route evidence is split between
 [native-remaining](../research/claude-reporting-acceptance/native-remaining/results.md)
@@ -147,3 +158,13 @@ regression, and native compaction observed explicit zero current usage. A native
 null-current-context observation remains open, as do broader transition forms.
 These gaps preserve Partial usage and Observed activity; no evidence here supports
 Complete accounting or Confirmed settling.
+
+PR 55 is a mergeable draft. It has not been merged or released. Task 4 is
+complete at `d12abda`, but Task 9 final contract review and this documentation
+unit remain open. Hosted queue measurements exclude kernel socket-buffer memory,
+and sampled RSS does not prove a full heap maximum. A targeted
+[native child run](../research/claude-reporting-acceptance/native-child/results.md)
+proved that real child `PreToolUse`, `PostToolUseFailure`, and `SubagentStop` leave
+root binding, activity, health, and usage unchanged. An arbitrary child API
+`StopFailure`, complete child accounting, and native null-current-context timing
+remain unverified.

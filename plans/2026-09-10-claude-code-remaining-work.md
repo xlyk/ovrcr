@@ -18,7 +18,7 @@ This plan owns the remaining work; the original design and its dated safety refi
 
 Already delivered: protocol/binding/lease ownership; initial Claude 2.1.267 admission; synchronous observed activity; exact-source partial collector; context/cost publication; bounded finalization; setup/doctor; usage inspection; compact dashboard. Verified 586 workspace tests, clippy/fmt, native two-turn reporting/reattachment/exit, and full owned-fixture cleanup. The 50-session test passed its measured subset (30k reports, p99 control 1.205ms, sampled RSS growth 1.354GiB).
 
-Not yet proved: complete accounting, post-Stop settling, broader transition admission, all native failure/interaction cases in the assembled integration, numerical internal queue occupancy under load, or Linux acceptance. Native /cost included more categories than collected tokens; matching rounded final cost does not establish token completeness.
+Not yet proved: complete accounting, post-Stop settling, broader transition admission, arbitrary child API StopFailure isolation, complete child accounting, native null-current-context timing, a full heap maximum, or kernel socket-buffer memory. Application queue occupancy and macOS/Linux capacity now have measured evidence. Native /cost included more categories than collected tokens; matching rounded final cost does not establish token completeness.
 
 ## Global constraints
 
@@ -143,7 +143,7 @@ linux:
 - [x] Run `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets -- -D warnings`, and workspace doc tests on Linux; macOS retains all-features GUI checks. Local shell invocations use `rtk proxy`; hosted CI need not add RTK just to run cargo.
 - [x] Confirm nonzero Linux executions for native argv/stdio/signals/foreground group, stopped-child cleanup, private channel descriptors/auth, reservation replacement, callback deadline, collector crash/truncation, expired-deadline reap and post-exit drain. Ignore only actual helper entry points, never whole failing behavioral suites.
 - [x] Fix demonstrated platform differences with cfg-specific code only where required; preserve macOS assertions. Treat missing ps/zsh or socket permissions as environment failures, not passing skips.
-- [ ] Run the explicit 50-session test on an isolated Linux runner as a separate capacity attempt with the original thresholds; upload raw counters/latency/RSS and cleanup evidence. Do not make a shared busy runner's failed threshold pass by changing the limit.
+- [x] Run the explicit 50-session test on an isolated Linux runner as a separate capacity attempt with the original thresholds; upload raw counters/latency/RSS and cleanup evidence. Do not make a shared busy runner's failed threshold pass by changing the limit.
 - [x] Review Linux logs and macOS affected regressions. Workflow edits alone do not close Linux acceptance; require an actual completed Linux run. If no runner is accessible before a PR, record that exact external dependency.
 
 **Gate:** Actual Linux PTY/socket/process results, not cross-compilation or a green macOS job.
@@ -226,10 +226,10 @@ Reporter loss, silence and process exit: never synthesize settled(B).
 **Files:** remaining matrix, both plans, support/setup/CLI docs, final evidence, existing task diary. Product changes only for findings returned to their original worker.
 
 - [ ] Review every enabled capability against exact source, actual caller, behavioral assertions and native/platform evidence. Each unresolved source gap stays visible. Distinguish internal-counter proof, sampled RSS, real provider coverage and GUI checks.
-- [ ] After relevant code corrections, run the final macOS all-features workspace tests/clippy/fmt once, Linux headless gates, doc tests and `rtk proxy git diff --check`. Repeat only affected checks after later relevant changes; don't rerun paid provider cases for prose edits.
+- [x] After relevant code corrections, run the final macOS all-features workspace tests/clippy/fmt once, Linux headless gates, doc tests and `rtk proxy git diff --check`. Repeat only affected checks after later relevant changes; don't rerun paid provider cases for prose edits.
 - [x] Run a final native smoke from one built revision covering initial binding, two turns, metrics, reattachment and exit/cleanup; repeat expanded capabilities only if enabled. Preserve failed attempts and revision provenance.
 - [ ] Update evidence-backed checkboxes and extend the existing work diary. Declare the limited supported contract or full contract accurately; releasing a smaller contract requires the user's explicit scope decision.
-- [ ] Prepare a concise PR description with supported version/forms, changed behavior, verification and remaining limits. Push/open a PR only when authorized; merge and release require their own authorization.
+- [x] Prepare a concise PR description with supported version/forms, changed behavior, verification and remaining limits. Push/open a PR only when authorized; merge and release require their own authorization.
 
 **Full completion criterion:** All required provider sources are certified, enabled routes pass native and Linux acceptance, queue/load limits are proved, final review has no blockers, and documentation matches the shipped capabilities. If a provider dependency remains absent, report the exact blocked capability rather than claiming this full milestone complete.
 
@@ -242,24 +242,36 @@ and open gaps.
 
 - Task 1 is complete: every inherited requirement is reconciled in the matrix and the
   independent review corrections are incorporated.
-- Task 2 has passing application-queue saturation and overflow regressions and a passing
-  macOS 50-session load. Kernel listen-backlog behavior and a full heap/RSS bound remain
-  exclusions, so the task's overall proof is not complete.
+- Task 2 has passing application-queue saturation and overflow regressions and passing
+  macOS and Linux 50-session loads. Hosted Linux recorded `somaxconn=4096`.
+  Kernel socket-buffer memory and a full heap/RSS maximum remain exclusions, so the
+  task's overall proof is not complete.
 - Task 3 has native evidence for actual output, two turns, approval and tool paths,
   continuation, compaction, source/collector loss, detach/reattach, exit, and cleanup in
   [native-remaining](../research/claude-reporting-acceptance/native-remaining/results.md)
   and [native-final](../research/claude-reporting-acceptance/native-final/results.md). The
   invalid-model `StopFailure` and same-binding recovery pass in native-final cases 07 and
-  08. The corrected 62-column GUI smoke for `7ec5634` passed; [its evidence](../research/claude-reporting-acceptance/native-corrected/results.md) includes two turns, full uncertainty labels, reattachment, exit, and cleanup.
-- Task 4's CI definition and actual Linux baseline passed. The revised Linux capacity run
-  is blocked because Docker became unavailable; this leaves the Linux load clause open.
+  08. The final [integrated native evidence](../research/claude-reporting-acceptance/native-integrated/results.md)
+  records a contemporaneously clean `d12abda` source, two turns, full uncertainty
+  labels, reattachment, exit, and cleanup.
+- Task 4 is complete at exact `d12abda`: private PR 55 run 34518312559 passed the
+  macOS, Linux, and isolated Linux-capacity jobs. Linux passed 607 tests with 11
+  ignores; the capacity case passed 30,000 reports, 3,000 stale rejections, five
+  collector failures, latency/RSS thresholds, queue bounds, and owned cleanup. The
+  earlier local Docker interruption is historical; its container/image cleanup remains.
 - Task 5's source review and capability table passed independent review. Required provider
   sources for settled completion, complete accounting, final-source completion, and wider
   conversation transitions were not found, so those capabilities remain blocked.
 - Task 6 has a real same-ID compaction regression. Native compaction reported explicit zero
   current usage; native null-current-context timing remains open. Broader transition forms
   remain disabled. Tasks 7 and 8 remain blocked on the missing Task 5 provider sources.
-- Final macOS all-features testing at `366c5d3` passed 599 tests with 11 intentional ignores.
-  The affected TUI suite at `7ec5634` passed 38 tests, and full clippy and formatting checks
-  passed. These results do not close the provider, Linux-load, kernel, or heap
-  gates.
+- Integrated macOS all-features testing at `d12abda` passed 633 tests with 11
+  intentional ignores across 24 binaries; Linux passed 607 with 11 ignores across
+  23. Clippy and formatting passed on both, while doctest commands executed zero
+  tests. The contemporaneously clean native run passed two turns, 62-column metrics,
+  reattachment, exit, and cleanup. These results do not close provider, arbitrary child API StopFailure, complete child accounting,
+  native-null-context, full-heap, or kernel socket-buffer accounting gaps. Task 9
+  A targeted native child run at unchanged `d12abda` proved real child tool-failure
+  and `SubagentStop` isolation; arbitrary child API `StopFailure` remains open. Task 9
+  final contract review and documentation closeout remain open; PR 55 is mergeable,
+  but merge and release have not been authorized.

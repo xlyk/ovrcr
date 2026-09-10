@@ -1,0 +1,32 @@
+[
+  {
+    "event": "PreToolUse",
+    "agent_id": "a78d93c3af567835b",
+    "binding_unchanged": true,
+    "activity_unchanged": true,
+    "activity_revision_unchanged": true,
+    "usage_unchanged": true,
+    "health_unchanged": true,
+    "forward_exit": 0
+  },
+  {
+    "event": "PostToolUseFailure",
+    "agent_id": "a78d93c3af567835b",
+    "binding_unchanged": true,
+    "activity_unchanged": true,
+    "activity_revision_unchanged": true,
+    "usage_unchanged": true,
+    "health_unchanged": true,
+    "forward_exit": 0
+  },
+  {
+    "event": "SubagentStop",
+    "agent_id": "a78d93c3af567835b",
+    "binding_unchanged": true,
+    "activity_unchanged": true,
+    "activity_revision_unchanged": true,
+    "usage_unchanged": true,
+    "health_unchanged": true,
+    "forward_exit": 0
+  }
+]

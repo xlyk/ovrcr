@@ -1,0 +1,1076 @@
+linux capacity	Set up job	﻿2026-09-10T19:05:36.1506892Z Current runner version: '2.337.0'
+linux capacity	Set up job	2026-09-10T19:05:36.1537711Z ##[group]Runner Image Provisioner
+linux capacity	Set up job	2026-09-10T19:05:36.1538741Z Hosted Compute Agent
+linux capacity	Set up job	2026-09-10T19:05:36.1539353Z Version: 20260828.587
+linux capacity	Set up job	2026-09-10T19:05:36.1540083Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+linux capacity	Set up job	2026-09-10T19:05:36.1540830Z Build Date: 2026-08-28T16:44:25Z
+linux capacity	Set up job	2026-09-10T19:05:36.1541532Z Worker ID: {4e95d000-392a-4b66-bde9-ead3bb74d21c}
+linux capacity	Set up job	2026-09-10T19:05:36.1542356Z Azure Region: centralus
+linux capacity	Set up job	2026-09-10T19:05:36.1542948Z ##[endgroup]
+linux capacity	Set up job	2026-09-10T19:05:36.1544863Z ##[group]Operating System
+linux capacity	Set up job	2026-09-10T19:05:36.1545550Z Ubuntu
+linux capacity	Set up job	2026-09-10T19:05:36.1546076Z 24.04.5
+linux capacity	Set up job	2026-09-10T19:05:36.1546644Z LTS
+linux capacity	Set up job	2026-09-10T19:05:36.1547179Z ##[endgroup]
+linux capacity	Set up job	2026-09-10T19:05:36.1547786Z ##[group]Runner Image
+linux capacity	Set up job	2026-09-10T19:05:36.1548428Z Image: ubuntu-24.04
+linux capacity	Set up job	2026-09-10T19:05:36.1549023Z Version: 20260907.300.1
+linux capacity	Set up job	2026-09-10T19:05:36.1550234Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+linux capacity	Set up job	2026-09-10T19:05:36.1552170Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+linux capacity	Set up job	2026-09-10T19:05:36.1553492Z ##[endgroup]
+linux capacity	Set up job	2026-09-10T19:05:36.1554834Z ##[group]GITHUB_TOKEN Permissions
+linux capacity	Set up job	2026-09-10T19:05:36.1557191Z Contents: read
+linux capacity	Set up job	2026-09-10T19:05:36.1557826Z Metadata: read
+linux capacity	Set up job	2026-09-10T19:05:36.1558467Z Packages: read
+linux capacity	Set up job	2026-09-10T19:05:36.1559047Z ##[endgroup]
+linux capacity	Set up job	2026-09-10T19:05:36.1561861Z Secret source: Actions
+linux capacity	Set up job	2026-09-10T19:05:36.1562981Z Cache mode: write
+linux capacity	Set up job	2026-09-10T19:05:36.1563997Z Prepare workflow directory
+linux capacity	Set up job	2026-09-10T19:05:36.1986785Z Prepare all required actions
+linux capacity	Set up job	2026-09-10T19:05:36.2043968Z Getting action download info
+linux capacity	Set up job	2026-09-10T19:05:36.6889365Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+linux capacity	Set up job	2026-09-10T19:05:37.5327968Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:6bed0761d98439e5a578e2877258200ad565ba87)
+linux capacity	Set up job	2026-09-10T19:05:37.6928091Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+linux capacity	Set up job	2026-09-10T19:05:38.3644384Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+linux capacity	Set up job	2026-09-10T19:05:38.7611587Z Complete job name: linux capacity
+linux capacity	Run actions/checkout@v4	﻿2026-09-10T19:05:38.8148953Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8155889Z ##[group]Run actions/checkout@v4
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8156390Z with:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8156736Z   repository: xlyk/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8158590Z   token: ***
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8159008Z   ssh-strict: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8159296Z   ssh-user: git
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8159547Z   persist-credentials: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8159809Z   clean: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8160134Z   sparse-checkout-cone-mode: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8160420Z   fetch-depth: 1
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8160700Z   fetch-tags: false
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8160956Z   show-progress: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8161207Z   lfs: false
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8161463Z   submodules: false
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8161805Z   set-safe-directory: true
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8162091Z   allow-unsafe-pr-checkout: false
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8162436Z env:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8162698Z   CARGO_TERM_COLOR: always
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8162950Z   SHELL: /bin/bash
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.8163366Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9065796Z Syncing repository: xlyk/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9067914Z ##[group]Getting Git version info
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9068402Z Working directory is '/home/runner/work/ovrcr/ovrcr'
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9069162Z [command]/usr/bin/git version
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9408949Z git version 2.55.0
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9465979Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9473792Z Temporarily overriding HOME='/home/runner/work/_temp/94291100-a1ad-44e4-8e8b-95df5bfb8dc5' before making global git config changes
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9475258Z Adding repository directory to the temporary git global config as a safe directory
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9476224Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ovrcr/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9574073Z Deleting the contents of '/home/runner/work/ovrcr/ovrcr'
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9584569Z ##[group]Initializing the repository
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9587413Z [command]/usr/bin/git init /home/runner/work/ovrcr/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9661745Z hint: Using 'master' as the name for the initial branch. This default branch name
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9681867Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9682848Z hint: to use in all of your new repositories, which will suppress this warning,
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9683725Z hint: call:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9684136Z hint:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9684648Z hint: 	git config --global init.defaultBranch <name>
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9685131Z hint:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9685730Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9689973Z hint: 'development'. The just-created branch can be renamed via this command:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9690808Z hint:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9691282Z hint: 	git branch -m <name>
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9691741Z hint:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9692308Z hint: Disable this message with "git config set advice.defaultBranchName false"
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9693345Z Initialized empty Git repository in /home/runner/work/ovrcr/ovrcr/.git/
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9694925Z [command]/usr/bin/git remote add origin https://github.com/xlyk/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9745790Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9746489Z ##[group]Disabling automatic garbage collection
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9747086Z [command]/usr/bin/git config --local gc.auto 0
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9780951Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9781608Z ##[group]Setting up auth
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9786635Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:38.9830652Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0515285Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0542274Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0693606Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0718153Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0861200Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0896259Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0897466Z ##[group]Fetching the repository
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:39.0905039Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +f4aeb06d1aa58e1bdc8cca40781d157325d72f23:refs/remotes/pull/55/merge
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1374084Z From https://github.com/xlyk/ovrcr
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1375223Z  * [new ref]         f4aeb06d1aa58e1bdc8cca40781d157325d72f23 -> pull/55/merge
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1379386Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1380370Z ##[group]Determining the checkout info
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1381227Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1387514Z [command]/usr/bin/git sparse-checkout disable
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1443526Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1474413Z ##[group]Checking out the ref
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1477391Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/55/merge
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1992098Z Note: switching to 'refs/remotes/pull/55/merge'.
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1992648Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1993238Z You are in 'detached HEAD' state. You can look around, make experimental
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1993741Z changes and commit them, and you can discard any commits you make in this
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1994146Z state without impacting any branches by switching back to a branch.
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1994465Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1994806Z If you want to create a new branch to retain commits you create, you may
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1995287Z do so (now or later) by using -c with the switch command. Example:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1995698Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1995833Z   git switch -c <new-branch-name>
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996008Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996136Z Or undo this operation with:
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996305Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996409Z   git switch -
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996557Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1996799Z Turn off this advice by setting config variable advice.detachedHead to false
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1997110Z
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.1997485Z HEAD is now at f4aeb06 Merge d12abda8100bd15cde4f9740c004eafd2f691116 into c4ee88e9906ca6aa7ee95dc6aad06ed7053b6dc1
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.2006440Z ##[endgroup]
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.2045060Z [command]/usr/bin/git log -1 --format=%H
+linux capacity	Run actions/checkout@v4	2026-09-10T19:05:40.2063359Z f4aeb06d1aa58e1bdc8cca40781d157325d72f23
+linux capacity	Run dtolnay/rust-toolchain@stable	﻿2026-09-10T19:05:40.2344104Z ##[group]Run dtolnay/rust-toolchain@stable
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2344390Z with:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2344579Z   components: rustfmt, clippy
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2344799Z   toolchain: stable
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2344965Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2345121Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2345310Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2345506Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2402112Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2450690Z ##[group]Run if [[ -z $toolchain ]]; then
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2451068Z ^[[36;1mif [[ -z $toolchain ]]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2451471Z ^[[36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2451898Z ^[[36;1m  echo "'toolchain' is a required input" >&2^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2452130Z ^[[36;1m  exit 1^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2452406Z ^[[36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2452764Z ^[[36;1m  if [[ Linux == macOS ]]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2453310Z ^[[36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2453698Z ^[[36;1m  else^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2454004Z ^[[36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2454351Z ^[[36;1m  fi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2454583Z ^[[36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2454967Z ^[[36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2455315Z ^[[36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2455698Z ^[[36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2456052Z ^[[36;1melse^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2456249Z ^[[36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2456487Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2481157Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2481460Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2481673Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2481888Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2482069Z   toolchain: stable
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2482238Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2569400Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=16]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2579487Z ##[start-action display=Construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2607419Z ##[group]Run echo "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2607921Z ^[[36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2608389Z ^[[36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2608776Z ^[[36;1mecho "downgrade=" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2628264Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2628540Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2628707Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2628896Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2629059Z   targets:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2629230Z   components: rustfmt, clippy
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2629423Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2676186Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=9]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2678009Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2696874Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2697260Z ^[[36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2712912Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2713475Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2713643Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2713834Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2714002Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2752479Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=7]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2754619Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2815561Z ##[group]Run if ! command -v rustup &>/dev/null; then
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2815872Z ^[[36;1mif ! command -v rustup &>/dev/null; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2816438Z ^[[36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2816984Z ^[[36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2817216Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2832120Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2832407Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2832585Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2832800Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2833039Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2833338Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2868453Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=11]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2870298Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2875883Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2885068Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2904196Z ##[group]Run rustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2904811Z ^[[36;1mrustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2919575Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2919843Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2920009Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2920198Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2920378Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2920595Z   RUSTUP_PERMIT_COPY_RENAME: 1
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:40.2920799Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.0900181Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5134215Z info: latest update on 2026-09-03 for version 1.98.1 (48a229cea 2026-09-01)
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5354565Z info: component clippy is up to date
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5355693Z info: component rustfmt is up to date
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5384175Z
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5453945Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5454402Z
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5477764Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=2259]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5482444Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5497302Z ##[group]Run rustup default stable
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5497547Z ^[[36;1mrustup default stable^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5516353Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5516599Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5516751Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5516924Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5517081Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5517259Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5584493Z info: using existing install for stable-x86_64-unknown-linux-gnu
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5597398Z
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5598874Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5670890Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.98.1 (48a229cea 2026-09-01)
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5671441Z
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5681598Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=19]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5683932Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5698257Z ##[group]Run DATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5698834Z ^[[36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5699273Z ^[[36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5699661Z ^[[36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5715753Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5715988Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5716137Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5716307Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5716470Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.5716665Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6388971Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=70]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6390852Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6402973Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6403565Z ^[[36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6403812Z ^[[36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6404020Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6421279Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6421537Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6421697Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6421873Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6422040Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6422224Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6459691Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=6]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6461400Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6472728Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6473023Z ^[[36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6473554Z ^[[36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6473816Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6488946Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6489184Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6489333Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6489501Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6489784Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6489991Z   CARGO_INCREMENTAL: 0
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6490154Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6522485Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=6]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6524472Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6536485Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6536864Z ^[[36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6537335Z ^[[36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6537816Z ^[[36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6538209Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6538591Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6538931Z ^[[36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6539374Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6539853Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6540096Z ^[[36;1m  fi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6540242Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6554212Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6554462Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6554617Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6554790Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6554954Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6555140Z   CARGO_INCREMENTAL: 0
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6555298Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6797245Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=27]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6799165Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6812190Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6812728Z ^[[36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6813343Z ^[[36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6813677Z ^[[36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6813908Z ^[[36;1mfi^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6829115Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6829362Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6829515Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6829686Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6829847Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6830033Z   CARGO_INCREMENTAL: 0
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6830199Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6965174Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=16]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6968213Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6980017Z ##[group]Run rustc +stable --version --verbose
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6980267Z ^[[36;1mrustc +stable --version --verbose^[[0m
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6994901Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6995171Z env:
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6995336Z   CARGO_TERM_COLOR: always
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6995527Z   SHELL: /bin/bash
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6995688Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6995883Z   CARGO_INCREMENTAL: 0
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.6996042Z ##[endgroup]
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7115911Z rustc 1.98.1 (48a229cea 2026-09-01)
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7116801Z binary: rustc
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7117327Z commit-hash: 48a229ceaefd4985c50990b14116b6d856af0985
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7119911Z commit-date: 2026-09-01
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7120272Z host: x86_64-unknown-linux-gnu
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7120630Z release: 1.98.1
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7120928Z LLVM version: 22.1.8
+linux capacity	Run dtolnay/rust-toolchain@stable	2026-09-10T19:05:42.7130883Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=16]
+linux capacity	Run Swatinem/rust-cache@v2	﻿2026-09-10T19:05:42.7219264Z ##[group]Run Swatinem/rust-cache@v2
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7219552Z with:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7219793Z   shared-key: linux-capacity
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7220102Z   cache-on-failure: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7220350Z   prefix-key: v0-rust
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7220629Z   add-job-id-key: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7220890Z   add-rust-environment-hash-key: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7221154Z   cache-targets: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7221437Z   cache-all-crates: false
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7221691Z   cache-workspace-crates: false
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7221951Z   save-if: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7222199Z   cache-provider: github
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7222473Z   cache-bin: true
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7222741Z   lookup-only: false
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7222972Z   cmd-format: {0}
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7223442Z env:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7223682Z   CARGO_TERM_COLOR: always
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7223927Z   SHELL: /bin/bash
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7224192Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7224453Z   CARGO_INCREMENTAL: 0
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:42.7224787Z ##[endgroup]
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1630596Z ##[group]Cache Configuration
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1631459Z Cache Provider:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1631959Z     github
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1632377Z Workspaces:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1632779Z     /home/runner/work/ovrcr/ovrcr
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1633592Z Cache Paths:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1634107Z     /home/runner/.cargo/bin
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1634769Z     /home/runner/.cargo/.crates.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1635305Z     /home/runner/.cargo/.crates2.json
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1635756Z     /home/runner/.cargo/registry
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1636232Z     /home/runner/.cargo/git
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1636737Z     /home/runner/work/ovrcr/ovrcr/target
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1637280Z Restore Key:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1637849Z     v0-rust-linux-capacity-Linux-x64-6ff13d87
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1638414Z Cache Key:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1638999Z     v0-rust-linux-capacity-Linux-x64-6ff13d87-29fb430f
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1639521Z .. Prefix:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1639917Z   - v0-rust-linux-capacity-Linux-x64
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1640412Z .. Environment considered:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1640823Z   - Rust Versions:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1641394Z     - 1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1641932Z   - CARGO_HOME
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1642291Z   - CARGO_INCREMENTAL
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1642856Z   - CARGO_TERM_COLOR
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1643387Z .. Lockfiles considered:
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1643840Z   - /home/runner/work/ovrcr/ovrcr/Cargo.lock
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1644388Z   - /home/runner/work/ovrcr/ovrcr/Cargo.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1645219Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol/Cargo.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1645942Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime/Cargo.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1646592Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal/Cargo.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1647331Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui/Cargo.toml
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1648274Z ##[endgroup]
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1648651Z
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.1648954Z ... Restoring cache ...
+linux capacity	Run Swatinem/rust-cache@v2	2026-09-10T19:05:45.4566631Z No cache found.
+linux capacity	Install shell test dependency	﻿2026-09-10T19:05:45.4626336Z ##[group]Run sudo apt-get update && sudo apt-get install -y zsh
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4626876Z ^[[36;1msudo apt-get update && sudo apt-get install -y zsh^[[0m
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4649281Z shell: /usr/bin/bash -e {0}
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4649629Z env:
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4649889Z   CARGO_TERM_COLOR: always
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4650144Z   SHELL: /bin/bash
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4650379Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4650692Z   CARGO_INCREMENTAL: 0
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4650937Z   CACHE_ON_FAILURE: true
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.4651318Z ##[endgroup]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8124225Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8798154Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8802616Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8872320Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8917020Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.8928000Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:45.9897451Z Get:7 https://dl.google.com/linux/chrome-stable/deb stable InRelease [2548 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.2696464Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1262 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.2759254Z Get:16 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [411 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.2919963Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [292 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.2952580Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Components [180 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.2993889Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1690 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3070882Z Get:17 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [459 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3461432Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Components [388 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3483963Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1540 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3764167Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [353 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3803924Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Components [940 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3807391Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-backports/main amd64 Components [5784 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.3826698Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-backports/universe amd64 Components [12.6 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4300095Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1006 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4318371Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [213 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4325532Z Get:22 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Components [46.4 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4353335Z Get:23 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1206 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4416221Z Get:24 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Components [76.2 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4429206Z Get:25 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1445 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4736763Z Get:26 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [336 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:46.4918959Z Get:27 https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages [1409 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:55.0331092Z Fetched 11.3 MB in 1s (7658 kB/s)
+linux capacity	Install shell test dependency	2026-09-10T19:05:55.7262686Z Reading package lists...
+linux capacity	Install shell test dependency	2026-09-10T19:05:55.7534487Z Reading package lists...
+linux capacity	Install shell test dependency	2026-09-10T19:05:55.8984964Z Building dependency tree...
+linux capacity	Install shell test dependency	2026-09-10T19:05:55.8991396Z Reading state information...
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.0484685Z The following additional packages will be installed:
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.0487154Z   zsh-common
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.0490499Z Suggested packages:
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.0490932Z   zsh-doc
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1011576Z The following NEW packages will be installed:
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1012700Z   zsh zsh-common
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1161075Z 0 upgraded, 2 newly installed, 0 to remove and 50 not upgraded.
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1161857Z Need to get 4985 kB of archives.
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1162549Z After this operation, 19.1 MB of additional disk space will be used.
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1164313Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.1862813Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh-common all 5.9-6ubuntu2 [4173 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.4745411Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh amd64 5.9-6ubuntu2 [812 kB]
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.6894034Z Fetched 4985 kB in 0s (13.5 MB/s)
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.7250207Z Selecting previously unselected package zsh-common.
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9373011Z (Reading database ...
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9374038Z (Reading database ... 5%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9374375Z (Reading database ... 10%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9374861Z (Reading database ... 15%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9375476Z (Reading database ... 20%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9375978Z (Reading database ... 25%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9376583Z (Reading database ... 30%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9377075Z (Reading database ... 35%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9377564Z (Reading database ... 40%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9378173Z (Reading database ... 45%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9378735Z (Reading database ... 50%
+linux capacity	Install shell test dependency	2026-09-10T19:05:56.9456201Z (Reading database ... 55%
+linux capacity	Install shell test dependency	2026-09-10T19:05:57.1536181Z (Reading database ... 60%
+linux capacity	Install shell test dependency	2026-09-10T19:05:57.3302528Z (Reading database ... 65%
+linux capacity	Install shell test dependency	2026-09-10T19:05:57.5940131Z (Reading database ... 70%
+linux capacity	Install shell test dependency	2026-09-10T19:05:57.7517750Z (Reading database ... 75%
+linux capacity	Install shell test dependency	2026-09-10T19:05:58.0737429Z (Reading database ... 80%
+linux capacity	Install shell test dependency	2026-09-10T19:05:58.3490090Z (Reading database ... 85%
+linux capacity	Install shell test dependency	2026-09-10T19:05:58.6566525Z (Reading database ... 90%
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.1721191Z (Reading database ... 95%
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.1722256Z (Reading database ... 100%
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.1723286Z (Reading database ... 201818 files and directories currently installed.)
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.1767976Z Preparing to unpack .../zsh-common_5.9-6ubuntu2_all.deb ...
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.2007818Z Unpacking zsh-common (5.9-6ubuntu2) ...
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.9772060Z Selecting previously unselected package zsh.
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.9881801Z Preparing to unpack .../zsh_5.9-6ubuntu2_amd64.deb ...
+linux capacity	Install shell test dependency	2026-09-10T19:05:59.9934700Z Unpacking zsh (5.9-6ubuntu2) ...
+linux capacity	Install shell test dependency	2026-09-10T19:06:00.2835742Z Setting up zsh-common (5.9-6ubuntu2) ...
+linux capacity	Install shell test dependency	2026-09-10T19:06:00.3908218Z Setting up zsh (5.9-6ubuntu2) ...
+linux capacity	Install shell test dependency	2026-09-10T19:06:00.4010324Z Processing triggers for debianutils (5.17build1) ...
+linux capacity	Install shell test dependency	2026-09-10T19:06:00.7361778Z Processing triggers for man-db (2.12.0-4build2) ...
+linux capacity	Install shell test dependency	2026-09-10T19:06:00.7387699Z Not building database; man-db/auto-update is not 'true'.
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3927421Z
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3927862Z Running kernel seems to be up-to-date.
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3928132Z
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3928584Z No services need to be restarted.
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3928854Z
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3954017Z No containers need to be restarted.
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3954412Z
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3963657Z No user sessions are running outdated binaries.
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3964213Z
+linux capacity	Install shell test dependency	2026-09-10T19:06:01.3965390Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+linux capacity	Configure fixture Git identity	﻿2026-09-10T19:06:02.1853321Z ##[group]Run git config --global user.name "OVRCR CI"
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1853822Z ^[[36;1mgit config --global user.name "OVRCR CI"^[[0m
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1854154Z ^[[36;1mgit config --global user.email "ci@ovrcr.invalid"^[[0m
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1874650Z shell: /usr/bin/bash -e {0}
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1875091Z env:
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1875331Z   CARGO_TERM_COLOR: always
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1875570Z   SHELL: /bin/bash
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1875828Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1876080Z   CARGO_INCREMENTAL: 0
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1876300Z   CACHE_ON_FAILURE: true
+linux capacity	Configure fixture Git identity	2026-09-10T19:06:02.1876554Z ##[endgroup]
+linux capacity	Record host provenance	﻿2026-09-10T19:06:02.1955214Z ##[group]Run mkdir -p target/hosted-linux-capacity/load
+linux capacity	Record host provenance	2026-09-10T19:06:02.1955593Z ^[[36;1mmkdir -p target/hosted-linux-capacity/load^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1955945Z ^[[36;1muname -a > target/hosted-linux-capacity/uname.txt^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1956284Z ^[[36;1mrustc -Vv > target/hosted-linux-capacity/rustc.txt^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1956673Z ^[[36;1mcargo -V > target/hosted-linux-capacity/cargo.txt^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1957131Z ^[[36;1mcat /proc/meminfo > target/hosted-linux-capacity/meminfo.txt^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1957532Z ^[[36;1mcat /proc/sys/net/core/somaxconn > target/hosted-linux-capacity/somaxconn.txt^[[0m
+linux capacity	Record host provenance	2026-09-10T19:06:02.1972018Z shell: /usr/bin/bash -e {0}
+linux capacity	Record host provenance	2026-09-10T19:06:02.1972331Z env:
+linux capacity	Record host provenance	2026-09-10T19:06:02.1972556Z   CARGO_TERM_COLOR: always
+linux capacity	Record host provenance	2026-09-10T19:06:02.1972796Z   SHELL: /bin/bash
+linux capacity	Record host provenance	2026-09-10T19:06:02.1973259Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Record host provenance	2026-09-10T19:06:02.1973544Z   CARGO_INCREMENTAL: 0
+linux capacity	Record host provenance	2026-09-10T19:06:02.1973786Z   CACHE_ON_FAILURE: true
+linux capacity	Record host provenance	2026-09-10T19:06:02.1974035Z ##[endgroup]
+linux capacity	Run isolated 50-session capacity acceptance	﻿2026-09-10T19:06:02.2537584Z ##[group]Run set +e
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2537899Z ^[[36;1mset +e^[[0m
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2538461Z ^[[36;1mcargo test --test claude_reporting_load --features acceptance-diagnostics fifty_session_reporting_capacity -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-capacity/test.log^[[0m
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2539052Z ^[[36;1mresult=${PIPESTATUS[0]}^[[0m
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2539399Z ^[[36;1mecho "$result" > target/hosted-linux-capacity/test.exit^[[0m
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2539705Z ^[[36;1mexit "$result"^[[0m
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2555334Z shell: /usr/bin/bash -e {0}
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2555631Z env:
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2555857Z   CARGO_TERM_COLOR: always
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2556091Z   SHELL: /bin/bash
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2556409Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2556674Z   CARGO_INCREMENTAL: 0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2556904Z   CACHE_ON_FAILURE: true
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2557250Z   OVRCR_LOAD_EVIDENCE: /home/runner/work/ovrcr/ovrcr/target/hosted-linux-capacity/load
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:02.2557604Z ##[endgroup]
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:03.7031544Z ^[[1m^[[92m    Updating^[[0m crates.io index
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.4855139Z ^[[1m^[[92m Downloading^[[0m crates ...
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.5441098Z ^[[1m^[[92m  Downloaded^[[0m equivalent v1.0.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6789414Z ^[[1m^[[92m  Downloaded^[[0m errno v0.3.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6807190Z ^[[1m^[[92m  Downloaded^[[0m downcast-rs v1.2.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6813757Z ^[[1m^[[92m  Downloaded^[[0m either v1.18.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6831253Z ^[[1m^[[92m  Downloaded^[[0m aho-corasick v1.1.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6949044Z ^[[1m^[[92m  Downloaded^[[0m sha2 v0.10.9
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6967130Z ^[[1m^[[92m  Downloaded^[[0m memoffset v0.9.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6975054Z ^[[1m^[[92m  Downloaded^[[0m strum v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6985254Z ^[[1m^[[92m  Downloaded^[[0m line-clipping v0.3.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.6997272Z ^[[1m^[[92m  Downloaded^[[0m mac_address v1.1.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7006972Z ^[[1m^[[92m  Downloaded^[[0m memmem v0.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7011648Z ^[[1m^[[92m  Downloaded^[[0m lru v0.18.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7018293Z ^[[1m^[[92m  Downloaded^[[0m num-conv v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7023037Z ^[[1m^[[92m  Downloaded^[[0m lock_api v0.4.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7030658Z ^[[1m^[[92m  Downloaded^[[0m num-derive v0.4.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7039533Z ^[[1m^[[92m  Downloaded^[[0m rustc_version v0.4.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7046354Z ^[[1m^[[92m  Downloaded^[[0m option-ext v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7050435Z ^[[1m^[[92m  Downloaded^[[0m palette_math v0.7.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7057262Z ^[[1m^[[92m  Downloaded^[[0m phf_codegen v0.11.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7063612Z ^[[1m^[[92m  Downloaded^[[0m strum_macros v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7081537Z ^[[1m^[[92m  Downloaded^[[0m lazy_static v1.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7102232Z ^[[1m^[[92m  Downloaded^[[0m ident_case v1.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7112290Z ^[[1m^[[92m  Downloaded^[[0m hex v0.4.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7121931Z ^[[1m^[[92m  Downloaded^[[0m litrs v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7135606Z ^[[1m^[[92m  Downloaded^[[0m serde_spanned v1.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7219123Z ^[[1m^[[92m  Downloaded^[[0m scopeguard v1.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7253921Z ^[[1m^[[92m  Downloaded^[[0m unty v0.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7254826Z ^[[1m^[[92m  Downloaded^[[0m time-core v0.1.9
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7255235Z ^[[1m^[[92m  Downloaded^[[0m utf8parse v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7255613Z ^[[1m^[[92m  Downloaded^[[0m fixedbitset v0.4.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7273845Z ^[[1m^[[92m  Downloaded^[[0m num_threads v0.1.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7284194Z ^[[1m^[[92m  Downloaded^[[0m lab v0.11.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7285377Z ^[[1m^[[92m  Downloaded^[[0m generic-array v0.14.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7286222Z ^[[1m^[[92m  Downloaded^[[0m phf_shared v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7286878Z ^[[1m^[[92m  Downloaded^[[0m filedescriptor v0.8.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7287495Z ^[[1m^[[92m  Downloaded^[[0m strum_macros v0.27.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7314093Z ^[[1m^[[92m  Downloaded^[[0m phf_generator v0.11.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7314722Z ^[[1m^[[92m  Downloaded^[[0m phf_shared v0.11.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7315658Z ^[[1m^[[92m  Downloaded^[[0m ratatui-macros v0.7.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7319347Z ^[[1m^[[92m  Downloaded^[[0m itoa v1.0.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7326709Z ^[[1m^[[92m  Downloaded^[[0m ratatui-termina v0.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7332663Z ^[[1m^[[92m  Downloaded^[[0m version_check v0.9.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7338488Z ^[[1m^[[92m  Downloaded^[[0m wezterm-blob-leases v0.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7344107Z ^[[1m^[[92m  Downloaded^[[0m heck v0.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7349722Z ^[[1m^[[92m  Downloaded^[[0m is_terminal_polyfill v1.70.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7355102Z ^[[1m^[[92m  Downloaded^[[0m powerfmt v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7360669Z ^[[1m^[[92m  Downloaded^[[0m rand_core v0.6.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7367396Z ^[[1m^[[92m  Downloaded^[[0m wezterm-color-types v0.3.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7371887Z ^[[1m^[[92m  Downloaded^[[0m castaway v0.2.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7378930Z ^[[1m^[[92m  Downloaded^[[0m derive_builder_macro v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7395329Z ^[[1m^[[92m  Downloaded^[[0m log v0.4.34
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7402761Z ^[[1m^[[92m  Downloaded^[[0m fnv v1.0.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7403328Z ^[[1m^[[92m  Downloaded^[[0m instability v0.3.13
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7413944Z ^[[1m^[[92m  Downloaded^[[0m signal-hook-mio v0.2.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7417114Z ^[[1m^[[92m  Downloaded^[[0m palette_derive v0.7.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7425090Z ^[[1m^[[92m  Downloaded^[[0m siphasher v1.0.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7521535Z ^[[1m^[[92m  Downloaded^[[0m ratatui-termwiz v0.1.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7527259Z ^[[1m^[[92m  Downloaded^[[0m ordered-float v4.6.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7535361Z ^[[1m^[[92m  Downloaded^[[0m ratatui-crossterm v0.1.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7541268Z ^[[1m^[[92m  Downloaded^[[0m phf v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7548235Z ^[[1m^[[92m  Downloaded^[[0m anstyle-query v1.1.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7554185Z ^[[1m^[[92m  Downloaded^[[0m bincode_derive v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7558843Z ^[[1m^[[92m  Downloaded^[[0m pest_generator v2.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7565513Z ^[[1m^[[92m  Downloaded^[[0m portable-pty v0.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7573858Z ^[[1m^[[92m  Downloaded^[[0m strum v0.27.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7578544Z ^[[1m^[[92m  Downloaded^[[0m vtparse v0.6.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7582815Z ^[[1m^[[92m  Downloaded^[[0m colorchoice v1.0.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7587823Z ^[[1m^[[92m  Downloaded^[[0m crypto-common v0.1.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7592542Z ^[[1m^[[92m  Downloaded^[[0m darling_macro v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7595920Z ^[[1m^[[92m  Downloaded^[[0m document-features v0.2.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7601735Z ^[[1m^[[92m  Downloaded^[[0m indoc v2.0.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7613384Z ^[[1m^[[92m  Downloaded^[[0m quote v1.0.47
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7624993Z ^[[1m^[[92m  Downloaded^[[0m rustversion v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7636184Z ^[[1m^[[92m  Downloaded^[[0m pest_derive v2.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7645047Z ^[[1m^[[92m  Downloaded^[[0m kasuari v0.4.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7655588Z ^[[1m^[[92m  Downloaded^[[0m fastrand v2.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7662314Z ^[[1m^[[92m  Downloaded^[[0m phf_macros v0.11.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7667669Z ^[[1m^[[92m  Downloaded^[[0m smallvec v1.16.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7675086Z ^[[1m^[[92m  Downloaded^[[0m foldhash v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7681358Z ^[[1m^[[92m  Downloaded^[[0m once_cell v1.21.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7693199Z ^[[1m^[[92m  Downloaded^[[0m static_assertions v1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7703976Z ^[[1m^[[92m  Downloaded^[[0m serial2 v0.2.38
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7714232Z ^[[1m^[[92m  Downloaded^[[0m semver v1.0.28
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7726672Z ^[[1m^[[92m  Downloaded^[[0m dirs-sys v0.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7732253Z ^[[1m^[[92m  Downloaded^[[0m cfg_aliases v0.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7736554Z ^[[1m^[[92m  Downloaded^[[0m num-traits v0.2.19
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7749788Z ^[[1m^[[92m  Downloaded^[[0m getrandom v0.3.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7766080Z ^[[1m^[[92m  Downloaded^[[0m minimal-lexical v0.2.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7788131Z ^[[1m^[[92m  Downloaded^[[0m parking_lot_core v0.9.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7798654Z ^[[1m^[[92m  Downloaded^[[0m phf v0.11.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7805484Z ^[[1m^[[92m  Downloaded^[[0m parking_lot v0.12.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7817901Z ^[[1m^[[92m  Downloaded^[[0m pest_meta v2.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7828206Z ^[[1m^[[92m  Downloaded^[[0m proc-macro2 v1.0.107
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7842912Z ^[[1m^[[92m  Downloaded^[[0m directories v6.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7849867Z ^[[1m^[[92m  Downloaded^[[0m serde_core v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7863928Z ^[[1m^[[92m  Downloaded^[[0m signal-hook v0.3.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7877502Z ^[[1m^[[92m  Downloaded^[[0m getrandom v0.4.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7894381Z ^[[1m^[[92m  Downloaded^[[0m iana-time-zone v0.1.65
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7907452Z ^[[1m^[[92m  Downloaded^[[0m serde_derive v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7921765Z ^[[1m^[[92m  Downloaded^[[0m ratatui v0.30.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7940797Z ^[[1m^[[92m  Downloaded^[[0m cfg-if v1.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7947301Z ^[[1m^[[92m  Downloaded^[[0m finl_unicode v1.4.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7966408Z ^[[1m^[[92m  Downloaded^[[0m memchr v2.8.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.7991814Z ^[[1m^[[92m  Downloaded^[[0m rand v0.8.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8009446Z ^[[1m^[[92m  Downloaded^[[0m ryu v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8024826Z ^[[1m^[[92m  Downloaded^[[0m serde v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8043207Z ^[[1m^[[92m  Downloaded^[[0m mio v1.2.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8071625Z ^[[1m^[[92m  Downloaded^[[0m fancy-regex v0.11.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8089115Z ^[[1m^[[92m  Downloaded^[[0m atomic v0.6.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8095990Z ^[[1m^[[92m  Downloaded^[[0m euclid v0.22.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8112692Z ^[[1m^[[92m  Downloaded^[[0m indexmap v2.14.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8134530Z ^[[1m^[[92m  Downloaded^[[0m nom v7.1.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8160502Z ^[[1m^[[92m  Downloaded^[[0m block-buffer v0.10.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8166572Z ^[[1m^[[92m  Downloaded^[[0m wezterm-dynamic v0.2.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8172904Z ^[[1m^[[92m  Downloaded^[[0m wezterm-dynamic-derive v0.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8177785Z ^[[1m^[[92m  Downloaded^[[0m darling_macro v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8181301Z ^[[1m^[[92m  Downloaded^[[0m pest v2.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8206619Z ^[[1m^[[92m  Downloaded^[[0m hashbrown v0.16.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8233924Z ^[[1m^[[92m  Downloaded^[[0m libm v0.2.16
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8281112Z ^[[1m^[[92m  Downloaded^[[0m serde_json v1.0.151
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8315793Z ^[[1m^[[92m  Downloaded^[[0m hashbrown v0.17.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8344302Z ^[[1m^[[92m  Downloaded^[[0m itertools v0.14.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8378041Z ^[[1m^[[92m  Downloaded^[[0m ratatui-core v0.1.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8414390Z ^[[1m^[[92m  Downloaded^[[0m strsim v0.11.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8420755Z ^[[1m^[[92m  Downloaded^[[0m regex v1.13.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8449538Z ^[[1m^[[92m  Downloaded^[[0m portable-atomic v1.15.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8488996Z ^[[1m^[[92m  Downloaded^[[0m cfg_aliases v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8494324Z ^[[1m^[[92m  Downloaded^[[0m ratatui-widgets v0.3.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8536303Z ^[[1m^[[92m  Downloaded^[[0m shell-words v1.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8541128Z ^[[1m^[[92m  Downloaded^[[0m approx v0.5.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8549406Z ^[[1m^[[92m  Downloaded^[[0m by_address v1.2.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8554060Z ^[[1m^[[92m  Downloaded^[[0m clap_lex v1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8560228Z ^[[1m^[[92m  Downloaded^[[0m palette v0.7.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8615625Z ^[[1m^[[92m  Downloaded^[[0m autocfg v1.5.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8624342Z ^[[1m^[[92m  Downloaded^[[0m bitflags v1.3.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8637451Z ^[[1m^[[92m  Downloaded^[[0m anstyle v1.0.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8645315Z ^[[1m^[[92m  Downloaded^[[0m csscolorparser v0.6.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8651675Z ^[[1m^[[92m  Downloaded^[[0m signal-hook-registry v1.4.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8658000Z ^[[1m^[[92m  Downloaded^[[0m nix v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8710935Z ^[[1m^[[92m  Downloaded^[[0m nix v0.29.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8764782Z ^[[1m^[[92m  Downloaded^[[0m regex-syntax v0.8.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8805859Z ^[[1m^[[92m  Downloaded^[[0m rustix v1.1.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8915358Z ^[[1m^[[92m  Downloaded^[[0m deranged v0.5.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8923902Z ^[[1m^[[92m  Downloaded^[[0m terminfo v0.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8936245Z ^[[1m^[[92m  Downloaded^[[0m uuid v1.26.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8952076Z ^[[1m^[[92m  Downloaded^[[0m vt100 v0.16.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8960695Z ^[[1m^[[92m  Downloaded^[[0m anstyle-parse v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8969325Z ^[[1m^[[92m  Downloaded^[[0m thiserror v2.0.20
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8993341Z ^[[1m^[[92m  Downloaded^[[0m bit-set v0.5.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.8998574Z ^[[1m^[[92m  Downloaded^[[0m digest v0.10.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9006651Z ^[[1m^[[92m  Downloaded^[[0m thiserror v1.0.69
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9026939Z ^[[1m^[[92m  Downloaded^[[0m thiserror-impl v1.0.69
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9033650Z ^[[1m^[[92m  Downloaded^[[0m toml_writer v1.1.2+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9040853Z ^[[1m^[[92m  Downloaded^[[0m cpufeatures v0.2.17
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9047718Z ^[[1m^[[92m  Downloaded^[[0m termios v0.3.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9055284Z ^[[1m^[[92m  Downloaded^[[0m thiserror-impl v2.0.20
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9062025Z ^[[1m^[[92m  Downloaded^[[0m toml_datetime v0.7.5+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9069025Z ^[[1m^[[92m  Downloaded^[[0m unicode-truncate v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9077366Z ^[[1m^[[92m  Downloaded^[[0m bit-vec v0.6.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9083815Z ^[[1m^[[92m  Downloaded^[[0m critical-section v1.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9090911Z ^[[1m^[[92m  Downloaded^[[0m regex-automata v0.4.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9168396Z ^[[1m^[[92m  Downloaded^[[0m wezterm-input-types v0.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9173205Z ^[[1m^[[92m  Downloaded^[[0m toml v0.9.12+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9191766Z ^[[1m^[[92m  Downloaded^[[0m libc v0.2.189
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9382674Z ^[[1m^[[92m  Downloaded^[[0m tempfile v3.27.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9394932Z ^[[1m^[[92m  Downloaded^[[0m ucd-trie v0.1.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9403385Z ^[[1m^[[92m  Downloaded^[[0m darling v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9423296Z ^[[1m^[[92m  Downloaded^[[0m anstream v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9433858Z ^[[1m^[[92m  Downloaded^[[0m linux-raw-sys v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9864499Z ^[[1m^[[92m  Downloaded^[[0m zmij v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9873978Z ^[[1m^[[92m  Downloaded^[[0m toml_parser v1.1.3+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9886359Z ^[[1m^[[92m  Downloaded^[[0m arrayvec v0.7.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9897242Z ^[[1m^[[92m  Downloaded^[[0m convert_case v0.10.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9905857Z ^[[1m^[[92m  Downloaded^[[0m clap_derive v4.6.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9917285Z ^[[1m^[[92m  Downloaded^[[0m derive_builder v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9938605Z ^[[1m^[[92m  Downloaded^[[0m derive_builder_core v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9948631Z ^[[1m^[[92m  Downloaded^[[0m allocator-api2 v0.2.21
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9961958Z ^[[1m^[[92m  Downloaded^[[0m vte v0.15.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9973893Z ^[[1m^[[92m  Downloaded^[[0m virtue v0.0.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:05.9985637Z ^[[1m^[[92m  Downloaded^[[0m clap v4.6.6
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0026531Z ^[[1m^[[92m  Downloaded^[[0m bitflags v2.13.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0046280Z ^[[1m^[[92m  Downloaded^[[0m croner v3.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0059400Z ^[[1m^[[92m  Downloaded^[[0m anyhow v1.0.104
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0077427Z ^[[1m^[[92m  Downloaded^[[0m wezterm-bidi v0.2.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0089830Z ^[[1m^[[92m  Downloaded^[[0m bincode v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0114337Z ^[[1m^[[92m  Downloaded^[[0m bytemuck v1.25.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0130182Z ^[[1m^[[92m  Downloaded^[[0m unicode-ident v1.0.24
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0144339Z ^[[1m^[[92m  Downloaded^[[0m darling_core v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0166516Z ^[[1m^[[92m  Downloaded^[[0m darling v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0194191Z ^[[1m^[[92m  Downloaded^[[0m derive_more v2.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0245582Z ^[[1m^[[92m  Downloaded^[[0m termina v0.3.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0264721Z ^[[1m^[[92m  Downloaded^[[0m darling_core v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0290631Z ^[[1m^[[92m  Downloaded^[[0m compact_str v0.9.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0309262Z ^[[1m^[[92m  Downloaded^[[0m base64 v0.22.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0328341Z ^[[1m^[[92m  Downloaded^[[0m unicode-segmentation v1.13.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0345900Z ^[[1m^[[92m  Downloaded^[[0m derive_more-impl v2.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0370463Z ^[[1m^[[92m  Downloaded^[[0m typenum v1.20.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0390053Z ^[[1m^[[92m  Downloaded^[[0m syn v1.0.109
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0436855Z ^[[1m^[[92m  Downloaded^[[0m clap_builder v4.6.6
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0468457Z ^[[1m^[[92m  Downloaded^[[0m crossterm v0.29.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0499517Z ^[[1m^[[92m  Downloaded^[[0m winnow v1.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0543917Z ^[[1m^[[92m  Downloaded^[[0m winnow v0.7.15
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0587036Z ^[[1m^[[92m  Downloaded^[[0m chrono v0.4.45
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0623303Z ^[[1m^[[92m  Downloaded^[[0m unicode-width v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0659137Z ^[[1m^[[92m  Downloaded^[[0m time v0.3.55
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0721470Z ^[[1m^[[92m  Downloaded^[[0m syn v2.0.119
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0774170Z ^[[1m^[[92m  Downloaded^[[0m syn v3.0.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0827205Z ^[[1m^[[92m  Downloaded^[[0m termwiz v0.23.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0895258Z ^[[1m^[[92m  Downloaded^[[0m chrono-tz v0.10.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.0995550Z ^[[1m^[[92m  Downloaded^[[0m deltae v0.3.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.4227541Z ^[[1m^[[92m   Compiling^[[0m proc-macro2 v1.0.107
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:06.4228312Z ^[[1m^[[92m   Compiling^[[0m quote v1.0.47
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:23.9783538Z ^[[1m^[[92m   Compiling^[[0m unicode-ident v1.0.24
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:24.9519327Z ^[[1m^[[92m   Compiling^[[0m libc v0.2.189
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:27.3754236Z ^[[1m^[[92m   Compiling^[[0m syn v2.0.119
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:28.7125181Z ^[[1m^[[92m   Compiling^[[0m syn v3.0.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:30.3275317Z ^[[1m^[[92m   Compiling^[[0m strsim v0.11.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.0295281Z ^[[1m^[[92m   Compiling^[[0m ident_case v1.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.0834724Z ^[[1m^[[92m   Compiling^[[0m cfg-if v1.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.1121192Z ^[[1m^[[92m   Compiling^[[0m heck v0.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.2295554Z ^[[1m^[[92m   Compiling^[[0m bitflags v2.13.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.3755661Z ^[[1m^[[92m   Compiling^[[0m itoa v1.0.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.6647080Z ^[[1m^[[92m   Compiling^[[0m serde_core v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.7854848Z ^[[1m^[[92m   Compiling^[[0m fnv v1.0.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.8382950Z ^[[1m^[[92m   Compiling^[[0m unicode-segmentation v1.13.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:31.8577256Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:33.5945115Z ^[[1m^[[92m   Compiling^[[0m allocator-api2 v0.2.21
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:33.8375717Z ^[[1m^[[92m   Compiling^[[0m rustversion v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:33.9845020Z ^[[1m^[[92m   Compiling^[[0m autocfg v1.5.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:33.9913781Z ^[[1m^[[92m   Compiling^[[0m unicode-width v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.1214353Z ^[[1m^[[92m   Compiling^[[0m foldhash v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.1834639Z ^[[1m^[[92m   Compiling^[[0m equivalent v1.0.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.2164701Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.4584767Z ^[[1m^[[92m   Compiling^[[0m num-traits v0.2.19
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.5101305Z ^[[1m^[[92m   Compiling^[[0m thiserror v2.0.20
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.6333671Z ^[[1m^[[92m   Compiling^[[0m thiserror v1.0.69
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.7404548Z ^[[1m^[[92m   Compiling^[[0m darling v0.20.11
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:34.8396437Z ^[[1m^[[92m   Compiling^[[0m thiserror-impl v2.0.20
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:35.1415313Z ^[[1m^[[92m   Compiling^[[0m darling_core v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:35.6505565Z ^[[1m^[[92m   Compiling^[[0m thiserror-impl v1.0.69
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:36.4400763Z ^[[1m^[[92m   Compiling^[[0m errno v0.3.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:36.5604430Z ^[[1m^[[92m   Compiling^[[0m rustix v1.1.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:36.7245417Z ^[[1m^[[92m   Compiling^[[0m log v0.4.34
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:36.8364589Z ^[[1m^[[92m   Compiling^[[0m signal-hook v0.3.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:36.8986252Z ^[[1m^[[92m   Compiling^[[0m either v1.18.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:37.0374360Z ^[[1m^[[92m   Compiling^[[0m itertools v0.14.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:37.4387708Z ^[[1m^[[92m   Compiling^[[0m darling_macro v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:37.7664756Z ^[[1m^[[92m   Compiling^[[0m signal-hook-registry v1.4.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:38.0914669Z ^[[1m^[[92m   Compiling^[[0m castaway v0.2.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:38.2834842Z ^[[1m^[[92m   Compiling^[[0m derive_builder_core v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:38.6694446Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.16.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:39.0252865Z ^[[1m^[[92m   Compiling^[[0m hashbrown v0.17.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:39.3050626Z ^[[1m^[[92m   Compiling^[[0m strum_macros v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:39.4948347Z ^[[1m^[[92m   Compiling^[[0m ryu v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:39.5984631Z ^[[1m^[[92m   Compiling^[[0m memchr v2.8.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.5164832Z ^[[1m^[[92m   Compiling^[[0m serde v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.6055395Z ^[[1m^[[92m   Compiling^[[0m siphasher v1.0.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.6480515Z ^[[1m^[[92m   Compiling^[[0m anyhow v1.0.104
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.7465012Z ^[[1m^[[92m   Compiling^[[0m static_assertions v1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.7768180Z ^[[1m^[[92m   Compiling^[[0m linux-raw-sys v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.7847565Z ^[[1m^[[92m   Compiling^[[0m instability v0.3.13
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:40.8574745Z ^[[1m^[[92m   Compiling^[[0m iana-time-zone v0.1.65
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:41.0270337Z ^[[1m^[[92m   Compiling^[[0m parking_lot_core v0.9.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:41.0441247Z ^[[1m^[[92m   Compiling^[[0m zmij v1.0.23
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:41.1700597Z ^[[1m^[[92m   Compiling^[[0m chrono v0.4.45
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:42.6195071Z ^[[1m^[[92m   Compiling^[[0m compact_str v0.9.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.3024795Z ^[[1m^[[92m   Compiling^[[0m phf_shared v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.4206028Z ^[[1m^[[92m   Compiling^[[0m strum v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.4597695Z ^[[1m^[[92m   Compiling^[[0m lru v0.18.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.5318583Z ^[[1m^[[92m   Compiling^[[0m kasuari v0.4.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.8304785Z ^[[1m^[[92m   Compiling^[[0m derive_builder_macro v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:43.9674711Z ^[[1m^[[92m   Compiling^[[0m unicode-truncate v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:44.0124772Z ^[[1m^[[92m   Compiling^[[0m filedescriptor v0.8.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:44.1338027Z ^[[1m^[[92m   Compiling^[[0m darling v0.24.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:44.1576104Z ^[[1m^[[92m   Compiling^[[0m convert_case v0.10.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:44.2720758Z ^[[1m^[[92m   Compiling^[[0m serde_derive v1.0.229
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:44.5159621Z ^[[1m^[[92m   Compiling^[[0m strum_macros v0.27.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:45.8655041Z ^[[1m^[[92m   Compiling^[[0m serde_json v1.0.151
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:45.9444900Z ^[[1m^[[92m   Compiling^[[0m chrono-tz v0.10.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.0155038Z ^[[1m^[[92m   Compiling^[[0m scopeguard v1.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.0584950Z ^[[1m^[[92m   Compiling^[[0m indoc v2.0.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.2695133Z ^[[1m^[[92m   Compiling^[[0m smallvec v1.16.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.3148712Z ^[[1m^[[92m   Compiling^[[0m virtue v0.0.18
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.4104750Z ^[[1m^[[92m   Compiling^[[0m critical-section v1.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.5574756Z ^[[1m^[[92m   Compiling^[[0m ratatui-core v0.1.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:46.7040917Z ^[[1m^[[92m   Compiling^[[0m bincode_derive v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:47.8784539Z ^[[1m^[[92m   Compiling^[[0m lock_api v0.4.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:48.0034817Z ^[[1m^[[92m   Compiling^[[0m strum v0.27.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:48.0525921Z ^[[1m^[[92m   Compiling^[[0m derive_more-impl v2.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:48.4884542Z ^[[1m^[[92m   Compiling^[[0m derive_builder v0.20.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:48.5374715Z ^[[1m^[[92m   Compiling^[[0m phf v0.12.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:48.7954486Z ^[[1m^[[92m   Compiling^[[0m mio v1.2.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.0816503Z ^[[1m^[[92m   Compiling^[[0m litrs v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.2452076Z ^[[1m^[[92m   Compiling^[[0m time-core v0.1.9
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.3576320Z ^[[1m^[[92m   Compiling^[[0m arrayvec v0.7.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.3685161Z ^[[1m^[[92m   Compiling^[[0m powerfmt v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.4755292Z ^[[1m^[[92m   Compiling^[[0m unty v0.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.4864271Z ^[[1m^[[92m   Compiling^[[0m cfg_aliases v0.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.5086707Z ^[[1m^[[92m   Compiling^[[0m num_threads v0.1.7
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.5144838Z ^[[1m^[[92m   Compiling^[[0m deranged v0.5.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.5875003Z ^[[1m^[[92m   Compiling^[[0m num-conv v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.6694762Z ^[[1m^[[92m   Compiling^[[0m nix v0.28.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:49.8405050Z ^[[1m^[[92m   Compiling^[[0m bincode v2.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:50.2657305Z ^[[1m^[[92m   Compiling^[[0m time v0.3.55
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:50.5175123Z ^[[1m^[[92m   Compiling^[[0m vte v0.15.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:50.6032304Z ^[[1m^[[92m   Compiling^[[0m document-features v0.2.12
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:50.9924606Z ^[[1m^[[92m   Compiling^[[0m signal-hook-mio v0.2.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:51.9477826Z ^[[1m^[[92m   Compiling^[[0m croner v3.0.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:52.5015114Z ^[[1m^[[92m   Compiling^[[0m derive_more v2.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:52.5345033Z ^[[1m^[[92m   Compiling^[[0m parking_lot v0.12.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:52.8355250Z ^[[1m^[[92m   Compiling^[[0m line-clipping v0.3.8
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.0784828Z ^[[1m^[[92m   Compiling^[[0m base64 v0.22.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.3025030Z ^[[1m^[[92m   Compiling^[[0m getrandom v0.4.3
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.3954685Z ^[[1m^[[92m   Compiling^[[0m winnow v1.0.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.6435412Z ^[[1m^[[92m   Compiling^[[0m utf8parse v0.2.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.6875059Z ^[[1m^[[92m   Compiling^[[0m anstyle-parse v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:53.7784377Z ^[[1m^[[92m   Compiling^[[0m toml_parser v1.1.3+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:54.3134661Z ^[[1m^[[92m   Compiling^[[0m crossterm v0.29.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:54.4765340Z ^[[1m^[[92m   Compiling^[[0m ovrcr-protocol v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:55.1327352Z ^[[1m^[[92m   Compiling^[[0m ratatui-widgets v0.3.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:56.6325402Z ^[[1m^[[92m   Compiling^[[0m vt100 v0.16.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:56.9254892Z ^[[1m^[[92m   Compiling^[[0m serde_spanned v1.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:56.9962362Z ^[[1m^[[92m   Compiling^[[0m toml_datetime v0.7.5+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.0524635Z ^[[1m^[[92m   Compiling^[[0m winnow v0.7.15
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.1984970Z ^[[1m^[[92m   Compiling^[[0m toml_writer v1.1.2+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.3194447Z ^[[1m^[[92m   Compiling^[[0m anstyle-query v1.1.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.3615080Z ^[[1m^[[92m   Compiling^[[0m is_terminal_polyfill v1.70.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.3914381Z ^[[1m^[[92m   Compiling^[[0m colorchoice v1.0.5
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.4325351Z ^[[1m^[[92m   Compiling^[[0m anstyle v1.0.14
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.5615446Z ^[[1m^[[92m   Compiling^[[0m option-ext v0.2.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.5944657Z ^[[1m^[[92m   Compiling^[[0m dirs-sys v0.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:57.7874523Z ^[[1m^[[92m   Compiling^[[0m anstream v1.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:58.2595303Z ^[[1m^[[92m   Compiling^[[0m toml v0.9.12+spec-1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.1415032Z ^[[1m^[[92m   Compiling^[[0m ovrcr-terminal v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.2559613Z ^[[1m^[[92m   Compiling^[[0m ratatui-macros v0.7.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.2894610Z ^[[1m^[[92m   Compiling^[[0m ratatui-crossterm v0.1.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.5074772Z ^[[1m^[[92m   Compiling^[[0m serial2 v0.2.38
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.5404720Z ^[[1m^[[92m   Compiling^[[0m clap_lex v1.1.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.6800424Z ^[[1m^[[92m   Compiling^[[0m once_cell v1.21.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.7644679Z ^[[1m^[[92m   Compiling^[[0m downcast-rs v1.2.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.8004739Z ^[[1m^[[92m   Compiling^[[0m shell-words v1.1.1
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.8117716Z ^[[1m^[[92m   Compiling^[[0m fastrand v2.5.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.8794568Z ^[[1m^[[92m   Compiling^[[0m portable-pty v0.9.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:06:59.9544790Z ^[[1m^[[92m   Compiling^[[0m tempfile v3.27.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:00.2596011Z ^[[1m^[[92m   Compiling^[[0m clap_builder v4.6.6
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:00.5134876Z ^[[1m^[[92m   Compiling^[[0m ratatui v0.30.2
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:00.6505249Z ^[[1m^[[92m   Compiling^[[0m directories v6.0.0
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:00.7534712Z ^[[1m^[[92m   Compiling^[[0m clap_derive v4.6.4
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:02.0194919Z ^[[1m^[[92m   Compiling^[[0m clap v4.6.6
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:02.0570738Z ^[[1m^[[92m   Compiling^[[0m ovrcr-runtime v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:03.7090422Z ^[[1m^[[92m   Compiling^[[0m ovrcr-tui v0.1.0 (/home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:08.2025011Z ^[[1m^[[92m   Compiling^[[0m ovrcr v0.1.0 (/home/runner/work/ovrcr/ovrcr)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.3830319Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 1m 09s
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.4568265Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-dfd28e94d101b005)
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.4601458Z
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.4602269Z running 1 test
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.4729682Z ovrcr server starting for /tmp/.tmpz5Uu4L/server.sock
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:07:11.4730584Z ovrcr server listening on /tmp/.tmpz5Uu4L/server.sock
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:11.4602680Z test fifty_session_reporting_capacity has been running for over 60 seconds
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5120138Z collector=1 pid=4845 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5219491Z collector=0 pid=4844 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5226311Z collector=4 pid=4848 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5227520Z collector=7 pid=4851 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5228082Z collector=3 pid=4847 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5228631Z collector=14 pid=4858 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5229202Z collector=36 pid=4880 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5229769Z collector=28 pid=4872 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5230325Z collector=2 pid=4846 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5231028Z collector=17 pid=4861 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5231510Z collector=26 pid=4870 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5232121Z collector=32 pid=4876 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5232945Z collector=40 pid=4884 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5234793Z collector=33 pid=4877 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5235341Z collector=18 pid=4862 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5235817Z collector=38 pid=4882 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5236287Z collector=20 pid=4864 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5237003Z session=0 reports=600 stale_rejected=60 max_schedule_late_us=4385
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5237712Z session=1 reports=600 stale_rejected=60 max_schedule_late_us=3415
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5238362Z session=2 reports=600 stale_rejected=60 max_schedule_late_us=3719
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5238970Z session=3 reports=600 stale_rejected=60 max_schedule_late_us=3820
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5239565Z session=4 reports=600 stale_rejected=60 max_schedule_late_us=4096
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5240127Z collector=15 pid=4859 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5240584Z collector=34 pid=4878 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5244947Z collector=31 pid=4875 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5245814Z collector=23 pid=4867 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5247717Z collector=42 pid=4886 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5248262Z collector=9 pid=4853 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5248729Z collector=25 pid=4869 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5249171Z collector=13 pid=4857 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5249683Z collector=19 pid=4863 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5250241Z collector=12 pid=4856 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5250819Z collector=16 pid=4860 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5251286Z collector=22 pid=4866 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5251728Z collector=21 pid=4865 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5252225Z collector=10 pid=4854 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5252686Z collector=35 pid=4879 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5253615Z collector=44 pid=4888 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5254205Z collector=30 pid=4874 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5254952Z collector=41 pid=4885 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5255468Z collector=49 pid=4893 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5255927Z collector=48 pid=4892 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5256416Z collector=43 pid=4887 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5256934Z collector=8 pid=4852 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5257420Z collector=5 pid=4849 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5258003Z session=5 reports=600 stale_rejected=60 max_schedule_late_us=4016
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5258637Z collector=45 pid=4889 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5271540Z collector=39 pid=4883 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5273422Z collector=6 pid=4850 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5273917Z collector=11 pid=4855 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5275696Z collector=24 pid=4868 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5276238Z collector=27 pid=4871 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5276723Z collector=37 pid=4881 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5277189Z session=6 reports=600 stale_rejected=60 max_schedule_late_us=3973
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5287237Z session=7 reports=600 stale_rejected=60 max_schedule_late_us=4683
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5287657Z collector=47 pid=4891 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5288056Z session=8 reports=600 stale_rejected=60 max_schedule_late_us=4070
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5288692Z session=9 reports=600 stale_rejected=60 max_schedule_late_us=3691
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5289108Z collector=29 pid=4873 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5289565Z session=10 reports=600 stale_rejected=60 max_schedule_late_us=6060
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5290103Z session=11 reports=600 stale_rejected=60 max_schedule_late_us=4911
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5290672Z session=12 reports=600 stale_rejected=60 max_schedule_late_us=3877
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5291218Z session=13 reports=600 stale_rejected=60 max_schedule_late_us=3802
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5291732Z session=14 reports=600 stale_rejected=60 max_schedule_late_us=4502
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5292225Z collector=46 pid=4890 reaped cancel=Ok(())
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5292730Z session=15 reports=600 stale_rejected=60 max_schedule_late_us=4566
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5297726Z session=16 reports=600 stale_rejected=60 max_schedule_late_us=3717
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5298389Z session=17 reports=600 stale_rejected=60 max_schedule_late_us=4249
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5298936Z session=18 reports=600 stale_rejected=60 max_schedule_late_us=4397
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5299459Z session=19 reports=600 stale_rejected=60 max_schedule_late_us=4659
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5299904Z session=20 reports=600 stale_rejected=60 max_schedule_late_us=3562
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5300348Z session=21 reports=600 stale_rejected=60 max_schedule_late_us=4202
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5300805Z session=22 reports=600 stale_rejected=60 max_schedule_late_us=4411
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5301308Z session=23 reports=600 stale_rejected=60 max_schedule_late_us=4322
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5301847Z session=24 reports=600 stale_rejected=60 max_schedule_late_us=3843
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5302441Z session=25 reports=600 stale_rejected=60 max_schedule_late_us=10132
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5302990Z session=26 reports=600 stale_rejected=60 max_schedule_late_us=4416
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5303760Z session=27 reports=600 stale_rejected=60 max_schedule_late_us=4353
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5304293Z session=28 reports=600 stale_rejected=60 max_schedule_late_us=4287
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5304844Z session=29 reports=600 stale_rejected=60 max_schedule_late_us=3796
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5305410Z session=30 reports=600 stale_rejected=60 max_schedule_late_us=4495
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5305942Z session=31 reports=600 stale_rejected=60 max_schedule_late_us=4121
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5306481Z session=32 reports=600 stale_rejected=60 max_schedule_late_us=3930
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5307055Z session=33 reports=600 stale_rejected=60 max_schedule_late_us=3783
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5307627Z session=34 reports=600 stale_rejected=60 max_schedule_late_us=4233
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5308181Z session=35 reports=600 stale_rejected=60 max_schedule_late_us=4027
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5308715Z session=36 reports=600 stale_rejected=60 max_schedule_late_us=4172
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5309243Z session=37 reports=600 stale_rejected=60 max_schedule_late_us=4034
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5309784Z session=38 reports=600 stale_rejected=60 max_schedule_late_us=3636
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5310338Z session=39 reports=600 stale_rejected=60 max_schedule_late_us=3584
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5310876Z session=40 reports=600 stale_rejected=60 max_schedule_late_us=4348
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5311406Z session=41 reports=600 stale_rejected=60 max_schedule_late_us=4136
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5311885Z session=42 reports=600 stale_rejected=60 max_schedule_late_us=4366
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5312323Z session=43 reports=600 stale_rejected=60 max_schedule_late_us=4635
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5312798Z session=44 reports=600 stale_rejected=60 max_schedule_late_us=3623
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5313417Z session=45 reports=600 stale_rejected=60 max_schedule_late_us=4394
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5313837Z session=46 reports=600 stale_rejected=60 max_schedule_late_us=4474
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5314238Z session=47 reports=600 stale_rejected=60 max_schedule_late_us=4610
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5314680Z session=48 reports=600 stale_rejected=60 max_schedule_late_us=6166
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5334427Z session=49 reports=600 stale_rejected=60 max_schedule_late_us=4037
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5335627Z reports=30000 seconds=60 collectors=50 failed_collectors=5 controls=2813 p99_us=4574 max_us=9607 baseline_kib=120760 peak_kib=1569416 growth_kib=1448656
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.5339620Z dashboard_frames=30225 dashboard_output_frames=70
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7765313Z ovrcr server stopped
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7796600Z all 50 owned PTY PIDs absent after server shutdown
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7797204Z test fifty_session_reporting_capacity ... ok
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7811132Z
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7812080Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 92.32s
+linux capacity	Run isolated 50-session capacity acceptance	2026-09-10T19:08:43.7812838Z
+linux capacity	Upload capacity evidence	﻿2026-09-10T19:08:43.8152745Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8154318Z ##[group]Run actions/upload-artifact@v4
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8154638Z with:
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8154880Z   name: linux-capacity-34518312559-1
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8155204Z   path: target/hosted-linux-capacity/
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8155487Z   if-no-files-found: error
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8155745Z   retention-days: 14
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8156009Z   compression-level: 6
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8156252Z   overwrite: false
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8156493Z   include-hidden-files: false
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8156762Z env:
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8157002Z   CARGO_TERM_COLOR: always
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8157264Z   SHELL: /bin/bash
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8157506Z   CARGO_HOME: /home/runner/.cargo
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8157882Z   CARGO_INCREMENTAL: 0
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8158130Z   CACHE_ON_FAILURE: true
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.8158437Z ##[endgroup]
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.9486628Z (node:41281) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.9487684Z (Use `node --trace-deprecation ...` to show where the warning was created)
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.9607805Z With the provided path, there will be 14 files uploaded
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.9610455Z Artifact name is valid!
+linux capacity	Upload capacity evidence	2026-09-10T19:08:43.9611979Z Root directory input is valid!
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.2791163Z Beginning upload of artifact content to blob storage
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.3128591Z (node:41281) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.5193999Z Uploaded bytes 19654
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.5640145Z Finished uploading artifact content to blob storage!
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.5641274Z SHA256 digest of uploaded artifact zip is 56e6138f6f3882f14e50cc3af26dd35bd77282446a57dee1486f67293ba735de
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.5643588Z Finalizing artifact upload
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.7977031Z Artifact linux-capacity-34518312559-1.zip successfully finalized. Artifact ID 10168694058
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.7978206Z Artifact linux-capacity-34518312559-1 has been successfully uploaded! Final size is 19654 bytes. Artifact ID is 10168694058
+linux capacity	Upload capacity evidence	2026-09-10T19:08:44.7984020Z Artifact download URL: https://github.com/xlyk/ovrcr/actions/runs/34518312559/artifacts/10168694058
+linux capacity	Post Run Swatinem/rust-cache@v2	﻿2026-09-10T19:08:44.8135403Z Post job cleanup.
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9199399Z ##[group]Cache Configuration
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9200393Z Cache Provider:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9202301Z     github
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9202944Z Workspaces:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9203671Z     /home/runner/work/ovrcr/ovrcr
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9204169Z Cache Paths:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9204672Z     /home/runner/.cargo/bin
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9205188Z     /home/runner/.cargo/.crates.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9205728Z     /home/runner/.cargo/.crates2.json
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9206278Z     /home/runner/.cargo/registry
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9206823Z     /home/runner/.cargo/git
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9207284Z     /home/runner/work/ovrcr/ovrcr/target
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9208172Z Restore Key:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9208723Z     v0-rust-linux-capacity-Linux-x64-6ff13d87
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9209368Z Cache Key:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9209869Z     v0-rust-linux-capacity-Linux-x64-6ff13d87-29fb430f
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9210406Z .. Prefix:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9210907Z   - v0-rust-linux-capacity-Linux-x64
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9211587Z .. Environment considered:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9212085Z   - Rust Versions:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9212666Z     - 1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9213495Z   - CARGO_HOME
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9214005Z   - CARGO_INCREMENTAL
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9214448Z   - CARGO_TERM_COLOR
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9214857Z .. Lockfiles considered:
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9215350Z   - /home/runner/work/ovrcr/ovrcr/Cargo.lock
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9216107Z   - /home/runner/work/ovrcr/ovrcr/Cargo.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9217008Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol/Cargo.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9217787Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime/Cargo.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9218507Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal/Cargo.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9219159Z   - /home/runner/work/ovrcr/ovrcr/crates/ovrcr-tui/Cargo.toml
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9220135Z ##[endgroup]
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:44.9220439Z
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:46.7824903Z ... Cleaning /home/runner/work/ovrcr/ovrcr/target ...
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:46.8128608Z ... Cleaning cargo registry (cache-all-crates: false) ...
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:47.7540791Z ... Cleaning cargo/bin ...
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:47.7550792Z ... Cleaning cargo git cache ...
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:47.7556572Z ... Saving cache ...
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:47.7688592Z [command]/usr/bin/tar --posix -cf cache.tzst --exclude cache.tzst -P -C /home/runner/work/ovrcr/ovrcr --files-from manifest.txt --use-compress-program zstdmt
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:51.0629986Z Sent 27639231 of 228965823 (12.1%), 26.4 MBs/sec
+linux capacity	Post Run Swatinem/rust-cache@v2	2026-09-10T19:08:51.4813558Z Sent 228965823 of 228965823 (100.0%), 153.9 MBs/sec
+linux capacity	Post Run actions/checkout@v4	﻿2026-09-10T19:08:51.7082412Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.7084401Z Post job cleanup.
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.7947247Z [command]/usr/bin/git version
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.7979124Z git version 2.55.0
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8549065Z Copying '/home/runner/.gitconfig' to '/home/runner/work/_temp/bae775c1-1953-4f49-863e-ee398e76c805/.gitconfig'
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8574392Z Temporarily overriding HOME='/home/runner/work/_temp/bae775c1-1953-4f49-863e-ee398e76c805' before making global git config changes
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8582823Z Adding repository directory to the temporary git global config as a safe directory
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8584209Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ovrcr/ovrcr
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8586576Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8588907Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8635030Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8683836Z http.https://github.com/.extraheader
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8746466Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.8770041Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.9034011Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+linux capacity	Post Run actions/checkout@v4	2026-09-10T19:08:51.9065627Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+linux capacity	Complete job	﻿2026-09-10T19:08:51.9360808Z Cleaning up orphan processes
+linux capacity	Complete job	2026-09-10T19:08:51.9538063Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
