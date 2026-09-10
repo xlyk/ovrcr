@@ -1,0 +1,5 @@
+Revision: 36213f4549b3e2b9d949b547ec4b220dfe5d8cba
+Command: rtk proxy cargo build -p ovrcr --features gui --bin ovrcr
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+
+Exit: 0

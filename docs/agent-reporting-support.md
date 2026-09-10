@@ -72,3 +72,34 @@ Task2 shared runtime work is permitted by the plan's source-or-named-blocker gat
 The implementation branch now has independently reviewed shared ownership/protocol, managed launcher, narrow initial admission, observed activity, pure metrics arithmetic and compact dashboard presentation. [Attempt09](../research/claude-reporting-acceptance/attempt-09-managed/commands.md) exercised real managed startup, native output, clear/exit and owned-process cleanup. [Attempt10](../research/claude-reporting-acceptance/attempt-10-sources/summary.md) linked an unanswered approval selector to its correlated permission notification and the exact reported transcript path to matching file records. Earlier research-only statements above describe their original checkpoint, not the current branch.
 
 Activity support requires synchronous hooks. Matching permission_prompt means observed waiting; PermissionRequest alone does not. Stop means observed completion, never confirmed settling. Native model-not-found StopFailure now has correlated evidence in [attempt11](../research/claude-reporting-acceptance/attempt-11-api-failure/summary.md); broader API failures remain unverified. Collector integration, setup/doctor, full metrics publication and final release gates remain in progress. No Linux or native GUI acceptance is claimed.
+
+## Assembled implementation follow-up, 2026-09-10
+
+Managed context/cost publication, exact-path partial transcript collection, native
+finalization, setup/doctor and JSON inspection are implemented. Independent review
+accepted the post-exit scan correction `05c3851` and conservative supplied-file
+diagnostics `d139563`. Finalization requires a scan requested after native
+completion, keeps the original two-second deadline, and always retains Partial
+coverage. Neither EOF nor this scan establishes provider accounting completion.
+
+Collector cleanup now retains eventual child-reaping ownership at an expired
+deadline (`5585702`) and handles macOS zombie-only process groups by reaping the
+owned child and checking group absence without signaling an unanchored group
+(`e1bbe4b`). Actual failing and passing process regressions are preserved.
+
+The [setup guide](claude-code-setup.md) describes configuration composition,
+legacy migration, diagnostics and removal. The selected dashboard header now uses
+the same managed activity quality/health as the sidebar (`2c432e0`). Native GUI
+synthetic evidence and the blocked real-Claude trust boundary are recorded in
+[the GUI review](../research/claude-reporting-acceptance/task7-gui/review.md).
+This does not certify native provider totals or final settling. Full release gates
+remain open until all required provider/platform evidence is available.
+
+Automated final checks passed586 workspace tests (11 intentional ignores),
+workspace clippy and formatting. The separately executed
+[50-session capacity check](../research/claude-reporting-acceptance/task7-load/scope.md)
+passed its measured subset:30,000 updates/60s,3,000 stale rejections, five helper
+failures, control p99=1.205ms/max=2.822ms and sampled RSS growth1.354GiB.
+Internal queue counters remain unmeasured. The corrected selected-header quality
+was recaptured in the native GUI with synthetic reports; actual Claude trust
+approval and full provider/platform release gates remain open.

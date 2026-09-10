@@ -1,0 +1,9 @@
+Revision: 36213f4549b3e2b9d949b547ec4b220dfe5d8cba
+Command: rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.59s
+
+Exit: 0

@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "pid",
+    "id": 87646,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 87646,
+    "state": "absent"
+  },
+  {
+    "kind": "pid",
+    "id": 87648,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 87648,
+    "state": "absent"
+  },
+  {
+    "kind": "pid",
+    "id": 87650,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 87650,
+    "state": "absent"
+  }
+]

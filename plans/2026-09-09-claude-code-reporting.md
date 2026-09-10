@@ -218,3 +218,21 @@ Deliver seven reviewed implementation units in dependency order. This plan itsel
 - Attempt10 ties the exact SessionStart transcript_path to the opened file and matching sessionId on assistant usage records, preserving device/inode across append. It supports the subset label **recognized root-transcript records**, not complete or root-only usage. Non-assistant metadata may omit identity; never treat it as usage.
 - Differing-value replacement remains uncertified. The pure last-record replacement accumulator can be implemented and tested, but a live reader must reject a differing duplicate before applying it and freeze publication with partial coverage and `conflicting_usage_record`. Its retained number is neither current nor a proven lower bound after a contradiction. Unique identities and equal duplicates may be accumulated only after exact identity, lifecycle/bounds and actual publication tests pass. A later certified provider correction route can enable differing-value replacement; this refinement does not claim that certification.
 - Complete accounting and final-write completion remain unverified. Native exit permits only bounded draining and partial final metrics, never promotion to complete based on EOF, Stop, SessionEnd or transcript silence.
+
+## 2026-09-10 assembled implementation checkpoint
+
+Implemented and reviewed: shared binding/observations, supervised initial
+admission, synchronous observed activity, partial exact-source collector,
+independent context/cost publication, bounded native finalization, setup/doctor,
+usage inspection and compact dashboard presentation. Review corrections include
+expired-deadline child reaping, macOS zombie-group cleanup, a required post-native
+completion read, conservative supplied-file diagnostics and selected-header quality.
+See the dated support document and saved acceptance evidence for exact commits.
+
+The remaining unchecked source/acceptance requirements are intentional. Settled
+completion, full auxiliary/resumed/forked accounting and final-source completion
+remain uncertified; the implementation exposes their limits rather than inferring
+success. Real-provider GUI acceptance is waiting for explicit approval at Claude's
+disposable-workspace trust prompt. Linux acceptance and internal queue-counter
+capacity instrumentation remain unverified. No full-integration release claim is
+made by this checkpoint.
