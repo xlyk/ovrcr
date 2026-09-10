@@ -829,3 +829,267 @@ fn fifty_session_reporting_capacity() {
     }
     println!("all 50 owned PTY PIDs absent after server shutdown");
 }
+
+// Linux-only execution, but keep this compiled on macOS so ordinary checks also
+// type-check the opt-in fixture. No high-water test runs without --ignored.
+#[test]
+#[ignore = "isolated Linux runner only: 50 collectors at raw/index limits"]
+fn fifty_collector_raw_index_and_sequential_json_high_water() {
+    assert_eq!(
+        std::env::consts::OS,
+        "linux",
+        "Linux evidence requires /proc"
+    );
+    let evidence = PathBuf::from(
+        std::env::var_os("OVRCR_MEMORY_EVIDENCE").expect("set isolated memory evidence directory"),
+    );
+    fs::create_dir_all(&evidence).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    memory_preflight(&evidence, root.path());
+    let root_path = root.path().to_owned();
+    let source = root.path().join("shared.jsonl");
+    File::create(&source).unwrap();
+    let mut helpers: Vec<_> = (0..50)
+        .map(|_| {
+            CollectorController::spawn(
+                Path::new(env!("CARGO_BIN_EXE_ovrcr")),
+                CollectorSource {
+                    path: source.clone(),
+                    conversation: "root".into(),
+                },
+            )
+            .unwrap()
+        })
+        .collect();
+    let pids: Vec<_> = helpers.iter().map(|h| h.process_id().unwrap()).collect();
+    for pid in &pids {
+        assert_eq!(unsafe { libc::getpgid(*pid as i32) }, *pid as i32);
+    }
+    let mut log = File::create(evidence.join("memory.csv")).unwrap();
+    writeln!(log, "phase,kind,pid,rss_kib,vmhwm_kib").unwrap();
+    memory_eof_barrier(&mut helpers, 0, 0, &mut log, &pids, "empty");
+    memory_sample(&mut log, &pids, "empty50");
+
+    let mut file = BufWriter::new(fs::OpenOptions::new().append(true).open(&source).unwrap());
+    for id in 0..65_536 {
+        // 112 fixed bytes + two 72-byte IDs = 256 charged bytes per entry.
+        writeln!(file, "{}", memory_usage_record(id)).unwrap();
+    }
+    file.flush().unwrap();
+    memory_eof_barrier(
+        &mut helpers,
+        65_536,
+        16 * 1024 * 1024,
+        &mut log,
+        &pids,
+        "index",
+    );
+    memory_sample(&mut log, &pids, "index50");
+
+    // A new identity must be rejected only AFTER the complete valid JSON is
+    // parsed. That diagnostic proves the held partial record was not discarded.
+    let mut prefix = memory_usage_record(65_536).to_string();
+    assert_eq!(prefix.pop(), Some('}'));
+    prefix.push_str(",\"nested\":");
+    prefix.push_str(&"[".repeat(96));
+    prefix.push('0');
+    prefix.push_str(&"]".repeat(96));
+    prefix.push_str(",\"fields\":{");
+    for field in 0..65_536 {
+        if field != 0 {
+            prefix.push(',');
+        }
+        use std::fmt::Write as _;
+        write!(prefix, "\"f{field:05}\":0").unwrap();
+    }
+    prefix.push_str("},\"padding\":\"");
+    const RAW_BYTES: usize = 32 * 1024 * 1024;
+    const SUFFIX: &[u8] = b"\"}";
+    assert!(prefix.len() + SUFFIX.len() < RAW_BYTES);
+    file.write_all(prefix.as_bytes()).unwrap();
+    let mut remaining = RAW_BYTES - prefix.len() - SUFFIX.len();
+    let padding = [b'x'; 65_536];
+    while remaining != 0 {
+        let count = remaining.min(padding.len());
+        file.write_all(&padding[..count]).unwrap();
+        remaining -= count;
+    }
+    file.write_all(SUFFIX).unwrap();
+    file.flush().unwrap();
+    drop(prefix);
+    memory_eof_barrier(
+        &mut helpers,
+        65_536,
+        16 * 1024 * 1024,
+        &mut log,
+        &pids,
+        "raw",
+    );
+    memory_sample(&mut log, &pids, "raw32m_index16m_all50");
+
+    // Stop requesting reads at each EOF acknowledgement. All 50 now retain the
+    // unterminated record. A newline releases parsing, one helper at a time.
+    file.write_all(b"\n").unwrap();
+    file.flush().unwrap();
+    drop(file);
+    for (index, helper) in helpers.iter_mut().enumerate() {
+        memory_safety_check();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut next_sample = Instant::now();
+        loop {
+            if let Some(snapshot) = helper.advance().unwrap() {
+                assert_eq!(snapshot.diagnostic.as_deref(), Some("accounting_limit"));
+                assert_eq!(snapshot.retained_identities, 65_536);
+                assert_eq!(snapshot.retained_bytes, 16 * 1024 * 1024);
+                assert_eq!(snapshot.usage.input_tokens, Some(65_536));
+                assert_eq!(snapshot.usage.output_tokens, Some(65_536));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "JSON parse deadline, collector {index}"
+            );
+            if Instant::now() >= next_sample {
+                memory_sample(&mut log, &pids, &format!("parsing_{index}"));
+                next_sample = Instant::now() + Duration::from_millis(250);
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        memory_sample(&mut log, &pids, &format!("parsed_{index}"));
+    }
+    for helper in &mut helpers {
+        helper
+            .cancel(Instant::now() + Duration::from_secs(2))
+            .unwrap();
+    }
+    for pid in pids {
+        assert_eq!(
+            unsafe { libc::kill(-(pid as i32), 0) },
+            -1,
+            "owned group remains"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    drop(helpers);
+    drop(root);
+    assert!(!root_path.exists());
+    writeln!(log, "cleanup,all50_groups_and_source_absent,0,0,0").unwrap();
+    log.flush().unwrap();
+}
+
+fn memory_usage_record(id: usize) -> serde_json::Value {
+    let id = format!("{id:072}");
+    serde_json::json!({"type":"assistant","sessionId":"root","isSidechain":false,
+        "requestId":id,"message":{"id":id,"usage":{"input_tokens":1,"output_tokens":1,
+        "cache_creation_input_tokens":0,"cache_read_input_tokens":0}}})
+}
+
+fn memory_available_kib() -> u64 {
+    let info =
+        fs::read_to_string("/proc/meminfo").expect("Linux memory preflight requires /proc/meminfo");
+    memory_field(&info, "MemAvailable:")
+}
+
+fn memory_field(info: &str, key: &str) -> u64 {
+    let mut fields = info
+        .lines()
+        .find(|line| line.starts_with(key))
+        .unwrap_or_else(|| panic!("missing {key}"))
+        .split_whitespace();
+    assert_eq!(fields.next(), Some(key));
+    let value = fields.next().unwrap().parse().unwrap();
+    assert_eq!(fields.next(), Some("kB"));
+    value
+}
+
+fn memory_preflight(evidence: &Path, source_directory: &Path) {
+    use std::os::unix::ffi::OsStrExt as _;
+    let path = std::ffi::CString::new(source_directory.as_os_str().as_bytes()).unwrap();
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::statvfs(path.as_ptr(), &mut stat) }, 0);
+    let available_disk = u128::from(stat.f_bavail) * u128::from(stat.f_frsize);
+    let available_ram = memory_available_kib();
+    fs::write(evidence.join("preflight.txt"), format!(
+        "MemAvailable_kib={available_ram}\navailable_disk_bytes={available_disk}\nrequired_ram_kib={}\nrequired_disk_bytes={}\n",
+        6 * 1024 * 1024, 512 * 1024 * 1024
+    )).unwrap();
+    assert!(
+        available_ram >= 6 * 1024 * 1024,
+        "memory preflight requires 6 GiB currently available RAM"
+    );
+    assert!(
+        available_disk >= 512 * 1024 * 1024,
+        "memory preflight requires 512 MiB free disk"
+    );
+}
+
+fn memory_safety_check() {
+    assert!(
+        memory_available_kib() >= 1024 * 1024,
+        "memory safety stop: less than 1 GiB available; owned helper guards will clean up"
+    );
+}
+
+fn memory_sample(log: &mut File, pids: &[u32], phase: &str) {
+    memory_safety_check();
+    let sampled = resources().0;
+    writeln!(log, "{phase},sampled_process_tree,0,{sampled},").unwrap();
+    for pid in std::iter::once(std::process::id()).chain(pids.iter().copied()) {
+        let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+        writeln!(
+            log,
+            "{phase},process,{pid},{},{}",
+            memory_field(&status, "VmRSS:"),
+            memory_field(&status, "VmHWM:")
+        )
+        .unwrap();
+    }
+    log.flush().unwrap();
+}
+
+fn memory_eof_barrier(
+    helpers: &mut [CollectorController],
+    identities: usize,
+    charged: usize,
+    log: &mut File,
+    pids: &[u32],
+    phase: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut ready = vec![false; helpers.len()];
+    let mut next_sample = Instant::now();
+    while ready.iter().any(|ready| !ready) {
+        for (index, helper) in helpers.iter_mut().enumerate() {
+            if !ready[index]
+                && let Some(snapshot) = helper.advance().unwrap()
+            {
+                assert!(
+                    snapshot.diagnostic.is_none(),
+                    "{phase}: {:?}",
+                    snapshot.diagnostic
+                );
+                if snapshot.caught_up {
+                    assert_eq!(snapshot.retained_identities, identities);
+                    assert_eq!(snapshot.retained_bytes, charged);
+                    assert_eq!(
+                        snapshot.usage.input_tokens,
+                        (identities > 0).then_some(identities as u64)
+                    );
+                    ready[index] = true;
+                }
+            }
+        }
+        if Instant::now() >= next_sample {
+            memory_sample(log, pids, phase);
+            next_sample = Instant::now() + Duration::from_millis(250);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{phase}: collector EOF barrier deadline"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}

@@ -122,3 +122,47 @@ jobs:
           path: target/hosted-linux-capacity/
           if-no-files-found: error
           retention-days: 14
+
+  linux-memory:
+    name: linux memory high-water
+    env:
+      SHELL: /bin/bash
+      CARGO_INCREMENTAL: 0
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-memory
+          cache-on-failure: true
+      - name: Compile memory fixture
+        run: cargo test --test claude_reporting_load --features acceptance-diagnostics --no-run
+      - name: Record isolated host provenance
+        run: |
+          mkdir -p target/hosted-linux-memory
+          git rev-parse HEAD > target/hosted-linux-memory/revision.txt
+          uname -a > target/hosted-linux-memory/uname.txt
+          rustc -Vv > target/hosted-linux-memory/rustc.txt
+          cat /proc/meminfo > target/hosted-linux-memory/meminfo.txt
+          df -k . > target/hosted-linux-memory/disk.txt
+          cat /proc/self/cgroup > target/hosted-linux-memory/cgroup.txt
+      - name: Run preflighted raw/index and sequential JSON acceptance
+        timeout-minutes: 15
+        env:
+          OVRCR_MEMORY_EVIDENCE: ${{ github.workspace }}/target/hosted-linux-memory
+        run: |
+          set +e
+          cargo test --test claude_reporting_load --features acceptance-diagnostics fifty_collector_raw_index_and_sequential_json_high_water -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-memory/test.log
+          result=${PIPESTATUS[0]}
+          echo "$result" > target/hosted-linux-memory/test.exit
+          exit "$result"
+      - name: Upload memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-memory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/hosted-linux-memory/
+          if-no-files-found: error
+          retention-days: 14
