@@ -1001,4 +1001,3 @@ test dashboard::git_hints::tests::branches_and_remote_default_from_real_reposito
 test dashboard::git_hints::tests::timeout_reaps_owned_child_and_output_is_bounded ... ok
 
 test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
-

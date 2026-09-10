@@ -1,8 +1,10 @@
 # Corrected native split-pane smoke
 
-This macOS run built all native binaries from `7ec5634` and exercised the actual
-GUI with an isolated Claude fixture. The first and second prompts produced the
-distinct visible responses `OVRCR_CORRECTED_FIRST_OK` and
+The coordinator recorded `7ec5634` as the source immediately before building all
+native binaries and exercising the actual GUI with an isolated Claude fixture.
+The retrospective [provenance record](provenance.md) supports that sequence, but
+no contemporaneous pre-build `git status` file was retained. The first and second
+prompts produced the distinct visible responses `OVRCR_CORRECTED_FIRST_OK` and
 `OVRCR_CORRECTED_SECOND_OK`. `02-two-turns.json` reports Idle/Observed after the
 second response and retains one Claude conversation, invocation, and generation-1
 binding across both turns.

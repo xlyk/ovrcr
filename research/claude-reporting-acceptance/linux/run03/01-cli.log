@@ -36,4 +36,3 @@ test requests_time_out_against_a_wedged_server ... ok
 test agent_hook_cli_timeout_is_bounded ... ok
 
 test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.03s
-
