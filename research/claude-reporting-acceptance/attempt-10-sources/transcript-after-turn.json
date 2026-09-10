@@ -1,0 +1,761 @@
+{
+  "source": "exact SessionStart transcript_path",
+  "hook_session_id": "conversation-1",
+  "path": "exact-transcript-path-1",
+  "device": 16777234,
+  "inode": 161489997,
+  "size": 246320,
+  "records": [
+    {
+      "type": "mode",
+      "sessionId": "conversation-1",
+      "line": 1,
+      "field_names": [
+        "mode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "permission-mode",
+      "sessionId": "conversation-1",
+      "line": 2,
+      "field_names": [
+        "permissionMode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "atis-latch",
+      "sessionId": "conversation-1",
+      "line": 3,
+      "field_names": [
+        "atis",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "file-history-snapshot",
+      "line": 4,
+      "field_names": [
+        "isSnapshotUpdate",
+        "messageId",
+        "snapshot",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "user",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-1",
+      "parentUuid": null,
+      "line": 5,
+      "field_names": [
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "message",
+        "origin",
+        "parentUuid",
+        "permissionMode",
+        "promptId",
+        "promptSource",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {
+        "role": "user"
+      }
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-2",
+      "parentUuid": "record-1",
+      "line": 6,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-3",
+      "parentUuid": "record-2",
+      "line": 7,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-4",
+      "parentUuid": "record-3",
+      "line": 8,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-5",
+      "parentUuid": "record-4",
+      "line": 9,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-6",
+      "parentUuid": "record-5",
+      "line": 10,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-7",
+      "parentUuid": "record-6",
+      "line": 11,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-8",
+      "parentUuid": "record-7",
+      "line": 12,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-9",
+      "parentUuid": "record-8",
+      "line": 13,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-10",
+      "parentUuid": "record-9",
+      "line": 14,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "last-prompt",
+      "sessionId": "conversation-1",
+      "line": 15,
+      "field_names": [
+        "lastPrompt",
+        "leafUuid",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "mode",
+      "sessionId": "conversation-1",
+      "line": 16,
+      "field_names": [
+        "mode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "permission-mode",
+      "sessionId": "conversation-1",
+      "line": 17,
+      "field_names": [
+        "permissionMode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "atis-latch",
+      "sessionId": "conversation-1",
+      "line": 18,
+      "field_names": [
+        "atis",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "ai-title",
+      "sessionId": "conversation-1",
+      "line": 19,
+      "field_names": [
+        "aiTitle",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "assistant",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "requestId": "request-1",
+      "uuid": "record-11",
+      "parentUuid": "record-10",
+      "line": 20,
+      "field_names": [
+        "apiBlockIndex",
+        "cwd",
+        "effort",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "message",
+        "parentUuid",
+        "perTurnEffort",
+        "requestId",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {
+        "id": "message-1",
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 10382,
+          "cache_read_input_tokens": 34681,
+          "output_tokens": 130,
+          "output_tokens_details": {
+            "thinking_tokens": 7
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 10382,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 130,
+              "cache_read_input_tokens": 34681,
+              "cache_creation_input_tokens": 10382,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 10382
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard"
+        },
+        "model": "claude-sonnet-5"
+      }
+    },
+    {
+      "type": "assistant",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "requestId": "request-1",
+      "uuid": "record-12",
+      "parentUuid": "record-11",
+      "line": 21,
+      "field_names": [
+        "apiBlockIndex",
+        "cwd",
+        "effort",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "message",
+        "parentUuid",
+        "perTurnEffort",
+        "requestId",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {
+        "id": "message-1",
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 10382,
+          "cache_read_input_tokens": 34681,
+          "output_tokens": 130,
+          "output_tokens_details": {
+            "thinking_tokens": 7
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 10382,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 130,
+              "cache_read_input_tokens": 34681,
+              "cache_creation_input_tokens": 10382,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 10382
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard"
+        },
+        "model": "claude-sonnet-5"
+      }
+    },
+    {
+      "type": "file-history-delta",
+      "line": 22,
+      "field_names": [
+        "backup",
+        "messageId",
+        "snapshotMessageId",
+        "timestamp",
+        "trackingPath",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "user",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-13",
+      "parentUuid": "record-12",
+      "line": 23,
+      "field_names": [
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "message",
+        "parentUuid",
+        "promptId",
+        "sessionId",
+        "session_id",
+        "sourceToolAssistantUUID",
+        "timestamp",
+        "toolUseResult",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {
+        "role": "user"
+      }
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-14",
+      "parentUuid": "record-13",
+      "line": 24,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "attachment",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-15",
+      "parentUuid": "record-14",
+      "line": 25,
+      "field_names": [
+        "attachment",
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "parentUuid",
+        "rendered",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "last-prompt",
+      "sessionId": "conversation-1",
+      "line": 26,
+      "field_names": [
+        "lastPrompt",
+        "leafUuid",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "ai-title",
+      "sessionId": "conversation-1",
+      "line": 27,
+      "field_names": [
+        "aiTitle",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "mode",
+      "sessionId": "conversation-1",
+      "line": 28,
+      "field_names": [
+        "mode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "permission-mode",
+      "sessionId": "conversation-1",
+      "line": 29,
+      "field_names": [
+        "permissionMode",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "atis-latch",
+      "sessionId": "conversation-1",
+      "line": 30,
+      "field_names": [
+        "atis",
+        "sessionId",
+        "type"
+      ],
+      "message": {}
+    },
+    {
+      "type": "assistant",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "requestId": "request-2",
+      "uuid": "record-16",
+      "parentUuid": "record-15",
+      "line": 31,
+      "field_names": [
+        "apiBlockIndex",
+        "cwd",
+        "effort",
+        "entrypoint",
+        "gitBranch",
+        "isSidechain",
+        "message",
+        "parentUuid",
+        "perTurnEffort",
+        "requestId",
+        "sessionId",
+        "session_id",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {
+        "id": "message-2",
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 234,
+          "cache_read_input_tokens": 45063,
+          "output_tokens": 17,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 234,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 17,
+              "cache_read_input_tokens": 45063,
+              "cache_creation_input_tokens": 234,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 234
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard"
+        },
+        "model": "claude-sonnet-5"
+      }
+    },
+    {
+      "type": "system",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-17",
+      "parentUuid": "record-16",
+      "line": 32,
+      "field_names": [
+        "cwd",
+        "entrypoint",
+        "gitBranch",
+        "hasOutput",
+        "hookAdditionalContext",
+        "hookCount",
+        "hookErrors",
+        "hookInfos",
+        "isSidechain",
+        "level",
+        "parentUuid",
+        "preventedContinuation",
+        "sessionId",
+        "session_id",
+        "stopReason",
+        "subtype",
+        "timestamp",
+        "toolUseID",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    },
+    {
+      "type": "system",
+      "sessionId": "conversation-1",
+      "isSidechain": false,
+      "uuid": "record-18",
+      "parentUuid": "record-17",
+      "line": 33,
+      "field_names": [
+        "cwd",
+        "durationMs",
+        "entrypoint",
+        "gitBranch",
+        "isMeta",
+        "isSidechain",
+        "messageCount",
+        "parentUuid",
+        "sessionId",
+        "subtype",
+        "timestamp",
+        "type",
+        "userType",
+        "uuid",
+        "version"
+      ],
+      "message": {}
+    }
+  ]
+}
