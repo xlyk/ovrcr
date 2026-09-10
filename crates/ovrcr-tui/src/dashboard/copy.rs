@@ -50,6 +50,7 @@ pub struct CopySelection {
     pub screen: vt100::Screen,
     pub cursor: CopyPoint,
     pub anchor: Option<CopyPoint>,
+    pub(crate) dragging: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -80,7 +81,12 @@ impl CopySelection {
             screen: screen.clone(),
             cursor,
             anchor: None,
+            dragging: false,
         }
+    }
+
+    pub(crate) fn point_at(&mut self, point: CopyPoint) {
+        self.cursor = normalize_point(&self.screen, point);
     }
 
     pub fn move_cursor(&mut self, motion: CopyMotion) {

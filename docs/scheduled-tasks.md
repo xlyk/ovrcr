@@ -153,6 +153,14 @@ for a prompt newline, and Ctrl-s to save. Use h for history and PgUp/PgDn to
 scroll the transcript. Follow the on-screen key hints. Task output uses its own control
 connection and does not change terminal selection.
 
+For mouse navigation, open Tasks from the dashboard's Actions or Menu control.
+Click a task or run row to select it, and click the footer actions to create,
+edit, save, pause/resume, or open history. In the editor, click a field to focus
+it and place the text cursor; project options are clickable. The Prompt field
+supports clicking within its visible lines. Use the wheel over lists, the
+editor, or the transcript to scroll. Deletion and working-file cleanup still
+require explicit confirmation.
+
 ## Validate an installation
 
 The optional probes retain their isolated fixtures for inspection:

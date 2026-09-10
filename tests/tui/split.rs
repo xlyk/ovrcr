@@ -58,6 +58,394 @@ fn split_layout_geometry_and_narrow_fallback() {
 }
 
 #[test]
+fn divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    assert!(dashboard.split_pane());
+    let initial = dashboard
+        .view_request(area, 10)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, initial);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    let divider = pane_rects(area, 2, dashboard.focused_pane)[0]
+        .terminal
+        .right();
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                60,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard
+            .panes
+            .iter()
+            .map(|pane| pane.desired_size.cols)
+            .collect::<Vec<_>>(),
+        vec![20, 59]
+    );
+    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    assert!(dashboard.input_request(vec![b'x'], 11).is_none());
+    assert!(dashboard.mouse_capture_required());
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                60,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+
+    let resized = dashboard
+        .view_request(area, 12)
+        .unwrap()
+        .expect("divider drag should request resized panes");
+    let Request::SetView { ref view } = resized.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        vec![20, 59]
+    );
+    acknowledge_all_view_targets(&mut dashboard, resized);
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let right = Rect::new(61, 3, 59, 36);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(right, MouseEventKind::Down(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(right, MouseEventKind::Up(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4m".to_vec())
+    );
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(60, 10)].symbol(), "│");
+
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                60,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                60,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                0,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(dashboard.view_request(area, 13).unwrap().is_none());
+}
+
+#[test]
+fn divider_gesture_releases_all_application_buttons_without_resizing() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 20)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let focused = focused_terminal_rect(&dashboard, area);
+    let divider = dashboard
+        .pane_rects(area)
+        .first()
+        .expect("left pane")
+        .terminal
+        .right();
+
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(focused, MouseEventKind::Down(MouseButton::Right), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(focused, MouseEventKind::Down(MouseButton::Middle), 4, 5),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<1;5;6M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Right),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("divider gesture should release held application buttons");
+    assert!(matches!(
+        cleanup.request,
+        Request::Input { session: SessionId(4), bytes }
+            if bytes == b"\x1b[<1;5;6m\x1b[<2;3;4m"
+    ));
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(dashboard.view_request(area, 21).unwrap().is_none());
+}
+
+#[test]
+fn divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(7, 4, 120, 40);
+    assert!(dashboard.split_pane());
+    let initial = dashboard
+        .view_request(area, 20)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, initial);
+
+    let default = pane_rects(area, 2, dashboard.focused_pane);
+    let divider = default[0].terminal.right();
+    let left_edge = default[0].terminal.x;
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            divider,
+            area.y + 6,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                left_edge,
+                area.y + 6,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.panes[0].desired_size.cols, 20);
+    assert_eq!(dashboard.panes[1].desired_size.cols, 59);
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Up(MouseButton::Left),
+            left_edge,
+            area.y + 6,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    let resized = dashboard
+        .view_request(area, 21)
+        .unwrap()
+        .expect("clamped drag should request a view");
+    acknowledge_all_view_targets(&mut dashboard, resized);
+
+    let wider = Rect::new(7, 4, 160, 40);
+    let wider_request = dashboard
+        .view_request(wider, 22)
+        .unwrap()
+        .expect("wider area should preserve split preference");
+    let Request::SetView { ref view } = wider_request.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        vec![30, 89]
+    );
+    acknowledge_all_view_targets(&mut dashboard, wider_request);
+
+    let current_divider = 47 + 30;
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            current_divider,
+            area.y + 6,
+            KeyModifiers::NONE,
+        ),
+        wider,
+    );
+    assert_eq!(
+        dashboard.event_action(Event::FocusLost),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.event_action(Event::FocusGained),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                current_divider + 10,
+                area.y + 6,
+                KeyModifiers::NONE,
+            ),
+            wider,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+
+    let narrow = Rect::new(11, 6, 80, 24);
+    let narrow_request = dashboard
+        .view_request(narrow, 23)
+        .unwrap()
+        .expect("narrow area should hide one pane");
+    let Request::SetView { ref view } = narrow_request.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(view.panes.len(), 1);
+    acknowledge_all_view_targets(&mut dashboard, narrow_request);
+
+    let restored = dashboard
+        .view_request(area, 24)
+        .unwrap()
+        .expect("restored area should show the preferred split");
+    let Request::SetView { ref view } = restored.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(
+        view.panes
+            .iter()
+            .map(|pane| pane.size.cols)
+            .collect::<Vec<_>>(),
+        vec![20, 59]
+    );
+    acknowledge_all_view_targets(&mut dashboard, restored);
+
+    dashboard.mouse_action(
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            67,
+            area.y + 6,
+            KeyModifiers::NONE,
+        ),
+        area,
+    );
+    let hidden_again = dashboard
+        .view_request(narrow, 25)
+        .unwrap()
+        .expect("resize to a tiny split should cancel the divider gesture");
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                75,
+                narrow.y + 6,
+                KeyModifiers::NONE,
+            ),
+            narrow,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    let Request::SetView { view } = hidden_again.request else {
+        panic!("expected SetView");
+    };
+    assert!(
+        view.panes
+            .iter()
+            .all(|pane| pane.size.cols > 0 && pane.size.rows > 0)
+    );
+}
+
+#[test]
 fn split_layout_renders_independent_cells_and_cursor() {
     let mut dashboard = dashboard_fixture();
     assert!(dashboard.split_pane());
@@ -615,7 +1003,17 @@ fn split_layout_renders_independent_cells_and_cursor() {
     );
     assert_eq!(
         dashboard.mouse_action(click(79, 20), Rect::new(0, 0, 120, 40)),
-        ovrcr::tui::DashboardAction::None
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                ..click(79, 20)
+            },
+            Rect::new(0, 0, 120, 40)
+        ),
+        ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_pane, 0);
     assert_eq!(
@@ -655,9 +1053,10 @@ fn split_layout_renders_independent_cells_and_cursor() {
     dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.mouse_action(click(40, 3), Rect::new(0, 0, 120, 40)),
-        ovrcr::tui::DashboardAction::None
+        ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(dashboard.focused_pane, 0);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
     assert_eq!(
         dashboard
             .panes
