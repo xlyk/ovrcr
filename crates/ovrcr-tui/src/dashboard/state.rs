@@ -598,6 +598,14 @@ impl Dashboard {
             .and_then(|pane| pane.session)
     }
 
+    pub(super) fn action_session(&self) -> Option<SessionId> {
+        if self.selected_container.is_some() {
+            None
+        } else {
+            self.focused_session()
+        }
+    }
+
     pub(super) fn focused_pane(&self) -> Option<&super::PaneState> {
         self.panes.get(self.focused_pane)
     }
@@ -1185,7 +1193,7 @@ impl Dashboard {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
-        let Some(session) = self.focused_session() else {
+        let Some(session) = self.action_session() else {
             self.set_error("Waiting for terminal screen");
             return DashboardAction::Redraw;
         };
@@ -1318,7 +1326,7 @@ impl Dashboard {
     }
 
     fn begin_history_request(&mut self, at_tail: bool) -> DashboardAction {
-        let Some(session) = self.focused_session() else {
+        let Some(session) = self.action_session() else {
             return DashboardAction::None;
         };
         if self.history.is_some() || self.history_begin_request.is_some() {
@@ -1979,6 +1987,7 @@ impl Dashboard {
         {
             let sidebar = sidebar_area(area);
             if mouse.row >= sidebar.y && mouse.row < sidebar.bottom() {
+                self.queue_held_releases();
                 self.mouse.split_dragging = true;
                 return Some(DashboardAction::Redraw);
             }
@@ -1989,6 +1998,9 @@ impl Dashboard {
                 .iter()
                 .find(|pane| point_in_rect(mouse, pane.terminal))
         {
+            if self.panes[pane.pane_index].session.is_none() {
+                return Some(DashboardAction::Redraw);
+            }
             if self.mode == InputMode::Browse {
                 self.focus_pane(pane.pane_index);
                 if matches!(self.selected_phase(), Some(SessionPhase::Running)) {
@@ -2038,6 +2050,9 @@ impl Dashboard {
     }
 
     fn select_container(&mut self, row: TreeRow) {
+        if self.selected_container.as_ref() == Some(&row) {
+            return;
+        }
         self.mark_pending_parser_discarded();
         self.release_for_selection_change();
         let size = self.focused_size();
@@ -2341,7 +2356,7 @@ impl Dashboard {
     }
 
     fn pause_request(&mut self, paused: bool) -> DashboardAction {
-        let Some(session) = self.focused_session().and_then(|id| find_session(self, id)) else {
+        let Some(session) = self.action_session().and_then(|id| find_session(self, id)) else {
             self.set_error("No session selected");
             return DashboardAction::Redraw;
         };
@@ -2880,13 +2895,13 @@ impl Dashboard {
     }
 
     pub(super) fn selected_phase(&self) -> Option<&SessionPhase> {
-        self.focused_session()
+        self.action_session()
             .and_then(|id| find_session(self, id))
             .map(|session| &session.phase)
     }
 
     pub(super) fn input_is_allowed(&self) -> bool {
-        let Some(session) = self.focused_session() else {
+        let Some(session) = self.action_session() else {
             return false;
         };
         matches!(self.selected_phase(), Some(SessionPhase::Running))

@@ -676,6 +676,42 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     };
     assert_eq!(view.panes.len(), 1);
     assert_eq!(view.focused, Some(retained));
+    deliver_all_view_screens(&mut dashboard, request.request_id, &view);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Ok,
+    });
+    assert!(dashboard.panes[dashboard.focused_pane].ready);
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+
+    dashboard.key(KeyCode::Char(' '));
+    let menu = palette_text(&dashboard);
+    assert!(menu.contains("w  Workspace"), "{menu}");
+    assert!(!menu.contains("t  Terminal"), "{menu}");
+    dashboard.key(KeyCode::Esc);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('p')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(retained));
+    assert!(dashboard.view_request(area, 63).unwrap().is_none());
 
     assert_eq!(
         dashboard.key(KeyCode::Char('n')),
@@ -694,6 +730,66 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     };
     assert_eq!(create.project, "consigint");
     assert_eq!(create.workspace, "auth");
+}
+
+#[test]
+fn empty_pane_click_preserves_the_assigned_wire_focus() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 70)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    assert!(dashboard.focus_pane(0));
+    let focused = dashboard
+        .view_request(area, 71)
+        .unwrap()
+        .expect("focus should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, focused);
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let selected = dashboard
+        .view_request(area, 72)
+        .unwrap()
+        .expect("container selection should retain one assigned pane");
+    acknowledge_all_view_targets(&mut dashboard, selected);
+    let retained_pane = dashboard.focused_pane;
+    let retained = dashboard.focused_session().expect("retained wire focus");
+    let empty = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index != retained_pane)
+        .expect("empty pane")
+        .terminal;
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: empty.x + 2,
+                row: empty.y + 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, retained_pane);
+    assert_eq!(dashboard.focused_session(), Some(retained));
+    assert!(dashboard.view_request(area, 73).unwrap().is_none());
 }
 
 #[test]

@@ -202,6 +202,87 @@ fn divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged() {
 }
 
 #[test]
+fn divider_gesture_releases_all_application_buttons_without_resizing() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 20)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let focused = focused_terminal_rect(&dashboard, area);
+    let divider = dashboard
+        .pane_rects(area)
+        .first()
+        .expect("left pane")
+        .terminal
+        .right();
+
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(focused, MouseEventKind::Down(MouseButton::Right), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<2;3;4M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(focused, MouseEventKind::Down(MouseButton::Middle), 4, 5),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<1;5;6M".to_vec())
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Right),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                divider,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let cleanup = dashboard
+        .take_mouse_cleanup()
+        .expect("divider gesture should release held application buttons");
+    assert!(matches!(
+        cleanup.request,
+        Request::Input { session: SessionId(4), bytes }
+            if bytes == b"\x1b[<1;5;6m\x1b[<2;3;4m"
+    ));
+    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(dashboard.view_request(area, 21).unwrap().is_none());
+}
+
+#[test]
 fn divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(7, 4, 120, 40);

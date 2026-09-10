@@ -434,9 +434,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 },
             )],
             TreeRow::Workspace { .. } => &[(2, MAUVE)],
-            TreeRow::Session { id }
-                if row_line == 0 && dashboard.focused_session() != Some(*id) =>
-            {
+            TreeRow::Session { id } if row_line == 0 && dashboard.action_session() != Some(*id) => {
                 &[(
                     2,
                     if dashboard.session_is_busy(*id) {
@@ -630,7 +628,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
 
 impl Dashboard {
     fn draw_start_screen(&self, frame: &mut Frame<'_>) {
-        if self.mode != InputMode::Browse || self.focused_session().is_some() {
+        if self.mode != InputMode::Browse || self.action_session().is_some() {
             return;
         }
         let Some(rect) = self
@@ -884,7 +882,7 @@ fn tree_line_text(
                     base_style,
                 );
             };
-            let selected = dashboard.focused_session() == Some(*id);
+            let selected = dashboard.action_session() == Some(*id);
             let label = if session.name == "local" {
                 "terminal"
             } else {

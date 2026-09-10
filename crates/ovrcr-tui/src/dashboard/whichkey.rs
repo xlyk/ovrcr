@@ -139,7 +139,7 @@ impl Dashboard {
         }
         let (project, workspace) = self.creation_context();
         let session = self
-            .focused_session()
+            .action_session()
             .and_then(|id| super::state::find_session(self, id));
         let group = self.whichkey.as_ref().and_then(|popup| popup.group);
         let title = match group {

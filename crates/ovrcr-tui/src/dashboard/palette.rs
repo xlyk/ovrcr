@@ -408,7 +408,7 @@ impl Dashboard {
 
     pub(super) fn open_close_terminal(&mut self) -> DashboardAction {
         let Some(id) = self
-            .focused_session()
+            .action_session()
             .filter(|id| find_session(self, *id).is_some())
         else {
             return DashboardAction::None;
@@ -501,7 +501,7 @@ impl Dashboard {
             },
         ];
         if let Some(id) = self
-            .focused_session()
+            .action_session()
             .filter(|id| find_session(self, *id).is_some())
         {
             entries.push(Entry {
