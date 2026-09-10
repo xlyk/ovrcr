@@ -7440,3 +7440,58 @@ fn agent_run_runtime_kill_reaches_owned_native_group() {
         Duration::from_secs(2)
     ));
 }
+
+#[test]
+fn agent_run_channel_failure_releases_reservation_before_native_fallback() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-channel-failure-setup");
+    let blocked = fixture._root.path().join("not-a-directory");
+    std::fs::write(&blocked, "blocked").unwrap();
+    let identity_path = fixture._root.path().join("fallback.identity");
+    let summary=fixture.create_session_summary("agent-channel-failure",vec![
+        "sh".into(),"-c".into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3"; TMPDIR="$2" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-secret "$1" agent run --provider claude -- /bin/sh -c 'test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99; printf FALLBACK_READY; IFS= read -r line; exit 17'; code=$?; printf 'FALLBACK_EXIT=%s\n' "$code"; exit "$code""#.into(),
+        "agent-channel-failure".into(),env!("CARGO_BIN_EXE_ovrcr").into(),blocked.into_os_string(),identity_path.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "FALLBACK_READY");
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        1,
+        "the reservation was allocated before channel setup"
+    );
+    let identity = std::fs::read_to_string(identity_path).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let next = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf NEXT_RESERVED",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    assert!(
+        next.status.success(),
+        "reservation retained during untracked native fallback: {next:?}"
+    );
+    assert_eq!(next.stdout, b"NEXT_RESERVED");
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 2);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "FALLBACK_EXIT=17");
+    fixture.wait_exited(summary.id);
+}

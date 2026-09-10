@@ -1971,3 +1971,26 @@ fn agent_run_unavailable_server_passes_native_help_version_and_signal_exit() {
     let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(5)).unwrap();
     assert_eq!(output.status.signal(), Some(libc::SIGTERM));
 }
+
+#[test]
+fn agent_run_private_channel_failure_runs_native_without_inherited_reporting() {
+    let root = tempfile::tempdir().unwrap();
+    let blocked = root.path().join("not-a-directory");
+    std::fs::write(&blocked, "blocked").unwrap();
+    let mut command = isolated_command(&root);
+    command.args(["agent","run","--provider","claude","--","/bin/sh","-c",
+        "test -z \"${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}\" || exit 99; printf NATIVE_FALLBACK; exit 17"])
+        .env("TMPDIR",&blocked)
+        .env("OVRCR_AGENT_SOCKET","outer-private-socket").env("OVRCR_AGENT_TOKEN","outer-private-secret")
+        .env("OVRCR_HOOK_SOCKET",root.path().join("absent.sock"))
+        .env("OVRCR_SESSION_ID","1").env("OVRCR_HOOK_TOKEN","ab".repeat(32));
+    let mut captured = spawn_captured(command).unwrap();
+    let output = wait_captured(&mut captured, Instant::now() + Duration::from_secs(5)).unwrap();
+    assert_eq!(output.status.code(), Some(17), "{output:?}");
+    assert_eq!(output.stdout, b"NATIVE_FALLBACK");
+    assert_eq!(
+        output.stderr,
+        b"agent reporting unavailable; running native command\n"
+    );
+    assert!(!root.path().join("server.sock").exists());
+}

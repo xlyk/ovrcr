@@ -1,0 +1,8 @@
+Command: cargo fmt --all -- --check
+Revision: 32336e7 + P1 correction
+
+Exit: 0
+Command: git diff --check
+Revision: 32336e7 + P1 correction
+
+Exit: 0

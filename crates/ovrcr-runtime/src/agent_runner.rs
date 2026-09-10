@@ -10,7 +10,7 @@ use std::{
 };
 
 // All group signals happen while the unreaped direct child anchors this PGID.
-pub fn run_native(argv: &[OsString]) -> Result<ExitStatus> {
+pub fn run_native(argv: &[OsString], channel_ready: impl FnOnce(bool)) -> Result<ExitStatus> {
     let executable = argv.first().context("native command is required")?;
     let mut signals = Signals::new([
         libc::SIGINT,
@@ -21,7 +21,9 @@ pub fn run_native(argv: &[OsString]) -> Result<ExitStatus> {
         libc::SIGTSTP,
     ])?;
     let terminal = Terminal::capture();
-    let channel = InvocationChannel::new()?;
+    let channel = InvocationChannel::new().ok();
+    // The caller releases reporting ownership before an untracked native spawn.
+    channel_ready(channel.is_some());
     let mut command = Command::new(executable);
     command
         .args(&argv[1..])
@@ -31,9 +33,14 @@ pub fn run_native(argv: &[OsString]) -> Result<ExitStatus> {
         .env_remove("OVRCR_HOOK_SOCKET")
         .env_remove("OVRCR_SESSION_ID")
         .env_remove("OVRCR_HOOK_TOKEN")
-        .env("OVRCR_AGENT_SOCKET", &channel.path)
-        .env("OVRCR_AGENT_TOKEN", &channel.token)
+        .env_remove("OVRCR_AGENT_SOCKET")
+        .env_remove("OVRCR_AGENT_TOKEN")
         .process_group(0);
+    if let Some(channel) = &channel {
+        command
+            .env("OVRCR_AGENT_SOCKET", &channel.path)
+            .env("OVRCR_AGENT_TOKEN", &channel.token);
+    }
     let foreground = terminal
         .as_ref()
         .is_some_and(|tty| tty.group == unsafe { libc::getpgrp() });
@@ -230,9 +237,7 @@ impl InvocationChannel {
                 atomic::{AtomicBool, Ordering},
             },
         };
-        let directory = tempfile::Builder::new()
-            .prefix("ovrcr-a-")
-            .tempdir_in("/tmp")?;
+        let directory = tempfile::Builder::new().prefix("ovrcr-a-").tempdir()?;
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
         let path = directory.path().join("hook");
         let listener = UnixListener::bind(&path)?;
