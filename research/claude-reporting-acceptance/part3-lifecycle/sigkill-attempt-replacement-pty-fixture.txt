@@ -1,0 +1,32 @@
+revision: fa4e12dc36c418cfc7af2079d62c4e72d38edd1c plus Task 1 test patch
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle agent_run_supervisor_sigkill_releases_reporting_watch -- --exact --nocapture
+output:
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.31s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 1 test
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQZ0qYJ/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+agent admission unavailable; running native command
+
+running 1 test
+
+thread 'agent_run_native_exec_helper' panicked at tests/server_lifecycle.rs:7233:88:
+called `Result::unwrap()` on an `Err` value: agent admission is unavailable
+test agent_run_native_exec_helper ... FAILED
+
+failures:
+    agent_run_native_exec_helper
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 77 filtered out; finished in 0.02s
+
+thread 'agent_run_supervisor_sigkill_releases_reporting_watch' panicked at tests/server_lifecycle.rs:7418:9:
+replacement invocation did not bind
+ovrcr server stopped
+test agent_run_supervisor_sigkill_releases_reporting_watch ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 77 filtered out; finished in 4.77s
+exit: 101

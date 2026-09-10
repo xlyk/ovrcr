@@ -1,0 +1,13 @@
+revision: fa4e12dc36c418cfc7af2079d62c4e72d38edd1c plus initial Task 1 test patch
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle agent_run_native_exec_does_not_inherit_supervisor_lease -- --exact --nocapture
+output:
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+error[E0282]: type annotations needed
+    --> tests/server_lifecycle.rs:7123:62
+     |
+7123 |     if result != 0 || address.sun_family != libc::AF_UNIX as _ {
+     |                                                              ^ cannot infer type
+
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `ovrcr` (test "server_lifecycle") due to 1 previous error
+exit: 101

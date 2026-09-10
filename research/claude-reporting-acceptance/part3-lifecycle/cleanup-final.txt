@@ -1,0 +1,13 @@
+command: rtk ls -ld /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvHfX7R
+output:
+755  /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvHfX7R/
+exit: 0
+
+command: rtk rm -rf /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvHfX7R
+output:
+exit: 0
+
+command: rtk ls -ld /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvHfX7R
+output:
+ls: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvHfX7R: No such file or directory
+exit: 1

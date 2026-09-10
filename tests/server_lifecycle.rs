@@ -7095,6 +7095,533 @@ impl Drop for CliLifecycleGuard {
     }
 }
 
+fn write_claude_exec_fixture(path: &Path) {
+    std::fs::write(
+        path,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  printf '2.1.267 (Claude Code)\n'
+  exit 0
+fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_run_native_exec_helper --nocapture
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn unix_socket_path(fd: libc::c_int, peer: bool) -> Option<Vec<u8>> {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    let result = unsafe {
+        if peer {
+            libc::getpeername(
+                fd,
+                (&mut address as *mut libc::sockaddr_un).cast(),
+                &mut length,
+            )
+        } else {
+            libc::getsockname(
+                fd,
+                (&mut address as *mut libc::sockaddr_un).cast(),
+                &mut length,
+            )
+        }
+    };
+    if result != 0 || address.sun_family != libc::AF_UNIX as libc::sa_family_t {
+        return None;
+    }
+    let address_start = (&address as *const libc::sockaddr_un).cast::<u8>();
+    let path_start = address.sun_path.as_ptr().cast::<u8>();
+    let path_offset = unsafe { path_start.offset_from(address_start) as usize };
+    let path_length = (length as usize)
+        .saturating_sub(path_offset)
+        .min(address.sun_path.len());
+    let bytes = unsafe { std::slice::from_raw_parts(path_start, path_length) };
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    (end > 0).then(|| bytes[..end].to_vec())
+}
+
+#[test]
+#[ignore = "native exec descriptor fixture launched through agent run"]
+fn agent_run_native_exec_helper() {
+    use std::fmt::Write as _;
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let probe = PathBuf::from(std::env::var_os("OVRCR_TEST_PROBE").unwrap());
+    let stay_alive = std::env::var("OVRCR_NATIVE_STAY_ALIVE").as_deref() == Ok("1");
+    if stay_alive {
+        unsafe {
+            libc::signal(libc::SIGHUP, libc::SIG_IGN);
+        }
+    }
+    let expected_watch = std::env::var_os("OVRCR_EXPECT_WATCH_SOCKET").unwrap();
+    let private_listener = std::env::var_os("OVRCR_AGENT_SOCKET").unwrap();
+    let expected_watch = Path::new(&expected_watch).as_os_str().as_bytes();
+    let private_listener = Path::new(&private_listener).as_os_str().as_bytes();
+    let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+        0
+    );
+    let descriptor_limit = if limit.rlim_cur == libc::RLIM_INFINITY {
+        65_536
+    } else {
+        limit.rlim_cur.min(65_536) as libc::c_int
+    };
+    let mut metadata = String::new();
+    let mut watch_inherited = false;
+    let mut listener_inherited = false;
+    for fd in 0..descriptor_limit {
+        if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+            continue;
+        }
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::fstat(fd, &mut stat) }, 0);
+        let kind = stat.st_mode & libc::S_IFMT;
+        if kind == libc::S_IFSOCK {
+            let local = unix_socket_path(fd, false);
+            let peer = unix_socket_path(fd, true);
+            watch_inherited |=
+                local.as_deref() == Some(expected_watch) || peer.as_deref() == Some(expected_watch);
+            listener_inherited |= local.as_deref() == Some(private_listener)
+                || peer.as_deref() == Some(private_listener);
+            writeln!(
+                metadata,
+                "fd={fd} type=socket local={} peer={}",
+                local
+                    .as_deref()
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_else(|| "-".into()),
+                peer.as_deref()
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_else(|| "-".into())
+            )
+            .unwrap();
+        } else {
+            let kind = if kind == libc::S_IFCHR {
+                "character"
+            } else if kind == libc::S_IFREG {
+                "regular"
+            } else if kind == libc::S_IFIFO {
+                "fifo"
+            } else {
+                "other"
+            };
+            writeln!(metadata, "fd={fd} type={kind}").unwrap();
+        }
+    }
+    for fd in 0..=2 {
+        assert!(
+            unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0,
+            "stdio fd {fd} closed"
+        );
+        if std::env::var("OVRCR_EXPECT_TTY").as_deref() == Ok("1") {
+            assert_eq!(unsafe { libc::isatty(fd) }, 1, "stdio fd {fd} lost its PTY");
+        }
+    }
+    writeln!(metadata, "supervisor_watch_inherited={watch_inherited}").unwrap();
+    writeln!(metadata, "private_listener_inherited={listener_inherited}").unwrap();
+    std::fs::write(probe.with_extension("fds"), metadata).unwrap();
+    assert!(
+        !watch_inherited,
+        "native exec inherited the supervisor watch socket"
+    );
+    assert!(
+        !listener_inherited,
+        "native exec inherited the private listener socket"
+    );
+
+    let conversation = std::env::var("OVRCR_TEST_UUID").unwrap();
+    if let Some(transcript) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+        let row = serde_json::json!({"type":"assistant","sessionId":conversation,"isSidechain":false,"requestId":"lifecycle","message":{"id":"lifecycle","usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}});
+        std::fs::write(&transcript, format!("{row}\n")).unwrap();
+    }
+    std::fs::write(
+        &probe,
+        format!(
+            "{} {} {}\n",
+            std::process::id(),
+            unsafe { libc::getpgrp() },
+            unsafe { libc::getppid() }
+        ),
+    )
+    .unwrap();
+    std::fs::write(probe.with_extension("uuid"), &conversation).unwrap();
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "session_id": conversation,
+        "transcript_path": std::env::var_os("OVRCR_TEST_TRANSCRIPT")
+            .map(|path| path.to_string_lossy().into_owned()),
+    }))
+    .unwrap();
+    ovrcr::report::send_claude_hook(&payload, Instant::now() + Duration::from_secs(1)).unwrap();
+    println!("NATIVE_EXEC_STDOUT_READY");
+    eprintln!("NATIVE_EXEC_STDERR_READY");
+    std::io::stdout().flush().unwrap();
+    std::io::stderr().flush().unwrap();
+    if stay_alive {
+        loop {
+            thread::park_timeout(Duration::from_secs(1));
+        }
+    }
+    let mut input = String::new();
+    std::io::stdin().lock().read_line(&mut input).unwrap();
+    println!("NATIVE_EXEC_STDIN={}", input.trim_end());
+}
+
+#[test]
+fn agent_run_supervisor_sigkill_releases_reporting_watch() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentActivity, AgentCommand, AgentObservation, AgentProvider, AgentReport,
+        AgentUpdate, ProviderReport, ReporterHealth, Response, SampleQuality, SupervisorRequest,
+        UsageCoverage,
+    };
+    let fixture = ControlFixture::new_bounded();
+    let setup = fixture.create_hook_child("setup", "agent-supervisor-crash-setup");
+    let setup_pgid = fixture.original_pgid(setup.session);
+    let proxy = AdmissionProxy::new(
+        fixture._root.path().join("supervisor-watch.sock"),
+        fixture.socket.clone(),
+        AdmissionFault::Passthrough,
+    );
+    let native = fixture._root.path().join("claude");
+    write_claude_exec_fixture(&native);
+    let probe = fixture._root.path().join("supervisor-crash-probe");
+    let transcript = fixture._root.path().join("supervisor-crash.jsonl");
+    let summary = fixture.create_session_summary(
+        "agent-supervisor-crash",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$6" OVRCR_NATIVE_STAY_ALIVE=1; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'KILLED_SUPERVISOR_EXIT=%s\nOUTER_SURVIVED\n' "$code"; while :; do sleep 1; done"#.into(),
+            "agent-supervisor-crash-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.clone().into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            probe.clone().into_os_string(),
+            proxy.path.clone().into_os_string(),
+            transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDOUT_READY");
+    let old_processes: Vec<libc::pid_t> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let (native_pid, native_pgid, supervisor_pid) =
+        (old_processes[0], old_processes[1], old_processes[2]);
+    assert_eq!(
+        native_pid, native_pgid,
+        "native fixture must own its process group"
+    );
+    assert_ne!(supervisor_pid, summary.pid.unwrap() as libc::pid_t);
+    fixture.process_groups.lock().unwrap().push(native_pgid);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let old_snapshot = loop {
+        if let Some(snapshot) = fixture.session_summary(summary.id).agent
+            && snapshot.metrics.is_some()
+        {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "root binding and retained metrics were not ready"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert_eq!(old_snapshot.binding.provider, AgentProvider::Claude);
+    assert_eq!(old_snapshot.health.state, ReporterHealth::Connected);
+    let old_auth = proxy
+        .supervisor
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("proxy did not observe the supervisor reservation");
+    let old_binding = proxy
+        .binding
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("proxy did not observe the root binding");
+    assert_eq!(old_binding, old_snapshot.binding);
+
+    assert_eq!(unsafe { libc::kill(supervisor_pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let disconnected = loop {
+        let current = fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("bound snapshot disappeared after supervisor crash");
+        if current.health.reason.as_deref() == Some("supervisor_disconnected") {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "server retained ownership after supervisor SIGKILL"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert_eq!(disconnected.health.state, ReporterHealth::Unavailable);
+    assert_ne!(
+        disconnected.metrics.unwrap().sample.usage.value.coverage,
+        UsageCoverage::Complete
+    );
+    assert_eq!(
+        unsafe { libc::kill(native_pid, 0) },
+        0,
+        "native did not survive supervisor"
+    );
+    fixture.wait_terminal_contains(summary.id, "OUTER_SURVIVED");
+    assert_eq!(
+        unsafe { libc::kill(summary.pid.unwrap() as libc::pid_t, 0) },
+        0,
+        "outer fixture shell did not survive supervisor"
+    );
+
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().map(str::to_owned).collect();
+    let capability = parse_hook_capability(&identity[2]).unwrap();
+    let replacement_probe = fixture._root.path().join("replacement-probe");
+    let replacement_transcript = fixture._root.path().join("replacement.jsonl");
+    let replacement = fixture.create_session_summary(
+        "agent-supervisor-replacement",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_SESSION_ID="$6" OVRCR_HOOK_TOKEN="$7" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$8"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'REPLACEMENT_FINISHED=%s\n' "$code"; IFS= read -r done; printf REPLACEMENT_OUTER_FINISHED; exit "$code""#.into(),
+            "agent-supervisor-replacement-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            replacement_probe.clone().into_os_string(),
+            identity[0].clone().into(),
+            identity[1].clone().into(),
+            identity[2].clone().into(),
+            replacement_transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&replacement);
+    fixture.wait_terminal_contains(replacement.id, "NATIVE_EXEC_STDOUT_READY");
+    let replacement_processes: Vec<libc::pid_t> = std::fs::read_to_string(&replacement_probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let replacement_pgid = replacement_processes[1];
+    let replacement_supervisor_pid = replacement_processes[2];
+    fixture
+        .process_groups
+        .lock()
+        .unwrap()
+        .push(replacement_pgid);
+    let replacement_uuid =
+        std::fs::read_to_string(replacement_probe.with_extension("uuid")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let replacement_binding = loop {
+        if let Some(snapshot) = fixture.session_summary(summary.id).agent
+            && snapshot.binding.conversation == replacement_uuid
+        {
+            break snapshot.binding;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "replacement invocation did not bind"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert_ne!(replacement_binding, old_binding);
+
+    let late_report = fixture.request(Request::AgentReport(AgentReport {
+        session: summary.id,
+        capability,
+        sequence: None,
+        update: AgentUpdate::Provider(ProviderReport {
+            binding: old_binding.clone(),
+            revision: 99,
+            observation: AgentObservation::Activity(ActivitySample {
+                state: AgentActivity::Busy,
+                quality: SampleQuality::Observed,
+                turn: None,
+            }),
+        }),
+    }));
+    assert!(matches!(late_report, Response::Error { .. }));
+    let late_release = fixture.request(Request::Supervisor(SupervisorRequest {
+        auth: old_auth,
+        operation: "late-old-release".into(),
+        command: AgentCommand::Release {
+            expected_binding: Some(old_binding),
+        },
+    }));
+    assert!(matches!(late_release, Response::Error { .. }));
+    let after_late = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(after_late.binding, replacement_binding);
+    assert_eq!(after_late.health.state, ReporterHealth::Connected);
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: replacement.id,
+            text: "finish".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(replacement.id, "NATIVE_EXEC_STDIN=finish");
+    fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_FINISHED=0");
+    assert!(wait_group_absent(replacement_pgid, Duration::from_secs(2)));
+    wait_pid_absent(replacement_supervisor_pid, Duration::from_secs(2));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: replacement.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_OUTER_FINISHED");
+    fixture.wait_exited(replacement.id);
+    assert!(wait_group_absent(
+        replacement.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+
+    assert_eq!(unsafe { libc::kill(-native_pgid, libc::SIGKILL) }, 0);
+    assert!(wait_group_absent(native_pgid, Duration::from_secs(2)));
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: summary.id,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: setup.session,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(setup.session);
+    assert!(wait_group_absent(setup_pgid, Duration::from_secs(2)));
+    assert!(
+        fixture
+            .process_groups
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .all(|pgid| !group_exists(pgid))
+    );
+}
+
+#[test]
+fn agent_run_native_exec_does_not_inherit_supervisor_lease() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-exec-descriptor-setup");
+    let native = fixture._root.path().join("claude");
+    write_claude_exec_fixture(&native);
+    let probe = fixture._root.path().join("exec-descriptor-probe");
+    let transcript = fixture._root.path().join("exec-descriptor.jsonl");
+    let summary = fixture.create_session_summary(
+        "agent-exec-descriptor",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'NATIVE_EXEC_FINISHED=%s\n' "$code"; IFS= read -r done; printf OUTER_EXEC_FINISHED; exit "$code""#.into(),
+            "agent-exec-descriptor-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            probe.clone().into_os_string(),
+            fixture.socket.clone().into_os_string(),
+            transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDOUT_READY");
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDERR_READY");
+    let descriptors = std::fs::read_to_string(probe.with_extension("fds")).unwrap();
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=0 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=1 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=2 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "supervisor_watch_inherited=false")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "private_listener_inherited=false")
+    );
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("native callback did not bind the invocation");
+    assert_eq!(
+        bound.binding.conversation,
+        std::fs::read_to_string(probe.with_extension("uuid")).unwrap()
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "descriptor-input".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDIN=descriptor-input");
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_FINISHED=0");
+    let native_pgid = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse::<libc::pid_t>()
+        .unwrap();
+    assert!(
+        wait_group_absent(native_pgid, Duration::from_secs(2)),
+        "native process group remained after completion"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "OUTER_EXEC_FINISHED");
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+}
+
 #[test]
 #[ignore = "native child fixture launched through agent run"]
 fn agent_run_native_helper() {
@@ -7708,6 +8235,7 @@ fn agent_admission_native_helper() {
 
 #[derive(Clone, Copy)]
 enum AdmissionFault {
+    Passthrough,
     LostBind,
     RejectHealth,
     RejectStatus,
@@ -7716,6 +8244,8 @@ enum AdmissionFault {
 }
 struct AdmissionProxy {
     final_status_verified: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    supervisor: std::sync::Arc<std::sync::Mutex<Option<ovrcr::protocol::SupervisorAuth>>>,
+    binding: std::sync::Arc<std::sync::Mutex<Option<ovrcr::protocol::AgentBinding>>>,
     path: std::path::PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     streams: std::sync::Arc<std::sync::Mutex<Vec<UnixStream>>>,
@@ -7737,6 +8267,10 @@ impl AdmissionProxy {
         let final_operation = Arc::new(Mutex::new(None::<String>));
         let final_status_verified = Arc::new(AtomicBool::new(false));
         let thread_final_status = final_status_verified.clone();
+        let supervisor = Arc::new(Mutex::new(None));
+        let thread_supervisor = supervisor.clone();
+        let binding = Arc::new(Mutex::new(None));
+        let thread_binding = binding.clone();
         let thread = thread::spawn(move || {
             let mut handlers = Vec::new();
             while !thread_stop.load(Ordering::SeqCst) {
@@ -7752,6 +8286,8 @@ impl AdmissionProxy {
                         let dropped = dropped.clone();
                         let final_operation = final_operation.clone();
                         let final_status_verified = thread_final_status.clone();
+                        let supervisor = thread_supervisor.clone();
+                        let binding = thread_binding.clone();
                         handlers.push(thread::spawn(move || {
                             if ovrcr::protocol::exchange_preamble(&mut front).is_err() {
                                 return;
@@ -7810,6 +8346,35 @@ impl AdmissionProxy {
                                 else {
                                     break;
                                 };
+                                if let (
+                                    Request::ReserveAgent(reserve),
+                                    ServerMessage::Response {
+                                        response:
+                                            Response::AgentOperation(
+                                                ovrcr::protocol::AgentOperationResult::Reserved(
+                                                    reservation,
+                                                ),
+                                            ),
+                                        ..
+                                    },
+                                ) = (&message.request, &response)
+                                {
+                                    *supervisor.lock().unwrap() =
+                                        Some(ovrcr::protocol::SupervisorAuth {
+                                            session: reserve.session,
+                                            lease: reservation.lease.clone(),
+                                        });
+                                }
+                                if let ServerMessage::Response {
+                                    response:
+                                        Response::AgentOperation(
+                                            ovrcr::protocol::AgentOperationResult::Bound(current),
+                                        ),
+                                    ..
+                                } = &response
+                                {
+                                    *binding.lock().unwrap() = Some(current.clone());
+                                }
                                 let is_bind = matches!(
                                     &message.request,
                                     Request::Supervisor(ovrcr::protocol::SupervisorRequest {
@@ -7884,6 +8449,8 @@ impl AdmissionProxy {
             streams,
             thread: Some(thread),
             final_status_verified,
+            supervisor,
+            binding,
         }
     }
 }
