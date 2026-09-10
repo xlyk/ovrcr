@@ -47,6 +47,8 @@ pub(super) enum Command {
         run_dir: PathBuf,
         pi_executable: PathBuf,
     },
+    #[command(name = "__agent-collector", hide = true)]
+    AgentCollector,
     /// Register and inspect Git projects.
     #[command(visible_alias = "projects")]
     Project {

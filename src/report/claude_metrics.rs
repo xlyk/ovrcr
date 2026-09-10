@@ -163,19 +163,38 @@ impl ClaudeUsageAccumulator {
     pub fn diagnostic(&self) -> Option<&'static str> {
         self.diagnostic
     }
+    pub fn retained_identities(&self) -> usize {
+        self.records.len()
+    }
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+    /// Subset mode compares the exact five normalized counted components, including
+    /// unknowns and cache subsets. Excluded auxiliary metadata is not compared.
+    /// A differing counted value freezes the prefix until replacement semantics
+    /// are certified; no probabilistic digest or second identity index is used.
+    pub fn apply_unique_record(&mut self, record: &Value) -> Result<bool> {
+        self.apply(record, false)
+    }
     /// The eventual reader must classify record categories and validate file identity.
     pub fn apply_record(&mut self, record: &Value) -> Result<bool> {
-        if self.diagnostic == Some("accounting_limit") {
+        self.apply(record, true)
+    }
+    fn apply(&mut self, record: &Value, replacement: bool) -> Result<bool> {
+        if matches!(
+            self.diagnostic,
+            Some("accounting_limit" | "conflicting_usage_record")
+        ) {
             return Ok(false);
         }
-        let result = self.apply_checked(record);
+        let result = self.apply_checked(record, replacement);
         if result.is_err() {
             self.diagnostic = Some("invalid_usage_record");
         }
         result
     }
 
-    fn apply_checked(&mut self, record: &Value) -> Result<bool> {
+    fn apply_checked(&mut self, record: &Value, replacement: bool) -> Result<bool> {
         if record.get("type").and_then(Value::as_str) != Some("assistant") {
             return Ok(false);
         }
@@ -211,6 +230,10 @@ impl ClaudeUsageAccumulator {
         let next = [canonical, output, read, write, reasoning];
         let old = self.records.get(&key);
         if old == Some(&next) {
+            return Ok(false);
+        }
+        if old.is_some() && !replacement {
+            self.diagnostic = Some("conflicting_usage_record");
             return Ok(false);
         }
         // Boxed strings retain exactly their lengths. Charge the fixed key/value
@@ -501,5 +524,22 @@ mod tests {
         invalid["message"]["usage"]["output_tokens_details"]["thinking_tokens"] = json!(9);
         assert!(totals.apply_record(&invalid).is_err());
         assert_eq!(totals.snapshot(), before);
+    }
+
+    #[test]
+    fn unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata() {
+        let mut totals = ClaudeUsageAccumulator::default();
+        let original = record("m", "r", 10);
+        assert!(totals.apply_unique_record(&original).unwrap());
+        let mut excluded = original.clone();
+        excluded["message"]["usage"]["iterations"] = json!([{"input_tokens":999}]);
+        assert!(!totals.apply_unique_record(&excluded).unwrap());
+        assert_eq!(totals.diagnostic(), None);
+        excluded["message"]["usage"]["cache_read_input_tokens"] = Value::Null;
+        assert!(!totals.apply_unique_record(&excluded).unwrap());
+        assert_eq!(totals.diagnostic(), Some("conflicting_usage_record"));
+        assert_eq!(totals.snapshot().input_tokens, Some(16));
+        assert!(!totals.apply_record(&record("other", "s", 100)).unwrap());
+        assert_eq!(totals.snapshot().input_tokens, Some(16));
     }
 }

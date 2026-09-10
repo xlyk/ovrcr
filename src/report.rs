@@ -1,7 +1,7 @@
 pub mod admission;
 pub mod claude;
-#[cfg(test)]
-mod claude_metrics;
+pub mod claude_metrics;
+pub mod collector;
 
 use crate::protocol::{
     AgentReport, AgentUpdate, ClientMessage, ErrorCode, Request, Response, ServerMessage,
