@@ -372,8 +372,17 @@ impl Receiver {
                     && (self.initial_source != Some(InitialSource::Resume)
                         || event.transcript_path.is_some())
         );
+        let contradictory_initial_source = matches!(
+            &event.kind,
+            ClaudeEventKind::SessionStart { source }
+                if matches!(self.phase, Phase::Waiting | Phase::Binding { .. })
+                    && self.initial_source == Some(InitialSource::Resume)
+                    && event.session == expected
+                    && source != "resume"
+        );
         let transition = matches!(&event.kind, ClaudeEventKind::SessionStart { source } if matches!(source.as_str(), "clear" | "resume" | "fork"))
-            && !initial_start;
+            && !initial_start
+            || contradictory_initial_source;
         if event.session != expected && !transition {
             return b"admission-ignored\n".to_vec();
         }
@@ -1016,7 +1025,6 @@ mod tests {
         };
         let deadline = || Instant::now() + Duration::from_secs(1);
         for payload in [
-            serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"}),
             serde_json::json!({"hook_event_name":"SessionStart","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"}),
             serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl","agent_id":"child"}),
             serde_json::json!({"hook_event_name":"SessionEnd","reason":"other","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd"}),
@@ -1028,6 +1036,23 @@ mod tests {
             );
             assert!(matches!(receiver.phase, Phase::Waiting));
         }
+        let mut wrong_source = waiting_resume();
+        assert_eq!(
+            wrong_source.handle(
+                &envelope(serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"})),
+                deadline(),
+            ),
+            b"admission-ignored\n"
+        );
+        assert!(matches!(wrong_source.phase, Phase::Closed));
+        assert_eq!(
+            wrong_source.handle(
+                &envelope(serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd","transcript_path":"/exact/root.jsonl"})),
+                deadline(),
+            ),
+            b"admission-ignored\n"
+        );
+        assert!(matches!(wrong_source.phase, Phase::Closed));
         for payload in [
             serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"wrong-conversation","transcript_path":"/exact/root.jsonl"}),
             serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"5ebc5f9b-54b5-4928-9955-dc81c23743dd"}),

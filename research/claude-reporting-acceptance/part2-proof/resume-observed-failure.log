@@ -1,0 +1,47 @@
+record: exact captured tool output from observed verification failure
+command: rtk proxy cargo test -p ovrcr --lib report::admission::tests -- --nocapture
+execution_context: one member of a Promise.all batch with three other Cargo test commands
+exit: 101
+failed_test: report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit
+assertion_location: src/report/admission.rs:1388:13
+assertion_output: assertion `left == right` failed; left: false; right: true
+
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.63s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-cfec07582b757f52)
+
+running 9 tests
+test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+
+thread 'report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit' (36612878) panicked at src/report/admission.rs:1388:13:
+assertion `left == right` failed
+  left: false
+ right: true
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... FAILED
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+
+failures:
+
+failures:
+    report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 1.39s
+
+error: test failed, to rerun pass `-p ovrcr --lib`
+
+follow_up_1: exact failed test run alone in a separate tool invocation; exit 0; 1 passed; 25 filtered out
+follow_up_2: complete admission unit filter in a separate tool invocation; exit 0; 9 passed; 17 filtered out
+note: RUST_TEST_THREADS was not set for any run. No source or assertion changed between the observed failure and passing reruns. The evidence does not establish the failure's cause.

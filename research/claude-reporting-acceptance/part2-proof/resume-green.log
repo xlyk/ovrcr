@@ -1,0 +1,41 @@
+record: summary of captured tool output
+base_revision: 36b3f5960e4b4f27931e1224597d2b06e0cf0e9d plus unstaged implementation
+
+command: rtk proxy cargo test -p ovrcr --lib report::admission::tests -- --nocapture
+exit: 0
+executed: 9
+passed: 9
+failed: 0
+filtered_out: 17
+
+command: rtk proxy cargo test -p ovrcr --test server_lifecycle agent_admission_ -- --nocapture
+exit: 0
+executed: 7
+passed: 7
+ignored: 1 native helper
+failed: 0
+filtered_out: 67
+
+command: rtk proxy cargo test -p ovrcr --test cli claude_doctor_reports_only_the_certified_initial_resume_form -- --exact
+exit: 0
+executed: 1
+passed: 1
+failed: 0
+filtered_out: 28
+
+command: rtk proxy cargo test -p ovrcr --test agent_setup
+exit: 0
+executed: 7
+passed: 7
+failed: 0
+
+command: rtk proxy cargo clippy -p ovrcr --lib --tests -- -D warnings
+exit: 0
+
+command: rtk cargo fmt --all -- --check
+exit: 0
+
+command: rtk git diff --check
+exit: 0
+
+observed_failure: During a Promise.all batch, this admission-unit command passed all resume tests but failed initial_admission_probe_cleans_descendants_after_leader_exit. The exact failed test then passed 1/1 in a separate tool invocation, and the complete admission unit filter passed 9/9 in another separate tool invocation without source or assertion changes. RUST_TEST_THREADS was not set, so these passing suite runs did not force Rust tests to one thread. See resume-observed-failure.log for the exact failed command, exit, assertion, and output.

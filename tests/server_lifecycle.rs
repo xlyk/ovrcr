@@ -7936,25 +7936,69 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join("resume-admission-probe");
-    let transcript = fixture._root.path().join("resumed-root.jsonl");
     let expected = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
-    let summary = fixture.create_session_summary(
-        "resume-admission",
-        vec![
+    let make_session = |name: &str, probe: &std::path::Path, transcript: &std::path::Path| {
+        fixture.create_session_summary(name, vec![
             "sh".into(),
             "-c".into(),
             r#"stty -echo; export OVRCR_HOOK_SOCKET="$7" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$5" OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" --resume "$3" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf RESUME_ADMISSION_FINISHED; IFS= read -r done"#.into(),
             "resume-admission-fixture".into(),
             env!("CARGO_BIN_EXE_ovrcr").into(),
-            native.into_os_string(),
+            native.clone().into_os_string(),
             expected.into(),
-            probe.clone().into_os_string(),
+            probe.as_os_str().into(),
             std::env::current_exe().unwrap().into_os_string(),
-            transcript.into_os_string(),
+            transcript.as_os_str().into(),
             fixture.socket.clone().into_os_string(),
-        ],
+        ])
+    };
+
+    let rejected_probe = fixture._root.path().join("wrong-source-resume-probe");
+    let rejected_transcript = fixture._root.path().join("wrong-source-resume.jsonl");
+    let rejected = make_session("wrong-source-resume", &rejected_probe, &rejected_transcript);
+    fixture.record_process_group(&rejected);
+    fixture.wait_terminal_contains_until(
+        rejected.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
     );
+    for (index, command) in ["root", "resume-root"].into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: rejected.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(rejected.id, &format!("ADMISSION_CALLBACK={index}"));
+        assert!(
+            fixture.session_summary(rejected.id).agent.is_none(),
+            "{command} reopened admission after contradictory startup source"
+        );
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: rejected.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(rejected.id, "RESUME_ADMISSION_FINISHED");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: rejected.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(rejected.id);
+
+    let probe = fixture._root.path().join("resume-admission-probe");
+    let transcript = fixture._root.path().join("resumed-root.jsonl");
+    let summary = make_session("resume-admission", &probe, &transcript);
     fixture.record_process_group(&summary);
     fixture.wait_terminal_contains_until(
         summary.id,
@@ -7970,7 +8014,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
     assert!(fixture.session_summary(summary.id).agent.is_none());
 
-    for (index, command) in ["wrong", "child", "missing-source", "root", "resume-root"]
+    for (index, command) in ["wrong", "child", "missing-source", "resume-root"]
         .into_iter()
         .enumerate()
     {
@@ -8032,7 +8076,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             }),
             Response::Ok
         );
-        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 5));
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
     }
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -8062,7 +8106,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         }),
         Response::Ok
     );
-    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=8");
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=7");
     let compact = fixture.session_summary(summary.id).agent.unwrap();
     assert_eq!(compact.binding, bound.binding);
     assert_eq!(
@@ -8082,7 +8126,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             }),
             Response::Ok
         );
-        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 8));
         let current = fixture.session_summary(summary.id).agent.unwrap();
         assert_eq!(current.binding, bound.binding);
         assert_eq!(

@@ -3,10 +3,11 @@
 Use Claude Code **2.1.267** and an interactive foreground invocation. OVRCR
 supports a fresh invocation or an initial resume using the separate-token form
 `--resume UUID`, where `UUID` is the known canonical lowercase RFC 4122 UUIDv4.
-Short `-r`, equals syntax, picker/name/search values, positional prompts,
-continue, print mode, background/fork mode, and in-process conversation switching
-are not supported reporting paths. See the [support matrix](agent-reporting-support.md)
-for evidence and remaining acceptance gaps.
+For resume, short `-r`, equals syntax, picker/name/search values, and positional
+prompts are excluded. Fresh invocations retain their existing safe options and
+single positional prompt. Continue, print mode, background/fork mode, and
+in-process conversation switching are not supported reporting paths. See the
+[support matrix](agent-reporting-support.md) for evidence and remaining gaps.
 
 ## Compose the settings
 
