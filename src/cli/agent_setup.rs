@@ -53,6 +53,22 @@ fn exact(command: &str, executable: &str, report: &str) -> bool {
     .any(|prefix| command == format!("{prefix} report {report} --stdin-json"))
 }
 
+// Recognize the exact command emitted by setup, including its single quoted
+// renderer argument. Other shell syntax is deliberately left unverified.
+fn supported_statusline(command: &str, executable: &str) -> bool {
+    let default = format!(
+        "{MARKER}{} report claude-statusline --stdin-json",
+        quote(executable)
+    );
+    if command == default || exact(command, executable, "claude-statusline") {
+        return true;
+    }
+    command
+        .strip_prefix(&format!("{default} --render-command "))
+        .and_then(|argument| argument.strip_prefix('\'')?.strip_suffix('\''))
+        .is_some_and(|inner| !inner.replace("'\"'\"'", "").contains('\''))
+}
+
 pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     let result = (|| -> anyhow::Result<Value> {
         let mut value = settings(path)?;
@@ -199,6 +215,9 @@ pub(super) fn doctor(
                     .and_then(Value::as_array)
                 {
                     for group in groups {
+                        let all_events = group
+                            .get("matcher")
+                            .is_none_or(|matcher| matches!(matcher.as_str(), Some("" | "*")));
                         if let Some(handlers) = group.get("hooks").and_then(Value::as_array) {
                             for handler in handlers {
                                 let command =
@@ -215,8 +234,10 @@ pub(super) fn doctor(
                                             quote(&executable)
                                         )
                                         || exact(command, &executable, "claude"))
-                                        && handler.get("async").and_then(Value::as_bool)
-                                            != Some(true)
+                                        && all_events
+                                        && handler.get("type").and_then(Value::as_str)
+                                            == Some("command")
+                                        && handler.get("async").is_none_or(|value| value == false)
                                     {
                                         present = true;
                                     }
@@ -234,10 +255,12 @@ pub(super) fn doctor(
                 .and_then(|line| line.get("command"))
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            if !status.starts_with(&format!(
-                "{MARKER}{} report claude-statusline --stdin-json",
-                quote(&executable)
-            )) && !exact(status, &executable, "claude-statusline")
+            if value
+                .get("statusLine")
+                .and_then(|line| line.get("type"))
+                .and_then(Value::as_str)
+                != Some("command")
+                || !supported_statusline(status, &executable)
             {
                 issues.push("statusline_reporting_unverified".into());
             }

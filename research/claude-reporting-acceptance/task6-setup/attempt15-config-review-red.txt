@@ -1,0 +1,27 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes
+Revision:2feda3b + regression
+Exit: 101
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.76s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 1 test
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... FAILED
+
+failures:
+
+---- doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes stdout ----
+
+thread 'doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes' (32566539) panicked at tests/agent_setup.rs:385:9:
+assertion `left == right` failed: case filtered
+  left: String("supplied_file_supported")
+ right: "supplied_file_unsupported_or_unverified"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.57s
+
+error: test failed, to rerun pass `-p ovrcr --test agent_setup`

@@ -361,3 +361,61 @@ fn doctor_interrupt_cleans_its_owned_version_probe_before_exit() {
         eprintln!("signal={signal} doctor_status={status} owned_probe_pgid={group} absent=ESRCH");
     }
 }
+
+#[test]
+fn doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes() {
+    let root = tempfile::tempdir().unwrap();
+    let (base, _) = setup(&root, &json!({}));
+    for (case, expected) in [
+        ("base", "supplied_file_supported"),
+        ("filtered", "supplied_file_unsupported_or_unverified"),
+        ("wrong-hook-type", "supplied_file_unsupported_or_unverified"),
+        (
+            "wrong-status-type",
+            "supplied_file_unsupported_or_unverified",
+        ),
+        ("status-typo", "supplied_file_unsupported_or_unverified"),
+        ("all-matcher", "supplied_file_supported"),
+        ("composed", "supplied_file_supported"),
+    ] {
+        let mut value = base.clone();
+        match case {
+            "filtered" => value["hooks"]["SessionStart"][0]["matcher"] = json!("resume"),
+            "wrong-hook-type" => {
+                value["hooks"]["SessionStart"][0]["hooks"][0]["type"] = json!("prompt")
+            }
+            "wrong-status-type" => value["statusLine"]["type"] = json!("prompt"),
+            "status-typo" => {
+                value["statusLine"]["command"] = json!(format!(
+                    "{}-typo",
+                    value["statusLine"]["command"].as_str().unwrap()
+                ))
+            }
+            "all-matcher" => value["hooks"]["SessionStart"][0]["matcher"] = json!("*"),
+            "composed" => {
+                value = setup(
+                    &root,
+                    &json!({"statusLine":{"type":"command", "command":"printf \"a'b\""}}),
+                )
+                .0
+            }
+            _ => {}
+        }
+        let path = root.path().join("doctor-matcher.json");
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let output = command(&root)
+            .args(["agent", "doctor", "claude", "--json", "--executable"])
+            .arg(root.path().join("missing"))
+            .arg("--settings")
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["configuration"]["status"], expected, "case {case}");
+        assert_eq!(
+            result["configuration"]["effective_configuration"],
+            "unverified"
+        );
+    }
+}
