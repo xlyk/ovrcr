@@ -18,4 +18,3 @@ test agent_runner::tests::invocation_channel_accepts_exact_payload_limit ... ok
 test agent_runner::tests::invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 88 filtered out; finished in 0.01s
-
