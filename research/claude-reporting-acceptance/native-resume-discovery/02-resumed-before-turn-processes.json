@@ -1,0 +1,92 @@
+[
+  {
+    "pid": 68488,
+    "ppid": 68450,
+    "pgid": 68437,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 68576,
+    "ppid": 68488,
+    "pgid": 68437,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 68652,
+    "ppid": 68576,
+    "pgid": 68652,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 68764,
+    "ppid": 68576,
+    "pgid": 68764,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 68899,
+    "ppid": 68576,
+    "pgid": 68899,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 69025,
+    "ppid": 68576,
+    "pgid": 69025,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 69034,
+    "ppid": 68576,
+    "pgid": 69034,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69040,
+    "ppid": 68576,
+    "pgid": 69040,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69050,
+    "ppid": 68576,
+    "pgid": 69050,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69056,
+    "ppid": 68576,
+    "pgid": 69056,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69077,
+    "ppid": 68576,
+    "pgid": 69077,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69092,
+    "ppid": 68576,
+    "pgid": 69092,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 69095,
+    "ppid": 68488,
+    "pgid": 69095,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 91212,
+    "ppid": 68576,
+    "pgid": 91212,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run --provider claude -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LZvJYj/provider-resume/bin/claude --setting-sources  --settings /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LZvJYj/provider-resume/settings.json --strict-mcp-config --model sonnet --resume 5ebc5f9b-54b5-4928-9955-dc81c23743dd"
+  },
+  {
+    "pid": 91218,
+    "ppid": 91212,
+    "pgid": 91218,
+    "command": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LZvJYj/provider-resume/bin/claude --setting-sources  --settings /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LZvJYj/provider-resume/settings.json --strict-mcp-config --model sonnet --resume 5ebc5f9b-54b5-4928-9955-dc81c23743dd"
+  }
+]

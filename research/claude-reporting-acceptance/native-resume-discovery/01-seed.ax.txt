@@ -1,0 +1,17 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 79543  elapsed: 1m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 41187 uncertain  cost conv estimate $0.05 uncertain
+  - local
+~		4 text (settable) ▼ 󰉋 consigint                          │pid: 79543  elapsed: 1m  agent idle observed
+~		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 41187 uncertain  cost conv estimate $0.05 uncertain
+~		12 text (settable)     resume-seed                        │
+~		13 text (settable)      ├ python3 idle observed           │❯ Remember the fixture word amber. Reply only OVRCR_RESUME_SEED_OK. Do not use tools.
+~		14 text (settable)      └ run 1m  ctx 4% uncertain        │
+~		15 text (settable)                                        │⏺ OVRCR_RESUME_SEED_OK
+~		17 text (settable)   - local                              │✻ Churned for 1s · done 1:47 PM
+~		22 text (settable)      └ run 2m  ctx —                   │  ctx 4%
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 79543  elapsed: 1m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 41187 uncertain  cost conv estimate $0.05 uncertain
+  - local
