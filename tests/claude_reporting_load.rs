@@ -328,7 +328,6 @@ fn fifty_session_reporting_capacity() {
                 ) {
                     output_frames += 1;
                 }
-                thread::sleep(Duration::from_millis(20));
             }
             (frames, output_frames)
         });

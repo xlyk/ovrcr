@@ -1,0 +1,272 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.58s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-379d91e394a34aa8)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZvnYPB/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZvnYPB/server.sock
+
+thread 'fifty_session_reporting_capacity' (34583075) panicked at tests/claude_reporting_load.rs:689:22:
+active dashboard diagnostics
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (34583934) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583948) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583910) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583920) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583938) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583909) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583943) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583896) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583907) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583884) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583879) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583892) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583913) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583906) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583904) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583901) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583917) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583951) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583922) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583894) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583903) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583950) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583945) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583897) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583891) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583932) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583911) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583930) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583942) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583926) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583955) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583899) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583924) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583886) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583889) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583880) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583888) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583956) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583953) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583940) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583877) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583915) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583928) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583878) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583882) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583883) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583957) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583947) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583885) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+
+thread '<unnamed>' (34583881) panicked at tests/claude_reporting_load.rs:519:17:
+assertion `left == right` failed
+  left: Error { code: Conflict, message: "agent report rejected" }
+ right: Ok
+ovrcr server stopped
+test fifty_session_reporting_capacity ... FAILED
+
+failures:
+
+failures:
+    fifty_session_reporting_capacity
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting_load`

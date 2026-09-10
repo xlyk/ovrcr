@@ -31,3 +31,26 @@ Command: rtk proxy cargo clippy --features acceptance-diagnostics --test claude_
 
 The 60-second load remains intentionally unrun for the coordinator acceptance
 pass. Its updated fixture compiled in both feature and default configurations.
+
+Attempt `macos-load-950710a` showed the fixture's artificial 20ms delay limited
+the dashboard reader to about 50 frames per second while 50 workers published
+about 500 reports per second. The dashboard correctly disconnected after its
+64 ordinary-message queue saturated; the test then failed because the active
+sink monitor disappeared. The preserved attempt log and cleanup evidence are
+under `macos-load-950710a/`.
+
+The normal-load reader no longer sleeps between complete framed reads. Dashboard
+saturation and explicit disconnect remain covered by the separate deterministic
+runtime tests.
+
+Command after correction: rtk proxy cargo check --features acceptance-diagnostics --test claude_reporting_load
+
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.75s
+
+Command after correction: rtk proxy cargo clippy --features acceptance-diagnostics --test claude_reporting_load -- -D warnings
+
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.81s

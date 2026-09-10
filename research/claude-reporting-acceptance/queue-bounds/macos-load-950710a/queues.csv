@@ -1,0 +1,3 @@
+second,queue,pending_items,pending_bytes,peak_items,peak_bytes,rejected
+0,raw-events,0,0,1,19,0
+0,dispatcher,0,0,45,4126,0
