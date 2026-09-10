@@ -42,8 +42,29 @@ pub fn receiver(
         phase: Phase::Waiting,
         prompt: None,
         activity_revision: 0,
+        metrics: None,
+        metrics_revision: 0,
+        health_revision: 0,
+        source_health: None,
+        transcript_path: None,
+        collector: None,
+        cost_watermark: None,
+        collector_caught_up: false,
     };
-    Box::new(move |input, deadline| receiver.handle(input, deadline))
+    Box::new(move |event| {
+        use ovrcr_runtime::agent_runner::HookEvent;
+        match event {
+            HookEvent::Request { input, deadline } => receiver.handle(input, deadline),
+            HookEvent::Poll { deadline } => {
+                receiver.poll(deadline);
+                Vec::new()
+            }
+            HookEvent::NativeCompleted { deadline } => {
+                receiver.native_completed(deadline);
+                Vec::new()
+            }
+        }
+    })
 }
 
 fn eligible(argv: &[OsString]) -> bool {
@@ -131,7 +152,7 @@ fn eligible_argv(argv: &[OsString]) -> bool {
     }
     true
 }
-fn pinned_version(executable: &OsStr) -> bool {
+pub fn pinned_version(executable: &OsStr) -> bool {
     let mut command = Command::new(executable);
     command
         .arg("--version")
@@ -240,6 +261,14 @@ struct Receiver {
     phase: Phase,
     prompt: Option<String>,
     activity_revision: u64,
+    metrics: Option<ovrcr_protocol::MetricsSample>,
+    metrics_revision: u64,
+    health_revision: u64,
+    source_health: Option<String>,
+    transcript_path: Option<String>,
+    collector: Option<super::collector::CollectorController>,
+    cost_watermark: Option<u64>,
+    collector_caught_up: bool,
 }
 impl Receiver {
     fn handle(&mut self, input: &[u8], deadline: Instant) -> Vec<u8> {
@@ -249,6 +278,19 @@ impl Receiver {
         let Ok(request) = serde_json::from_slice::<serde_json::Value>(input) else {
             return b"admission-ignored\n".to_vec();
         };
+        if request.get("provider").and_then(|v| v.as_str()) == Some("claude")
+            && request.get("origin").and_then(|v| v.as_str()) == Some("claude-statusline")
+        {
+            #[derive(serde::Deserialize)]
+            struct RawEnvelope<'a> {
+                #[serde(borrow)]
+                payload: &'a serde_json::value::RawValue,
+            }
+            if let Ok(raw) = serde_json::from_slice::<RawEnvelope<'_>>(input) {
+                self.statusline(raw.payload.get().as_bytes(), deadline);
+            }
+            return b"admission-ignored\n".to_vec();
+        }
         if request.get("provider").and_then(|v| v.as_str()) != Some("claude")
             || request.get("origin").and_then(|v| v.as_str()) != Some("claude-hook")
         {
@@ -300,13 +342,9 @@ impl Receiver {
                     turn: Some(prompt),
                 }),
             };
-            if lease.publish_activity(report, deadline).is_err() {
+            if lease.publish_observation(report, deadline).is_err() {
                 // Delivery uncertainty cannot leave a connected reporter claiming continuity.
-                self.phase = Phase::Closed;
-                if let Some(lease) = self.lease.take() {
-                    let _ = lease.stream.shutdown(std::net::Shutdown::Both);
-                    drop(lease);
-                }
+                self.disconnect(deadline);
                 return b"admission-unavailable\n".to_vec();
             }
             return b"admission-accepted\n".to_vec();
@@ -319,6 +357,7 @@ impl Receiver {
         };
         let response = match &self.phase {
             Phase::Waiting => {
+                self.transcript_path = event.transcript_path.clone();
                 let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() else {
                     self.phase = Phase::Closed;
                     return b"admission-unavailable\n".to_vec();
@@ -342,6 +381,7 @@ impl Receiver {
             Ok(Response::AgentOperation(AgentOperationResult::Bound(binding))) => {
                 lease.binding = Some(binding);
                 self.phase = Phase::Bound;
+                self.start_collector(deadline);
                 b"admission-accepted\n".to_vec()
             }
             Ok(_) => {
@@ -351,10 +391,261 @@ impl Receiver {
             Err(_) => b"admission-unavailable\n".to_vec(),
         }
     }
+    fn empty_metrics() -> ovrcr_protocol::MetricsSample {
+        use ovrcr_protocol::*;
+        fn uncertain<T>(value: T, source: &str) -> Measurement<T> {
+            Measurement {
+                value,
+                source: source.into(),
+                source_revision: None,
+                source_sequence: None,
+                freshness: MeasurementFreshness::Uncertain,
+            }
+        }
+        MetricsSample {
+            model: None,
+            context: uncertain(
+                ContextSample {
+                    used_tokens: None,
+                    capacity_tokens: None,
+                    quality: SampleQuality::Observed,
+                },
+                "claude_statusline",
+            ),
+            cost: uncertain(None, "claude_statusline"),
+            usage: uncertain(
+                UsageTotals {
+                    scope: UsageScope::Conversation,
+                    coverage: UsageCoverage::Partial,
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    reasoning_output_tokens: None,
+                },
+                "claude_root_transcript",
+            ),
+        }
+    }
+    fn disconnect(&mut self, deadline: Instant) {
+        self.phase = Phase::Closed;
+        if let Some(mut collector) = self.collector.take() {
+            let _ = collector.cancel(deadline);
+        }
+        if let Some(lease) = self.lease.take() {
+            let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+            drop(lease);
+        }
+    }
+    fn source_health(&mut self, reason: Option<String>, deadline: Instant) {
+        if !matches!(self.phase, Phase::Bound) || self.source_health == reason {
+            return;
+        }
+        self.source_health = reason.clone();
+        let Some(lease) = &mut self.lease else {
+            return;
+        };
+        let Some(binding) = lease.binding.clone() else {
+            return;
+        };
+        self.health_revision += 1;
+        let result = ovrcr_runtime::agent_runner::private_identifier()
+            .map_err(anyhow::Error::from)
+            .and_then(|operation| {
+                lease.command(
+                    operation,
+                    AgentCommand::Health(ProviderReport {
+                        binding,
+                        revision: self.health_revision,
+                        observation: AgentObservation::Health(HealthSample {
+                            state: if reason.is_some() {
+                                ReporterHealth::Unavailable
+                            } else {
+                                ReporterHealth::Connected
+                            },
+                            reason,
+                        }),
+                    }),
+                    deadline,
+                )
+            });
+        if !matches!(
+            result,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::HealthUpdated
+            ))
+        ) {
+            self.disconnect(deadline);
+        }
+    }
+    fn start_collector(&mut self, deadline: Instant) {
+        let Some(path) = self.transcript_path.as_ref() else {
+            return;
+        };
+        let Some(conversation) = self.expected.clone() else {
+            return;
+        };
+        let result = std::env::current_exe()
+            .map_err(anyhow::Error::from)
+            .and_then(|executable| {
+                super::collector::CollectorController::spawn(
+                    &executable,
+                    super::collector::CollectorSource {
+                        path: path.into(),
+                        conversation,
+                    },
+                )
+            });
+        match result {
+            Ok(collector) => self.collector = Some(collector),
+            Err(_) => self.source_health(Some("collector_unavailable".into()), deadline),
+        }
+    }
+    fn publish_metrics(&mut self, next: ovrcr_protocol::MetricsSample, deadline: Instant) {
+        if !matches!(self.phase, Phase::Bound) || self.metrics.as_ref() == Some(&next) {
+            return;
+        }
+        let Some(lease) = &self.lease else {
+            return;
+        };
+        let Some(binding) = lease.binding.clone() else {
+            return;
+        };
+        self.metrics_revision += 1;
+        let result = lease.publish_observation(
+            ProviderReport {
+                binding,
+                revision: self.metrics_revision,
+                observation: AgentObservation::Metrics(Box::new(next.clone())),
+            },
+            deadline,
+        );
+        if result.is_ok() {
+            self.metrics = Some(next);
+        } else {
+            self.disconnect(deadline);
+        }
+    }
+    fn statusline(&mut self, input: &[u8], deadline: Instant) {
+        if !matches!(self.phase, Phase::Bound) {
+            return;
+        }
+        let Ok(sample) = super::claude_metrics::parse_claude_metrics(input) else {
+            return;
+        };
+        if self.expected.as_ref() != Some(&sample.conversation) {
+            return;
+        }
+        if let Some(cost) = &sample.cost.value {
+            if self.cost_watermark.is_some_and(|old| cost.usd_ticks < old) {
+                return;
+            }
+            self.cost_watermark = Some(cost.usd_ticks);
+        }
+        let mut next = self.metrics.clone().unwrap_or_else(Self::empty_metrics);
+        next.model = sample.model;
+        next.context = sample.context;
+        next.cost = sample.cost;
+        self.publish_metrics(next, deadline);
+    }
+    fn poll(&mut self, deadline: Instant) {
+        if !matches!(self.phase, Phase::Bound) {
+            return;
+        }
+        let Some(collector) = &mut self.collector else {
+            return;
+        };
+        let result = collector.advance();
+        match result {
+            Ok(Some(snapshot)) => {
+                self.collector_caught_up = snapshot.caught_up;
+                let mut next = self.metrics.clone().unwrap_or_else(Self::empty_metrics);
+                next.usage.value = snapshot.usage;
+                self.publish_metrics(next, deadline);
+                self.source_health(snapshot.diagnostic, deadline);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                if let Some(mut collector) = self.collector.take() {
+                    let _ = collector.cancel(deadline);
+                }
+                self.source_health(Some("collector_unavailable".into()), deadline);
+            }
+        }
+    }
+    fn native_completed(&mut self, deadline: Instant) {
+        // Reserve 700ms for atomic finalization and original-operation receipt recovery.
+        let drain_deadline = deadline
+            .checked_sub(Duration::from_millis(700))
+            .unwrap_or(deadline);
+        self.collector_caught_up = false;
+        while self.collector.is_some()
+            && !self.collector_caught_up
+            && Instant::now() < drain_deadline
+        {
+            self.poll(
+                Instant::now()
+                    .checked_add(Duration::from_millis(100))
+                    .unwrap()
+                    .min(drain_deadline),
+            );
+            if !self.collector_caught_up {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        if let Some(mut collector) = self.collector.take() {
+            let _ = collector.cancel(drain_deadline);
+        }
+        let Some(mut lease) = self.lease.take() else {
+            return;
+        };
+        if matches!(self.phase, Phase::Bound)
+            && let Some(binding) = lease.binding.clone()
+        {
+            self.metrics_revision += 1;
+            let mut final_metrics = self.metrics.clone().unwrap_or_else(Self::empty_metrics);
+            final_metrics.usage.value.coverage = ovrcr_protocol::UsageCoverage::Partial;
+            if let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() {
+                let first_deadline = (Instant::now() + Duration::from_millis(300)).min(deadline);
+                let result = lease.command(
+                    operation.clone(),
+                    AgentCommand::Finalize {
+                        binding,
+                        revision: self.metrics_revision,
+                        final_metrics: Box::new(final_metrics),
+                    },
+                    first_deadline,
+                );
+                if !matches!(
+                    result,
+                    Ok(Response::AgentOperation(AgentOperationResult::Released))
+                ) && Instant::now() < deadline
+                {
+                    let _ = lease.final_status(operation, deadline);
+                }
+            }
+        } else if let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() {
+            let _ = lease.command(
+                operation,
+                AgentCommand::Release {
+                    expected_binding: lease.binding.clone(),
+                },
+                deadline,
+            );
+        }
+        self.phase = Phase::Closed;
+        // Ack uncertainty falls back to watched disconnection, never a new grace period.
+        let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+        drop(lease);
+    }
     fn freeze(&mut self, deadline: Instant) {
         if matches!(self.phase, Phase::Closed) {
             return;
         }
+        if let Some(mut collector) = self.collector.take() {
+            let _ = collector.cancel(deadline);
+        }
+        self.health_revision += 1;
         let pending = match &self.phase {
             Phase::Binding { operation } => Some(operation.clone()),
             _ => None,
@@ -380,7 +671,7 @@ impl Receiver {
                 operation,
                 AgentCommand::Health(ProviderReport {
                     binding,
-                    revision: 1,
+                    revision: self.health_revision,
                     observation: AgentObservation::Health(HealthSample {
                         state: ReporterHealth::Unavailable,
                         reason: Some("identity_transition_unavailable".into()),
@@ -555,6 +846,14 @@ mod tests {
             phase: Phase::Waiting,
             prompt: None,
             activity_revision: 0,
+            metrics: None,
+            metrics_revision: 0,
+            health_revision: 0,
+            source_health: None,
+            transcript_path: None,
+            collector: None,
+            cost_watermark: None,
+            collector_caught_up: false,
         };
         let input=br#"{"provider":"claude","origin":"claude-hook","payload":{"hook_event_name":"SessionStart","source":"startup","session_id":"expected"}}"#;
         assert_eq!(

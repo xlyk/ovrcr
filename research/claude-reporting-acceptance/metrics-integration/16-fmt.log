@@ -1,0 +1,20 @@
+Diff in /Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/cli/args.rs:230:
+
+ #[derive(Subcommand)]
+ pub(super) enum SessionCommand {
+-    Context { id: u64 },
++    Context {
++        id: u64,
++    },
+     /// Inspect managed activity, usage, cost, and source ages as JSON.
+-    Usage { id: u64 },
+-    Remove { id: u64 },
++    Usage {
++        id: u64,
++    },
++    Remove {
++        id: u64,
++    },
+ }
+
+ pub(super) fn resolve_cli_path(path: PathBuf) -> anyhow::Result<PathBuf> {

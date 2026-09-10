@@ -1,4 +1,4 @@
-//! Native invocation mechanics; provider admission is deliberately unavailable.
+//! Native invocation mechanics and bounded opaque reporting lifecycle.
 use anyhow::{Context, Result};
 use signal_hook::iterator::Signals;
 use std::{
@@ -9,7 +9,19 @@ use std::{
     time::Duration,
 };
 
-pub type HookHandler = Box<dyn FnMut(&[u8], std::time::Instant) -> Vec<u8> + Send>;
+pub enum HookEvent<'a> {
+    Request {
+        input: &'a [u8],
+        deadline: std::time::Instant,
+    },
+    Poll {
+        deadline: std::time::Instant,
+    },
+    NativeCompleted {
+        deadline: std::time::Instant,
+    },
+}
+pub type HookHandler = Box<dyn FnMut(HookEvent<'_>) -> Vec<u8> + Send>;
 
 // All group signals happen while the unreaped direct child anchors this PGID.
 pub fn run_native(
@@ -65,6 +77,7 @@ pub fn run_native(
     }
     let mut child = command.spawn().context("start native agent")?;
     let group = child.id() as libc::pid_t;
+    let mut completion_deadline = None;
     let result = (|| -> Result<ExitStatus> {
         loop {
             let mut continued = false;
@@ -101,7 +114,11 @@ pub fn run_native(
             }
             if unsafe { info.si_pid() } != 0 {
                 match info.si_code {
-                    libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED => break,
+                    libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED => {
+                        completion_deadline =
+                            Some(std::time::Instant::now() + Duration::from_secs(2));
+                        break;
+                    }
                     libc::CLD_STOPPED => {
                         // Consume only the stop notification, leaving exits unreaped.
                         unsafe {
@@ -163,6 +180,12 @@ pub fn run_native(
         let _ = child.wait();
     }
     drop(terminal);
+    if let Some(channel) = &mut channel {
+        channel.complete(
+            completion_deadline
+                .unwrap_or_else(|| std::time::Instant::now() + Duration::from_secs(2)),
+        );
+    }
     result
 }
 
@@ -237,6 +260,7 @@ struct InvocationChannel {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     initialize: Option<std::sync::mpsc::SyncSender<Option<HookHandler>>>,
+    completion: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 impl InvocationChannel {
     fn new() -> io::Result<Self> {
@@ -251,6 +275,8 @@ impl InvocationChannel {
         let expected = format!("{token}\n").into_bytes();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_stop = stop.clone();
+        let completion = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let thread_completion = completion.clone();
         let (initialize, ready) = std::sync::mpsc::sync_channel::<Option<HookHandler>>(1);
         // Start the receiver before reporting setup can authorize argv changes.
         let thread = std::thread::Builder::new().spawn(move || {
@@ -259,7 +285,26 @@ impl InvocationChannel {
                 return;
             };
             let stop = thread_stop;
+            let mut next_poll = Instant::now();
             while !stop.load(Ordering::SeqCst) {
+                let completion_deadline = *thread_completion.lock().unwrap();
+                if let Some(deadline) = completion_deadline {
+                    if let Some(handler) = &mut handler {
+                        handler(HookEvent::NativeCompleted { deadline });
+                    }
+                    break;
+                }
+                if Instant::now() >= next_poll {
+                    next_poll = Instant::now() + Duration::from_millis(100);
+                    if let Some(handler) = &mut handler {
+                        handler(HookEvent::Poll {
+                            deadline: next_poll,
+                        });
+                    }
+                }
+                if thread_completion.lock().unwrap().is_some() {
+                    continue;
+                }
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         let started = Instant::now();
@@ -288,7 +333,10 @@ impl InvocationChannel {
                                 continue;
                             }
                             if let Some(handler) = &mut handler {
-                                handler(&request, started + Duration::from_millis(800))
+                                handler(HookEvent::Request {
+                                    input: &request,
+                                    deadline: started + Duration::from_millis(800),
+                                })
                             } else {
                                 b"admission-unavailable\n".to_vec()
                             }
@@ -315,7 +363,28 @@ impl InvocationChannel {
             stop,
             thread: Some(thread),
             initialize: Some(initialize),
+            completion,
         })
+    }
+    fn complete(&mut self, deadline: std::time::Instant) {
+        *self.completion.lock().unwrap() = Some(deadline);
+        // The handler contract uses this same absolute deadline. Never acquire a new
+        // grace period or block indefinitely joining a failed reporting callback.
+        while self
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        if let Some(thread) = self.thread.take() {
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
     }
     fn start(&mut self, handler: Option<HookHandler>) {
         if let Some(initialize) = self.initialize.take() {
@@ -347,10 +416,7 @@ fn read_private_bytes(
 }
 impl Drop for InvocationChannel {
     fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         drop(self.initialize.take());
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        self.complete(std::time::Instant::now() + Duration::from_secs(2));
     }
 }

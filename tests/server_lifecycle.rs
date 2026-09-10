@@ -7512,6 +7512,15 @@ fn agent_admission_native_helper() {
         ),
     )
     .unwrap();
+    let write_transcript = || {
+        if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+            let row = serde_json::json!({"type":"assistant","sessionId":expected,"isSidechain":false,"requestId":"r","message":{"id":"m","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}});
+            std::fs::write(path, format!("{row}\n")).unwrap();
+        }
+    };
+    if std::env::var("OVRCR_TEST_DELAY_TRANSCRIPT").as_deref() != Ok("1") {
+        write_transcript();
+    }
     println!("ADMISSION_READY");
     for (index, line) in std::io::stdin().lock().lines().enumerate() {
         let line = line.unwrap();
@@ -7519,7 +7528,34 @@ fn agent_admission_native_helper() {
             break;
         }
         let mut payload = serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected,"agent_type":"fixture-root"});
+        if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+            payload["transcript_path"] = path.to_string_lossy().as_ref().into();
+        }
         match line.as_str() {
+            "create-transcript" => write_transcript(),
+            "grow-transcript" => {
+                use std::io::Write;
+                let path = std::env::var_os("OVRCR_TEST_TRANSCRIPT").unwrap();
+                let row = serde_json::json!({"type":"assistant","sessionId":expected,"isSidechain":false,"requestId":"r2","message":{"id":"m2","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}});
+                writeln!(
+                    std::fs::OpenOptions::new().append(true).open(path).unwrap(),
+                    "{row}"
+                )
+                .unwrap();
+            }
+            "statusline" | "statusline-replay" | "statusline-wrong" | "statusline-unknown"
+            | "statusline-lower" => {
+                payload = serde_json::json!({"session_id":expected,"cost":{"total_cost_usd":0.25},"context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+                if line == "statusline-wrong" {
+                    payload["session_id"] = "foreign".into();
+                }
+                if line == "statusline-unknown" {
+                    payload["cost"] = serde_json::Value::Null;
+                }
+                if line == "statusline-lower" {
+                    payload["cost"]["total_cost_usd"] = 0.1.into();
+                }
+            }
             "wrong" => payload["session_id"] = "wrong-conversation".into(),
             "child" => payload["agent_id"] = "child-1".into(),
             "malformed-child" => payload["agent_id"] = serde_json::Value::Null,
@@ -7594,7 +7630,9 @@ fn agent_admission_native_helper() {
             continue;
         }
         let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
-        if line == "generic" {
+        if line.starts_with("statusline") {
+            command.args(["report", "claude-statusline", "--stdin-json"]);
+        } else if line == "generic" {
             command.args(["report", "activity", "--state", "busy"]);
         } else {
             command.args(["report", "claude", "--stdin-json"]);
@@ -7612,7 +7650,11 @@ fn agent_admission_native_helper() {
             .write_all(serde_json::to_string(&payload).unwrap().as_bytes())
             .unwrap();
         let output = callback.wait_with_output().unwrap();
-        assert!(output.stdout.is_empty(), "hooks must be stdout silent");
+        if line.starts_with("statusline") {
+            assert_eq!(output.stdout, b"ctx 20%\n");
+        } else {
+            assert!(output.stdout.is_empty(), "hooks must be stdout silent");
+        }
         println!("ADMISSION_CALLBACK={index}");
     }
 }
@@ -7623,8 +7665,10 @@ enum AdmissionFault {
     RejectHealth,
     RejectStatus,
     RejectActivity,
+    LostFinalize,
 }
 struct AdmissionProxy {
+    final_status_verified: std::sync::Arc<std::sync::atomic::AtomicBool>,
     path: std::path::PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     streams: std::sync::Arc<std::sync::Mutex<Vec<UnixStream>>>,
@@ -7643,6 +7687,9 @@ impl AdmissionProxy {
         let thread_stop = stop.clone();
         let thread_streams = streams.clone();
         let dropped = Arc::new(AtomicBool::new(false));
+        let final_operation = Arc::new(Mutex::new(None::<String>));
+        let final_status_verified = Arc::new(AtomicBool::new(false));
+        let thread_final_status = final_status_verified.clone();
         let thread = thread::spawn(move || {
             let mut handlers = Vec::new();
             while !thread_stop.load(Ordering::SeqCst) {
@@ -7656,6 +7703,8 @@ impl AdmissionProxy {
                         let target = target.clone();
                         let streams = thread_streams.clone();
                         let dropped = dropped.clone();
+                        let final_operation = final_operation.clone();
+                        let final_status_verified = thread_final_status.clone();
                         handlers.push(thread::spawn(move || {
                             if ovrcr::protocol::exchange_preamble(&mut front).is_err() {
                                 return;
@@ -7721,6 +7770,41 @@ impl AdmissionProxy {
                                         ..
                                     })
                                 );
+                                if let Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                    command: ovrcr::protocol::AgentCommand::Finalize { .. },
+                                    operation,
+                                    ..
+                                }) = &message.request
+                                {
+                                    *final_operation.lock().unwrap() = Some(operation.clone());
+                                }
+                                if let Request::AgentStatus { operation, .. } = &message.request
+                                    && final_operation.lock().unwrap().as_ref() == Some(operation)
+                                    && matches!(
+                                        &response,
+                                        ServerMessage::Response {
+                                            response: Response::AgentOperation(
+                                                ovrcr::protocol::AgentOperationResult::Released
+                                            ),
+                                            ..
+                                        }
+                                    )
+                                {
+                                    final_status_verified.store(true, Ordering::SeqCst);
+                                }
+                                let is_finalize = matches!(
+                                    &message.request,
+                                    Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                        command: ovrcr::protocol::AgentCommand::Finalize { .. },
+                                        ..
+                                    })
+                                );
+                                if is_finalize
+                                    && matches!(fault, AdmissionFault::LostFinalize)
+                                    && !dropped.swap(true, Ordering::SeqCst)
+                                {
+                                    continue;
+                                }
                                 if is_bind
                                     && matches!(
                                         fault,
@@ -7752,6 +7836,7 @@ impl AdmissionProxy {
             stop,
             streams,
             thread: Some(thread),
+            final_status_verified,
         }
     }
 }
@@ -8417,4 +8502,310 @@ fn fresh_pty_outer_channel_helper() {
         "",
         "private outer channel must not reach a fresh PTY"
     );
+}
+
+#[test]
+fn claude_metrics_route_collects_partial_usage_and_finalizes_native_exit() {
+    assert_claude_metrics_completion(false, false, false);
+}
+#[test]
+fn claude_metrics_finalization_recovers_original_receipt_after_lost_ack() {
+    assert_claude_metrics_completion(true, false, false);
+}
+#[test]
+fn claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path() {
+    assert_claude_metrics_completion(false, true, false);
+}
+#[test]
+fn claude_metrics_clear_freezes_components_and_prevents_reader_reopening() {
+    assert_claude_metrics_completion(false, false, true);
+}
+fn assert_claude_metrics_completion(lose_ack: bool, missing: bool, clear: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "metrics-setup");
+    let proxy = lose_ack.then(|| {
+        AdmissionProxy::new(
+            fixture._root.path().join("metrics-proxy.sock"),
+            fixture.socket.clone(),
+            AdmissionFault::LostFinalize,
+        )
+    });
+    let socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("metrics-probe");
+    let transcript = fixture._root.path().join("root-transcript.jsonl");
+    let summary = fixture.create_session_summary("metrics", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4" OVRCR_TEST_TRANSCRIPT="$6" OVRCR_TEST_DELAY_TRANSCRIPT="$7"; "$1" agent run --provider claude -- "$2"; printf METRICS_FINISHED; IFS= read -r done"#.into(),
+        "metrics-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.into_os_string(), std::env::current_exe().unwrap().into_os_string(), socket.clone().into_os_string(), transcript.into_os_string(), if missing { "1" } else { "0" }.into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    let commands = if missing {
+        vec![
+            "root",
+            "activity:UserPromptSubmit:A",
+            "statusline",
+            "create-transcript",
+        ]
+    } else {
+        vec!["root", "statusline"]
+    };
+    for (index, command) in commands.into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if missing && index == 2 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+                if snapshot.health.state == ovrcr::protocol::ReporterHealth::Unavailable {
+                    assert_eq!(
+                        snapshot.activity.unwrap().state,
+                        ovrcr::protocol::AgentActivity::Busy
+                    );
+                    assert_eq!(
+                        snapshot.metrics.unwrap().sample.context.value.used_tokens,
+                        Some(20)
+                    );
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "missing source health must be visible"
+                );
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let before = loop {
+        let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+        if snapshot.metrics.as_ref().is_some_and(|m| {
+            m.sample.usage.value.input_tokens == Some(10)
+                && m.sample.context.value.used_tokens == Some(20)
+        }) && snapshot.health.state == ovrcr::protocol::ReporterHealth::Connected
+        {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual statusline/collector metrics not published"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    if !missing {
+        for (index, command) in ["statusline-replay", "statusline-wrong"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 2));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.metrics_revision, before.metrics_revision);
+            assert_eq!(snapshot.metrics, before.metrics);
+        }
+    }
+    if !missing && !clear {
+        for (index, command) in ["statusline-unknown", "statusline-lower", "statusline"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Connected
+            );
+            assert_eq!(
+                snapshot
+                    .metrics
+                    .unwrap()
+                    .sample
+                    .cost
+                    .value
+                    .map(|cost| cost.usd_ticks),
+                if index == 2 {
+                    Some(2_500_000_000)
+                } else {
+                    None
+                }
+            );
+        }
+    }
+    if clear {
+        for (index, command) in ["clear", "grow-transcript", "statusline-unknown", "root"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.metrics, before.metrics);
+            assert_eq!(snapshot.binding, before.binding);
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+        }
+    }
+    let started = Instant::now();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "METRICS_FINISHED",
+        Instant::now() + Duration::from_secs(3),
+    );
+    assert!(started.elapsed() < Duration::from_millis(2500));
+    let after = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(after.binding, before.binding);
+    assert_eq!(
+        after.health.reason.as_deref(),
+        Some(if clear {
+            "unfinalized_release"
+        } else {
+            "incomplete_final_accounting"
+        })
+    );
+    let metrics = after.metrics.unwrap();
+    assert_eq!(
+        metrics.sample.usage.value.coverage,
+        ovrcr::protocol::UsageCoverage::Partial
+    );
+    assert_eq!(metrics.sample.usage.value.input_tokens, Some(10));
+    assert_eq!(metrics.sample.cost.value.unwrap().usd_ticks, 2_500_000_000);
+    assert_eq!(
+        metrics.context_received_unix_ms,
+        before.metrics.unwrap().context_received_unix_ms
+    );
+    if let Some(proxy) = &proxy {
+        assert!(
+            proxy
+                .final_status_verified
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "must recover original committed finalization receipt without reattaching"
+        );
+    }
+}
+
+#[test]
+fn native_exit_is_bounded_when_reporting_callback_stalls() {
+    use std::os::unix::process::CommandExt;
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "native_exit_stalled_reporting_helper",
+            "--nocapture",
+        ])
+        .process_group(0)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+            }
+            let _ = child.wait();
+            panic!("owned reporting fixture exceeded exit bound");
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("NATIVE_EXIT_17"));
+}
+#[test]
+#[ignore = "isolated signal handler and native supervision fixture"]
+fn native_exit_stalled_reporting_helper() {
+    use ovrcr_runtime::agent_runner::{HookEvent, run_native};
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("callback-entered");
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (finished, finish) = std::sync::mpsc::channel();
+    let child_marker = marker.clone();
+    let started = Instant::now();
+    let status = run_native(
+        &[
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"while test ! -f "$1"; do sleep 0.01; done; printf NATIVE_EXIT_17; exit 17"#.into(),
+            "native-exit".into(),
+            child_marker.into_os_string(),
+        ],
+        move |available, _| {
+            assert!(available);
+            Some(Box::new(move |event| {
+                if matches!(event, HookEvent::Poll { .. }) {
+                    std::fs::write(&marker, "entered").unwrap();
+                    let _ = blocked.recv();
+                    let _ = finished.send(());
+                }
+                Vec::new()
+            }))
+        },
+    )
+    .unwrap();
+    assert_eq!(status.code(), Some(17));
+    assert!(started.elapsed() < Duration::from_millis(2500));
+    release.send(()).unwrap();
+    finish.recv_timeout(Duration::from_secs(1)).unwrap();
 }

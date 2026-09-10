@@ -1,0 +1,18 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+error[E0432]: unresolved imports `ovrcr_protocol::ContextUsageSnapshot`, `ovrcr_protocol::ContextUsageReport`, `ovrcr_protocol::ContextSource`
+ --> crates/ovrcr-tui/src/dashboard/render.rs:9:142
+  |
+9 | ...geCoverage, CostKind, ContextUsageSnapshot, ContextUsageReport, ContextSource};
+  |                          ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^ no `ContextSource` in the root
+  |                          |                     |
+  |                          |                     no `ContextUsageReport` in the root
+  |                          no `ContextUsageSnapshot` in the root
+  |
+help: a similar name exists in the module
+  |
+9 - use ovrcr_protocol::{HistoryColor, SessionSummary, SampleQuality, ReporterHealth, MeasurementFreshness, UsageScope, UsageCoverage, CostKind, ContextUsageSnapshot, ContextUsageReport, ContextSource};
+9 + use ovrcr_protocol::{HistoryColor, SessionSummary, SampleQuality, ReporterHealth, MeasurementFreshness, UsageScope, UsageCoverage, CostKind, ContextUsageSnapshot, ContextUsageReport, ContextSample};
+  |
+
+For more information about this error, try `rustc --explain E0432`.
+error: could not compile `ovrcr-tui` (lib) due to 1 previous error

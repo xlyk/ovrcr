@@ -1,0 +1,25 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.93s
+     Running tests/cli.rs (target/debug/deps/cli-6b6ba4db7807183d)
+
+running 2 tests
+
+thread 'claude_statusline_renders_default_without_reporting_server' (32043469) panicked at tests/cli.rs:2008:5:
+assertion failed: output.status.success()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test claude_statusline_renders_default_without_reporting_server ... FAILED
+
+thread 'claude_statusline_renderer_receives_original_input_once_even_if_invalid' (32043468) panicked at tests/cli.rs:2027:9:
+assertion failed: output.status.success()
+test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... FAILED
+
+failures:
+
+failures:
+    claude_statusline_renderer_receives_original_input_once_even_if_invalid
+    claude_statusline_renders_default_without_reporting_server
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.60s
+
+error: test failed, to rerun pass `-p ovrcr --test cli`

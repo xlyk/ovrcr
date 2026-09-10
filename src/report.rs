@@ -456,7 +456,7 @@ pub struct InvocationLease {
     capability: [u8; 32],
 }
 impl InvocationLease {
-    fn publish_activity(
+    fn publish_observation(
         &self,
         report: ovrcr_protocol::ProviderReport,
         deadline: Instant,
@@ -475,7 +475,7 @@ impl InvocationLease {
             deadline,
         )?;
         if response != Response::Ok {
-            bail!("activity publication unavailable");
+            bail!("observation publication unavailable");
         }
         Ok(())
     }
@@ -495,6 +495,19 @@ impl InvocationLease {
                 operation,
                 command,
             }),
+            deadline,
+        )
+    }
+    fn final_status(&self, operation: String, deadline: Instant) -> Result<Response> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        agent_exchange(
+            &mut stream,
+            1,
+            Request::AgentStatus {
+                auth: self.auth.clone(),
+                operation,
+            },
             deadline,
         )
     }
@@ -525,15 +538,29 @@ impl InvocationLease {
 }
 
 pub fn send_claude_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    send_claude_payload(input, "claude-hook", deadline)
+}
+pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
+    send_claude_payload(input, "claude-statusline", deadline)
+}
+fn send_claude_payload(input: &[u8], origin: &str, deadline: Instant) -> Result<()> {
     let path = std::env::var_os("OVRCR_AGENT_SOCKET").context("no private invocation channel")?;
     let token = std::env::var("OVRCR_AGENT_TOKEN")
         .ok()
         .filter(|value| value.len() == 64)
         .context("invalid private invocation token")?;
-    let payload: serde_json::Value = serde_json::from_slice(input)?;
-    let request = serde_json::to_vec(
-        &serde_json::json!({"provider":"claude","origin":"claude-hook","payload":payload}),
-    )?;
+    #[derive(serde::Serialize)]
+    struct Envelope<'a> {
+        provider: &'static str,
+        origin: &'a str,
+        payload: &'a serde_json::value::RawValue,
+    }
+    let payload = serde_json::from_slice(input)?;
+    let request = serde_json::to_vec(&Envelope {
+        provider: "claude",
+        origin,
+        payload,
+    })?;
     if request.len() > HOOK_INPUT_LIMIT {
         bail!("hook input exceeds limit");
     }

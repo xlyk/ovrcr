@@ -1,0 +1,14 @@
+    Checking parking_lot_core v0.9.12
+    Checking mio v1.2.3
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Checking tempfile v3.27.0
+    Checking parking_lot v0.12.5
+    Checking signal-hook-mio v0.2.5
+    Checking crossterm v0.29.0
+    Checking ratatui-crossterm v0.1.2
+    Checking ratatui v0.30.2
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.60s

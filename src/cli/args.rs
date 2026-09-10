@@ -118,6 +118,12 @@ pub(super) enum ReportCommand {
         #[arg(long)]
         stdin_json: bool,
     },
+    ClaudeStatusline {
+        #[arg(long)]
+        stdin_json: bool,
+        #[arg(long)]
+        render_command: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

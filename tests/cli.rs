@@ -1994,3 +1994,105 @@ fn agent_run_private_channel_failure_runs_native_without_inherited_reporting() {
     );
     assert!(!root.path().join("server.sock").exists());
 }
+
+#[test]
+fn claude_statusline_renders_default_without_reporting_server() {
+    let root = tempfile::tempdir().unwrap();
+    let mut command = isolated_command(&root);
+    command
+        .args(["report", "claude-statusline", "--stdin-json"])
+        .env_remove("OVRCR_AGENT_SOCKET")
+        .env_remove("OVRCR_AGENT_TOKEN")
+        .stdin(Stdio::piped());
+    let mut child = spawn_captured(command).unwrap();
+    child.child.stdin.take().unwrap().write_all(br#"{"session_id":"root","context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#).unwrap();
+    let output = wait_captured(&mut child, Instant::now() + Duration::from_secs(2)).unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"ctx 20%\n");
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
+fn claude_statusline_renderer_receives_original_input_once_even_if_invalid() {
+    for input in [
+        b" { \"not_metrics\": 1.12345678901 }\n".to_vec(),
+        b"not json".to_vec(),
+        vec![b'x'; 70_000],
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let received = root.path().join("received");
+        let count = root.path().join("calls");
+        let mut command = isolated_command(&root);
+        command
+            .args([
+                "report",
+                "claude-statusline",
+                "--stdin-json",
+                "--render-command",
+                "cat > \"$RENDER_INPUT\"; printf x >> \"$RENDER_CALLS\"; printf USER_RENDER",
+            ])
+            .env("RENDER_INPUT", &received)
+            .env("RENDER_CALLS", &count)
+            .env("OVRCR_AGENT_SOCKET", root.path().join("missing.sock"))
+            .env("OVRCR_AGENT_TOKEN", "8".repeat(64))
+            .stdin(Stdio::piped());
+        let mut child = spawn_captured(command).unwrap();
+        child.child.stdin.take().unwrap().write_all(&input).unwrap();
+        let output = wait_captured(&mut child, Instant::now() + Duration::from_secs(2)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"USER_RENDER");
+        assert_eq!(std::fs::read(received).unwrap(), input);
+        assert_eq!(std::fs::read(count).unwrap(), b"x");
+    }
+}
+
+#[test]
+fn claude_statusline_preserves_decimal_and_renders_after_reporting_timeout() {
+    for (withhold, render) in [(false, false), (true, false), (true, true)] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("private.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut auth = [0; 65];
+            stream.read_exact(&mut auth).unwrap();
+            let mut length = [0; 4];
+            stream.read_exact(&mut length).unwrap();
+            let mut input = vec![0; u32::from_be_bytes(length) as usize];
+            stream.read_exact(&mut input).unwrap();
+            if withhold {
+                let _ = stream.read(&mut [0; 1]);
+            } else {
+                stream.write_all(b"admission-ignored\n").unwrap();
+            }
+            String::from_utf8(input).unwrap()
+        });
+        let mut command = isolated_command(&root);
+        command
+            .args(["report", "claude-statusline", "--stdin-json"])
+            .env("OVRCR_AGENT_SOCKET", path)
+            .env("OVRCR_AGENT_TOKEN", "9".repeat(64))
+            .stdin(Stdio::piped());
+        if render {
+            command.args(["--render-command", "cat >/dev/null; printf USER_RENDER"]);
+        }
+        let mut child = spawn_captured(command).unwrap();
+        child.child.stdin.take().unwrap().write_all(br#"{"session_id":"root","cost":{"total_cost_usd":1.00000000005},"context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}"#).unwrap();
+        let output = wait_captured(&mut child, Instant::now() + Duration::from_secs(2)).unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            if render {
+                b"USER_RENDER".as_slice()
+            } else {
+                b"ctx 20%\n".as_slice()
+            }
+        );
+        let envelope = server.join().unwrap();
+        assert!(envelope.contains("1.00000000005"));
+        assert!(envelope.contains("claude-statusline"));
+    }
+}

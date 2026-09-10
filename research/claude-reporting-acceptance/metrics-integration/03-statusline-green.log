@@ -1,0 +1,9 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.77s
+     Running tests/cli.rs (target/debug/deps/cli-6b6ba4db7807183d)
+
+running 2 tests
+test claude_statusline_renders_default_without_reporting_server ... ok
+test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.83s

@@ -1,0 +1,16 @@
+research/claude-reporting-acceptance/metrics-integration/03-statusline-green.log:10: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/06-route-green.log:31: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/07-statusline.log:11: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/08-route-recovery.log:39: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/10-metrics.log:50: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/11-stalled-callback.log:8: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/12-statusline.log:11: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/13-existing-lifecycle.log:139: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/14-report-library.log:28: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/16-fmt.log:2: trailing whitespace.
++
+research/claude-reporting-acceptance/metrics-integration/16-fmt.log:19: trailing whitespace.
++
+research/claude-reporting-acceptance/metrics-integration/18-activity.log:28: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/19-cli-hooks.log:12: new blank line at EOF.
+research/claude-reporting-acceptance/metrics-integration/23-startup-allowance.log:49: new blank line at EOF.
