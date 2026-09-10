@@ -1,0 +1,20 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-a24d3eaf6784f9c6)
+
+running 1 test
+
+thread 'report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit' (37982999) panicked at src/report/admission.rs:1419:13:
+assertion `left == right` failed
+  left: false
+ right: true
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... FAILED
+
+failures:
+
+    report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.38s
+
+error: test failed, to rerun pass `-p ovrcr --lib`

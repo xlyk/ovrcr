@@ -1,0 +1,31 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.24s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpN5iCzU/repo/.git/
+[main (root-commit) 3d7eae4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpN5iCzU/server.sock
+
+thread '<unnamed>' (38014859) panicked at tests/server_lifecycle.rs:5303:72:
+called `Result::unwrap()` on an `Err` value: bind server socket /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpN5iCzU/server.sock
+
+Caused by:
+    Operation not permitted (os error 1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle' (38014823) panicked at tests/server_lifecycle.rs:5330:9:
+control server did not start
+control fixture shutdown response: None
+control fixture cleanup incomplete; preserved /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpN5iCzU
+test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... FAILED
+
+failures:
+
+    agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 78 filtered out; finished in 2.10s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
