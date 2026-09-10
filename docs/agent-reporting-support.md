@@ -2,6 +2,8 @@
 
 Claude contract review date: 2026-09-10. The installed executable was verified as **2.1.267** by the Task 1 coordinator. No minimum supported version is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
 
+The [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md) reconciles this rolling record with the delivered callers, assertions, tested revisions and native evidence. It splits passing parts from open provider and platform clauses.
+
 The [fixture manifest](../tests/fixtures/agent-reporting/claude/manifest.json) contains 23 **source-derived** payload examples. Every identity, path and content value is synthetic. Shared IDs illustrate relationships; file order does not represent observed callback order. The rolling documentation may describe behavior that differs from the installed release. No fixture in this directory is a live capture.
 
 ## Documented sources
@@ -92,7 +94,9 @@ legacy migration, diagnostics and removal. The selected dashboard header now use
 the same managed activity quality/health as the sidebar (`2c432e0`). Native GUI
 synthetic evidence and the blocked real-Claude trust boundary are recorded in
 [the GUI review](../research/claude-reporting-acceptance/task7-gui/review.md).
-This does not certify native provider totals or final settling. Full release gates
+That trust statement describes the first attempt; the authorized native follow-up
+below resolved it and cleaned the fixture. This does not certify native provider
+totals or final settling. Full release gates
 remain open until all required provider/platform evidence is available.
 
 Automated final checks passed586 workspace tests (11 intentional ignores),

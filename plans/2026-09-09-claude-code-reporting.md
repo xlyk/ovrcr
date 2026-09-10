@@ -27,6 +27,8 @@ Already implemented:
 
 Required outcome: reliable identity; honest status quality; current context; complete or explicitly partial token totals; optional cost with scope/provenance; safe setup; actionable diagnostics; CLI/dashboard display; native Claude acceptance. Preserve all generic reporting commands and scheduled Pi behavior.
 
+The dated [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md) reconciles this checklist with the delivered implementation and evidence. Unchecked mixed clauses remain open even when the matrix marks their narrower implementation `Verified` or `Partial`.
+
 Not included: implementing other harnesses, account quotas, pricing tables, historical analytics, automatic global configuration edits or restoration of dead PTYs.
 
 ## Contract decisions
@@ -232,8 +234,10 @@ See the dated support document and saved acceptance evidence for exact commits.
 The remaining unchecked source/acceptance requirements are intentional. Settled
 completion, full auxiliary/resumed/forked accounting and final-source completion
 remain uncertified; the implementation exposes their limits rather than inferring
-success. Real-provider GUI acceptance is waiting for explicit approval at Claude's
-disposable-workspace trust prompt. Linux acceptance and internal queue-counter
+success. That trust-pending statement records the first GUI attempt. The later
+authorized native follow-up accepted trust, completed two turns, detach/reattach,
+exit and owned cleanup; see the remaining-requirement matrix for the open cases.
+Linux acceptance and internal queue-counter
 capacity instrumentation remain unverified. No full-integration release claim is
 made by this checkpoint.
 
