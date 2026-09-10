@@ -84,3 +84,16 @@ from the `c2fb7ea` working tree with the added reason assertion. It passed one
 test with 98 filtered out. The RTK-compressed terminal capture is retained at
 [retained capture](part2-proof/supervisor-disconnect.txt); it is outside the repository
 because the coordinator owns staged evidence files.
+
+
+## Part 3 checkpoint (2026-09-10)
+
+- **CR-OWN-01/exec boundary:** `d041e49` added real supervisor PID-only SIGKILL and native exec descriptor proofs. Independent review found missing collector-group and callback-directory cleanup assertions; `fcf26fe` fixed both. Both exact macOS tests passed again and [independent review](part3-lifecycle/review.md) resolved the blockers. Linux execution on the new revision remains pending; helper foreground TPGID is not newly asserted by these tests.
+- **CR-SRC-05/version eligibility:** [Source review](part3-version/source-review.md) approved exact 2.1.268 existing Partial/Observed reporting and separate short UUID resume on 2.1.268 only. Integrated acceptance is still required after implementation. No version range or 2.1.267 short-form support is inferred.
+- **CR-MET-01/native null:** [Actual 2.1.268 clear](part3-version/README.md) emitted current_usage=null and null context percentages with `ctx —` in native GUI. This closes native null source observation, not identity-transition support or the historical 2.1.267 compaction-specific question.
+- **CR-ACT-07/child API:** Actual child HTTP 404 emitted child-tagged StopFailure and valid parent continuation in the discovery fixture. Discovery was untracked; unchanged runtime binding/activity/metrics remains an integrated acceptance gate.
+- **CR-MET-02/03/06 and CR-ACT-01A:** OTEL history omission and missing correction/finality/settled guarantees keep Complete and Confirmed disabled. Native observations do not establish the remaining cancellation/background/race matrices.
+- **CR-LOAD-02/04:** [Full allocation inventory](part3-memory/inventory.md) is retained. Fifty distinct raw-boundary sources require 1600 MiB disk, exceeding this host's roughly 953 MiB free. A shared file still implies 1600 MiB pending buffers and 2400 MiB including charged indexes before overhead. No stress was run on the busy host; no universal memory bound is claimed.
+- **Cleanup:** [Discovery cleanup](part3-version/cleanup.json) verified all recorded native/GUI/receiver groups absent and fixture removal. The bounded [Docker check](part3-memory/docker-check.json) timed out after eight seconds; the previously named container/image remain pending, without a service restart.
+
+The full milestone remains open. PR #55 was found externally marked ready during Part 3 preflight; that user-owned state is preserved, while merge/release remain unauthorized.

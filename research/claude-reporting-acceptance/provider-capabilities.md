@@ -34,3 +34,20 @@ Further native work must capture only attributable identities and numeric measur
 Independent discovery review confirmed the pre-existing distinctions on 2026-09-10. Independent review approved the initial explicit UUID resume source contract at `36b3f59`; runtime implementation and integrated native acceptance remain separate gates.
 
 Part 2 correction review approved `9585271` with no blocking findings. The native run from that same clean tracked revision preserved unknown activity before new input, imported the old recognized usage row, added a distinct new row, and retained Partial accounting at exit. This closes only the initial explicit UUID resume clause.
+
+
+## Part 3 source checkpoint (2026-09-10)
+
+This dated checkpoint supersedes the earlier source-discovery verdicts only where stated. [Exact 2.1.268 discovery](part3-version/README.md) and its [independent source review](part3-version/source-review.md) permit the existing Partial/Observed contract on exact 2.1.268 and separate `-r <canonical lowercase UUIDv4>` on 2.1.268 only. The source review does not extend short resume to 2.1.267. Implementation and integrated acceptance are separate gates; the discovery GUI was built at `fa4e12d` and correctly reported `agent: null` for the unsupported candidate.
+
+The new native records include long/short resume success and missing-UUID exit 1, same-ID compact with explicit zero context, clear with native null current context, blocking Stop continuation followed by a matching delayed idle, and a child model-not-found HTTP 404 carrying a child-tagged StopFailure followed by a valid parent response. The null and child API source gaps now have actual observations; corresponding runtime assertions and integrated acceptance remain separate.
+
+| Expansion | New evidence | Remaining contract gap |
+| --- | --- | --- |
+| Complete accounting | Local OTEL delta export matched the new resumed request: 50478 input including cache subsets and 19 output | Earlier 335379/372 recognized history was not exported; no request/correction identity, full category reconciliation or final boundary |
+| Final accounting | Normal exit and successful HTTP export were observed | Neither establishes finality across delayed writes, children or missing categories |
+| Confirmed activity | Matching idle notification arrived 60.063212 seconds after a continued turn's final Stop | No guaranteed post-decision signal across denial, cancellation, child work and stale timers; remaining adverse matrix unverified |
+| In-process selection | Foreground A to branch B to resume A to clear C generated paired events | Pair exclusivity, independently intended target and cancelled/background ordering remain uncertified |
+| Other launch forms | Short exact UUID form has version-specific argv and matching native identity | Continue, picker/name/search, equals syntax and other UUID spellings remain disabled |
+
+No production OTEL collector, correction support, Complete quality, Confirmed quality or transition rebinding is authorized by these observations. The full milestone remains incomplete. The [memory inventory](part3-memory/inventory.md) separates measured/charged limits from allocator, JSON, queue and kernel terms; its required high-water run is unrun on this disk-constrained host.
