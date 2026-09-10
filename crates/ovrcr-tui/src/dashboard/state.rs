@@ -1991,6 +1991,9 @@ impl Dashboard {
         {
             if self.mode == InputMode::Browse {
                 self.focus_pane(pane.pane_index);
+                if matches!(self.selected_phase(), Some(SessionPhase::Running)) {
+                    self.mode = InputMode::Terminal;
+                }
                 return Some(DashboardAction::Redraw);
             }
             if pane.pane_index != self.focused_pane {
@@ -2041,8 +2044,12 @@ impl Dashboard {
         if let Some(pane) = self.focused_pane_mut() {
             *pane = super::PaneState::new(size);
         }
+        if let Some(index) = self.panes.iter().position(|pane| pane.session.is_some()) {
+            self.focused_pane = index;
+        }
         self.selected_container = Some(row);
         self.mode = InputMode::Browse;
+        self.pending_user_view_change = true;
         self.invalidate_view_readiness();
     }
 

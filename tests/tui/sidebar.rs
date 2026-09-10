@@ -635,6 +635,68 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
 }
 
 #[test]
+fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 60)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    assert!(dashboard.focus_pane(0));
+    let focused = dashboard
+        .view_request(area, 61)
+        .unwrap()
+        .expect("focus should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, focused);
+    let retained = dashboard.panes[1].session.expect("second pane session");
+
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(dashboard.focused_session(), Some(retained));
+
+    let request = dashboard
+        .view_request(area, 62)
+        .unwrap()
+        .expect("container selection should retain the other pane view");
+    let Request::SetView { view } = request.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(view.panes.len(), 1);
+    assert_eq!(view.focused, Some(retained));
+
+    assert_eq!(
+        dashboard.key(KeyCode::Char('n')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("container-target".into()));
+    dashboard.key(KeyCode::Tab);
+    let ovrcr::tui::DashboardAction::Request(create) = dashboard.key(KeyCode::Enter) else {
+        panic!("selected workspace should keep the create-terminal action");
+    };
+    let Request::CreateSession(create) = create.request else {
+        panic!("expected CreateSession");
+    };
+    assert_eq!(create.project, "consigint");
+    assert_eq!(create.workspace, "auth");
+}
+
+#[test]
 fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
     dashboard.outer_area = Rect::new(0, 0, 120, 40);

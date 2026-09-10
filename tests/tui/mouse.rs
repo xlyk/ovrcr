@@ -310,7 +310,58 @@ fn browse_click_in_pane_focuses_without_bytes() {
         area,
     );
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
     assert!(dashboard.take_mouse_cleanup().is_none());
+}
+
+#[test]
+fn browse_click_focuses_other_running_pane_and_types_after_view_ack() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 60)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+    assert!(dashboard.focus_pane(0));
+    let focused = dashboard
+        .view_request(area, 61)
+        .unwrap()
+        .expect("focus should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, focused);
+
+    let other = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("other pane")
+        .terminal;
+    let action = dashboard.mouse_action(
+        click_in(other, MouseEventKind::Down(MouseButton::Left), 2, 3),
+        area,
+    );
+
+    assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
+    assert_eq!(dashboard.focused_pane, 1);
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let replacement = dashboard
+        .view_request(area, 62)
+        .unwrap()
+        .expect("focus click should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, replacement);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
 }
 
 #[test]
