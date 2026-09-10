@@ -1,0 +1,64 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 53638  elapsed: 6m  agent unknown                                                                                           
+  ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 53638  elapsed: 6m  agent unknown                                                                                           
+		5 text (settable)   ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │ ▐▛███▛█   Claude Code v2.1.268                                                                                                  
+		7 text (settable)      ├ terminal                        │▝▜██████▀  Sonnet 5 · Claude API                                                                                                 
+		8 text (settable)      └ run 8m  ctx —                   │  ▝▝ ▝▝    /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/workspaces/consigint/auth-handoff           
+		9 text (settable)   - review auth handoff                │                                                                                                                                 
+		10 text (settable)      ├ grok / grok-4.6                 │  Fable 5.1 writes better code and reports progress on long tasks. Switch anytime with /model.                                   
+		11 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		12 text (settable)   - version-seed                       │✻ Conversation compacted (ctrl+o for history)                                                                                    
+		13 text (settable)      ├ python3                         │                                                                                                                                 
+		14 text (settable)      └ run 6m  ctx —                   │                                                                                                                                 
+		15 text (settable)                                        │⏺ OVRCR_268_PARENT_DONE                                                                                                          
+		16 text (settable)   ▼ worktree-lifecycle                 │                                                                                                                                 
+		17 text (settable)   - local                              │✻ Brewed for 13s · done 3:58 PM                                                                                                  
+		18 text (settable)      ├ terminal                        │                                                                                                                                 
+		19 text (settable)      └ run 8m  ctx —                   │❯ /compact Preserve the remembered word and the acceptance markers.                                                              
+		20 text (settable)   - implement lifecycle cleanup        │  ⎿  Compacted (ctrl+o to see full summary)                                                                                      
+		21 text (settable)      ├ claude / sonnet-4               │                                                                                                                                 
+		22 text (settable)      └ run 8m  ctx —                   │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		23 text (settable)   - review websocket shutdown          │❯                                                                                                                                
+		24 text (settable)      ├ codex / gpt-5.4                 │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		25 text (settable)      └ run 8m  ctx —                   │  ctx 0%                                                                                                                         
+		26 text (settable)   - plan snapshot restore              │  ⏸ manual mode on · ← for agents                                                                                                
+		27 text (settable)      ├ pi / grok-4.6                   │                                                                                                                                 
+		28 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		29 text (settable)                                        │                                                                                                                                 
+		30 text (settable) ▼ 󰉋 spacelift-agent                    │                                                                                                                                 
+		31 text (settable)   ▼ pipeline-progress-v2               │                                                                                                                                 
+		32 text (settable)   - local                              │                                                                                                                                 
+		33 text (settable)      ├ terminal                        │                                                                                                                                 
+		34 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		35 text (settable)   - build pipeline progress            │                                                                                                                                 
+		36 text (settable)      ├ claude / opus-4                 │                                                                                                                                 
+		37 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		38 text (settable)                                        │                                                                                                                                 
+		39 text (settable)   ▼ scope-quality                      │                                                                                                                                 
+		40 text (settable)   - local                              │                                                                                                                                 
+		41 text (settable)      ├ terminal                        │                                                                                                                                 
+		42 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		43 text (settable)   - review scope quality               │                                                                                                                                 
+		44 text (settable)      ├ codex / gpt-5.4                 │                                                                                                                                 
+		45 text (settable)      └ run 8m  ctx —                   │                                                                                                                                 
+		46 text (settable)                                        │                                                                                                                                 
+		47 text (settable)                                        │                                                                                                                                 
+		48 text (settable)                                        │                                                                                                                                 
+		49 text (settable)                                        │                                                                                                                                 
+		50 text (settable)                                        │                                                                                                                                 
+		51 text (settable)                                        │                                                                                                                                 
+		52 text (settable)                                        │                                                                                                                                 
+		53 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                             
+	54 close button
+	55 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	56 minimize button
+	57 text OVRCR GUI
+58 menu bar
+	59 OVRCR GUI

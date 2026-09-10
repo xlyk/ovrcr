@@ -1,0 +1,68 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 2790  elapsed: 0m  agent unknown                                                                                            
+  ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 2790  elapsed: 0m  agent unknown                                                                                            
+		5 text (settable)   ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │                                                                                                                                 
+		7 text (settable)      ├ terminal                        │ ▐▛███▛█   Claude Code v2.1.268                                                                                                  
+		8 text (settable)      └ run 25m  ctx —                  │▝▜██████▀  Sonnet 5 · Claude API                                                                                                 
+		9 text (settable)   - review auth handoff                │  ▝▝ ▝▝    /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/workspaces/consigint/auth-handoff           
+		10 text (settable)      ├ grok / grok-4.6                 │                                                                                                                                 
+		11 text (settable)      └ run 25m  ctx —                  │  Fable 5.1 writes better code and reports progress on long tasks. Switch anytime with /model.                                   
+		12 text (settable)     version-seed                       │                                                                                                                                 
+		13 text (settable)      ├ python3                         │❯ Acceptance test: invoke the named ovrcr-failure-probe agent exactly once. Its nonexistent model deliberately tests child API   
+		14 text (settable)      └ run 22m  ctx —                  │  failure. Do not substitute another model, retry it, or use other tools. After it returns its error, reply                      
+		15 text (settable)     version-missing                    │  OVRCR_268_CHILD_API_PARENT_OK.                                                                                                 
+		16 text (settable)      ├ python3                         │                                                                                                                                 
+		17 text (settable)      └ run 13m  ctx —                  │⏺ ovrcr-failure-probe(Invoke ovrcr-failure-probe acceptance test)                                                                
+		18 text (settable)     version-resume-otel                │  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)                                                                         
+		19 text (settable)      ├ python3                         │                                                                                                                                 
+		20 text (settable)      └ run 9m  ctx —                   │⏺ I've invoked the ovrcr-failure-probe agent once. Waiting for it to return its error before replying with the confirmation code.
+		21 text (settable)     version-short-resume               │                                                                                                                                 
+		22 text (settable)      ├ python3                         │✻ Waiting for 1 background agent to finish                                                                                       
+		23 text (settable)      └ run 6m  ctx —                   │                                                                                                                                 
+		24 text (settable)     version-short-missing              │⏺ Agent "Invoke ovrcr-failure-probe acceptance test" failed: Agent terminated early due to an API error: There's an issue with   
+		25 text (settable)      ├ python3                         │the selected model (claude-ovrcr-child-invalid-2099). It may not exist or you may not have access to it. Run /model to pick a    
+		26 text (settable)      └ run 2m  ctx —                   │different model. (error type model_not_found, HTTP 404, request id req_011CevcNTtn3xk2U7nCjFuQs, model sent to the API:          
+		27 text (settable)   - version-child-api                  │claude-ovrcr-child-invalid-2099)                                                                                                 
+		28 text (settable)      ├ python3                         │                                                                                                                                 
+		29 text (settable)      └ run 0m  ctx —                   │⏺ OVRCR_268_CHILD_API_PARENT_OK                                                                                                  
+		30 text (settable)                                        │                                                                                                                                 
+		31 text (settable)   ▼ worktree-lifecycle                 │✻ Crunched for 14s · done 4:16 PM                                                                                                
+		32 text (settable)   - local                              │                                                                                                                                 
+		33 text (settable)      ├ terminal                        │                                                                                                                                 
+		34 text (settable)      └ run 25m  ctx —                  │                                                                                                                                 
+		35 text (settable)   - implement lifecycle cleanup        │                                                                                                                                 
+		36 text (settable)      ├ claude / sonnet-4               │                                                                                                                                 
+		37 text (settable)      └ run 25m  ctx —                  │                                                                                                                                 
+		38 text (settable)   - review websocket shutdown          │                                                                                                                                 
+		39 text (settable)      ├ codex / gpt-5.4                 │                                                                                                                                 
+		40 text (settable)      └ run 25m  ctx —                  │                                                                                                                                 
+		41 text (settable)   - plan snapshot restore              │                                                                                                                                 
+		42 text (settable)      ├ pi / grok-4.6                   │                                                                                                                                 
+		43 text (settable)      └ run 25m  ctx —                  │                                                                                                                                 
+		44 text (settable)                                        │                                                                                                                                 
+		45 text (settable) ▼ 󰉋 spacelift-agent                    │                                                                                                                                 
+		46 text (settable)   ▼ pipeline-progress-v2               │                                                                                                                                 
+		47 text (settable)   - local                              │                                                                                                                                 
+		48 text (settable)      ├ terminal                        │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		49 text (settable)      └ run 25m  ctx —                  │❯                                                                                                                                
+		50 text (settable)   - build pipeline progress            │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		51 text (settable)      ├ claude / opus-4                 │  ctx 4%                                                                                                                         
+		52 text (settable)      └ run 25m  ctx —                  │  ⏸ manual mode on · ← for agents                                                                                                
+		53 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                             
+	54 close button
+	55 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	56 minimize button
+	57 text OVRCR GUI
+58 menu bar
+	59 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 2790  elapsed: 0m  agent unknown                                                                                            
+  ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

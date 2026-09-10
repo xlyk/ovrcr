@@ -1,0 +1,1 @@
+{"aggregationTemporality":1,"attributes":{"app.entrypoint":"cli","app.version":"2.1.268","session.id":"dc0ec5c94c7be7fb089422ed0b3c186ca0596aca86d87bc57c67b32ccd010a4a","start_type":"resume"},"isMonotonic":true,"metric":"claude_code.session.count","startTimeUnixNano":"1789081663889000000","timeUnixNano":"1789081664889000000","value":1.0}
