@@ -1,6 +1,6 @@
 # Agent reporting support record
 
-Claude contract review date: 2026-09-10. Retained discovery and native evidence verify **2.1.267**. The current default executable is 2.1.268, which is unsupported by this exact-version contract; no minimum version or version-range support is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
+Claude contract review date: 2026-09-10. Retained discovery and native evidence verify exact **2.1.267** and **2.1.268**. These are an explicit allowlist; no minimum version or version range is certified. This record describes reporting research for the [Claude implementation plan](../plans/2026-09-09-claude-code-reporting.md); it does not declare the planned integration shipped.
 
 The [remaining-requirement matrix](../research/claude-reporting-acceptance/remaining-matrix.md) reconciles this rolling record with the delivered callers, assertions, tested revisions and native evidence. It splits passing parts from open provider and platform clauses.
 
@@ -188,3 +188,18 @@ interrupted disk-full run remain in the [local gate record](../research/claude-r
 The full milestone remains blocked by the other provider-source and memory proof
 gaps. Continue, alternate resume forms, and in-process transitions remain disabled.
 The supported executable remains exactly 2.1.267; default 2.1.268 is unsupported.
+
+## Part 3 exact 2.1.268 and short resume, 2026-09-10
+
+The earlier Part 2 statement above records that checkpoint. The current exact
+allowlist is 2.1.267 and 2.1.268. Fresh launch and separate-token
+`--resume <canonical-lowercase-UUIDv4>` are supported on both versions. Exact
+2.1.268 additionally supports separate-token `-r <canonical-lowercase-UUIDv4>`;
+2.1.267 does not. OVRCR preserves either resume argv and requires the same matching
+root `SessionStart(source=resume)` before binding.
+
+Adjacent 2.1.266 and 2.1.269 remain unsupported. Equals syntax, missing or
+noncanonical UUIDs, names/search/picker selection, continue, fork, and in-process
+switching remain unavailable reporting paths. The 2.1.268 evidence does not change
+Partial conversation usage, Observed activity, or the absence of a provider
+final-accounting boundary.

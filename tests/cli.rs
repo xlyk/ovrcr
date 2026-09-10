@@ -1919,12 +1919,12 @@ fn agent_run_preserves_native_argv_stdio_and_exit_without_server() {
 }
 
 #[test]
-fn claude_doctor_reports_only_the_certified_initial_resume_form() {
+fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");
     std::fs::write(
         &executable,
-        "#!/bin/sh\nprintf '2.1.267 (Claude Code)\\n'\n",
+        "#!/bin/sh\nprintf '2.1.268 (Claude Code)\\n'\n",
     )
     .unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -1939,7 +1939,11 @@ fn claude_doctor_reports_only_the_certified_initial_resume_form() {
         String::from_utf8_lossy(&output.stderr)
     );
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["supported_version"], "2.1.267");
+    assert_eq!(
+        value["supported_versions"],
+        serde_json::json!(["2.1.267", "2.1.268"])
+    );
+    assert_eq!(value["version"], "2.1.268");
     assert_eq!(value["probe_status"], "supported");
     assert_eq!(value["capabilities"]["initial_invocation"]["fresh"], true);
     assert_eq!(
@@ -1947,11 +1951,26 @@ fn claude_doctor_reports_only_the_certified_initial_resume_form() {
         "explicit_canonical_lowercase_uuid_v4"
     );
     assert_eq!(
+        value["capabilities"]["initial_invocation"]["resume_forms"],
+        serde_json::json!(["--resume", "-r"])
+    );
+    assert_eq!(
         value["capabilities"]["initial_invocation"]["continue"],
         false
     );
     assert_eq!(value["capabilities"]["initial_invocation"]["fork"], false);
     assert!(!root.path().join("server.sock").exists());
+
+    let help = run_cli_bounded({
+        let mut command = isolated_command(&root);
+        command.args(["agent", "run", "--help"]);
+        command
+    })
+    .unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("Claude Code 2.1.267 and 2.1.268"));
+    assert!(help.contains("2.1.268 also accepts -r UUID"));
 }
 
 #[test]

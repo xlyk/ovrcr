@@ -1,12 +1,14 @@
 # Set up Claude Code reporting
 
-Use Claude Code **2.1.267** and an interactive foreground invocation. OVRCR
-supports a fresh invocation or an initial resume using the separate-token form
-`--resume UUID`, where `UUID` is the known canonical lowercase RFC 4122 UUIDv4.
-For resume, short `-r`, equals syntax, picker/name/search values, and positional
-prompts are excluded. Fresh invocations retain their existing safe options and
-single positional prompt. Continue, print mode, background/fork mode, and
-in-process conversation switching are not supported reporting paths. See the
+Use exact Claude Code **2.1.267** or **2.1.268** and an interactive foreground
+invocation. OVRCR supports a fresh invocation or an initial resume using the
+separate-token form `--resume UUID`, where `UUID` is the known canonical lowercase
+RFC 4122 UUIDv4. Exact 2.1.268 also supports the separate-token form `-r UUID`.
+The short form remains unavailable on 2.1.267. Equals syntax, picker/name/search
+values, and positional prompts on resume are excluded. Fresh invocations retain
+their existing safe options and single positional prompt. Continue, print mode,
+background/fork mode, and in-process conversation switching are not supported
+reporting paths. See the
 [support matrix](agent-reporting-support.md) for evidence and remaining gaps.
 
 ## Compose the settings
@@ -36,9 +38,12 @@ Check the supplied file and executable:
 ovrcr agent doctor claude --json --settings ~/.claude/settings.json
 ```
 
-For a nonstandard Claude executable, add `--executable /path/to/claude`. An
-unsupported or unavailable version probe is reported explicitly. Doctor never
-starts a server and does not certify all effective settings sources.
+For a nonstandard Claude executable, add `--executable /path/to/claude`. Doctor
+reports the exact allowlist in `supported_versions`, the detected version when
+the probe returns a recognized Claude version line, and separate `unsupported`
+or `unavailable` probe status. Its `resume_forms` field describes the forms for
+the detected supported version. Doctor never starts a server and does not certify
+all effective settings sources.
 
 ## Launch and inspect
 
@@ -60,6 +65,12 @@ path. Existing
 recognized assistant rows in that transcript remain partial conversation usage;
 new distinct rows are added once, while estimated status-line cost remains an
 independent measurement.
+
+On exact 2.1.268, the certified short spelling preserves the same native argv:
+
+```sh
+ovrcr new --project demo --workspace hooks --name resumed -- ovrcr agent run --provider claude -- claude -r 5ebc5f9b-54b5-4928-9955-dc81c23743dd
+```
 
 Use one root agent per PTY. The supervisor preserves Claude's terminal and native
 exit behavior. Missing reporting transport lets Claude run without tracking;

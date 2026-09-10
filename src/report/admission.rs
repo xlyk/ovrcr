@@ -20,8 +20,11 @@ pub fn receiver(
     lease: Option<InvocationLease>,
     argv: &mut Vec<OsString>,
 ) -> ovrcr_runtime::agent_runner::HookHandler {
-    let launch = if lease.is_some() && eligible(argv) && pinned_version(&argv[0]) {
-        eligible_launch(argv).and_then(|launch| match launch {
+    let launch = if lease.is_some()
+        && eligible(argv, ClaudeVersion::V2_1_268)
+        && let Some(version) = pinned_version(&argv[0]).supported()
+    {
+        eligible_launch(argv, version).and_then(|launch| match launch {
             EligibleLaunch::Fresh => fresh_uuid()
                 .ok()
                 .map(|conversation| (conversation, InitialSource::Startup)),
@@ -77,21 +80,21 @@ pub fn receiver(
     })
 }
 
-fn eligible(argv: &[OsString]) -> bool {
+fn eligible(argv: &[OsString], version: ClaudeVersion) -> bool {
     if unsafe { libc::isatty(0) } != 1 || unsafe { libc::isatty(1) } != 1 {
         return false;
     }
-    eligible_argv(argv)
+    eligible_argv(argv, version)
 }
-fn eligible_argv(argv: &[OsString]) -> bool {
-    eligible_launch(argv).is_some()
+fn eligible_argv(argv: &[OsString], version: ClaudeVersion) -> bool {
+    eligible_launch(argv, version).is_some()
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum EligibleLaunch {
     Fresh,
     Resume(String),
 }
-fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
+fn eligible_launch(argv: &[OsString], version: ClaudeVersion) -> Option<EligibleLaunch> {
     if argv.first().and_then(|arg| Path::new(arg).file_name()) != Some(OsStr::new("claude")) {
         return None;
     }
@@ -126,7 +129,7 @@ fn eligible_launch(argv: &[OsString]) -> Option<EligibleLaunch> {
             let (name, value) = arg
                 .split_once('=')
                 .map_or((arg, None), |(name, value)| (name, Some(value)));
-            if name == "--resume" {
+            if name == "--resume" || (name == "-r" && version == ClaudeVersion::V2_1_268) {
                 if value.is_some() || resume.is_some() {
                     return None;
                 }
@@ -198,7 +201,67 @@ fn canonical_uuid_v4(value: &str) -> bool {
         && bytes[14] == b'4'
         && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
 }
-pub fn pinned_version(executable: &OsStr) -> bool {
+pub const SUPPORTED_CLAUDE_VERSIONS: &[&str] = &["2.1.267", "2.1.268"];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClaudeVersion {
+    V2_1_267,
+    V2_1_268,
+}
+
+impl ClaudeVersion {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::V2_1_267 => "2.1.267",
+            Self::V2_1_268 => "2.1.268",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClaudeVersionProbe {
+    Supported(ClaudeVersion),
+    Unsupported(String),
+    Unavailable,
+}
+
+impl ClaudeVersionProbe {
+    pub fn supported(&self) -> Option<ClaudeVersion> {
+        match self {
+            Self::Supported(version) => Some(*version),
+            Self::Unsupported(_) | Self::Unavailable => None,
+        }
+    }
+
+    pub fn observed(&self) -> Option<&str> {
+        match self {
+            Self::Supported(version) => Some(version.as_str()),
+            Self::Unsupported(version) => Some(version),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+fn classify_version(bytes: &[u8]) -> ClaudeVersionProbe {
+    match bytes {
+        b"2.1.267 (Claude Code)\n" => ClaudeVersionProbe::Supported(ClaudeVersion::V2_1_267),
+        b"2.1.268 (Claude Code)\n" => ClaudeVersionProbe::Supported(ClaudeVersion::V2_1_268),
+        _ => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|output| output.strip_suffix(" (Claude Code)\n"))
+            .filter(|version| {
+                !version.is_empty()
+                    && version
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+            })
+            .map_or(ClaudeVersionProbe::Unavailable, |version| {
+                ClaudeVersionProbe::Unsupported(version.to_owned())
+            }),
+    }
+}
+
+pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
     let mut command = Command::new(executable);
     command
         .arg("--version")
@@ -216,7 +279,7 @@ pub fn pinned_version(executable: &OsStr) -> bool {
         command.env_remove(name);
     }
     let Ok(mut child) = command.spawn() else {
-        return false;
+        return ClaudeVersionProbe::Unavailable;
     };
     let mut stdout = child.stdout.take().expect("piped version stdout");
     let fd = stdout.as_raw_fd();
@@ -262,8 +325,11 @@ pub fn pinned_version(executable: &OsStr) -> bool {
                 let _ = stdout
                     .take(129 - bytes.len() as u64)
                     .read_to_end(&mut bytes);
-                return status.is_ok_and(|status| status.success())
-                    && bytes == b"2.1.267 (Claude Code)\n";
+                return if status.is_ok_and(|status| status.success()) {
+                    classify_version(&bytes)
+                } else {
+                    ClaudeVersionProbe::Unavailable
+                };
             }
             if Instant::now() >= deadline {
                 break;
@@ -276,7 +342,7 @@ pub fn pinned_version(executable: &OsStr) -> bool {
         libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
     }
     let _ = child.wait();
-    false
+    ClaudeVersionProbe::Unavailable
 }
 fn fresh_uuid() -> std::io::Result<String> {
     let identifier = ovrcr_runtime::agent_runner::private_identifier()?;
@@ -905,7 +971,10 @@ mod tests {
             vec!["claude", "--", "doctor"],
             vec!["claude", "-n", "name"],
         ] {
-            assert!(eligible_argv(&args(&arguments)), "{arguments:?}");
+            assert!(
+                eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
+                "{arguments:?}"
+            );
         }
         for option in [
             "--session-id=x",
@@ -938,7 +1007,10 @@ mod tests {
             "--worktree",
             "--add-dir",
         ] {
-            assert!(!eligible_argv(&args(&["claude", option])), "{option}");
+            assert!(
+                !eligible_argv(&args(&["claude", option]), ClaudeVersion::V2_1_267),
+                "{option}"
+            );
         }
         for arguments in [
             vec!["claude", "doctor"],
@@ -949,7 +1021,10 @@ mod tests {
             vec!["other", "--agent", "root"],
             vec!["claude", "two", "prompts"],
         ] {
-            assert!(!eligible_argv(&args(&arguments)), "{arguments:?}");
+            assert!(
+                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
+                "{arguments:?}"
+            );
         }
     }
 
@@ -964,14 +1039,25 @@ mod tests {
             "sonnet",
             "--strict-mcp-config",
         ]);
+        for version in [ClaudeVersion::V2_1_267, ClaudeVersion::V2_1_268] {
+            assert_eq!(
+                eligible_launch(&resume, version),
+                Some(EligibleLaunch::Resume(uuid.into()))
+            );
+        }
         assert_eq!(
-            eligible_launch(&resume),
+            eligible_launch(&args(&["claude", "-r", uuid]), ClaudeVersion::V2_1_268),
             Some(EligibleLaunch::Resume(uuid.into()))
         );
+        assert!(!eligible_argv(
+            &args(&["claude", "-r", uuid]),
+            ClaudeVersion::V2_1_267
+        ));
 
         for arguments in [
             vec!["claude", "--resume"],
-            vec!["claude", "-r", uuid],
+            vec!["claude", "-r"],
+            vec!["claude", "-r=5ebc5f9b-54b5-4928-9955-dc81c23743dd"],
             vec!["claude", "--resume=5ebc5f9b-54b5-4928-9955-dc81c23743dd"],
             vec!["claude", "--resume", "5EBC5F9B-54B5-4928-9955-DC81C23743DD"],
             vec![
@@ -984,6 +1070,9 @@ mod tests {
             vec!["claude", "--resume", "5ebc5f9b-54b5-3928-9955-dc81c23743dd"],
             vec!["claude", "--resume", "5ebc5f9b-54b5-4928-7955-dc81c23743dd"],
             vec!["claude", "--resume", uuid, "--resume", uuid],
+            vec!["claude", "--resume", uuid, "-r", uuid],
+            vec!["claude", "-r", "5EBC5F9B-54B5-4928-9955-DC81C23743DD"],
+            vec!["claude", "-r", uuid, "prompt"],
             vec!["claude", "--resume", uuid, "prompt"],
             vec!["claude", "--resume", uuid, "--continue"],
             vec!["claude", "--resume", uuid, "--fork-session", uuid],
@@ -991,7 +1080,10 @@ mod tests {
             vec!["claude", "--resume", uuid, "--background"],
             vec!["claude", "--resume", uuid, "--print"],
         ] {
-            assert!(!eligible_argv(&args(&arguments)), "{arguments:?}");
+            assert!(
+                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_268),
+                "{arguments:?}"
+            );
         }
     }
 
@@ -1404,13 +1496,25 @@ mod tests {
     #[test]
     fn initial_admission_probe_cleans_descendants_after_leader_exit() {
         use std::os::unix::fs::PermissionsExt;
-        for exit in [0, 1] {
+        for (version, exit, expected) in [
+            ("2.1.267", 0, true),
+            ("2.1.268", 0, true),
+            ("2.1.266", 0, false),
+            ("2.1.269", 0, false),
+            ("2.1.268", 1, false),
+        ] {
             let root = tempfile::tempdir().unwrap();
             let executable = root.path().join("probe");
             let identity = root.path().join("identity");
-            std::fs::write(&executable,format!("#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > '{}'\nprintf '2.1.267 (Claude Code)\\n'\nexit {exit}\n",identity.display())).unwrap();
+            std::fs::write(&executable,format!("#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > '{}'\nprintf '{version} (Claude Code)\\n'\nexit {exit}\n",identity.display())).unwrap();
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-            assert_eq!(pinned_version(executable.as_os_str()), exit == 0);
+            let probe = pinned_version(executable.as_os_str());
+            assert_eq!(probe.supported().is_some(), expected);
+            assert_eq!(
+                probe.observed(),
+                (exit == 0).then_some(version),
+                "version diagnostic"
+            );
             let ids = std::fs::read_to_string(&identity).unwrap();
             let ids: Vec<libc::pid_t> =
                 ids.split_whitespace().map(|s| s.parse().unwrap()).collect();

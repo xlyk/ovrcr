@@ -152,9 +152,11 @@ fn setup_quotes_actual_executable_path() {
 fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets() {
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");
-    for (version, expected) in [
-        ("2.1.267 (Claude Code)", "supported"),
-        ("9.9.9 (Claude Code)", "unsupported_or_unavailable"),
+    for (version, expected_status, expected_version) in [
+        ("2.1.267 (Claude Code)", "supported", "2.1.267"),
+        ("2.1.268 (Claude Code)", "supported", "2.1.268"),
+        ("2.1.266 (Claude Code)", "unsupported", "2.1.266"),
+        ("2.1.269 (Claude Code)", "unsupported", "2.1.269"),
     ] {
         std::fs::write(
             &executable,
@@ -188,7 +190,19 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
             String::from_utf8_lossy(&output.stderr)
         );
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(value["probe_status"], expected);
+        assert_eq!(value["probe_status"], expected_status);
+        assert_eq!(value["version"], expected_version);
+        assert_eq!(value["supported_versions"], json!(["2.1.267", "2.1.268"]));
+        assert_eq!(
+            value["capabilities"]["initial_invocation"]["resume_forms"],
+            if expected_version == "2.1.268" {
+                json!(["--resume", "-r"])
+            } else if expected_version == "2.1.267" {
+                json!(["--resume"])
+            } else {
+                json!([])
+            }
+        );
         assert_eq!(
             value["configuration"]["effective_configuration"],
             "unverified"
@@ -212,6 +226,7 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
     assert!(output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["version"], Value::Null);
+    assert_eq!(value["probe_status"], "unavailable");
     assert_eq!(value["configuration"]["status"], "unverified");
 }
 

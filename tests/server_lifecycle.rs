@@ -8535,17 +8535,26 @@ fn agent_admission_branch_freezes_without_replacement_or_reopening() {
 
 #[test]
 fn agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage() {
+    assert_agent_admission_resume("--resume", "2.1.267");
+}
+
+#[test]
+fn agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle() {
+    assert_agent_admission_resume("-r", "2.1.268");
+}
+
+fn assert_agent_admission_resume(resume_flag: &str, version: &str) {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "resume-admission-setup");
     let native = fixture._root.path().join("claude");
     std::fs::write(
         &native,
-        r#"#!/bin/sh
-if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit 0; fi
+        format!(r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '{version} (Claude Code)\n'; exit 0; fi
 printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
 OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
-"#,
+"#),
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -8554,7 +8563,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         fixture.create_session_summary(name, vec![
             "sh".into(),
             "-c".into(),
-            r#"stty -echo; export OVRCR_HOOK_SOCKET="$7" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$5" OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" --resume "$3" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf RESUME_ADMISSION_FINISHED; IFS= read -r done"#.into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$7" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$5" OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" "$8" "$3" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf RESUME_ADMISSION_FINISHED; IFS= read -r done"#.into(),
             "resume-admission-fixture".into(),
             env!("CARGO_BIN_EXE_ovrcr").into(),
             native.clone().into_os_string(),
@@ -8563,6 +8572,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             std::env::current_exe().unwrap().into_os_string(),
             transcript.as_os_str().into(),
             fixture.socket.clone().into_os_string(),
+            resume_flag.into(),
         ])
     };
 
@@ -8621,7 +8631,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     assert_eq!(
         std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
         format!(
-            "--resume\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+            "{resume_flag}\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
         )
     );
     assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
@@ -9067,9 +9077,12 @@ exit 19
     std::fs::write(&blocked, "file").unwrap();
     for (index, (argument, version, mode)) in [
         ("--resume=foreign", "2.1.267", "normal"),
+        ("--resume", "2.1.268", "normal"),
+        ("-r", "2.1.268", "normal"),
         ("--unknown-mode", "2.1.267", "normal"),
         ("doctor", "2.1.267", "normal"),
-        ("--model=sonnet", "2.1.268", "normal"),
+        ("--model=sonnet", "2.1.266", "normal"),
+        ("--model=sonnet", "2.1.269", "normal"),
         ("--model=sonnet", "fail", "normal"),
         ("--model=sonnet", "timeout", "normal"),
         ("--model=sonnet", "2.1.267", "blocked"),

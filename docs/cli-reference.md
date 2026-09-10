@@ -103,9 +103,9 @@ use `terminal kill ID`, then `terminal remove ID` when finished.
 
 | Command | Contract |
 | --- | --- |
-| `agent run --provider claude -- claude [ARGS...]` | Supervise a supported fresh interactive invocation inside an OVRCR PTY. Does not start a server. |
+| `agent run --provider claude -- claude [ARGS...]` | Supervise an exact Claude Code 2.1.267 or 2.1.268 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. Exact 2.1.268 also accepts separate-token `-r UUID`. Does not start a server. |
 | `agent setup claude --print [--settings PATH]` | Print composed JSON; migration and removal notes go to stderr. Does not write provider settings. |
-| `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the supported executable version and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
+| `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the executable, report the detected version and exact supported-version list, and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
 | `session usage ID` | Emit JSON containing `agent_epoch`, raw `agent`, `reporting_unavailable`, and separate `measurement_age_ms` fields. Does not start a server. |
 | `session context ID` | Emit the legacy context sample and stale flag as JSON. Does not start a server. |
 | `report claude --stdin-json` | Route typed Claude command hooks through inherited reporting credentials. |
