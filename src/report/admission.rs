@@ -548,12 +548,12 @@ impl Receiver {
         next.cost = sample.cost;
         self.publish_metrics(next, deadline);
     }
-    fn poll(&mut self, deadline: Instant) {
+    fn poll(&mut self, deadline: Instant) -> bool {
         if !matches!(self.phase, Phase::Bound) {
-            return;
+            return false;
         }
         let Some(collector) = &mut self.collector else {
-            return;
+            return false;
         };
         let result = collector.advance();
         match result {
@@ -563,13 +563,15 @@ impl Receiver {
                 next.usage.value = snapshot.usage;
                 self.publish_metrics(next, deadline);
                 self.source_health(snapshot.diagnostic, deadline);
+                true
             }
-            Ok(None) => {}
+            Ok(None) => false,
             Err(_) => {
                 if let Some(mut collector) = self.collector.take() {
                     let _ = collector.cancel(deadline);
                 }
                 self.source_health(Some("collector_unavailable".into()), deadline);
+                false
             }
         }
     }
@@ -579,17 +581,23 @@ impl Receiver {
             .checked_sub(Duration::from_millis(700))
             .unwrap_or(deadline);
         self.collector_caught_up = false;
-        while self.collector.is_some()
-            && !self.collector_caught_up
-            && Instant::now() < drain_deadline
-        {
-            self.poll(
+        // One request may already be in flight. Only the response after that one
+        // proves a read was requested after native completion. This is an IPC
+        // barrier, not a certified source revision or complete-accounting claim.
+        let mut consumed_first_response = false;
+        let mut post_exit_caught_up = false;
+        while self.collector.is_some() && !post_exit_caught_up && Instant::now() < drain_deadline {
+            let consumed = self.poll(
                 Instant::now()
                     .checked_add(Duration::from_millis(100))
                     .unwrap()
                     .min(drain_deadline),
             );
-            if !self.collector_caught_up {
+            if consumed {
+                post_exit_caught_up = consumed_first_response && self.collector_caught_up;
+                consumed_first_response = true;
+            }
+            if !post_exit_caught_up {
                 std::thread::sleep(Duration::from_millis(5));
             }
         }
@@ -874,6 +882,186 @@ mod tests {
             b"admission-ignored\n"
         );
         server.join().unwrap();
+    }
+
+    #[test]
+    fn native_completion_drains_past_pending_pre_exit_eof() {
+        use ovrcr_protocol::{
+            AgentBinding, AgentProvider, AgentSecret, ClientMessage, Request, ServerMessage,
+            SupervisorAuth, exchange_preamble, read_frame, write_frame,
+        };
+        use std::os::unix::{
+            fs::PermissionsExt,
+            net::{UnixListener, UnixStream},
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("report.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (client, mut supervisor) = UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        supervisor
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let reports_done = done.clone();
+        let reports = std::thread::spawn(move || {
+            while !reports_done.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        exchange_preamble(&mut stream).unwrap();
+                        let message = read_frame::<ClientMessage>(&mut stream).unwrap();
+                        assert!(matches!(message.request, Request::AgentReport { .. }));
+                        write_frame(
+                            &mut stream,
+                            &ServerMessage::Response {
+                                request_id: message.request_id,
+                                response: Response::Ok,
+                            },
+                        )
+                        .unwrap();
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        });
+        let finalizer = std::thread::spawn(move || {
+            let message = read_frame::<ClientMessage>(&mut supervisor).unwrap();
+            let Request::Supervisor(request) = message.request else {
+                panic!("expected finalize")
+            };
+            let AgentCommand::Finalize { final_metrics, .. } = request.command else {
+                panic!("expected finalize")
+            };
+            write_frame(
+                &mut supervisor,
+                &ServerMessage::Response {
+                    request_id: message.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::Released),
+                },
+            )
+            .unwrap();
+            done.store(true, Ordering::Release);
+            final_metrics
+        });
+        let source = super::super::collector::CollectorSource {
+            path: root.path().join("transcript"),
+            conversation: "expected".into(),
+        };
+        let start = serde_json::to_vec(&serde_json::json!({"Start": &source})).unwrap();
+        for (name, tokens) in [("a", 10), ("b", 30)] {
+            let mut usage = Receiver::empty_metrics().usage.value;
+            usage.input_tokens = Some(tokens);
+            let snapshot = super::super::collector::CollectorSnapshot {
+                usage,
+                source_revision: None,
+                diagnostic: None,
+                caught_up: true,
+                rebuilding: false,
+                retained_identities: 1,
+                retained_bytes: 100,
+            };
+            let payload = serde_json::to_vec(&snapshot).unwrap();
+            let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+            frame.extend(payload);
+            std::fs::write(root.path().join(name), frame).unwrap();
+        }
+        let executable = root.path().join("helper");
+        // The marker is written only after A is flushed to the real helper pipe.
+        // The helper cannot send B until the controller issues its next Read.
+        std::fs::write(&executable, format!(
+            "#!/bin/sh\ncd '{}'\n/bin/dd bs=1 count={} 2>/dev/null >/dev/null\n/bin/cat a\n/usr/bin/touch ready\n/bin/dd bs=1 count=1 2>/dev/null >/dev/null\n/bin/cat transcript\n/bin/sleep 60\n",
+            root.path().display(), start.len() + 4,
+        )).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::copy(root.path().join("a"), &source.path).unwrap();
+        let collector =
+            super::super::collector::CollectorController::spawn(&executable, source).unwrap();
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        while !root.path().join("ready").exists() && Instant::now() < ready_deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            root.path().join("ready").exists(),
+            "pre-exit EOF was not queued"
+        );
+        let binding = AgentBinding {
+            provider: AgentProvider::Claude,
+            invocation: "invocation".into(),
+            conversation: "expected".into(),
+            generation: 1,
+        };
+        let mut receiver = Receiver {
+            lease: Some(InvocationLease {
+                stream: client,
+                auth: SupervisorAuth {
+                    session: ovrcr_protocol::SessionId(1),
+                    lease: AgentSecret([7; 32]),
+                },
+                socket: path,
+                binding: Some(binding),
+                next_request: 2,
+                capability: [0; 32],
+            }),
+            expected: Some("expected".into()),
+            phase: Phase::Bound,
+            prompt: None,
+            activity_revision: 0,
+            metrics: None,
+            metrics_revision: 0,
+            health_revision: 0,
+            source_health: None,
+            transcript_path: None,
+            collector: Some(collector),
+            cost_watermark: None,
+            collector_caught_up: false,
+        };
+        let argv = args(&[
+            "/bin/sh",
+            "-c",
+            &format!(
+                "/bin/cp '{0}/b' '{0}/transcript'; printf 'POST_EXIT_DRAIN_NATIVE_OUTPUT\\n'; exit 17",
+                root.path().display(),
+            ),
+        ]);
+        let started = Instant::now();
+        let status = ovrcr_runtime::agent_runner::run_native(&argv, move |ready, _| {
+            assert!(ready);
+            Some(Box::new(move |event| {
+                // Keep the deliberately queued pre-exit response pending until the real
+                // native-completion callback, reproducing the disputed ordering exactly.
+                if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted { deadline } = event
+                {
+                    receiver.native_completed(deadline);
+                }
+                Vec::new()
+            }))
+        })
+        .unwrap();
+        assert_eq!(status.code(), Some(17));
+        assert!(started.elapsed() < Duration::from_millis(2500));
+        let final_metrics = finalizer.join().unwrap();
+        reports.join().unwrap();
+        assert_eq!(
+            final_metrics.usage.value.input_tokens,
+            Some(30),
+            "finalization consumed only the queued pre-exit EOF"
+        );
+        assert_eq!(
+            final_metrics.usage.value.coverage,
+            ovrcr_protocol::UsageCoverage::Partial
+        );
     }
 
     #[test]
