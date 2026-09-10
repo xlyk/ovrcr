@@ -1,0 +1,28 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.29s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 2 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQnOXLC/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpnwAIoo/repo/.git/
+[main (root-commit) eedbacf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) eedbacf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQnOXLC/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQnOXLC/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpnwAIoo/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpnwAIoo/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ovrcr server stopped
+test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+ovrcr server stopped
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 2.10s
+

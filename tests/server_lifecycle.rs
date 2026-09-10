@@ -7554,6 +7554,12 @@ fn agent_admission_native_helper() {
                 if parts.get(3) == Some(&"malformed") {
                     payload["prompt_id"] = serde_json::Value::Null;
                 }
+                if parts.get(3) == Some(&"control") {
+                    payload["prompt_id"] = "bad\nprompt".into();
+                }
+                if parts.get(3) == Some(&"oversized") {
+                    payload["prompt_id"] = "p".repeat(257).into();
+                }
                 if parts[1] == "StopFailure" {
                     payload["error"] = "rate_limit".into();
                 }
@@ -8185,6 +8191,18 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             Some("A"),
         ),
         (
+            "activity:UserPromptSubmit:A:control",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:UserPromptSubmit:A:oversized",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
             "activity:Stop:A:child",
             Some(AgentActivity::Busy),
             1,
@@ -8322,6 +8340,12 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
                 ovrcr::protocol::ReporterHealth::Unavailable
             );
             break;
+        }
+        if command.ends_with(":control") || command.ends_with(":oversized") {
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Connected
+            );
         }
         assert_eq!(snapshot.activity_revision, revision, "{command}");
         assert_eq!(

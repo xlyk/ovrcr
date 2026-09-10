@@ -27,3 +27,15 @@ Every command below was prefixed with `rtk proxy`. Logs retain stdout/stderr. So
 | 13 | git diff --check | 0 |
 
 Actual routing assertions cover root Busy, child/foreign/malformed Stop rejection, duplicate startup, PermissionRequest/generic Notification ignored, correlated Waiting, Stop continuation observed only, later tool Busy, turn B rejecting turn A Stop/Error/wait/tool, missing-turn Stop rejection, current API Error, post-tool failure Busy, and no publication after clear. Failure fixture rejects the bounded report request and verifies Unavailable, same binding generation, no later reopening, and native output through normal exit. Existing closure regressions retain successful-clear lease ownership and lost-Bind/failed-health protections. Linux signal/native acceptance is not claimed by this macOS test slice.
+
+## Review correction: protocol identity validation
+
+Base f608e70. Reviewer traced invalid nonempty prompt IDs entering receiver state before runtime rejected them. The parser now applies shared `validate_agent_id` to session/prompt IDs before mutation; transcript paths retain their separate exact-path semantics. Real routing sends control-character and 257-byte prompt IDs, asserts unchanged activity/revision and Connected health, then accepts later legitimate callbacks. Parser tests cover both fields, accepted 256-byte limits, and paths exceeding 256 bytes.
+
+- 14-review-red.log: `cargo test -p ovrcr --test server_lifecycle private_claude_activity_tracks_only_current_root_prompt_observations -- --nocapture`, exit101, 0 passed/1 failed. Product RED: after malformed prompt, legitimate notification stayed revision1 instead of2.
+- 15-review-green.log: `cargo test -p ovrcr --test server_lifecycle private_claude_activity -- --nocapture`, exit0, 2 passed.
+- 16-review-parser.log: `cargo test -p ovrcr --lib report::claude::`, exit0, 4 passed.
+- 17-review-clippy.log: `cargo clippy -p ovrcr --all-targets --all-features -- -D warnings`, exit0; affected compilation and lint passed.
+- 18-review-fmt.log and 19-review-diff.log: `cargo fmt --all -- --check` and `git diff --check`, both exit0.
+
+All commands used `rtk proxy`; real route used required socket/PTY execution permission. No activity mappings or source-certification scope changed.

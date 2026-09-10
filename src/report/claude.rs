@@ -50,11 +50,15 @@ pub fn parse_claude_hook(input: &[u8]) -> Result<Option<ClaudeEvent>> {
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("invalid Claude hook"))?;
     let session = required_string(input, "session_id")?;
+    ovrcr_protocol::validate_agent_id(&session)?;
     let event = required_string(input, "hook_event_name")?;
     if optional_string(input, "agent_id")?.is_some() || event.starts_with("Subagent") {
         return Ok(None);
     }
     let prompt = optional_string(input, "prompt_id")?;
+    if let Some(prompt) = &prompt {
+        ovrcr_protocol::validate_agent_id(prompt)?;
+    }
     let transcript_path = optional_string(input, "transcript_path")?;
     let kind = match event.as_str() {
         "SessionStart" => ClaudeEventKind::SessionStart {
@@ -111,6 +115,22 @@ mod tests {
             parse_claude_hook(&serde_json::to_vec(&child).unwrap())
                 .unwrap()
                 .is_none()
+        );
+    }
+    #[test]
+    fn claude_protocol_ids_validate_before_receiver_mutation() {
+        for field in ["session_id", "prompt_id"] {
+            for invalid in ["bad\nidentity".to_owned(), "x".repeat(257)] {
+                let mut value = serde_json::json!({"session_id":"root","prompt_id":"prompt","hook_event_name":"UserPromptSubmit"});
+                value[field] = invalid.into();
+                assert!(parse_claude_hook(&serde_json::to_vec(&value).unwrap()).is_err());
+            }
+        }
+        let value = serde_json::json!({"session_id":"s".repeat(256),"prompt_id":"p".repeat(256),"transcript_path":"/".repeat(300),"hook_event_name":"UserPromptSubmit"});
+        assert!(
+            parse_claude_hook(&serde_json::to_vec(&value).unwrap())
+                .unwrap()
+                .is_some()
         );
     }
     #[test]
