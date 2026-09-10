@@ -1,0 +1,28 @@
+Command: rtk proxy cargo test -p ovrcr-runtime reporting_queue::tests -- --nocapture
+Source: 090ca4926dbb8769d0de66ba9edf3193767efeaa plus uncommitted Task 2 changes
+
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.61s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-387c4bd08e9ed8e5)
+
+running 6 tests
+test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... ok
+test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+test server::reporting_queue::tests::sender_drop_cannot_be_lost_between_empty_and_wait ... ok
+test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 93 filtered out; finished in 0.00s
+
+Command: rtk proxy cargo clippy -p ovrcr-runtime --all-targets --features acceptance-diagnostics -- -D warnings
+Source: same
+
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s
+
+Command: rtk proxy cargo clippy -p ovrcr-runtime --lib -- -D warnings
+Source: same
+
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.30s

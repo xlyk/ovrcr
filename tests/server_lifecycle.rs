@@ -7532,6 +7532,28 @@ fn agent_admission_native_helper() {
             payload["transcript_path"] = path.to_string_lossy().as_ref().into();
         }
         match line.as_str() {
+            "kill-collector" => {
+                let parent = unsafe { libc::getppid() };
+                let processes = Command::new("ps")
+                    .args(["-axo", "pid=,ppid=,command="])
+                    .output()
+                    .unwrap();
+                assert!(processes.status.success());
+                let collector = String::from_utf8(processes.stdout)
+                    .unwrap()
+                    .lines()
+                    .find_map(|row| {
+                        let mut fields = row.split_whitespace();
+                        let pid = fields.next()?.parse::<i32>().ok()?;
+                        let ppid = fields.next()?.parse::<i32>().ok()?;
+                        let command = fields.collect::<Vec<_>>().join(" ");
+                        (ppid == parent && command.contains("__agent-collector")).then_some(pid)
+                    })
+                    .expect("task-owned collector child");
+                assert_eq!(unsafe { libc::kill(-collector, libc::SIGKILL) }, 0);
+                println!("ADMISSION_CALLBACK={index}");
+                continue;
+            }
             "create-transcript" => write_transcript(),
             "grow-transcript" => {
                 use std::io::Write;
@@ -8506,21 +8528,30 @@ fn fresh_pty_outer_channel_helper() {
 
 #[test]
 fn claude_metrics_route_collects_partial_usage_and_finalizes_native_exit() {
-    assert_claude_metrics_completion(false, false, false);
+    assert_claude_metrics_completion(false, false, false, false);
 }
 #[test]
 fn claude_metrics_finalization_recovers_original_receipt_after_lost_ack() {
-    assert_claude_metrics_completion(true, false, false);
+    assert_claude_metrics_completion(true, false, false, false);
 }
 #[test]
 fn claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path() {
-    assert_claude_metrics_completion(false, true, false);
+    assert_claude_metrics_completion(false, true, false, false);
 }
 #[test]
 fn claude_metrics_clear_freezes_components_and_prevents_reader_reopening() {
-    assert_claude_metrics_completion(false, false, true);
+    assert_claude_metrics_completion(false, false, true, false);
 }
-fn assert_claude_metrics_completion(lose_ack: bool, missing: bool, clear: bool) {
+#[test]
+fn claude_metrics_collector_loss_propagates_while_native_stays_usable() {
+    assert_claude_metrics_completion(false, false, false, true);
+}
+fn assert_claude_metrics_completion(
+    lose_ack: bool,
+    missing: bool,
+    clear: bool,
+    kill_collector: bool,
+) {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "metrics-setup");
@@ -8610,6 +8641,44 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         );
         thread::park_timeout(Duration::from_millis(5));
     };
+    if kill_collector {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "kill-collector".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let current = fixture.session_summary(summary.id);
+            let agent = current.agent.unwrap();
+            if agent.health.reason.as_deref() == Some("collector_unavailable") {
+                assert!(matches!(
+                    current.phase,
+                    ovrcr::session::SessionPhase::Running
+                ));
+                assert_eq!(agent.binding, before.binding);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "collector loss was not propagated"
+            );
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "statusline".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=3");
+    }
     if !missing {
         for (index, command) in ["statusline-replay", "statusline-wrong"]
             .into_iter()
@@ -8630,7 +8699,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             assert_eq!(snapshot.metrics, before.metrics);
         }
     }
-    if !missing && !clear {
+    if !missing && !clear && !kill_collector {
         for (index, command) in ["statusline-unknown", "statusline-lower", "statusline"]
             .into_iter()
             .enumerate()

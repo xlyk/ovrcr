@@ -2,7 +2,11 @@
 use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::*;
 use ovrcr::report::collector::{CollectorController, CollectorSource};
-use ovrcr::server::{ServerPaths, run_server};
+use ovrcr::server::ServerPaths;
+#[cfg(not(feature = "acceptance-diagnostics"))]
+use ovrcr::server::run_server;
+#[cfg(feature = "acceptance-diagnostics")]
+use ovrcr::server::{ServerQueueDiagnostics, run_server_with_diagnostics};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::os::unix::net::UnixStream;
@@ -47,6 +51,8 @@ struct Fixture {
     root: tempfile::TempDir,
     socket: PathBuf,
     server: Option<thread::JoinHandle<()>>,
+    #[cfg(feature = "acceptance-diagnostics")]
+    diagnostics: ServerQueueDiagnostics,
 }
 impl Fixture {
     fn new() -> Self {
@@ -86,6 +92,15 @@ impl Fixture {
         let paths = ServerPaths {
             socket: socket.clone(),
         };
+        #[cfg(feature = "acceptance-diagnostics")]
+        let diagnostics = ServerQueueDiagnostics::default();
+        #[cfg(feature = "acceptance-diagnostics")]
+        let server_diagnostics = diagnostics.clone();
+        #[cfg(feature = "acceptance-diagnostics")]
+        let server = Some(thread::spawn(move || {
+            run_server_with_diagnostics(paths, registry, server_diagnostics).unwrap()
+        }));
+        #[cfg(not(feature = "acceptance-diagnostics"))]
         let server = Some(thread::spawn(move || run_server(paths, registry).unwrap()));
         let deadline = Instant::now() + Duration::from_secs(5);
         while !socket.exists() {
@@ -96,6 +111,8 @@ impl Fixture {
             root,
             socket,
             server,
+            #[cfg(feature = "acceptance-diagnostics")]
+            diagnostics,
         };
         let mut control = connect(&fixture.socket);
         assert_eq!(
@@ -248,6 +265,75 @@ fn fifty_session_reporting_capacity() {
         writeln!(owned_pids, "pty,{index},{pid}").unwrap();
         identities.push((session.id, capability));
     }
+    #[cfg(feature = "acceptance-diagnostics")]
+    let dashboard_session = identities[0].0;
+    #[cfg(feature = "acceptance-diagnostics")]
+    let (dashboard_shutdown, dashboard_reader) = {
+        let mut dashboard = connect(&fixture.socket);
+        write_frame(
+            &mut dashboard,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::DashboardHello,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Hierarchy(_)
+            }
+        ));
+        write_frame(
+            &mut dashboard,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::SetView {
+                    view: DashboardView {
+                        revision: 1,
+                        panes: vec![PaneTarget {
+                            session: dashboard_session,
+                            size: TerminalSize { rows: 24, cols: 80 },
+                        }],
+                        focused: Some(dashboard_session),
+                    },
+                },
+            },
+        )
+        .unwrap();
+        loop {
+            if matches!(
+                read_frame::<ServerMessage>(&mut dashboard).unwrap(),
+                ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok
+                }
+            ) {
+                break;
+            }
+        }
+        dashboard.set_read_timeout(None).unwrap();
+        let shutdown = dashboard.try_clone().unwrap();
+        let reader = thread::spawn(move || {
+            let mut frames = 0usize;
+            let mut output_frames = 0usize;
+            while let Ok(message) = read_frame::<ServerMessage>(&mut dashboard) {
+                frames += 1;
+                if matches!(
+                    message,
+                    ServerMessage::Event(
+                        ServerEvent::Output { .. } | ServerEvent::ScreenDirty { .. }
+                    )
+                ) {
+                    output_frames += 1;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+            (frames, output_frames)
+        });
+        (shutdown, reader)
+    };
     let baseline = resources();
     writeln!(
         resource_log,
@@ -328,6 +414,31 @@ fn fifty_session_reporting_capacity() {
             s.diagnostic.as_ref().unwrap()
         )
         .unwrap();
+    }
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        let mut ipc = File::create(evidence.join("collector-queues.csv")).unwrap();
+        writeln!(
+            ipc,
+            "collector,pending_items,pending_bytes,peak_items,peak_bytes,rejected"
+        )
+        .unwrap();
+        for (index, helper) in helpers.iter().enumerate() {
+            let snapshot = helper.reporting_snapshot();
+            assert!(snapshot.pending_items <= 1);
+            assert!(snapshot.peak_items <= 1);
+            assert!(snapshot.peak_bytes <= 65_536 + 4);
+            writeln!(
+                ipc,
+                "{index},{},{},{},{},{}",
+                snapshot.pending_items,
+                snapshot.pending_bytes,
+                snapshot.peak_items,
+                snapshot.peak_bytes,
+                snapshot.rejected
+            )
+            .unwrap();
+        }
     }
     let full = resources();
     writeln!(resource_log, "full50,0,{},{},{}", full.0, full.1, full.2).unwrap();
@@ -466,7 +577,11 @@ fn fifty_session_reporting_capacity() {
                 (start + Duration::from_secs(60)).saturating_duration_since(Instant::now()),
             );
             let pid = helper.process_id().unwrap() as i32;
+            #[cfg(feature = "acceptance-diagnostics")]
+            let collector_snapshot = helper.reporting_snapshot();
             let result = helper.cancel(Instant::now() + Duration::from_secs(2));
+            #[cfg(feature = "acceptance-diagnostics")]
+            let drained = helper.reporting_snapshot();
             drop(helper);
             let deadline = Instant::now() + Duration::from_secs(3);
             while unsafe { libc::kill(pid, 0) } == 0 {
@@ -479,11 +594,22 @@ fn fifty_session_reporting_capacity() {
             );
             println!("collector={index} pid={pid} reaped cancel={result:?}");
             result.unwrap();
+            #[cfg(feature = "acceptance-diagnostics")]
+            return (index, max_late, owner, collector_snapshot, drained);
+            #[cfg(not(feature = "acceptance-diagnostics"))]
             (index, max_late, owner)
         }));
     }
     let mut latency = File::create(evidence.join("latency.csv")).unwrap();
     writeln!(latency, "sample,elapsed_us").unwrap();
+    #[cfg(feature = "acceptance-diagnostics")]
+    let mut queue_log = File::create(evidence.join("queues.csv")).unwrap();
+    #[cfg(feature = "acceptance-diagnostics")]
+    writeln!(
+        queue_log,
+        "second,queue,pending_items,pending_bytes,peak_items,peak_bytes,rejected"
+    )
+    .unwrap();
     thread::sleep(start.saturating_duration_since(Instant::now()));
     let mut times = Vec::new();
     let mut peak = full.0.max(fill_peak);
@@ -521,10 +647,62 @@ fn fifty_session_reporting_capacity() {
         }
         let second = start.elapsed().as_secs();
         if second != last_second {
+            #[cfg(feature = "acceptance-diagnostics")]
+            assert_eq!(
+                send(
+                    &mut control,
+                    Request::SendTerminal {
+                        session: dashboard_session,
+                        text: "dashboard-load".into(),
+                        submit: true,
+                    }
+                ),
+                Response::Ok
+            );
             let r = resources();
             peak = peak.max(r.0);
             writeln!(resource_log, "load,{second},{},{},{}", r.0, r.1, r.2).unwrap();
             resource_log.flush().unwrap();
+            #[cfg(feature = "acceptance-diagnostics")]
+            for (name, snapshot) in [
+                ("raw-events", fixture.diagnostics.raw_events.snapshot()),
+                ("dispatcher", fixture.diagnostics.dispatcher.snapshot()),
+            ] {
+                writeln!(
+                    queue_log,
+                    "{second},{name},{},{},{},{},{}",
+                    snapshot.pending_items,
+                    snapshot.pending_bytes,
+                    snapshot.peak_items,
+                    snapshot.peak_bytes,
+                    snapshot.rejected
+                )
+                .unwrap();
+                assert!(snapshot.pending_items <= 64);
+            }
+            #[cfg(feature = "acceptance-diagnostics")]
+            {
+                let dashboard = fixture
+                    .diagnostics
+                    .dashboard
+                    .snapshot()
+                    .expect("active dashboard diagnostics");
+                writeln!(
+                    queue_log,
+                    "{second},dashboard,{},{},{},{},{}",
+                    dashboard.pending_items,
+                    dashboard.pending_bytes,
+                    dashboard.peak_items,
+                    dashboard.peak_bytes,
+                    dashboard.rejected
+                )
+                .unwrap();
+                assert!(dashboard.message_items <= 64);
+                assert!(dashboard.terminal_items <= 1);
+                assert!(dashboard.dirty_items <= 2);
+            }
+            #[cfg(feature = "acceptance-diagnostics")]
+            queue_log.flush().unwrap();
             assert!(
                 peak.saturating_sub(baseline.0) < 3 * 1024 * 1024,
                 "RSS budget"
@@ -534,9 +712,39 @@ fn fifty_session_reporting_capacity() {
         thread::sleep(Duration::from_millis(20));
     }
     let mut owners = Vec::new();
+    #[cfg(feature = "acceptance-diagnostics")]
+    let mut collector_log = File::create(evidence.join("collector-final.csv")).unwrap();
+    #[cfg(feature = "acceptance-diagnostics")]
+    writeln!(
+        collector_log,
+        "collector,phase,pending_items,pending_bytes,peak_items,peak_bytes,rejected"
+    )
+    .unwrap();
     for worker in workers {
+        #[cfg(feature = "acceptance-diagnostics")]
+        let (index, late, owner, before_cancel, drained) = worker.join().unwrap();
+        #[cfg(not(feature = "acceptance-diagnostics"))]
         let (index, late, owner) = worker.join().unwrap();
         println!("session={index} reports=600 stale_rejected=60 max_schedule_late_us={late}");
+        #[cfg(feature = "acceptance-diagnostics")]
+        for (phase, snapshot) in [("before-cancel", before_cancel), ("drained", drained)] {
+            writeln!(
+                collector_log,
+                "{index},{phase},{},{},{},{},{}",
+                snapshot.pending_items,
+                snapshot.pending_bytes,
+                snapshot.peak_items,
+                snapshot.peak_bytes,
+                snapshot.rejected
+            )
+            .unwrap();
+            assert!(snapshot.peak_items <= 1);
+            assert!(snapshot.peak_bytes <= 65_536 + 4);
+            if phase == "drained" {
+                assert_eq!(snapshot.pending_items, 0);
+                assert_eq!(snapshot.pending_bytes, 0);
+            }
+        }
         owners.push(owner);
     }
     let Response::Inventory { sessions, .. } = send(&mut control, Request::Inspect) else {
@@ -575,6 +783,38 @@ fn fifty_session_reporting_capacity() {
         peak.saturating_sub(baseline.0)
     );
     assert!(p99 < 250_000 && max < 1_000_000, "control latency budget");
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        let events = fixture.diagnostics.raw_events.snapshot();
+        let dispatcher = fixture.diagnostics.dispatcher.snapshot();
+        assert!(events.peak_items <= 64 && dispatcher.peak_items <= 64);
+        assert!(events.peak_bytes <= 64 * 8192);
+        let dashboard = fixture
+            .diagnostics
+            .dashboard
+            .snapshot()
+            .expect("dashboard remains active through final sample");
+        assert!(dashboard.peak_items > 0, "dashboard was not exercised");
+        assert!(dashboard.message_items <= 64);
+    }
+    #[cfg(feature = "acceptance-diagnostics")]
+    {
+        dashboard_shutdown
+            .shutdown(std::net::Shutdown::Both)
+            .unwrap();
+        let (dashboard_frames, dashboard_output_frames) = dashboard_reader.join().unwrap();
+        assert!(
+            dashboard_frames > 0,
+            "dashboard received no frames under load"
+        );
+        assert!(
+            dashboard_output_frames > 0,
+            "dashboard received no output delivery under load"
+        );
+        println!(
+            "dashboard_frames={dashboard_frames} dashboard_output_frames={dashboard_output_frames}"
+        );
+    }
     drop(owners);
     drop(fixture);
     for pid in pty_pids {

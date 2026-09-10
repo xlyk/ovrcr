@@ -192,6 +192,10 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 history: None,
                 next_history_id: 1,
             });
+            #[cfg(feature = "acceptance-diagnostics")]
+            if let Some(monitor) = &state.dashboard_monitor {
+                monitor.register(&dashboard_sink);
+            }
             drop(slot);
             *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
             ownership = Some(DashboardOwnership {

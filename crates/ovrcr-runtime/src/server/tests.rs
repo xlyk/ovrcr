@@ -17,24 +17,38 @@ use std::net::Shutdown;
 
 #[test]
 fn raw_event_and_dispatch_queues_reject_the_65th_item() {
-    let (event_sender, _event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (event_sender, event_receiver) = event_channel();
     for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
         event_sender
             .try_send(SessionEvent::Output {
                 id: SessionId(1),
-                bytes: Vec::new(),
+                bytes: vec![0; 8192],
             })
             .unwrap();
     }
     assert!(matches!(
         event_sender.try_send(SessionEvent::Output {
             id: SessionId(1),
-            bytes: Vec::new(),
+            bytes: vec![0; 8192],
         }),
         Err(mpsc::TrySendError::Full(_))
     ));
+    assert_eq!(
+        event_sender.snapshot().pending_items,
+        RAW_EVENT_QUEUE_CAPACITY
+    );
+    assert_eq!(
+        event_sender.snapshot().pending_bytes,
+        RAW_EVENT_QUEUE_CAPACITY * 8192
+    );
+    assert_eq!(event_sender.snapshot().rejected, 1);
+    drop(event_receiver.recv().unwrap());
+    assert_eq!(
+        event_sender.snapshot().pending_items,
+        RAW_EVENT_QUEUE_CAPACITY - 1
+    );
 
-    let (dispatch_sender, _dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (dispatch_sender, dispatch_receiver) = dispatch_channel();
     for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
         dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
     }
@@ -42,6 +56,23 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
         dispatch_sender.try_send(DispatchMessage::Stop),
         Err(mpsc::TrySendError::Full(_))
     ));
+    assert_eq!(
+        dispatch_sender.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY
+    );
+    assert_eq!(dispatch_sender.snapshot().rejected, 1);
+    drop(dispatch_receiver.recv().unwrap());
+    assert_eq!(
+        dispatch_sender.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY - 1
+    );
+    drop(dispatch_receiver);
+    assert_eq!(dispatch_sender.snapshot().pending_items, 0);
+    assert!(matches!(
+        dispatch_sender.try_send(DispatchMessage::Stop),
+        Err(mpsc::TrySendError::Disconnected(_))
+    ));
+    assert_eq!(dispatch_sender.snapshot().rejected, 2);
 }
 
 #[test]
@@ -128,6 +159,50 @@ fn split_delivery_snapshots_precede_increments() {
     }
     assert!(!sink.replace_view(&view, 11, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
     assert!(sink.next().is_none());
+}
+
+#[test]
+fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
+    let sink = DashboardSink::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue_queued(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision: 1,
+                bytes: vec![b'x'; 32],
+            }),
+            completion: None,
+        }));
+    }
+    assert!(sink.enqueue_queued(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(1),
+            revision: 1,
+            bytes: vec![b'y'; 32],
+        }),
+        completion: None,
+    }));
+    let snapshot = sink.reporting_snapshot();
+    assert_eq!(snapshot.message_items + snapshot.dirty_items, 1);
+    assert_eq!(snapshot.dirty_items, 1);
+    assert_eq!(snapshot.terminal_items, 0);
+    assert!(snapshot.pending_bytes <= ovrcr_protocol::MAX_FRAME_BYTES);
+    assert_eq!(snapshot.rejected, 0);
+    let DashboardDelivery::Dirty { revision, session } = sink.next().unwrap() else {
+        panic!("expected dirty delivery");
+    };
+    sink.dirty_sent(revision, session);
+    assert!(sink.replace_view(
+        &DashboardView {
+            revision: 2,
+            panes: Vec::new(),
+            focused: None
+        },
+        7,
+        Vec::new(),
+    ));
+    drop(sink.next().unwrap());
+    assert_eq!(sink.reporting_snapshot().pending_items, 0);
 }
 
 #[test]
@@ -2105,10 +2180,27 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
 
 #[test]
 fn agent_report_queue_full_is_a_structured_conflict() {
-    let (state, _receiver) = test_state_with_dispatch(None, None);
-    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
-        state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+    let (state, receiver) = test_state_with_dispatch(None, None);
+    for sequence in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        let (completion, _) = mpsc::sync_channel(1);
+        state
+            .dispatch
+            .try_send(DispatchMessage::AgentReport {
+                report: AgentReport {
+                    session: SessionId(sequence as u64 + 1),
+                    capability: [0_u8; 32],
+                    sequence: None,
+                    update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+                },
+                completion,
+            })
+            .unwrap();
     }
+    assert_eq!(
+        state.dispatch.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY
+    );
+    assert!(state.dispatch.snapshot().pending_bytes > 0);
     let mut role = ClientRole::Control;
     let response = state.handle_request(
         &mut role,
@@ -2126,6 +2218,11 @@ fn agent_report_queue_full_is_a_structured_conflict() {
             message: "dispatcher queue is full".into(),
         }
     );
+    assert_eq!(state.dispatch.snapshot().rejected, 1);
+    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        drop(receiver.recv().unwrap());
+    }
+    assert_eq!(state.dispatch.snapshot().pending_items, 0);
 }
 
 #[test]
@@ -2269,9 +2366,9 @@ fn test_state(
 fn test_state_with_dispatch(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
-) -> (Arc<ServerState>, Receiver<DispatchMessage>) {
+) -> (Arc<ServerState>, ReportingReceiver<DispatchMessage>) {
     let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (dispatch, receiver) = dispatch_channel();
     (
         Arc::new(ServerState {
             tasks: None,
@@ -2287,7 +2384,7 @@ fn test_state_with_dispatch(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Some(events.into())),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2325,11 +2422,11 @@ fn test_state_with_socket(
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch,
+            dispatch: dispatch.into(),
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Some(events.into())),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2458,7 +2555,11 @@ fn apply_test_session_events(
 fn saturated_control_state(
     session: &Arc<Session>,
     id: SessionId,
-) -> (Arc<ServerState>, Receiver<DispatchMessage>, UnixStream) {
+) -> (
+    Arc<ServerState>,
+    ReportingReceiver<DispatchMessage>,
+    UnixStream,
+) {
     let (server_stream, client_stream) = UnixStream::pair().unwrap();
     let sink = DashboardSink::new();
     let identity = Arc::new(());
@@ -4476,11 +4577,11 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         dashboard: Mutex::new(None),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone(),
+        dispatch: dispatch.clone().into(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
-        events: Mutex::new(Some(events)),
+        events: Mutex::new(Some(events.into())),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -4688,11 +4789,11 @@ fn session_output_flows_while_another_session_spawns() {
         dashboard: Mutex::new(Some(sink.clone())),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone(),
+        dispatch: dispatch.clone().into(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
-        events: Mutex::new(Some(events)),
+        events: Mutex::new(Some(events.into())),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),

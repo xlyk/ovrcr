@@ -24,6 +24,118 @@ fn launch(path: &Path) -> CollectorController {
     )
     .unwrap()
 }
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn collector_diagnostics_track_one_bounded_exchange_and_drain() {
+    let temp = tempfile::tempdir().unwrap();
+    let transcript = temp.path().join("transcript.jsonl");
+    fs::write(&transcript, row("one", 1)).unwrap();
+    let mut controller = launch(&transcript);
+    let initial = controller.reporting_snapshot();
+    assert_eq!(initial.pending_items, 1);
+    assert!(initial.pending_bytes <= 65_536 + 4);
+    assert!(initial.peak_bytes > 0);
+    let _ = next(&mut controller);
+    let drained = controller.reporting_snapshot();
+    assert_eq!(drained.pending_items, 0);
+    assert_eq!(drained.pending_bytes, 0);
+    assert!(drained.peak_items <= 1);
+    assert!(drained.peak_bytes <= 65_536 + 4);
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+fn launch_response_helper(root: &Path, frame: &[u8]) -> CollectorController {
+    use std::os::unix::fs::PermissionsExt;
+
+    let response = root.join("response.bin");
+    fs::write(&response, frame).unwrap();
+    let executable = root.join("response-helper");
+    let quoted = format!("'{}'", response.to_str().unwrap().replace('\'', "'\"'\"'"));
+    fs::write(
+        &executable,
+        format!("#!/bin/sh\n/bin/cat {quoted}\nexec /bin/sleep 300\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    CollectorController::spawn(
+        &executable,
+        CollectorSource {
+            path: root.join("unused"),
+            conversation: "root".into(),
+        },
+    )
+    .unwrap()
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+fn advance_to_error(controller: &mut CollectorController) -> String {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match controller.advance() {
+            Err(error) => return error.to_string(),
+            Ok(None) => assert!(Instant::now() < deadline, "malicious response deadline"),
+            Ok(Some(_)) => panic!("malicious response was accepted"),
+        }
+        std::thread::yield_now();
+    }
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[test]
+fn collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound() {
+    let oversized_root = tempfile::tempdir().unwrap();
+    let mut oversized = (65_537u32).to_be_bytes().to_vec();
+    oversized.extend(std::iter::repeat_n(0, 65_537));
+    let mut controller = launch_response_helper(oversized_root.path(), &oversized);
+    assert_eq!(
+        advance_to_error(&mut controller),
+        "collector response exceeds limit"
+    );
+    let snapshot = controller.reporting_snapshot();
+    assert_eq!(snapshot.rejected, 1);
+    assert!(snapshot.pending_bytes <= 65_536 + 4);
+    assert!(snapshot.peak_bytes <= 65_536 + 4);
+    controller
+        .cancel(Instant::now() + Duration::from_secs(1))
+        .unwrap();
+
+    let trailing_root = tempfile::tempdir().unwrap();
+    let mut body = serde_json::to_vec(&json!({
+        "usage": {
+            "scope": "Conversation",
+            "coverage": "Complete",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_output_tokens": null
+        },
+        "source_revision": null,
+        "diagnostic": null,
+        "caught_up": true,
+        "rebuilding": false,
+        "retained_identities": 0,
+        "retained_bytes": 0
+    }))
+    .unwrap();
+    body.resize(65_536, b' ');
+    let mut trailing = (body.len() as u32).to_be_bytes().to_vec();
+    trailing.extend_from_slice(&body);
+    trailing.extend(std::iter::repeat_n(0, 4096));
+    let mut controller = launch_response_helper(trailing_root.path(), &trailing);
+    assert_eq!(
+        advance_to_error(&mut controller),
+        "unexpected collector response"
+    );
+    let snapshot = controller.reporting_snapshot();
+    assert_eq!(snapshot.rejected, 1);
+    assert!(snapshot.pending_bytes <= 65_536 + 4);
+    assert_eq!(snapshot.peak_bytes, 65_536 + 4);
+    controller
+        .cancel(Instant::now() + Duration::from_secs(1))
+        .unwrap();
+}
 fn next(controller: &mut CollectorController) -> CollectorSnapshot {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

@@ -1,0 +1,33 @@
+Source: 622a7ee plus uncommitted Task 2 changes
+
+Command: rtk proxy cargo test --features acceptance-diagnostics --test claude_reporting collector_diagnostics_track_one_bounded_exchange_and_drain -- --nocapture
+
+running 1 test
+test collector_diagnostics_track_one_bounded_exchange_and_drain ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.69s
+
+Command: rtk proxy cargo test --features acceptance-diagnostics --test claude_reporting collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound -- --nocapture
+
+running 1 test
+test collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.37s
+
+Command: rtk proxy cargo check --features acceptance-diagnostics --test claude_reporting_load
+
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.28s
+
+Command: rtk proxy cargo check --test claude_reporting_load
+
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+
+Command: rtk proxy cargo clippy --features acceptance-diagnostics --test claude_reporting_load --test claude_reporting -- -D warnings
+
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+
+The 60-second load remains intentionally unrun for the coordinator acceptance
+pass. Its updated fixture compiled in both feature and default configurations.

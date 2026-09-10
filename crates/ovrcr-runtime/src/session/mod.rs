@@ -6,7 +6,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex, mpsc::SyncSender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -242,9 +242,9 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: SyncSender<SessionEvent>,
+        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events, None, None, None, None, None)
+        Self::spawn_internal(id, spec, size, events.into(), None, None, None, None, None)
     }
 
     /// Spawn a session and publish it through `register` before its PTY
@@ -260,14 +260,14 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: SyncSender<SessionEvent>,
+        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
         register: SessionRegister<'_>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
             spec,
             size,
-            events,
+            events.into(),
             Some(register),
             None,
             None,
@@ -281,7 +281,7 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: SyncSender<SessionEvent>,
+        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -290,7 +290,7 @@ impl Session {
             id,
             spec,
             size,
-            events,
+            events.into(),
             None,
             reap_hook,
             signal_hook,
@@ -304,14 +304,14 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: SyncSender<SessionEvent>,
+        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
         leader_wait: LeaderWaitOverride<'_>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
             spec,
             size,
-            events,
+            events.into(),
             None,
             None,
             None,
@@ -325,7 +325,7 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: SyncSender<SessionEvent>,
+        events: crate::server::ReportingSender<SessionEvent>,
         register: Option<SessionRegister<'_>>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,

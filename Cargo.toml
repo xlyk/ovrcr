@@ -49,6 +49,7 @@ default-run = "ovrcr"
 
 [features]
 gui = ["dep:eframe", "dep:tempfile"]
+acceptance-diagnostics = ["ovrcr-runtime/acceptance-diagnostics"]
 
 [[bin]]
 name = "ovrcr-gui"

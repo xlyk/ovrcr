@@ -709,6 +709,102 @@ mod tests {
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
     }
+
+    #[test]
+    fn collector_process_loss_automatically_publishes_unavailable_health() {
+        use ovrcr_protocol::{
+            AgentBinding, AgentProvider, AgentSecret, ClientMessage, Request, ServerMessage,
+            SupervisorAuth, read_frame, write_frame,
+        };
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::net::UnixStream;
+
+        let root = tempfile::tempdir().unwrap();
+        let helper = root.path().join("collector-helper");
+        std::fs::write(&helper, "#!/bin/sh\n/bin/sleep 60\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let source = super::super::collector::CollectorSource {
+            path: root.path().join("transcript"),
+            conversation: "expected".into(),
+        };
+        std::fs::write(&source.path, "").unwrap();
+        let collector =
+            super::super::collector::CollectorController::spawn(&helper, source).unwrap();
+        let collector_pid = collector.process_id().unwrap() as i32;
+        let binding = AgentBinding {
+            provider: AgentProvider::Claude,
+            invocation: "invocation".into(),
+            conversation: "expected".into(),
+            generation: 1,
+        };
+        let (client, mut server_stream) = UnixStream::pair().unwrap();
+        let expected_binding = binding.clone();
+        let server = std::thread::spawn(move || {
+            let message = read_frame::<ClientMessage>(&mut server_stream).unwrap();
+            let Request::Supervisor(request) = message.request else {
+                panic!("expected automatic health command");
+            };
+            let AgentCommand::Health(report) = request.command else {
+                panic!("expected unavailable health report");
+            };
+            assert_eq!(report.binding, expected_binding);
+            assert!(matches!(
+                report.observation,
+                AgentObservation::Health(HealthSample {
+                    state: ReporterHealth::Unavailable,
+                    reason: Some(ref reason),
+                }) if reason == "collector_unavailable"
+            ));
+            write_frame(
+                &mut server_stream,
+                &ServerMessage::Response {
+                    request_id: message.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
+                },
+            )
+            .unwrap();
+        });
+        let mut receiver = Receiver {
+            lease: Some(InvocationLease {
+                stream: client,
+                auth: SupervisorAuth {
+                    session: ovrcr_protocol::SessionId(1),
+                    lease: AgentSecret([7; 32]),
+                },
+                socket: root.path().join("unused.sock"),
+                binding: Some(binding.clone()),
+                next_request: 1,
+                capability: [0; 32],
+            }),
+            expected: Some("expected".into()),
+            phase: Phase::Bound,
+            prompt: None,
+            activity_revision: 0,
+            metrics: None,
+            metrics_revision: 0,
+            health_revision: 0,
+            source_health: None,
+            transcript_path: None,
+            collector: Some(collector),
+            cost_watermark: None,
+            collector_caught_up: false,
+        };
+        assert_eq!(unsafe { libc::kill(-collector_pid, libc::SIGKILL) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while receiver.source_health.is_none() && Instant::now() < deadline {
+            receiver.poll(deadline);
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            receiver.source_health.as_deref(),
+            Some("collector_unavailable")
+        );
+        assert_eq!(
+            receiver.lease.as_ref().unwrap().binding.as_ref(),
+            Some(&binding)
+        );
+        server.join().unwrap();
+    }
     #[test]
     fn initial_admission_argv_grammar_is_conservative_and_value_aware() {
         for arguments in [

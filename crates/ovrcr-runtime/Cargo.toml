@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+acceptance-diagnostics = []
+
 [dependencies]
 anyhow = { workspace = true }
 bincode = { workspace = true }

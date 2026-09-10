@@ -13,6 +13,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const IPC_LIMIT: usize = 65_536;
+const IPC_FRAME_LIMIT: usize = IPC_LIMIT + 4;
 const READ_LIMIT: usize = 256 * 1024;
 const RECORD_LIMIT: usize = 32 * 1024 * 1024;
 
@@ -52,12 +53,16 @@ pub struct CollectorController {
     watermark: [Option<u64>; 5],
     awaiting_rebuild: bool,
     cleanup_deadline: Option<Instant>,
+    peak_items: usize,
+    peak_bytes: usize,
+    rejected: u64,
 }
 
 impl CollectorController {
     pub fn spawn(executable: &Path, source: CollectorSource) -> Result<Self> {
         validate_source(&source)?;
         let write = encode(&HelperRequest::Start(source))?;
+        let initial_bytes = write.len();
         let mut child = Command::new(executable)
             .arg("__agent-collector")
             .env_clear()
@@ -85,6 +90,9 @@ impl CollectorController {
             watermark: [None; 5],
             awaiting_rebuild: false,
             cleanup_deadline: None,
+            peak_items: 1,
+            peak_bytes: initial_bytes,
+            rejected: 0,
         };
         nonblocking(controller.input.as_raw_fd())?;
         nonblocking(controller.output.as_raw_fd())?;
@@ -103,31 +111,41 @@ impl CollectorController {
             self.write = encode(&HelperRequest::Read)?;
             self.written = 0;
             self.in_flight = true;
+            self.record_peak();
         }
         self.flush()?;
+        if !self.write.is_empty() {
+            return Ok(None);
+        }
         let mut chunk = [0u8; 4096];
         loop {
-            match self.output.read(&mut chunk) {
+            let remaining = IPC_FRAME_LIMIT - self.response.len();
+            let read_len = remaining.min(chunk.len());
+            match self.output.read(&mut chunk[..read_len]) {
                 Ok(0) => bail!("collector disconnected"),
-                Ok(n) => self.response.extend_from_slice(&chunk[..n]),
+                Ok(n) => {
+                    self.response.extend_from_slice(&chunk[..n]);
+                    self.record_peak();
+                }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => bail!("collector response unavailable"),
-            }
-            if self.response.len() > IPC_LIMIT + 4 {
-                bail!("collector response exceeds limit");
             }
             if self.response.len() < 4 {
                 continue;
             }
             let length = u32::from_be_bytes(self.response[..4].try_into().unwrap()) as usize;
             if length > IPC_LIMIT {
+                self.rejected += 1;
                 bail!("collector response exceeds limit");
             }
             if self.response.len() < length + 4 {
                 continue;
             }
-            if self.response.len() != length + 4 {
+            let mut trailing = [0u8; 1];
+            if self.response.len() != length + 4 || matches!(self.output.read(&mut trailing), Ok(1))
+            {
+                self.rejected += 1;
                 bail!("unexpected collector response");
             }
             let mut snapshot: CollectorSnapshot = serde_json::from_slice(&self.response[4..])
@@ -149,6 +167,9 @@ impl CollectorController {
                 Err(_) => bail!("collector request unavailable"),
             }
         }
+        self.write.clear();
+        self.written = 0;
+        self.record_peak();
         Ok(())
     }
 
@@ -191,6 +212,10 @@ impl CollectorController {
     pub fn cancel(&mut self, deadline: Instant) -> Result<()> {
         self.stopped = true;
         self.cleanup_deadline = Some(deadline);
+        self.write.clear();
+        self.written = 0;
+        self.response.clear();
+        self.in_flight = false;
         let Some(child) = &mut self.child else {
             return Ok(());
         };
@@ -235,6 +260,24 @@ impl CollectorController {
 
     pub fn process_id(&self) -> Option<u32> {
         self.child.as_ref().map(Child::id)
+    }
+
+    #[cfg(feature = "acceptance-diagnostics")]
+    pub fn reporting_snapshot(&self) -> ovrcr_runtime::server::ReportingQueueSnapshot {
+        ovrcr_runtime::server::ReportingQueueSnapshot {
+            pending_items: usize::from(self.in_flight),
+            pending_bytes: self.write.len() + self.response.len(),
+            peak_items: self.peak_items,
+            peak_bytes: self.peak_bytes,
+            rejected: self.rejected,
+        }
+    }
+
+    fn record_peak(&mut self) {
+        let items = usize::from(self.in_flight);
+        let bytes = self.write.len() + self.response.len();
+        self.peak_items = self.peak_items.max(items);
+        self.peak_bytes = self.peak_bytes.max(bytes);
     }
 }
 
