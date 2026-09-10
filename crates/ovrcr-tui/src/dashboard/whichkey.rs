@@ -29,6 +29,14 @@ struct PopupLayout {
     detail: Rect,
 }
 
+fn navigation_text(area: Rect) -> &'static str {
+    if area.width < 18 {
+        " [X] [<] "
+    } else {
+        " [Close] [Back] "
+    }
+}
+
 fn paragraph(text: &str) -> Paragraph<'_> {
     Paragraph::new(text).wrap(Wrap { trim: false })
 }
@@ -332,10 +340,12 @@ impl Dashboard {
         let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
         let selected = self.whichkey.as_ref().and_then(|p| p.browsing).unwrap_or(0);
         let layout = popup_layout(area, &groups, selected);
-        if matches!(
-            mouse.kind,
-            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
-        ) {
+        if layout.area.contains(Position::new(mouse.column, mouse.row))
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+            )
+        {
             let popup = self.whichkey.as_mut().unwrap();
             popup.pending_leader = false;
             popup.browsing = Some(if mouse.kind == MouseEventKind::ScrollUp {
@@ -347,6 +357,27 @@ impl Dashboard {
         }
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return DashboardAction::None;
+        }
+        let point = Position::new(mouse.column, mouse.row);
+        if mouse.row == layout.area.bottom().saturating_sub(1) && layout.area.contains(point) {
+            let x = mouse.column.saturating_sub(layout.area.x + 1);
+            let text = navigation_text(layout.area);
+            let close = text.find('[').unwrap() as u16;
+            let close_end = text.find(']').unwrap() as u16 + 1;
+            let back = text.rfind('[').unwrap() as u16;
+            let back_end = text.rfind(']').unwrap() as u16 + 1;
+            let key = if (close..close_end).contains(&x) {
+                Some(KeyCode::Esc)
+            } else if (back..back_end).contains(&x) {
+                Some(KeyCode::Backspace)
+            } else {
+                None
+            };
+            if let Some(code) = key {
+                return self
+                    .whichkey_key(KeyEvent::new(code, KeyModifiers::NONE))
+                    .unwrap_or(DashboardAction::Redraw);
+            }
         }
         if let Some(index) = layout
             .rows
@@ -383,7 +414,7 @@ impl Dashboard {
                     Some(group) => format!(" Which key · Space {group} "),
                     None => " Which key · Space ".into(),
                 })
-                .title_bottom(" Esc close · Backspace up ")
+                .title_bottom(navigation_text(layout.area))
                 .style(Style::default().bg(CRUST).fg(TEXT))
                 .border_style(Style::default().fg(MAUVE)),
             layout.area,

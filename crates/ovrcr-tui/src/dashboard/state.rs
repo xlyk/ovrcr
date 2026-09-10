@@ -1828,7 +1828,10 @@ impl Dashboard {
     }
 
     pub fn mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
-        if self.tasks.is_some() || self.palette.is_some() {
+        if self.palette.is_some() {
+            return self.palette_mouse(mouse, area);
+        }
+        if self.tasks.is_some() {
             return DashboardAction::None;
         }
         if self.whichkey.is_some() {
@@ -1836,6 +1839,23 @@ impl Dashboard {
         }
         if !self.mouse_focused {
             return DashboardAction::None;
+        }
+        if matches!(self.mode, InputMode::Browse | InputMode::Terminal)
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            let (actions, menu) = super::render::action_controls(area);
+            let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+            if actions.contains(point) {
+                self.cancel_mouse_gesture();
+                return self.open_palette();
+            }
+            if menu.contains(point) {
+                self.cancel_mouse_gesture();
+                self.mode = InputMode::Browse;
+                return self
+                    .whichkey_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE))
+                    .unwrap_or(DashboardAction::Redraw);
+            }
         }
         if let Some(action) = self.pane_mouse_action(mouse, area) {
             return action;
@@ -1863,7 +1883,10 @@ impl Dashboard {
     }
 
     pub fn mouse_capture_required(&self) -> bool {
-        if self.tasks.is_some() || self.palette.is_some() {
+        if self.palette.is_some() {
+            return true;
+        }
+        if self.tasks.is_some() {
             return false;
         }
         if self.whichkey.is_some() {

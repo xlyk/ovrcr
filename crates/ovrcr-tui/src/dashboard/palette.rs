@@ -7,9 +7,9 @@ use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{BranchRequest, ClientMessage, CreateSessionRequest, Request, Response};
 use crate::session::SessionId;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
@@ -86,6 +86,57 @@ pub(super) struct Palette {
     workspace_acknowledged: bool,
     suggestions: Suggestions,
     submit_when_ready: bool,
+    cursor: super::text_cursor::TextCursor,
+    scroll: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+enum PaletteTarget {
+    Search,
+    Entry(usize),
+    Field(usize, bool),
+    Option(usize, usize),
+}
+
+fn palette_geometry(outer: Rect) -> (Rect, Rect, Rect, Rect) {
+    let width = outer.width.min(82);
+    let height = outer.height.min(19);
+    let area = Rect::new(
+        outer.x + (outer.width - width) / 2,
+        outer.y + (outer.height - height) / 2,
+        width,
+        height,
+    );
+    let inner = Block::bordered().inner(area);
+    let button_height = inner.height.min(1);
+    let footer = inner
+        .height
+        .saturating_sub(button_height)
+        .min(4)
+        .min(inner.height / 3);
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(footer + button_height),
+    );
+    let buttons = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(button_height),
+        inner.width,
+        button_height,
+    );
+    (area, inner, body, buttons)
+}
+fn button_text(page: &Page, width: u16) -> &'static str {
+    if width < 17 {
+        return "[OK] [X]";
+    }
+    match page {
+        Page::Search { .. } => "[Open] [Cancel]",
+        Page::Confirm { .. } => "[Confirm] [Cancel]",
+        Page::Form { .. } => "[Submit] [Cancel]",
+    }
 }
 
 impl Palette {
@@ -100,6 +151,8 @@ impl Palette {
             workspace_acknowledged: false,
             suggestions: Suggestions::default(),
             submit_when_ready: false,
+            cursor: Default::default(),
+            scroll: None,
         }
     }
 
@@ -107,6 +160,7 @@ impl Palette {
         if self.pending.is_some() || self.submit_when_ready {
             return;
         }
+        self.scroll = None;
         let text: String = text.chars().filter(|ch| !ch.is_control()).collect();
         if text.is_empty() {
             return;
@@ -114,7 +168,7 @@ impl Palette {
         match &mut self.page {
             Page::Search { query, selected } => {
                 *selected = 0;
-                query.push_str(&text);
+                self.cursor.insert(query, &text);
             }
             Page::Form {
                 fields,
@@ -125,11 +179,14 @@ impl Palette {
             } => {
                 mark_form_edit(fields, *active, name_edited, root_edited);
                 match &mut fields[*active].kind {
-                    FieldKind::Pick(list) => list.on_insert(&text),
-                    FieldKind::Text => fields[*active].value.push_str(&text),
+                    FieldKind::Pick(list) => {
+                        self.cursor.insert(&mut list.query, &text);
+                        list.selected = 0;
+                    }
+                    FieldKind::Text => self.cursor.insert(&mut fields[*active].value, &text),
                     FieldKind::Path(picker) => {
                         picker.selected = 0;
-                        fields[*active].value.push_str(&text);
+                        self.cursor.insert(&mut fields[*active].value, &text);
                     }
                     FieldKind::Toggle => {}
                 }
@@ -237,6 +294,8 @@ impl Dashboard {
             workspace_acknowledged: false,
             suggestions: Suggestions::default(),
             submit_when_ready: false,
+            cursor: Default::default(),
+            scroll: None,
         });
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
@@ -561,13 +620,147 @@ impl Dashboard {
         refresh_path_listing(&mut fields[*active], &self.settings.picker_roots);
     }
 
+    pub(super) fn palette_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
+        let (_, _, body, buttons) = palette_geometry(area);
+        let point = Position::new(mouse.column, mouse.row);
+        let palette = self.palette.as_ref().unwrap();
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && buttons.contains(point) {
+            let label = button_text(&palette.page, buttons.width);
+            let cancel = label.rfind('[').unwrap() as u16;
+            let x = mouse.column - buttons.x;
+            if x >= cancel && x < label.len() as u16 {
+                return self.palette_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            }
+            if x < cancel.saturating_sub(1)
+                && palette.pending.is_none()
+                && !palette.submit_when_ready
+            {
+                let action =
+                    self.palette_key_inner(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true);
+                self.refresh_active_path_listing();
+                return action;
+            }
+            return DashboardAction::Redraw;
+        }
+        if palette.pending.is_some() || palette.submit_when_ready || !body.contains(point) {
+            return DashboardAction::None;
+        }
+        let (lines, targets, scroll) = self.palette_body(body);
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                -1
+            } else {
+                1
+            };
+            let over_option = mouse.column >= body.x.saturating_add(4)
+                && targets.iter().any(|(row, target)| {
+                    *row == scroll + usize::from(mouse.row - body.y)
+                        && matches!(target, PaletteTarget::Option(..))
+                });
+            if matches!(palette.page, Page::Search { .. }) || over_option {
+                return self.palette_key(KeyEvent::new(
+                    if delta < 0 {
+                        KeyCode::Up
+                    } else {
+                        KeyCode::Down
+                    },
+                    KeyModifiers::NONE,
+                ));
+            }
+            let max = lines.len().saturating_sub(body.height as usize);
+            let next = scroll.saturating_add_signed(delta).min(max);
+            self.palette.as_mut().unwrap().scroll = Some(next);
+            return DashboardAction::Redraw;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return DashboardAction::None;
+        }
+        let target = targets
+            .into_iter()
+            .find(|(row, _)| *row == scroll + usize::from(mouse.row - body.y))
+            .map(|(_, t)| t);
+        let Some(target) = target else {
+            return DashboardAction::None;
+        };
+        let mut palette = self.palette.take().unwrap();
+        let mut key = None;
+        match (&mut palette.page, target) {
+            (Page::Search { query, .. }, PaletteTarget::Search) => palette.cursor.click(
+                query,
+                body.width.saturating_sub(8) as usize,
+                mouse.column.saturating_sub(body.x + 8) as usize,
+            ),
+            (Page::Search { selected, .. }, PaletteTarget::Entry(index)) => {
+                *selected = index;
+                key = Some(KeyCode::Enter);
+            }
+            (Page::Form { fields, active, .. }, PaletteTarget::Field(index, value)) => {
+                let was_active = *active == index;
+                if !was_active {
+                    palette.cursor = Default::default();
+                }
+                *active = index;
+                palette.scroll = None;
+                let field = &mut fields[index];
+                if value
+                    && let FieldKind::Pick(list) = &mut field.kind
+                    && (!was_active || list.query.is_empty())
+                {
+                    list.query.clone_from(&field.value);
+                    list.selected = 0;
+                }
+                match &field.kind {
+                    FieldKind::Toggle => key = Some(KeyCode::Char(' ')),
+                    _ if value => {
+                        let text = match &field.kind {
+                            FieldKind::Pick(list) if !list.query.is_empty() => &list.query,
+                            _ => &field.value,
+                        };
+                        palette.cursor.click(
+                            text,
+                            body.width.saturating_sub(2) as usize,
+                            mouse.column.saturating_sub(body.x + 2) as usize,
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            (Page::Form { fields, active, .. }, PaletteTarget::Option(index, selected)) => {
+                *active = index;
+                palette.cursor = Default::default();
+                match &mut fields[index].kind {
+                    FieldKind::Pick(list) => {
+                        list.selected = selected;
+                        key = Some(KeyCode::Tab);
+                    }
+                    FieldKind::Path(picker) => {
+                        picker.selected = selected;
+                        key = Some(KeyCode::Tab);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        self.palette = Some(palette);
+        if let Some(code) = key {
+            self.palette_key(KeyEvent::new(code, KeyModifiers::NONE))
+        } else {
+            self.refresh_active_path_listing();
+            DashboardAction::Redraw
+        }
+    }
+
     pub(super) fn palette_key(&mut self, key: KeyEvent) -> DashboardAction {
-        let action = self.palette_key_inner(key);
+        let action = self.palette_key_inner(key, false);
         self.refresh_active_path_listing();
         action
     }
 
-    fn palette_key_inner(&mut self, key: KeyEvent) -> DashboardAction {
+    fn palette_key_inner(&mut self, key: KeyEvent, submit: bool) -> DashboardAction {
         let mut palette = self.palette.take().unwrap();
         if key.code == KeyCode::Esc || is_browse_key(key) {
             // Escape closes even while a request runs; its late response is
@@ -588,12 +781,21 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         self.refresh_workspace_form(&mut palette);
+        palette.scroll = None;
+        if matches!(
+            key.code,
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Enter | KeyCode::Up | KeyCode::Down
+        ) {
+            palette.cursor = Default::default();
+            palette.scroll = None;
+        }
         let mut action = DashboardAction::Redraw;
         match key.code {
             KeyCode::Char('u' | 'U') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 match &mut palette.page {
                     Page::Search { query, selected } => {
                         query.clear();
+                        palette.cursor = Default::default();
                         *selected = 0;
                     }
                     Page::Form {
@@ -609,6 +811,7 @@ impl Dashboard {
                         }
                         mark_form_edit(fields, *active, name_edited, root_edited);
                         fields[*active].value.clear();
+                        palette.cursor = Default::default();
                         match &mut fields[*active].kind {
                             FieldKind::Pick(list) => {
                                 list.query.clear();
@@ -642,11 +845,19 @@ impl Dashboard {
             {
                 palette.insert(&ch.to_string());
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End => {
+                let editing = matches!(key.code, KeyCode::Backspace | KeyCode::Delete);
                 match &mut palette.page {
                     Page::Search { query, selected } => {
-                        query.pop();
-                        *selected = 0;
+                        palette.cursor.key(query, key.code);
+                        if editing {
+                            *selected = 0;
+                        }
                     }
                     Page::Form {
                         fields,
@@ -655,22 +866,32 @@ impl Dashboard {
                         root_edited,
                         ..
                     } => {
-                        mark_form_edit(fields, *active, name_edited, root_edited);
-                        match &mut fields[*active].kind {
+                        if editing {
+                            mark_form_edit(fields, *active, name_edited, root_edited);
+                        }
+                        let field = &mut fields[*active];
+                        match &mut field.kind {
                             FieldKind::Toggle => {}
-                            FieldKind::Pick(list) => list.on_backspace(),
-                            FieldKind::Text => {
-                                fields[*active].value.pop();
+                            FieldKind::Pick(list) => {
+                                palette.cursor.key(&mut list.query, key.code);
+                                if editing {
+                                    list.selected = 0;
+                                }
                             }
+                            FieldKind::Text => palette.cursor.key(&mut field.value, key.code),
                             FieldKind::Path(picker) => {
-                                picker.selected = 0;
-                                fields[*active].value.pop();
+                                palette.cursor.key(&mut field.value, key.code);
+                                if editing {
+                                    picker.selected = 0;
+                                }
                             }
                         }
                     }
                     _ => {}
                 }
-                palette.error = None;
+                if editing {
+                    palette.error = None;
+                }
             }
             KeyCode::Up | KeyCode::Down if form_list_active(&palette.page) => {
                 if let Page::Form { fields, active, .. } = &mut palette.page {
@@ -799,7 +1020,8 @@ impl Dashboard {
                     self.refresh_terminal_form(fields, *name_edited);
                     self.refresh_project_form(fields, *name_edited, *root_edited);
                     let visible = visible_indices(fields);
-                    let last = visible.last().copied() == Some(*active)
+                    let last = submit
+                        || visible.last().copied() == Some(*active)
                         || (matches!(command, Command::CreateWorkspace) && *active == 1);
                     if !last {
                         move_form_field(fields, active, false);
@@ -1240,44 +1462,18 @@ impl Dashboard {
         outgoing
     }
 
-    pub(super) fn draw_palette(&self, frame: &mut Frame<'_>) {
-        let Some(palette) = &self.palette else {
-            return;
-        };
-        let outer = frame.area();
-        let width = outer.width.min(82);
-        let height = outer.height.min(19);
-        let area = Rect::new(
-            outer.x + (outer.width - width) / 2,
-            outer.y + (outer.height - height) / 2,
-            width,
-            height,
-        );
-        frame.render_widget(Clear, area);
-        let title = match &palette.page {
-            Page::Search { .. } => "Command palette",
-            Page::Form { command, .. } => match command {
-                Command::CreateTerminal => "Create terminal",
-                Command::CreateWorkspace => "Create workspace",
-                Command::RegisterProject => "Register project",
-                Command::RemoveWorkspace => "Remove workspace",
-                _ => "Remove project",
-            },
-            Page::Confirm { .. } => "Confirm action",
-        };
-        let block = Block::bordered()
-            .title(format!(" {title} "))
-            .border_style(Style::default().fg(MAUVE))
-            .style(Style::default().bg(CRUST).fg(TEXT));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let footer_height = inner.height.min(4);
-        let body = Rect::new(inner.x, inner.y, inner.width, inner.height - footer_height);
+    fn palette_body(&self, body: Rect) -> (Vec<Line<'_>>, Vec<(usize, PaletteTarget)>, usize) {
+        let palette = self.palette.as_ref().unwrap();
         let mut lines = Vec::new();
         let mut focus_line = 0;
+        let mut targets = Vec::new();
         match &palette.page {
             Page::Search { query, selected } => {
-                lines.push(Line::from(format!("Search: {query}▏")));
+                targets.push((lines.len(), PaletteTarget::Search));
+                let (visible, _) = palette
+                    .cursor
+                    .display(query, body.width.saturating_sub(8) as usize);
+                lines.push(Line::from(format!("Search: {visible}")));
                 let entries = self.palette_entries(query);
                 if entries.is_empty() {
                     lines.push(Line::from("No matching actions or terminals"));
@@ -1303,6 +1499,7 @@ impl Dashboard {
                     } else {
                         clip_text(&entry.label, available)
                     };
+                    targets.push((lines.len(), PaletteTarget::Entry(index)));
                     lines.push(Line::styled(
                         format!("{} {}", if index == selected { "›" } else { " " }, label),
                         if index == selected {
@@ -1329,6 +1526,7 @@ impl Dashboard {
                     if index == *active {
                         focus_line = lines.len() + 1;
                     }
+                    targets.push((lines.len(), PaletteTarget::Field(index, false)));
                     lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT)));
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
@@ -1336,34 +1534,33 @@ impl Dashboard {
                         }
                         _ => &field.value,
                     };
-                    let text = format!(
-                        "{} {}{}",
-                        if index == *active { "›" } else { " " },
-                        editing,
-                        if index == *active { "▏" } else { "" }
-                    );
-                    // Keep the end of an edited path visible in a narrow window.
-                    let tail: String = text
-                        .chars()
-                        .rev()
-                        .take(usize::from(inner.width))
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect();
+                    let cursor = if index == *active {
+                        palette.cursor
+                    } else {
+                        Default::default()
+                    };
+                    let (mut text, _) =
+                        cursor.display(editing, body.width.saturating_sub(2) as usize);
+                    if index != *active {
+                        text.pop();
+                    }
+                    targets.push((lines.len(), PaletteTarget::Field(index, true)));
                     lines.push(Line::styled(
-                        tail,
-                        if index == *active {
-                            Style::default().fg(MAUVE)
-                        } else {
-                            Style::default().fg(TEXT)
-                        },
+                        format!("{} {text}", if index == *active { "›" } else { " " }),
+                        Style::default().fg(if index == *active { MAUVE } else { TEXT }),
                     ));
                     if index == *active
                         && let FieldKind::Pick(list) = &field.kind
                     {
                         let (options, selected) = list.lines(8);
                         focus_line = lines.len() + selected;
+                        let start = list.selected.saturating_sub(selected);
+                        for offset in 0..options.len().min(list.filtered().len()) {
+                            targets.push((
+                                lines.len() + offset,
+                                PaletteTarget::Option(index, start + offset),
+                            ));
+                        }
                         lines.extend(options);
                     }
                     if index == *active
@@ -1376,6 +1573,10 @@ impl Dashboard {
                             listing.entries.iter().enumerate().skip(start).take(count)
                         {
                             let chosen = offset == picker.selected;
+                            targets.push((lines.len(), PaletteTarget::Option(index, offset)));
+                            if chosen {
+                                focus_line = lines.len();
+                            }
                             lines.push(Line::styled(
                                 format!("  {} {}", if chosen { "›" } else { " " }, item.label),
                                 if chosen {
@@ -1398,7 +1599,39 @@ impl Dashboard {
                 lines.push(Line::from(target.clone()));
             }
         }
-        let scroll = focus_line.saturating_sub(usize::from(body.height.saturating_sub(1)));
+        let scroll = palette
+            .scroll
+            .unwrap_or_else(|| {
+                focus_line.saturating_sub(usize::from(body.height.saturating_sub(1)))
+            })
+            .min(lines.len().saturating_sub(body.height as usize));
+        (lines, targets, scroll)
+    }
+
+    pub(super) fn draw_palette(&self, frame: &mut Frame<'_>) {
+        let Some(palette) = &self.palette else {
+            return;
+        };
+        let (area, inner, body, buttons) = palette_geometry(frame.area());
+        frame.render_widget(Clear, area);
+        let title = match &palette.page {
+            Page::Search { .. } => "Command palette",
+            Page::Form { command, .. } => match command {
+                Command::CreateTerminal => "Create terminal",
+                Command::CreateWorkspace => "Create workspace",
+                Command::RegisterProject => "Register project",
+                Command::RemoveWorkspace => "Remove workspace",
+                _ => "Remove project",
+            },
+            Page::Confirm { .. } => "Confirm action",
+        };
+        let block = Block::bordered()
+            .title(format!(" {title} "))
+            .border_style(Style::default().fg(MAUVE))
+            .style(Style::default().bg(CRUST).fg(TEXT));
+        frame.render_widget(block, area);
+        let footer_height = buttons.y.saturating_sub(body.bottom());
+        let (lines, _, scroll) = self.palette_body(body);
         let paragraph = Paragraph::new(lines)
             .scroll((scroll as u16, 0))
             .style(Style::default().fg(TEXT));
@@ -1483,6 +1716,11 @@ impl Dashboard {
             );
         }
         frame.render_widget(
+            Paragraph::new(button_text(&palette.page, buttons.width))
+                .style(Style::default().fg(MAUVE)),
+            buttons,
+        );
+        frame.render_widget(
             Paragraph::new(status)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(if palette.error.is_some() {
@@ -1541,4 +1779,316 @@ fn removal_confirmation(request: Request) -> Page {
         _ => unreachable!("only workspace/project removal uses this confirmation"),
     };
     Page::Confirm { request, target }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn click(d: &mut Dashboard, needle: &str, dx: u16, width: u16, height: u16) -> DashboardAction {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| super::super::render::draw_dashboard_at(f, d, 0))
+            .unwrap();
+        let b = terminal.backend().buffer();
+        let mut found = None;
+        for y in 0..height {
+            for x in 0..width {
+                let row: String = (x..width).map(|col| b[(col, y)].symbol()).collect();
+                if row.starts_with(needle) {
+                    found = Some((x + dx, y));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        let (column, row) = found.unwrap_or_else(|| panic!("missing rendered control: {needle}"));
+        d.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            Rect::new(0, 0, width, height),
+        )
+    }
+    fn dashboard() -> Dashboard {
+        Dashboard::new(crate::session::TerminalSize {
+            rows: 30,
+            cols: 100,
+        })
+    }
+    #[test]
+    fn mouse_form_focus_unicode_edit_and_cancel() {
+        let mut d = dashboard();
+        d.open_register_project();
+        assert!(d.mouse_capture_required());
+        click(&mut d, "Name", 0, 100, 30);
+        d.palette_paste("a界éz");
+        click(&mut d, "a界", 3, 100, 30);
+        d.palette_paste("X");
+        d.palette_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        d.palette_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(*active, 1);
+        assert_eq!(fields[1].value, "a界z");
+        click(&mut d, "[Cancel]", 1, 100, 30);
+        assert!(d.palette.is_none());
+    }
+    #[test]
+    fn mouse_actions_search_and_confirmation_pending_guard() {
+        let mut d = dashboard();
+        d.mode = InputMode::Terminal;
+        click(&mut d, "[Actions]", 1, 100, 30);
+        click(&mut d, "Register project", 1, 100, 30);
+        assert!(matches!(
+            d.palette.as_ref().unwrap().page,
+            Page::Form {
+                command: Command::RegisterProject,
+                ..
+            }
+        ));
+        d.palette = Some(Palette {
+            page: removal_confirmation(Request::RemoveProject {
+                name: "demo".into(),
+            }),
+            ..Palette::new()
+        });
+        let DashboardAction::Request(message) = click(&mut d, "[Confirm]", 1, 100, 30) else {
+            panic!("confirm must submit")
+        };
+        assert_eq!(
+            message.request,
+            Request::RemoveProject {
+                name: "demo".into()
+            }
+        );
+        assert!(!matches!(
+            click(&mut d, "[Confirm]", 1, 100, 30),
+            DashboardAction::Request(_)
+        ));
+        click(&mut d, "[Cancel]", 1, 100, 30);
+        assert!(d.ignored_responses.contains(&message.request_id));
+    }
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+    #[test]
+    fn mouse_menu_back_and_close_without_clickthrough() {
+        let mut d = dashboard();
+        click(&mut d, "[Menu]", 1, 100, 30);
+        click(&mut d, "v  View", 1, 100, 30);
+        assert_eq!(d.whichkey.as_ref().unwrap().group, Some('v'));
+        click(&mut d, "[Back]", 1, 100, 30);
+        assert_eq!(d.whichkey.as_ref().unwrap().group, None);
+        d.mouse_action(
+            mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+            Rect::new(0, 0, 100, 30),
+        );
+        assert!(d.whichkey.is_some());
+        click(&mut d, "[Close]", 1, 100, 30);
+        assert!(d.whichkey.is_none());
+    }
+    #[test]
+    fn mouse_scrolled_picker_accepts_visible_option() {
+        let mut d = dashboard();
+        d.open_register_project();
+        let p = d.palette.as_mut().unwrap();
+        let Page::Form { fields, .. } = &mut p.page else {
+            panic!()
+        };
+        let mut list = PickList::new(
+            (0..20)
+                .map(|i| PickItem {
+                    label: format!("Choice-{i:02}"),
+                    value: format!("value-{i}"),
+                })
+                .collect(),
+        );
+        list.selected = 10;
+        fields[0].kind = FieldKind::Pick(list);
+        // Wheel the rendered option viewport beyond its initial eight rows.
+        let (_, _, body, _) = palette_geometry(Rect::new(0, 0, 100, 30));
+        let (_, targets, scroll) = d.palette_body(body);
+        let y = targets
+            .iter()
+            .find(|(_, t)| matches!(t, PaletteTarget::Option(_, 10)))
+            .unwrap()
+            .0;
+        for _ in 0..3 {
+            d.mouse_action(
+                mouse(
+                    MouseEventKind::ScrollDown,
+                    body.x + 5,
+                    body.y + (y - scroll) as u16,
+                ),
+                Rect::new(0, 0, 100, 30),
+            );
+        }
+        click(&mut d, "Choice-13", 1, 100, 30);
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[0].value, "value-13");
+        assert_eq!(*active, 1);
+    }
+    #[test]
+    fn mouse_submit_from_first_field_and_outside_overlay_guard() {
+        let mut d = dashboard();
+        d.open_register_project();
+        let Page::Form {
+            fields,
+            name_edited,
+            root_edited,
+            ..
+        } = &mut d.palette.as_mut().unwrap().page
+        else {
+            panic!()
+        };
+        *name_edited = true;
+        *root_edited = true;
+        fields[0].value = "/tmp/repo".into();
+        fields[1].value = "demo".into();
+        fields[2].value = "/tmp/work".into();
+        d.mouse_action(
+            mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+            Rect::new(0, 0, 100, 30),
+        );
+        assert!(d.palette.is_some());
+        let DashboardAction::Request(message) = click(&mut d, "[Submit]", 1, 100, 30) else {
+            panic!("submit must validate all fields from first field")
+        };
+        assert!(matches!(message.request, Request::AddProject { name, .. } if name == "demo"));
+    }
+    #[test]
+    fn mouse_toggle_and_scrolled_path_row() {
+        let mut d = dashboard();
+        d.open_create_workspace();
+        click(&mut d, "Branch mode", 1, 100, 30);
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[2].value, "existing");
+        assert!(fields[4].hidden);
+        d.open_register_project();
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..15 {
+            std::fs::create_dir(dir.path().join(format!("child-{i:02}"))).unwrap();
+        }
+        d.palette_paste(&format!("{}/", dir.path().display()));
+        for _ in 0..11 {
+            d.palette_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        click(&mut d, "child-11", 1, 100, 30);
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert!(fields[0].value.ends_with("/child-11/"));
+    }
+    #[test]
+    fn mouse_narrow_form_scroll_reaches_hidden_fields() {
+        let mut d = dashboard();
+        d.open_register_project();
+        let area = Rect::new(0, 0, 22, 9);
+        let (_, _, body, _) = palette_geometry(area);
+        for _ in 0..12 {
+            d.mouse_action(mouse(MouseEventKind::ScrollDown, body.x, body.y), area);
+        }
+        click(&mut d, "Workspace root", 1, 22, 9);
+        d.palette_paste("/tmp/界/root");
+        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(*active, 2);
+        assert_eq!(fields[2].value, "/tmp/界/root");
+        click(&mut d, "[Cancel]", 1, 22, 9);
+        assert!(d.palette.is_none());
+    }
+    #[test]
+    fn mouse_text_search_and_narrow_unicode_cursor() {
+        let mut d = dashboard();
+        d.open_palette();
+        d.palette_paste("creat workspace");
+        click(&mut d, "Search: creat", 13, 100, 30);
+        d.palette_paste("e");
+        let Page::Search { query, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(query, "create workspace");
+        d.open_register_project();
+        click(&mut d, "Name", 0, 22, 12);
+        d.palette_paste("abcdefghijklmnop界Z");
+        click(&mut d, "界", 0, 22, 12);
+        d.palette_paste("X");
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[1].value, "abcdefghijklmnopX界Z");
+    }
+    #[test]
+    fn mouse_pick_value_edits_at_visible_cursor() {
+        let mut d = dashboard();
+        d.open_register_project();
+        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+            panic!()
+        };
+        fields[0].value = "hello".into();
+        fields[0].kind = FieldKind::Pick(PickList::new(vec![PickItem {
+            label: "hello".into(),
+            value: "hello".into(),
+        }]));
+        click(&mut d, "hello", 2, 100, 30);
+        d.palette_paste("X");
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        let FieldKind::Pick(list) = &fields[0].kind else {
+            panic!()
+        };
+        assert_eq!(list.query, "heXllo");
+    }
+
+    #[test]
+    fn mouse_tiny_overlay_controls_remain_visible() {
+        let mut d = dashboard();
+        d.open_register_project();
+        click(&mut d, "[X]", 1, 12, 8);
+        assert!(d.palette.is_none());
+        d.key(KeyCode::Char('?'));
+        click(&mut d, "[<]", 1, 18, 12);
+        assert!(d.whichkey.is_some());
+        click(&mut d, "[X]", 1, 18, 12);
+        assert!(d.whichkey.is_none());
+    }
+    #[test]
+    fn mouse_cursor_uses_rendered_emoji_grapheme_width() {
+        let mut d = dashboard();
+        d.open_register_project();
+        click(&mut d, "Name", 0, 100, 30);
+        d.palette_paste("a👩‍💻Z");
+        click(&mut d, "a👩‍💻", 3, 100, 30);
+        d.palette_paste("X");
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[1].value, "a👩‍💻XZ");
+        d.palette_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        d.palette_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        let Page::Form { fields, .. } = &d.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(fields[1].value, "aZ");
+    }
 }

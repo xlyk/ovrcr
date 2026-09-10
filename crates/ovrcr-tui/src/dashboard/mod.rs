@@ -12,6 +12,7 @@ mod state;
 mod terminal_guard;
 #[cfg(test)]
 mod tests;
+pub(crate) mod text_cursor;
 mod whichkey;
 
 pub use agents::detect_agents;
