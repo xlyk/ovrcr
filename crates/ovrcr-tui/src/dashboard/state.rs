@@ -2002,7 +2002,11 @@ impl Dashboard {
                 return Some(DashboardAction::Redraw);
             }
             if self.mode == InputMode::Browse {
-                self.focus_pane(pane.pane_index);
+                if pane.pane_index == self.focused_pane {
+                    self.selected_container = None;
+                } else {
+                    self.focus_pane(pane.pane_index);
+                }
                 if matches!(self.selected_phase(), Some(SessionPhase::Running)) {
                     self.mode = InputMode::Terminal;
                 }

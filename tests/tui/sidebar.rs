@@ -790,6 +790,97 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
     assert_eq!(dashboard.focused_pane, retained_pane);
     assert_eq!(dashboard.focused_session(), Some(retained));
     assert!(dashboard.view_request(area, 73).unwrap().is_none());
+
+    let assigned = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == retained_pane)
+        .expect("assigned pane")
+        .terminal;
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: assigned.x + 2,
+                row: assigned.y + 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
+    );
+}
+
+#[test]
+fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.hierarchy.projects[1]
+        .workspaces
+        .push(WorkspaceSummary {
+            project: "consigint".into(),
+            name: "empty".into(),
+            path: PathBuf::from("/tmp/empty"),
+            sessions: Vec::new(),
+        });
+    assert!(dashboard.split_pane());
+    let split = dashboard
+        .view_request(area, 80)
+        .unwrap()
+        .expect("split should request both panes");
+    acknowledge_all_view_targets(&mut dashboard, split);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let empty_row = (0..40)
+        .find(|row| {
+            (0..39)
+                .map(|column| terminal.backend().buffer()[(column, *row)].symbol())
+                .collect::<String>()
+                .contains("empty")
+        })
+        .expect("empty workspace row");
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: empty_row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let selected = dashboard
+        .view_request(area, 81)
+        .unwrap()
+        .expect("empty workspace selection should retain one pane");
+    acknowledge_all_view_targets(&mut dashboard, selected);
+    let retained_rect = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == dashboard.focused_pane)
+        .expect("retained pane")
+        .terminal;
+    dashboard.panes[dashboard.focused_pane]
+        .parser
+        .process(b"RETAINED_TERMINAL");
+
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let retained = (retained_rect.x..retained_rect.right())
+        .map(|column| terminal.backend().buffer()[(column, retained_rect.y)].symbol())
+        .collect::<String>();
+    assert!(retained.contains("RETAINED_TERMINAL"), "{retained}");
 }
 
 #[test]

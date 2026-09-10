@@ -628,7 +628,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
 
 impl Dashboard {
     fn draw_start_screen(&self, frame: &mut Frame<'_>) {
-        if self.mode != InputMode::Browse || self.action_session().is_some() {
+        if self.mode != InputMode::Browse || self.focused_session().is_some() {
             return;
         }
         let Some(rect) = self
