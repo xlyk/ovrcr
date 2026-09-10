@@ -1,0 +1,12 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets -- --nocapture
+Revision: concurrent Task6 working diff
+Exit: 0
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 1 test
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.91s
+

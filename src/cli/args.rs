@@ -230,10 +230,16 @@ pub(super) struct NewArgs {
 
 #[derive(Subcommand)]
 pub(super) enum SessionCommand {
-    Context { id: u64 },
+    Context {
+        id: u64,
+    },
     /// Inspect managed activity, usage, cost, and source ages as JSON.
-    Usage { id: u64 },
-    Remove { id: u64 },
+    Usage {
+        id: u64,
+    },
+    Remove {
+        id: u64,
+    },
 }
 
 pub(super) fn resolve_cli_path(path: PathBuf) -> anyhow::Result<PathBuf> {
@@ -268,6 +274,26 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
 
 #[derive(Subcommand)]
 pub(super) enum AgentCommand {
+    /// Print a reviewed settings composition; never modify provider settings.
+    Setup {
+        #[arg(value_parser = ["claude"])]
+        provider: String,
+        #[arg(long, required = true)]
+        print: bool,
+        #[arg(long)]
+        settings: Option<PathBuf>,
+    },
+    /// Inspect supported reporting prerequisites without starting a server.
+    Doctor {
+        #[arg(value_parser = ["claude"])]
+        provider: String,
+        #[arg(long)]
+        settings: Option<PathBuf>,
+        #[arg(long)]
+        session: Option<u64>,
+        #[arg(long, default_value = "claude")]
+        executable: OsString,
+    },
     #[command(
         long_about = "Run a native command with invocation supervision. Initial conversation admission supports only interactive Claude Code 2.1.267 with a fresh startup. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Only an eligible invocation with successful reporting setup receives a supervisor-selected --session-id."
     )]

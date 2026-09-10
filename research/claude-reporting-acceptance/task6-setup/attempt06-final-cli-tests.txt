@@ -1,0 +1,16 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup
+Revision: e21ddf4326235e1c31727da7e484e906ce0fe515 + setup working diff
+Exit: 0
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 5 tests
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test setup_quotes_actual_executable_path ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s
+

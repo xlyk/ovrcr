@@ -1,0 +1,293 @@
+{
+  "fixture": "Exact supported stdout; separate start/end side-effect markers; 12 sequential then24 with concurrency4; each CLI deadline4seconds",
+  "results": [
+    {
+      "attempt": 0,
+      "exit": 0,
+      "elapsed_ms": 247.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 1,
+      "exit": 0,
+      "elapsed_ms": 200.8,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 2,
+      "exit": 0,
+      "elapsed_ms": 177.2,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 3,
+      "exit": 0,
+      "elapsed_ms": 178.8,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 4,
+      "exit": 0,
+      "elapsed_ms": 187.8,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 5,
+      "exit": 0,
+      "elapsed_ms": 183.5,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 6,
+      "exit": 0,
+      "elapsed_ms": 185.0,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 7,
+      "exit": 0,
+      "elapsed_ms": 183.9,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 8,
+      "exit": 0,
+      "elapsed_ms": 206.0,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 9,
+      "exit": 0,
+      "elapsed_ms": 175.7,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 10,
+      "exit": 0,
+      "elapsed_ms": 181.1,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 11,
+      "exit": 0,
+      "elapsed_ms": 188.1,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 12,
+      "exit": 0,
+      "elapsed_ms": 680.0,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 13,
+      "exit": 0,
+      "elapsed_ms": 505.5,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 14,
+      "exit": 0,
+      "elapsed_ms": 173.4,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 15,
+      "exit": 0,
+      "elapsed_ms": 343.5,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 16,
+      "exit": 0,
+      "elapsed_ms": 668.9,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 17,
+      "exit": 0,
+      "elapsed_ms": 663.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 18,
+      "exit": 0,
+      "elapsed_ms": 664.3,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 19,
+      "exit": 0,
+      "elapsed_ms": 650.7,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 20,
+      "exit": 0,
+      "elapsed_ms": 647.8,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 21,
+      "exit": 0,
+      "elapsed_ms": 648.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 22,
+      "exit": 0,
+      "elapsed_ms": 642.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 23,
+      "exit": 0,
+      "elapsed_ms": 653.2,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 24,
+      "exit": 0,
+      "elapsed_ms": 655.8,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 25,
+      "exit": 0,
+      "elapsed_ms": 658.1,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 26,
+      "exit": 0,
+      "elapsed_ms": 662.7,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 27,
+      "exit": 0,
+      "elapsed_ms": 648.4,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 28,
+      "exit": 0,
+      "elapsed_ms": 644.3,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 29,
+      "exit": 0,
+      "elapsed_ms": 652.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 30,
+      "exit": 0,
+      "elapsed_ms": 693.4,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 31,
+      "exit": 0,
+      "elapsed_ms": 647.5,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 32,
+      "exit": 0,
+      "elapsed_ms": 655.3,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 33,
+      "exit": 0,
+      "elapsed_ms": 640.5,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 34,
+      "exit": 0,
+      "elapsed_ms": 598.1,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    },
+    {
+      "attempt": 35,
+      "exit": 0,
+      "elapsed_ms": 647.6,
+      "probe": "supported",
+      "started": true,
+      "finished": true
+    }
+  ]
+}
