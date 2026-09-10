@@ -7565,8 +7565,12 @@ fn agent_admission_native_helper() {
                 )
                 .unwrap();
             }
-            "statusline" | "statusline-replay" | "statusline-wrong" | "statusline-unknown"
-            | "statusline-lower" => {
+            "statusline"
+            | "statusline-replay"
+            | "statusline-wrong"
+            | "statusline-unknown"
+            | "statusline-lower"
+            | "statusline-context-unknown" => {
                 payload = serde_json::json!({"session_id":expected,"cost":{"total_cost_usd":0.25},"context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
                 if line == "statusline-wrong" {
                     payload["session_id"] = "foreign".into();
@@ -7576,6 +7580,11 @@ fn agent_admission_native_helper() {
                 }
                 if line == "statusline-lower" {
                     payload["cost"]["total_cost_usd"] = 0.1.into();
+                }
+                if line == "statusline-context-unknown" {
+                    payload["context_window"]["current_usage"] = serde_json::Value::Null;
+                    payload["context_window"]["used_percentage"] = serde_json::Value::Null;
+                    payload["context_window"]["remaining_percentage"] = serde_json::Value::Null;
                 }
             }
             "wrong" => payload["session_id"] = "wrong-conversation".into(),
@@ -7591,6 +7600,10 @@ fn agent_admission_native_helper() {
             "branch" => {
                 payload["source"] = "fork".into();
                 payload["session_id"] = "uncertified-other-root".into();
+            }
+            "compact" => {
+                payload["hook_event_name"] = "SessionStart".into();
+                payload["source"] = "compact".into();
             }
             "end-other" => {
                 payload["hook_event_name"] = "SessionEnd".into();
@@ -7673,7 +7686,14 @@ fn agent_admission_native_helper() {
             .unwrap();
         let output = callback.wait_with_output().unwrap();
         if line.starts_with("statusline") {
-            assert_eq!(output.stdout, b"ctx 20%\n");
+            assert_eq!(
+                output.stdout,
+                if line == "statusline-context-unknown" {
+                    "ctx —\n".as_bytes()
+                } else {
+                    b"ctx 20%\n".as_slice()
+                }
+            );
         } else {
             assert!(output.stdout.is_empty(), "hooks must be stdout silent");
         }
@@ -8733,6 +8753,52 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
                     None
                 }
             );
+        }
+    }
+    if !lose_ack && !missing && !clear && !kill_collector {
+        let compact_before = fixture.session_summary(summary.id).agent.unwrap();
+        for (index, command) in ["compact", "statusline-context-unknown", "statusline"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 7));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.binding, before.binding);
+            let metrics = snapshot.metrics.unwrap();
+            assert_eq!(
+                metrics.sample.usage.value,
+                compact_before.metrics.as_ref().unwrap().sample.usage.value
+            );
+            assert_eq!(
+                metrics
+                    .sample
+                    .cost
+                    .value
+                    .as_ref()
+                    .map(|cost| cost.usd_ticks),
+                Some(2_500_000_000)
+            );
+            match index {
+                0 => assert_eq!(metrics, compact_before.metrics.as_ref().unwrap().clone()),
+                1 => {
+                    assert_eq!(metrics.sample.context.value.used_tokens, None);
+                    assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                }
+                2 => {
+                    assert_eq!(metrics.sample.context.value.used_tokens, Some(20));
+                    assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                }
+                _ => unreachable!(),
+            }
         }
     }
     if clear {
