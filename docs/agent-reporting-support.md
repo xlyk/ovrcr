@@ -22,11 +22,11 @@ These fields come from the [official hooks reference](https://code.claude.com/do
 
 The [official status-line reference](https://code.claude.com/docs/en/statusline) supplies these semantics. The fixtures use small synthetic values: 30 fresh input + 10 cache-write input + 40 cache-read input = 80 occupied tokens. The pre-response null fixture does not establish post-compaction timing.
 
-## Foreground admission remains uncertified
+## Foreground admission support
 
 | Transition | Task 1 acceptance still needed |
 | --- | --- |
-| Initial start | Prove the candidate belongs to the supervisor-owned foreground invocation. |
+| Initial start | Certified for the narrow interactive Claude Code 2.1.267 launch grammar, supervisor-selected UUID and root startup discriminator; actual managed routing captured in attempt09. |
 | Foreground branch | Distinguish the new foreground conversation from a background fork. |
 | Background fork | Prove the current foreground binding remains unchanged. |
 | Clear | Capture identity replacement and callbacks arriving after the next transition. |
@@ -45,7 +45,7 @@ The approved design requires identity to become unavailable for an ambiguous can
 | `final-source-completion` | A reliable final-accounting boundary, including delayed writes and abrupt native exit. |
 | `cost-scope` | Comparison with native totals establishing child, auxiliary, resumed and forked attribution independently of token coverage. |
 
-No transcript usage fixture is fabricated. The proposed `(message.id, requestId)` reader key remains an implementation-plan hypothesis until source or live evidence certifies it. Root-only accounting cannot claim complete native usage while excluded categories remain unresolved. Missing cost remains unknown; explicit zero is a value.
+Live captures establish equal-usage duplicate rows with the same `(message.id, requestId)` and different record UUIDs. They do not establish differing-value replacement. The partial reader must stop before applying a conflicting counted value and label its retained result unavailable; it cannot claim the retained number remains current or is a lower bound. Recognized root-transcript records do not cover every native usage category. Missing cost remains unknown; explicit zero is a value.
 
 Task 1 remains open. The source fixtures support later parser work only after its prerequisite contracts are resolved. Existing manual reporting instructions remain in [agent-reporting.md](agent-reporting.md).
 
@@ -66,3 +66,9 @@ Task2 shared runtime work is permitted by the plan's source-or-named-blocker gat
 ## Initial startup evidence follow-up
 
 [Attempt08](../research/claude-reporting-acceptance/attempt-08-summary.md) observed a supervisor-selected UUID on a named root startup, with `agent_type` present and `agent_id` absent. Child lifecycle events carried the same session ID and a distinct `agent_id`, including cases with an empty `agent_type`. Independent review permits implementing this narrow startup discriminator, subject to actual invocation-routing tests and explicit launch-option eligibility. Initial startup remains uncertified until those tests pass; the earlier unsupported-switch limitations remain.
+
+## Reviewed implementation checkpoints
+
+The implementation branch now has independently reviewed shared ownership/protocol, managed launcher, narrow initial admission, observed activity, pure metrics arithmetic and compact dashboard presentation. [Attempt09](../research/claude-reporting-acceptance/attempt-09-managed/commands.md) exercised real managed startup, native output, clear/exit and owned-process cleanup. [Attempt10](../research/claude-reporting-acceptance/attempt-10-sources/summary.md) linked an unanswered approval selector to its correlated permission notification and the exact reported transcript path to matching file records. Earlier research-only statements above describe their original checkpoint, not the current branch.
+
+Activity support requires synchronous hooks. Matching permission_prompt means observed waiting; PermissionRequest alone does not. Stop means observed completion, never confirmed settling. Native model-not-found StopFailure now has correlated evidence in [attempt11](../research/claude-reporting-acceptance/attempt-11-api-failure/summary.md); broader API failures remain unverified. Collector integration, setup/doctor, full metrics publication and final release gates remain in progress. No Linux or native GUI acceptance is claimed.

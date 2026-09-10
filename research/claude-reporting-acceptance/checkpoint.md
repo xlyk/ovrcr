@@ -51,3 +51,11 @@ Managed native attempt09 used that exact clean source. Claude2.1.267 initial sta
 ## Task4/5 source follow-up
 
 Attempt10 independently reviewed: real correlated Notification(permission_prompt) while awaiting approval supports Waiting/Observed; exact hook path opened and assistant record session identity matched across append. Equal duplicate usage exists; differing replacement is still unproven. Pure metrics arithmetic is being implemented independently. A future reader may freeze on the first conflicting duplicate instead of silently adopting uncertified replacement values, with explicit partial/stale reporting. See the dated plan refinement and attempt10 summary. Native fixture exited0 and PID/PGID75748 were verified absent.
+
+## Observed activity reviewed
+
+Task4 scoped activity implementation731d5a8 and malformed-ID correctiondb8c829 passed independent review. Real callbacks exercise Busy, correlated Waiting, Idle/Observed Stop, synthetic API Error and rejection/fail-open paths. Original gates: reporting9, admission6, activity2, CLI4 and affected check/clippy/fmt; correction activity2/parser4 and clippy/fmt. Native API failure and settling remain open. Pure Task5 arithmeticf608e70 separately reviewed;9 owning-crate tests pass. Collector helper and finalization integration are next, with actual reader activation still gated.
+
+## Presentation and collector checkpoint
+
+Fresh-PTY inherited-private-endpoint correction8586a2, dashboard697149d and CLI inspectiond5d6772 passed independent exact reviews. Gates: fresh environment real lifecycle1; dashboard38 owning/163 root TUI; inspection6 resource CLI; affected lint/format passed. No native GUI claim. Collector helper06bed526 has one pending review correction for expired-deadline reaping ownership; parent integration continues separately. Native attempt11 independently supports correlated model_not_found StopFailure; broader API errors remain unverified.
