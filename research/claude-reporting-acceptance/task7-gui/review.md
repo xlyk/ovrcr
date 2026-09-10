@@ -28,3 +28,6 @@ PGIDs were verified absent in synthetic-cleanup.json. Real Claude remains paused
 at the still-unapproved trust prompt. The disposable GUI/server and original
 shells are retained for that pending approval; their whole-fixture cleanup is
 not yet complete. Launcher session78083 remains open.
+
+
+2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. Earlier pending trust/cleanup statements are historical; provider completeness and Linux gates remain open.

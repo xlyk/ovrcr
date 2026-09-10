@@ -1,0 +1,104 @@
+[
+  {
+    "pid": 46615,
+    "ppid": 45755,
+    "pgid": 45724,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 46767,
+    "ppid": 46615,
+    "pgid": 45724,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 46831,
+    "ppid": 46767,
+    "pgid": 46831,
+    "comm": "/bin/zsh"
+  },
+  {
+    "pid": 49243,
+    "ppid": 46767,
+    "pgid": 49243,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 49249,
+    "ppid": 49243,
+    "pgid": 49249,
+    "comm": "claude"
+  },
+  {
+    "pid": 56385,
+    "ppid": 49243,
+    "pgid": 56385,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 59441,
+    "ppid": 49249,
+    "pgid": 49249,
+    "comm": "caffeinate"
+  },
+  {
+    "pid": 46965,
+    "ppid": 46767,
+    "pgid": 46965,
+    "comm": "/bin/zsh"
+  },
+  {
+    "pid": 47027,
+    "ppid": 46767,
+    "pgid": 47027,
+    "comm": "/bin/zsh"
+  },
+  {
+    "pid": 47035,
+    "ppid": 46767,
+    "pgid": 47035,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 47045,
+    "ppid": 46767,
+    "pgid": 47045,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 47053,
+    "ppid": 46767,
+    "pgid": 47053,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 47060,
+    "ppid": 46767,
+    "pgid": 47060,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 47067,
+    "ppid": 46767,
+    "pgid": 47067,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 47075,
+    "ppid": 46767,
+    "pgid": 47075,
+    "comm": "/bin/sh"
+  },
+  {
+    "pid": 79057,
+    "ppid": 46615,
+    "pgid": 79057,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 76546,
+    "ppid": 46615,
+    "pgid": 76546,
+    "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  }
+]

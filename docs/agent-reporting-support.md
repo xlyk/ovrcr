@@ -103,3 +103,6 @@ failures, control p99=1.205ms/max=2.822ms and sampled RSS growth1.354GiB.
 Internal queue counters remain unmeasured. The corrected selected-header quality
 was recaptured in the native GUI with synthetic reports; actual Claude trust
 approval and full provider/platform release gates remain open.
+
+
+2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. Earlier pending trust/cleanup statements are historical; provider completeness and Linux gates remain open.

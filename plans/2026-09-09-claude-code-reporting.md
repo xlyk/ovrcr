@@ -236,3 +236,6 @@ success. Real-provider GUI acceptance is waiting for explicit approval at Claude
 disposable-workspace trust prompt. Linux acceptance and internal queue-counter
 capacity instrumentation remain unverified. No full-integration release claim is
 made by this checkpoint.
+
+
+2026-09-10 authorized native follow-up: trust approval completed; two native Claude turns, observed activity, partial metrics, cost comparison, detach/reattach and exit0 verified. All recorded fixture processes, socket and disposable directory cleaned. See `research/claude-reporting-acceptance/task7-gui-native/review.md`. Earlier pending trust/cleanup statements are historical; provider completeness and Linux gates remain open.
