@@ -1,0 +1,98 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_admission_ -- --nocapture
+Revision: de8cd87 + P1/P2 corrections
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.29s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 7 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZSUoAX/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpub2KYu/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpg7XXnV/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8VPhYt/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpn8Axh1/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSQEHmy/repo/.git/
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 089cd86] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8VPhYt/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpub2KYu/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpn8Axh1/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpg7XXnV/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSQEHmy/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpub2KYu/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8VPhYt/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpn8Axh1/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpg7XXnV/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSQEHmy/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZSUoAX/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZSUoAX/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+
+thread 'agent_admission_failed_unavailable_publication_disconnects_watch' (31668267) panicked at tests/server_lifecycle.rs:7925:65:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ovrcr server stopped
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+test agent_admission_failed_unavailable_publication_disconnects_watch ... FAILED
+ADMISSION_PROXY request=supervisor
+
+thread 'agent_admission_failed_bind_status_disconnects_watch' (31668266) panicked at tests/server_lifecycle.rs:7925:65:
+called `Option::unwrap()` on a `None` value
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_admission_failed_bind_status_disconnects_watch ... FAILED
+ovrcr server stopped
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+ovrcr server stopped
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+
+failures:
+
+failures:
+    agent_admission_failed_bind_status_disconnects_watch
+    agent_admission_failed_unavailable_publication_disconnects_watch
+
+test result: FAILED. 4 passed; 2 failed; 1 ignored; 0 measured; 56 filtered out; finished in 3.42s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101

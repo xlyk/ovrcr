@@ -166,16 +166,32 @@ fn pinned_version(executable: &OsStr) -> bool {
             if bytes.len() > 128 {
                 break;
             }
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    // The child has exited; drain its final bounded version bytes.
-                    let _ = stdout
-                        .take(129 - bytes.len() as u64)
-                        .read_to_end(&mut bytes);
-                    return status.success() && bytes == b"2.1.267 (Claude Code)\n";
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let waited = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    child.id(),
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if waited != 0 {
+                if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                    continue;
                 }
-                Ok(None) => {}
-                Err(_) => break,
+                break;
+            }
+            if unsafe { info.si_pid() } != 0 {
+                // Keep the zombie leader as the ownership anchor until group cleanup.
+                unsafe {
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                let status = child.wait();
+                let _ = stdout
+                    .take(129 - bytes.len() as u64)
+                    .read_to_end(&mut bytes);
+                return status.is_ok_and(|status| status.success())
+                    && bytes == b"2.1.267 (Claude Code)\n";
             }
             if Instant::now() >= deadline {
                 break;
@@ -209,7 +225,7 @@ fn fresh_uuid() -> std::io::Result<String> {
 
 enum Phase {
     Waiting,
-    Binding { operation: String, frozen: bool },
+    Binding { operation: String },
     Bound,
     Closed,
 }
@@ -276,7 +292,6 @@ impl Receiver {
                 };
                 self.phase = Phase::Binding {
                     operation: operation.clone(),
-                    frozen: false,
                 };
                 lease.command(
                     operation,
@@ -292,12 +307,8 @@ impl Receiver {
         };
         match response {
             Ok(Response::AgentOperation(AgentOperationResult::Bound(binding))) => {
-                let frozen = matches!(self.phase, Phase::Binding { frozen: true, .. });
                 lease.binding = Some(binding);
                 self.phase = Phase::Bound;
-                if frozen {
-                    self.freeze(deadline);
-                }
                 b"admission-accepted\n".to_vec()
             }
             Ok(_) => {
@@ -308,22 +319,31 @@ impl Receiver {
         }
     }
     fn freeze(&mut self, deadline: Instant) {
-        if let Phase::Binding { frozen, .. } = &mut self.phase {
-            *frozen = true;
-            return;
-        }
         if matches!(self.phase, Phase::Closed) {
             return;
         }
+        let pending = match &self.phase {
+            Phase::Binding { operation } => Some(operation.clone()),
+            _ => None,
+        };
         self.phase = Phase::Closed;
         let Some(lease) = &mut self.lease else {
             return;
         };
-        let Some(binding) = lease.binding.clone() else {
-            return;
-        };
-        if let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() {
-            let _ = lease.command(
+        let closed = (|| -> anyhow::Result<()> {
+            if let Some(operation) = pending {
+                match lease.operation_status(operation, deadline)? {
+                    Response::AgentOperation(AgentOperationResult::Bound(binding)) => {
+                        lease.binding = Some(binding)
+                    }
+                    _ => anyhow::bail!("binding status unavailable during closure"),
+                }
+            }
+            let Some(binding) = lease.binding.clone() else {
+                return Ok(());
+            };
+            let operation = ovrcr_runtime::agent_runner::private_identifier()?;
+            let response = lease.command(
                 operation,
                 AgentCommand::Health(ProviderReport {
                     binding,
@@ -334,7 +354,19 @@ impl Receiver {
                     }),
                 }),
                 deadline,
-            );
+            )?;
+            if response != Response::AgentOperation(AgentOperationResult::HealthUpdated) {
+                anyhow::bail!("unavailable health was not acknowledged");
+            }
+            Ok(())
+        })();
+        if closed.is_err()
+            && let Some(lease) = self.lease.take()
+        {
+            // Do not let Drop's graceful release wait beyond this exhausted callback.
+            // Generation-safe watch loss makes the runtime unavailable on delivery failure.
+            let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+            drop(lease);
         }
     }
 }
@@ -507,5 +539,40 @@ mod tests {
             b"admission-ignored\n"
         );
         server.join().unwrap();
+    }
+
+    #[test]
+    fn initial_admission_probe_cleans_descendants_after_leader_exit() {
+        use std::os::unix::fs::PermissionsExt;
+        for exit in [0, 1] {
+            let root = tempfile::tempdir().unwrap();
+            let executable = root.path().join("probe");
+            let identity = root.path().join("identity");
+            std::fs::write(&executable,format!("#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > '{}'\nprintf '2.1.267 (Claude Code)\\n'\nexit {exit}\n",identity.display())).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(pinned_version(executable.as_os_str()), exit == 0);
+            let ids = std::fs::read_to_string(&identity).unwrap();
+            let ids: Vec<libc::pid_t> =
+                ids.split_whitespace().map(|s| s.parse().unwrap()).collect();
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while unsafe { libc::kill(-ids[0], 0) } == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let leaked = unsafe { libc::kill(-ids[0], 0) } == 0;
+            if leaked {
+                assert_eq!(
+                    unsafe { libc::getpgid(ids[1]) },
+                    ids[0],
+                    "owned fixture descendant moved"
+                );
+                unsafe {
+                    libc::kill(-ids[0], libc::SIGKILL);
+                }
+            }
+            assert!(
+                !leaked,
+                "version probe left its descendant after leader exit {exit}"
+            );
+        }
     }
 }

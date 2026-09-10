@@ -7585,18 +7585,184 @@ fn agent_admission_native_helper() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum AdmissionFault {
+    LostBind,
+    RejectHealth,
+    RejectStatus,
+}
+struct AdmissionProxy {
+    path: std::path::PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    streams: std::sync::Arc<std::sync::Mutex<Vec<UnixStream>>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+impl AdmissionProxy {
+    fn new(path: std::path::PathBuf, target: std::path::PathBuf, fault: AdmissionFault) -> Self {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let streams = Arc::new(Mutex::new(Vec::new()));
+        let thread_stop = stop.clone();
+        let thread_streams = streams.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let thread = thread::spawn(move || {
+            let mut handlers = Vec::new();
+            while !thread_stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut front, _)) => {
+                        front.set_nonblocking(false).unwrap();
+                        thread_streams
+                            .lock()
+                            .unwrap()
+                            .push(front.try_clone().unwrap());
+                        let target = target.clone();
+                        let streams = thread_streams.clone();
+                        let dropped = dropped.clone();
+                        handlers.push(thread::spawn(move || {
+                            if ovrcr::protocol::exchange_preamble(&mut front).is_err() {
+                                return;
+                            }
+                            let Ok(mut upstream) = connect_server(&target) else {
+                                return;
+                            };
+                            streams.lock().unwrap().push(upstream.try_clone().unwrap());
+                            while let Ok(message) = read_frame::<ClientMessage>(&mut front) {
+                                eprintln!(
+                                    "ADMISSION_PROXY request={}",
+                                    match &message.request {
+                                        Request::Inspect => "inspect",
+                                        Request::ReserveAgent(_) => "reserve",
+                                        Request::SupervisorHello(_) => "hello",
+                                        Request::AgentStatus { .. } => "status",
+                                        Request::Supervisor(_) => "supervisor",
+                                        _ => "other",
+                                    }
+                                );
+                                let reject = matches!(
+                                    (&message.request, fault),
+                                    (
+                                        Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                            command: ovrcr::protocol::AgentCommand::Health(_),
+                                            ..
+                                        }),
+                                        AdmissionFault::RejectHealth
+                                    ) | (Request::AgentStatus { .. }, AdmissionFault::RejectStatus)
+                                );
+                                if reject {
+                                    if matches!(fault, AdmissionFault::RejectHealth) {
+                                        continue;
+                                    }
+                                    if write_frame(
+                                        &mut front,
+                                        &ServerMessage::Response {
+                                            request_id: message.request_id,
+                                            response: Response::Error {
+                                                code: ovrcr::protocol::ErrorCode::Conflict,
+                                                message: "fixture rejected publication".into(),
+                                            },
+                                        },
+                                    )
+                                    .is_err()
+                                    {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                if write_frame(&mut upstream, &message).is_err() {
+                                    break;
+                                }
+                                let Ok(response) = read_frame::<ServerMessage>(&mut upstream)
+                                else {
+                                    break;
+                                };
+                                let is_bind = matches!(
+                                    &message.request,
+                                    Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                        command: ovrcr::protocol::AgentCommand::Bind { .. },
+                                        ..
+                                    })
+                                );
+                                if is_bind
+                                    && !matches!(fault, AdmissionFault::RejectHealth)
+                                    && !dropped.swap(true, Ordering::SeqCst)
+                                {
+                                    continue;
+                                }
+                                if write_frame(&mut front, &response).is_err() {
+                                    break;
+                                }
+                            }
+                            let _ = upstream.shutdown(std::net::Shutdown::Both);
+                        }));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::park_timeout(Duration::from_millis(2))
+                    }
+                    Err(_) => break,
+                }
+            }
+            for handler in handlers {
+                handler.join().unwrap();
+            }
+        });
+        Self {
+            path,
+            stop,
+            streams,
+            thread: Some(thread),
+        }
+    }
+}
+impl Drop for AdmissionProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        for stream in self.streams.lock().unwrap().iter() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+#[test]
+fn agent_admission_lost_bind_then_clear_resolves_without_another_startup() {
+    assert_initial_admission("clear", Some(AdmissionFault::LostBind));
+}
+#[test]
+fn agent_admission_failed_unavailable_publication_disconnects_watch() {
+    assert_initial_admission("clear", Some(AdmissionFault::RejectHealth));
+}
+#[test]
+fn agent_admission_failed_bind_status_disconnects_watch() {
+    assert_initial_admission("clear", Some(AdmissionFault::RejectStatus));
+}
+
 #[test]
 fn agent_admission_private_claude_route_binds_once_and_clear_retains_lease() {
-    assert_initial_admission("clear");
+    assert_initial_admission("clear", None);
 }
 #[test]
 fn agent_admission_branch_freezes_without_replacement_or_reopening() {
-    assert_initial_admission("branch");
+    assert_initial_admission("branch", None);
 }
-fn assert_initial_admission(closing_command: &str) {
+fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>) {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "admission-setup");
+    let proxy = fault.map(|fault| {
+        AdmissionProxy::new(
+            fixture._root.path().join("proxy.sock"),
+            fixture.socket.clone(),
+            fault,
+        )
+    });
+    let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+
     let native = fixture._root.path().join("claude");
     std::fs::write(&native,r#"#!/bin/sh
 if [ "$1" = --version ]; then
@@ -7611,8 +7777,8 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     let make_session = |name: &str, probe: &std::path::Path| {
         fixture.create_session_summary(name,vec![
         "sh".into(),"-c".into(),
-        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
-        "admission-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),std::env::current_exe().unwrap().into_os_string(),probe.to_path_buf().into_os_string(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
+        "admission-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),std::env::current_exe().unwrap().into_os_string(),probe.to_path_buf().into_os_string(),reporting_socket.clone().into_os_string(),
     ])
     };
     let summary = make_session("admission", &probe);
@@ -7686,10 +7852,13 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         })),
         Response::Ok
     );
-    for (index, command) in ["root", "end-other", closing_command, "root"]
-        .into_iter()
-        .enumerate()
-    {
+    let commands = if fault.is_some() {
+        vec![closing_command]
+    } else {
+        vec!["root", "end-other", closing_command, "root"]
+    };
+    for (index, command) in commands.into_iter().enumerate() {
+        let closure_started = Instant::now();
         assert_eq!(
             fixture.request(Request::SendTerminal {
                 session: summary.id,
@@ -7699,6 +7868,27 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             Response::Ok
         );
         fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
+        if command == closing_command {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while fixture
+                .session_summary(summary.id)
+                .agent
+                .as_ref()
+                .unwrap()
+                .health
+                .state
+                == ovrcr::protocol::ReporterHealth::Connected
+                && Instant::now() < deadline
+            {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+        if command == closing_command && fault.is_some() {
+            assert!(
+                closure_started.elapsed() < Duration::from_millis(1400),
+                "closure exceeded its callback deadline plus fixture observation allowance"
+            );
+        }
         let current = fixture.session_summary(summary.id).agent.unwrap();
         assert_eq!(current.binding, bound.binding);
         assert_eq!(current.activity_revision, 9);
@@ -7708,6 +7898,26 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
                 ovrcr::protocol::ReporterHealth::Unavailable
             );
         }
+    }
+    if matches!(
+        fault,
+        Some(AdmissionFault::RejectHealth | AdmissionFault::RejectStatus)
+    ) {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "root".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=10");
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(
+            current.health.state,
+            ovrcr::protocol::ReporterHealth::Unavailable
+        );
     }
     let conflict = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
         .args([
@@ -7725,8 +7935,18 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         .env("OVRCR_HOOK_TOKEN", identity[2])
         .output()
         .unwrap();
-    assert!(!conflict.status.success());
-    assert!(conflict.stdout.is_empty());
+    if matches!(
+        fault,
+        Some(AdmissionFault::RejectHealth | AdmissionFault::RejectStatus)
+    ) {
+        assert!(
+            conflict.status.success(),
+            "failed reporting ownership must be relinquished"
+        );
+    } else {
+        assert!(!conflict.status.success());
+        assert!(conflict.stdout.is_empty());
+    }
     assert_eq!(
         fixture.request(Request::SendTerminal {
             session: summary.id,
@@ -7736,7 +7956,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         Response::Ok
     );
     fixture.wait_terminal_contains(summary.id, "ADMISSION_FINISHED");
-    if closing_command == "clear" {
+    if closing_command == "clear" && fault.is_none() {
         use std::io::{Read, Write};
         let old = std::fs::read_to_string(probe.with_extension("channel")).unwrap();
         let old: Vec<_> = old.lines().collect();
