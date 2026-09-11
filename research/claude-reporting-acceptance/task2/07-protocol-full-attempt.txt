@@ -1,0 +1,92 @@
+command: rtk proxy cargo test -p ovrcr-protocol --lib -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.04s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-10a25567881c671c)
+
+running 22 tests
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::preamble_round_trip ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+
+thread 'agent::tests::agent_report_validation_and_integer_boundaries' (30753422) panicked at crates/ovrcr-protocol/src/agent.rs:185:70:
+called `Result::unwrap()` on an `Err` value: Error("number out of range", line: 0, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test context::tests::context_claude_projection ... ok
+test context::tests::context_semantics ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test context::tests::context_json_validation ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+wire snapshot for PROTOCOL_VERSION 5:
+        ("Request::DashboardHello", "00"),
+        ("Request::DashboardGeometry", "010102"),
+        ("Request::List", "02"),
+        ("Request::AddProject", "030161022f72022f77"),
+        ("Request::RemoveProject", "040161"),
+        ("Request::CreateWorkspace", "0501610162010163"),
+        ("Request::RemoveWorkspace", "0601610162"),
+        ("Request::CreateSession", "07016101620163000100027368"),
+        ("Request::RemoveSession", "0801"),
+        ("Request::KillSession", "0901"),
+        ("Request::PauseSession", "0a01"),
+        ("Request::ResumeSession", "0b01"),
+        ("Request::Select", "0c010102"),
+        ("Request::Input", "0d010107"),
+        ("Request::Resize", "0e010102"),
+        ("Request::Shutdown", "0f01"),
+        ("Request::Inspect", "10"),
+        ("Request::ReadTerminal", "11010103"),
+        ("Request::SendTerminal", "1201017401"),
+        ("Request::CloseTerminal", "1301"),
+        ("Request::Task", "1400"),
+        ("Request::AgentReport", "1501090909090909090909090909090909090909090909090909090909090909090901010002"),
+        ("Request::HistoryBegin", "1601"),
+        ("Request::HistoryPage", "17010203040506"),
+        ("Request::HistoryEnd", "180102"),
+        ("Request::SetView", "1903010101020101"),
+        ("Response::Ok", "00"),
+        ("Response::Hierarchy", "0100"),
+        ("Response::CreatedSession", "020101700177016e016c01020300000000010000000104010506"),
+        ("Response::Screen", "03010301020107"),
+        ("Response::Error", "0401016d"),
+        ("Response::Inventory", "0500010101700177016e016c01020300000000010000000104010506"),
+        ("Response::TerminalText", "060101020174"),
+        ("Response::Task", "070601"),
+        ("Response::HistoryOpened", "0801020301020405"),
+        ("Response::HistoryRows", "090102030401010101780100020102030000"),
+        ("ServerEvent::HierarchyChanged", "0000"),
+        ("ServerEvent::Output", "0101030107"),
+        ("ServerEvent::ScreenDirty", "020103"),
+        ("ServerEvent::SessionChanged", "030101700177016e016c01020300000000010000000104010506"),
+        ("TaskRequest::ListTasks", "00"),
+        ("TaskRequest::GetTask", "0301"),
+        ("TaskRequest::Cancel", "0e01"),
+        ("TaskRequest::Clean", "0f0101"),
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+
+thread 'wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version' (30753443) panicked at crates/ovrcr-protocol/src/wire.rs:782:13:
+wire encoding changed; bump PROTOCOL_VERSION in codec.rs and replace EXPECTED with the block above
+test agent::tests::agent_report_validation_and_integer_boundaries ... FAILED
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... FAILED
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+failures:
+
+failures:
+    agent::tests::agent_report_validation_and_integer_boundaries
+    wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version
+
+test result: FAILED. 20 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr-protocol --lib`

@@ -1,0 +1,7 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/cli.rs (target/debug/deps/cli-655ca2a77720960e)
+
+running 1 test
+test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 2.59s

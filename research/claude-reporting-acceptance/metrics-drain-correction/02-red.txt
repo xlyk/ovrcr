@@ -1,0 +1,22 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-cfec07582b757f52)
+
+running 1 test
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+
+thread 'report::admission::tests::native_completion_drains_past_pending_pre_exit_eof' (32623895) panicked at src/report/admission.rs:987:9:
+assertion `left == right` failed: finalization consumed only the queued pre-exit EOF
+  left: Some(10)
+ right: Some(30)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... FAILED
+
+failures:
+
+failures:
+    report::admission::tests::native_completion_drains_past_pending_pre_exit_eof
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p ovrcr --lib`

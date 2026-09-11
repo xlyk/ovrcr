@@ -1,0 +1,110 @@
+[
+  {
+    "pid": 65787,
+    "ppid": 25168,
+    "pgid": 65787,
+    "command": "rtk proxy sh -c mkdir -p research/claude-reporting-acceptance/native-child; git rev-parse HEAD > research/claude-reporting-acceptance/native-child/source.txt; git status --porcelain --untracked-files=no > research/claude-reporting-acceptance/native-child/tracked-status.txt; just gui > research/claude-reporting-acceptance/native-child/build.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-child/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 65789,
+    "ppid": 65787,
+    "pgid": 65787,
+    "command": "/bin/sh -c mkdir -p research/claude-reporting-acceptance/native-child; git rev-parse HEAD > research/claude-reporting-acceptance/native-child/source.txt; git status --porcelain --untracked-files=no > research/claude-reporting-acceptance/native-child/tracked-status.txt; just gui > research/claude-reporting-acceptance/native-child/build.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-child/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 65793,
+    "ppid": 65789,
+    "pgid": 65787,
+    "command": "just gui"
+  },
+  {
+    "pid": 65798,
+    "ppid": 65793,
+    "pgid": 65787,
+    "command": "rtk proxy sh scripts/gui.sh"
+  },
+  {
+    "pid": 65799,
+    "ppid": 65798,
+    "pgid": 65787,
+    "command": "rtk proxy ./ovrcr-gui"
+  },
+  {
+    "pid": 65810,
+    "ppid": 65799,
+    "pgid": 65787,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 65840,
+    "ppid": 65810,
+    "pgid": 65787,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 65894,
+    "ppid": 65840,
+    "pgid": 65894,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 65926,
+    "ppid": 65840,
+    "pgid": 65926,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 65983,
+    "ppid": 65840,
+    "pgid": 65983,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 66051,
+    "ppid": 65840,
+    "pgid": 66051,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 66055,
+    "ppid": 65840,
+    "pgid": 66055,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66062,
+    "ppid": 65840,
+    "pgid": 66062,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66071,
+    "ppid": 65840,
+    "pgid": 66071,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66077,
+    "ppid": 65840,
+    "pgid": 66077,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66087,
+    "ppid": 65840,
+    "pgid": 66087,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66099,
+    "ppid": 65840,
+    "pgid": 66099,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 66103,
+    "ppid": 65810,
+    "pgid": 66103,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  }
+]

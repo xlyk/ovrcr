@@ -1,0 +1,243 @@
+{
+  "binary": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+  "config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-v3edHG/config.toml",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-v3edHG/server.sock",
+  "revision": "2feda3b",
+  "launcher_session": 78083,
+  "status": "waiting_for_explicit_claude_workspace_trust_approval",
+  "source_dashboard": "36213f4",
+  "source_server_and_native": "2feda3b",
+  "launcher_script": "/private/tmp/ovrcr-claude-gui-20260910/launch.py",
+  "currently_owned_processes": [
+    {
+      "pid": 45755,
+      "ppid": 45754,
+      "pgid": 45724,
+      "comm": "rtk"
+    },
+    {
+      "pid": 46615,
+      "ppid": 45755,
+      "pgid": 45724,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 46767,
+      "ppid": 46615,
+      "pgid": 45724,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 46831,
+      "ppid": 46767,
+      "pgid": 46831,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 46891,
+      "ppid": 46767,
+      "pgid": 46891,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 70853,
+      "ppid": 46891,
+      "pgid": 70853,
+      "comm": "rtk"
+    },
+    {
+      "pid": 70854,
+      "ppid": 70853,
+      "pgid": 70853,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 70857,
+      "ppid": 70854,
+      "pgid": 70857,
+      "comm": "claude"
+    },
+    {
+      "pid": 46965,
+      "ppid": 46767,
+      "pgid": 46965,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 47027,
+      "ppid": 46767,
+      "pgid": 47027,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 47035,
+      "ppid": 46767,
+      "pgid": 47035,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47045,
+      "ppid": 46767,
+      "pgid": 47045,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47053,
+      "ppid": 46767,
+      "pgid": 47053,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47060,
+      "ppid": 46767,
+      "pgid": 47060,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47067,
+      "ppid": 46767,
+      "pgid": 47067,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47075,
+      "ppid": 46767,
+      "pgid": 47075,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 79057,
+      "ppid": 46615,
+      "pgid": 79057,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    }
+  ],
+  "prior_owned_processes": [
+    {
+      "pid": 45755,
+      "ppid": 45754,
+      "pgid": 45724,
+      "comm": "rtk"
+    },
+    {
+      "pid": 46615,
+      "ppid": 45755,
+      "pgid": 45724,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 46767,
+      "ppid": 46615,
+      "pgid": 45724,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 46831,
+      "ppid": 46767,
+      "pgid": 46831,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 46891,
+      "ppid": 46767,
+      "pgid": 46891,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 70853,
+      "ppid": 46891,
+      "pgid": 70853,
+      "comm": "rtk"
+    },
+    {
+      "pid": 70854,
+      "ppid": 70853,
+      "pgid": 70853,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 70857,
+      "ppid": 70854,
+      "pgid": 70857,
+      "comm": "claude"
+    },
+    {
+      "pid": 46965,
+      "ppid": 46767,
+      "pgid": 46965,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 47027,
+      "ppid": 46767,
+      "pgid": 47027,
+      "comm": "/bin/zsh"
+    },
+    {
+      "pid": 47035,
+      "ppid": 46767,
+      "pgid": 47035,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47045,
+      "ppid": 46767,
+      "pgid": 47045,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47053,
+      "ppid": 46767,
+      "pgid": 47053,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47060,
+      "ppid": 46767,
+      "pgid": 47060,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47067,
+      "ppid": 46767,
+      "pgid": 47067,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47075,
+      "ppid": 46767,
+      "pgid": 47075,
+      "comm": "/bin/sh"
+    },
+    {
+      "pid": 47080,
+      "ppid": 46615,
+      "pgid": 47080,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 98125,
+      "ppid": 46615,
+      "pgid": 98125,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 87646,
+      "ppid": 46767,
+      "pgid": 87646,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 87648,
+      "ppid": 87646,
+      "pgid": 87648,
+      "comm": "/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+    },
+    {
+      "pid": 87650,
+      "ppid": 87646,
+      "pgid": 87650,
+      "comm": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    }
+  ]
+}

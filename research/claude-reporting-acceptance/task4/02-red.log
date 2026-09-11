@@ -1,0 +1,37 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+warning: variable does not need to be mutable
+    --> tests/server_lifecycle.rs:8128:9
+     |
+8128 |     let mut fixture = ControlFixture::new();
+     |         ----^^^^^^^
+     |         |
+     |         help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ovrcr` (test "server_lifecycle") generated 1 warning (run `cargo fix --test "server_lifecycle" -p ovrcr` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.54s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5ejvqk/repo/.git/
+[main (root-commit) 6b73154] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5ejvqk/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5ejvqk/server.sock
+
+thread 'private_claude_activity_tracks_only_current_root_prompt_observations' (31841976) panicked at tests/server_lifecycle.rs:5364:25:
+unexpected response: Error { code: NotFound, message: "project not found: fixture" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test private_claude_activity_tracks_only_current_root_prompt_observations ... FAILED
+
+failures:
+
+failures:
+    private_claude_activity_tracks_only_current_root_prompt_observations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.22s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

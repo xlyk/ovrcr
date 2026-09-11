@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 15954  elapsed: 1m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 41259 uncertain  cost conv estimate $0.05 uncertain
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 15954  elapsed: 1m  agent idle observed
+		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 41259 uncertain  cost conv estimate $0.05 uncertain
+		6 text (settable)   - local                              │agent awaiting certified startup
+		7 text (settable)      ├ terminal                        │ ▐▛███▛█   Claude Code v2.1.267
+		8 text (settable)      └ run 2m  ctx —                   │▝▜██████▀  Sonnet 5 · Claude API
+		9 text (settable)   - review auth handoff                │  ▝▝ ▝▝    /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-ZnTRSP/workspaces/consigint/auth-handoff
+		10 text (settable)      ├ grok / grok-4.6                 │
+		11 text (settable)      └ run 2m  ctx —                   │
+		12 text (settable)     claude-integrated                  │❯ Reply exactly OVRCR_INTEGRATED_FIRST_OK. Do not use tools.
+		13 text (settable)      ├ python3 idle observed           │
+		14 text (settable)      └ run 1m  ctx 4% uncertain        │⏺ OVRCR_INTEGRATED_FIRST_OK
+		15 text (settable)                                        │
+		16 text (settable)   ▼ worktree-lifecycle                 │✻ Worked for 2s · done 12:06 PM
+		17 text (settable)   - local                              │
+		18 text (settable)      ├ terminal                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		19 text (settable)      └ run 2m  ctx —                   │❯ 
+		20 text (settable)   - implement lifecycle cleanup        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		21 text (settable)      ├ claude / sonnet-4               │  ctx 4%
+		22 text (settable)      └ run 2m  ctx —                   │  ⏸ manual mode on · ← for agents
+		23 text (settable)   - review websocket shutdown          │
+		24 text (settable)      ├ codex / gpt-5.4                 │
+		25 text (settable)      └ run 2m  ctx —                   │
+		26 text (settable)   - plan snapshot restore              │
+		27 text (settable)      ├ pi / grok-4.6                   │
+		28 text (settable)      └ run 2m  ctx —                   │
+		29 text (settable)                                        │
+		30 text (settable) ▼ 󰉋 spacelift-agent                    │
+		31 text (settable)   ▼ pipeline-progress-v2               │
+		32 text (settable)   - local                              │
+		33 text (settable)      ├ terminal                        │
+		34 text (settable)      └ run 2m  ctx —                   │
+		35 text (settable)   - build pipeline progress            │
+		36 text (settable)      ├ claude / opus-4                 │
+		37 text (settable)      └ run 2m  ctx —                   │
+		38 text (settable)                                        │
+		39 text (settable)   ▼ scope-quality                      │
+		40 text (settable)   - local                              │
+		41 text (settable)      ├ terminal                        │
+		42 text (settable)      └ run 2m  ctx —                   │
+		43 text (settable)   - review scope quality               │
+		44 text (settable)      ├ codex / gpt-5.4                 │
+		45 text (settable)      └ run 2m  ctx —                   │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)                                        │
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 15954  elapsed: 1m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 41259 uncertain  cost conv estimate $0.05 uncertain
+  - local

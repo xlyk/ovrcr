@@ -1,3 +1,4 @@
+pub use ovrcr_runtime::agent_runner;
 pub mod client;
 pub use ovrcr_protocol::context;
 #[cfg(feature = "gui")]

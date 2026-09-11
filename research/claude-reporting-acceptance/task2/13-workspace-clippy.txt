@@ -1,0 +1,68 @@
+command: rtk proxy cargo clippy --workspace --all-targets --all-features -- -D warnings
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+error: large size difference between variants
+   --> crates/ovrcr-protocol/src/agent.rs:101:1
+    |
+101 | / pub enum AgentObservation {
+102 | |     Activity(ActivitySample),
+    | |     ------------------------ the second-largest variant contains at least 32 bytes
+103 | |     Metrics(MetricsSample),
+    | |     ---------------------- the largest variant contains at least 384 bytes
+104 | |     Health(HealthSample),
+105 | | }
+    | |_^ the entire enum is at least 384 bytes
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_enum_variant
+    = note: `-D clippy::large-enum-variant` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::large_enum_variant)]`
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    |
+103 -     Metrics(MetricsSample),
+103 +     Metrics(Box<MetricsSample>),
+    |
+
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-protocol/src/agent.rs:247:9
+    |
+247 | /         if let (Some(reasoning), Some(output)) = (u.reasoning_output_tokens, u.output_tokens) {
+248 | |             if reasoning > output {
+249 | |                 bail!("reasoning subset exceeds output tokens");
+250 | |             }
+251 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+247 ~         if let (Some(reasoning), Some(output)) = (u.reasoning_output_tokens, u.output_tokens)
+248 ~             && reasoning > output {
+249 |                 bail!("reasoning subset exceeds output tokens");
+250 ~             }
+    |
+
+error: large size difference between variants
+   --> crates/ovrcr-protocol/src/wire.rs:122:1
+    |
+122 | / pub enum AgentUpdate {
+123 | |     Activity(AgentActivity),
+124 | |     Context(ContextUsageReport),
+    | |     --------------------------- the second-largest variant contains at least 88 bytes
+125 | |     Provider(crate::ProviderReport),
+    | |     ------------------------------- the largest variant contains at least 456 bytes
+126 | | }
+    | |_^ the entire enum is at least 456 bytes
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_enum_variant
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    |
+125 -     Provider(crate::ProviderReport),
+125 +     Provider(Box<crate::ProviderReport>),
+    |
+
+error: could not compile `ovrcr-protocol` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ovrcr-protocol` (lib test) due to 3 previous errors

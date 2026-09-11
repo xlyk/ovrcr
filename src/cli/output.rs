@@ -91,6 +91,10 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         },
         "exit_code": exit_code,
         "exit_signal": exit_signal,
+        "agent": session.agent,
+        "agent_epoch": session.agent_epoch,
+        "reporting_unavailable": reporting_unavailable(session),
+        "measurement_age_ms": measurement_age_ms(session, now_unix_ms),
         "context_usage": session.context_usage,
         "context_stale": session.context_usage.as_ref().map(|sample| {
             context_is_stale(
@@ -100,6 +104,27 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
             )
         }),
     })
+}
+
+pub(super) fn reporting_unavailable(session: &SessionSummary) -> Option<bool> {
+    session.agent.as_ref().map(|agent| {
+        agent.health.state == ovrcr::protocol::ReporterHealth::Unavailable
+            || matches!(session.phase, SessionPhase::Exited { .. })
+    })
+}
+
+pub(super) fn measurement_age_ms(session: &SessionSummary, now: u64) -> Value {
+    session
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.metrics.as_ref())
+        .map_or(Value::Null, |metrics| {
+            json!({
+                "context": now.checked_sub(metrics.context_received_unix_ms),
+                "usage": now.checked_sub(metrics.usage_received_unix_ms),
+                "cost": now.checked_sub(metrics.cost_received_unix_ms),
+            })
+        })
 }
 
 pub(super) fn now_unix_ms() -> u64 {

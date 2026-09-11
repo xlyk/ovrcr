@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "provider": "claude",
+  "source_date": "2026-09-10",
+  "installed_executable": {
+    "version": "2.1.267",
+    "verification": "research/claude-reporting-acceptance/attempt-00.json",
+    "certified_minimum": null
+  },
+  "certification": "source_only_live_gates_open",
+  "sources": [
+    {
+      "id": "hooks",
+      "url": "https://code.claude.com/docs/en/hooks",
+      "retrieved_on": "2026-09-10",
+      "version_scope": "Rolling documentation; not a pinned 2.1.267 release contract."
+    },
+    {
+      "id": "statusline",
+      "url": "https://code.claude.com/docs/en/statusline",
+      "retrieved_on": "2026-09-10",
+      "version_scope": "Rolling documentation; compare with installed payloads before certification."
+    }
+  ],
+  "sanitization": "All values and paths are synthetic. Shared session, prompt and child IDs preserve illustrative relationships only. No user content, credentials, transcript records or live payloads are included. Fixture order does not assert callback order. Optional fields are deliberately omitted in some fixtures.",
+  "identity": {
+    "conversation": "session_id",
+    "prompt": "prompt_id (optional; absent before first input; no event sequence established)",
+    "transcript": "transcript_path (asynchronous file; completeness unproved)",
+    "child": "agent_id; agent_type alone may describe a root --agent session",
+    "tool": "tool_use_id on documented tool events",
+    "foreground_admission": "unverified",
+    "source_revision": null
+  },
+  "context": {
+    "source": "context_window.current_usage and context_window.context_window_size",
+    "input_rule": "input_tokens + cache_creation_input_tokens + cache_read_input_tokens",
+    "output_in_occupancy": false,
+    "cumulative": false,
+    "missing": "unknown; null current_usage before first response",
+    "compaction_live_verified": false
+  },
+  "tokens": {
+    "cumulative_source": null,
+    "coverage": "unavailable",
+    "transcript_identity_keys": null,
+    "proposed_reader_keys": [
+      "message.id",
+      "requestId"
+    ],
+    "proposed_reader_keys_certified": false
+  },
+  "cost": {
+    "source": "cost.total_cost_usd",
+    "provenance": "estimated_by_provider",
+    "documented_scope": "session; reset on clear",
+    "child_auxiliary_resume_fork_scope": "unverified",
+    "currency": "USD"
+  },
+  "fixtures": [
+    {
+      "file": "session-start-startup.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Synthetic variant of documented source enum; no foreground admission or transition ordering proved."
+    },
+    {
+      "file": "session-start-resume.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Synthetic variant of documented source enum; no foreground admission or transition ordering proved."
+    },
+    {
+      "file": "session-start-clear.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Synthetic variant of documented source enum; no foreground admission or transition ordering proved."
+    },
+    {
+      "file": "session-start-compact.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Synthetic variant of documented source enum; no foreground admission or transition ordering proved."
+    },
+    {
+      "file": "session-start-fork.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Synthetic variant of documented source enum; no foreground admission or transition ordering proved."
+    },
+    {
+      "file": "prompt.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "userpromptsubmit-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "pre-tool.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "pretooluse-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "permission-request.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "permissionrequest-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Permission request alone does not prove a human dialog remained open; another hook can answer it."
+    },
+    {
+      "file": "permission-notification.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "notification-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "tool-success.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "posttooluse-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "tool-failure.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "posttoolusefailure-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "stop.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "stop-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Independent source-derived input; not an observed sequence or a settled notification."
+    },
+    {
+      "file": "stop-continuation.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "stop-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "Independent source-derived input; not an observed sequence or a settled notification."
+    },
+    {
+      "file": "stop-block-output.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "stop-decision-control",
+      "kind": "hook_output",
+      "live_capture": false
+    },
+    {
+      "file": "api-failure.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "stopfailure-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "pre-compact.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "precompact-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "post-compact.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "postcompact-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "session-end.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionend-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "child-pre-tool.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "common-input-fields",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "child-stop.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "subagentstop-input",
+      "kind": "hook_input",
+      "live_capture": false
+    },
+    {
+      "file": "named-root-start.json",
+      "evidence": "source",
+      "source": "hooks",
+      "section": "sessionstart-input",
+      "kind": "hook_input",
+      "live_capture": false,
+      "limitation": "agent_type can name a root --agent session; only agent_id identifies a subagent in the documented common fields."
+    },
+    {
+      "file": "statusline-context-cost.json",
+      "evidence": "source",
+      "source": "statusline",
+      "section": "available-data",
+      "kind": "statusline_input",
+      "live_capture": false,
+      "limitation": "Synthetic values; current context input is 80, not cumulative usage; cost is a provider estimate."
+    },
+    {
+      "file": "statusline-before-response.json",
+      "evidence": "source",
+      "source": "statusline",
+      "section": "context-window-fields",
+      "kind": "statusline_input",
+      "live_capture": false,
+      "limitation": "Null usage variant; omitted cost intentionally exercises unknown, not a certified post-compaction capture."
+    }
+  ],
+  "blocking_dependencies": [
+    {
+      "id": "live-payloads",
+      "requires": "Isolated interactive captures and comparison for all Task 1 scenarios, including cancellation, user wait, children and session transitions."
+    },
+    {
+      "id": "foreground-admission",
+      "requires": "Authoritative proof for startup, branch, background fork, clear, resume and compaction; source fork does not distinguish branch from background fork."
+    },
+    {
+      "id": "settled-transition",
+      "requires": "Supported or verified signal after all Stop decisions; prompt_id is correlation, not proof of settling or event order."
+    },
+    {
+      "id": "cumulative-accounting",
+      "requires": "Supported cumulative export or versioned exact transcript schema, stable replacement keys, replay/history and child/auxiliary coverage."
+    },
+    {
+      "id": "final-source-completion",
+      "requires": "Verified accounting completion boundary; Stop and SessionEnd do not establish transcript flush completion here."
+    },
+    {
+      "id": "cost-scope",
+      "requires": "Native comparison of estimate and its child, auxiliary, resume and fork scope."
+    }
+  ],
+  "missing_fixtures": [
+    {
+      "scenario": "cancellation",
+      "reason": "No supported cancellation hook established; do not fabricate Stop or PostToolUseFailure as cancellation evidence."
+    },
+    {
+      "scenario": "foreground branch versus background fork",
+      "reason": "Documented source fork is shared; no admission discriminator certified."
+    },
+    {
+      "scenario": "transcript usage replacement",
+      "reason": "Official pages reviewed do not certify transcript record schema or replacement keys."
+    },
+    {
+      "scenario": "post-compaction context unknown",
+      "reason": "Requires live timing/capture; pre-response null fixture does not prove compaction delivery."
+    }
+  ]
+}

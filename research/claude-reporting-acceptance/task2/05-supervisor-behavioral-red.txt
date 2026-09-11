@@ -1,0 +1,28 @@
+command: rtk proxy cargo test -p ovrcr-runtime --lib agent_reporting -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.24s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-e053d05bcb14d016)
+
+running 5 tests
+
+thread 'server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup' (30727412) panicked at crates/ovrcr-runtime/src/server/tests.rs:5493:9:
+assertion `left == right` failed
+  left: Response { request_id: 1, response: Error { code: Conflict, message: "supervisor requires a dedicated connection" } }
+ right: Response { request_id: 1, response: Ok }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... FAILED
+test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+
+failures:
+
+failures:
+    server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`

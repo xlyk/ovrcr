@@ -1,0 +1,6 @@
+Command: cargo check -p ovrcr -p ovrcr-runtime --all-targets --all-features
+Revision: 8108941 + Task3 working tree
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.91s
+Exit: 0

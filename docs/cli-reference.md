@@ -13,7 +13,8 @@ contract scripts can rely on. Every command accepts `--help`.
 | `terminal` (`terminals`) | Create, read, send to, and close terminals |
 | `task` (`tasks`), `run` (`runs`) | Scheduled Pi tasks; see [scheduled tasks](scheduled-tasks.md) |
 | `service` | Install, start, stop, or remove the background service |
-| `report` | Report agent activity or context from a provider hook |
+| `agent` | Supervise Claude Code, print setup, and inspect integration health |
+| `report` | Report agent activity, context, or status-line metrics from a provider hook |
 | `session` | Inspect or remove a session record |
 | `server` | Run the server in the foreground |
 
@@ -97,6 +98,28 @@ sends do not select or resize the dashboard terminal.
 `terminal close` stops the whole process group, waits for cleanup, and removes the
 record. Cleanup failure leaves the record available. To retain the final screen,
 use `terminal kill ID`, then `terminal remove ID` when finished.
+
+## Agent reporting commands
+
+| Command | Contract |
+| --- | --- |
+| `agent run --provider claude -- claude [ARGS...]` | Supervise an exact Claude Code 2.1.267 or 2.1.268 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. Exact 2.1.268 also accepts separate-token `-r UUID`. Does not start a server. |
+| `agent setup claude --print [--settings PATH]` | Print composed JSON; migration and removal notes go to stderr. Does not write provider settings. |
+| `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the executable, report the detected version and exact supported-version list, and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
+| `session usage ID` | Emit JSON containing `agent_epoch`, raw `agent`, `reporting_unavailable`, and separate `measurement_age_ms` fields. Does not start a server. |
+| `session context ID` | Emit the legacy context sample and stale flag as JSON. Does not start a server. |
+| `report claude --stdin-json` | Route typed Claude command hooks through inherited reporting credentials. |
+| `report claude-statusline --stdin-json [--render-command COMMAND]` | Attempt managed context/cost reporting while rendering the status line. An external renderer receives the original input bytes. |
+
+Terminal inventory includes the same agent snapshot and independent measurement
+ages as `session usage`. Unknown observations and unavailable ages are JSON
+`null`; zero usage or cost is a known value. The `agent` snapshot contains distinct
+binding, activity, metrics, and reporter health. Token and cost scopes must be
+interpreted independently. No provider capability or private launcher lease is
+included.
+
+See [Claude Code setup](claude-code-setup.md) for configuration steps and
+[agent reporting](agent-reporting.md) for managed and legacy semantics.
 
 ## Session lifecycle
 

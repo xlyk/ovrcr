@@ -1,0 +1,32 @@
+command: rtk proxy cargo test -p ovrcr-protocol --lib
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-10a25567881c671c)
+
+running 22 tests
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test codec::tests::preamble_round_trip ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test context::tests::context_semantics ... ok
+test context::tests::context_claude_projection ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test context::tests::context_json_validation ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s

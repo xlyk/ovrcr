@@ -1,0 +1,20 @@
+These were test-development failures, not product failures.
+
+The first compile attempt moved `metrics.sample.cost.value` before comparing the
+full snapshot:
+
+error[E0382]: borrow of partially moved value: `metrics`
+    --> tests/server_lifecycle.rs:8781:22
+
+The assertion now borrows the optional cost.
+
+The next run compared the compact snapshot with an older pre-sequence snapshot.
+All metric components matched, but `received_unix_ms` had advanced during the
+existing replay/cost regressions:
+
+assertion `left == right` failed
+  left received_unix_ms: 1789064303079
+ right received_unix_ms: 1789064303008
+
+The regression now captures its baseline immediately before the compact hook,
+so it detects changes attributable to that callback.

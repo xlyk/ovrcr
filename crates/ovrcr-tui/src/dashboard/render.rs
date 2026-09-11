@@ -1,10 +1,13 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, history_page_covers};
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
-use crate::context::format_context;
+use crate::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot, format_context};
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
-use ovrcr_protocol::HistoryColor;
+use ovrcr_protocol::{
+    CostKind, HistoryColor, MeasurementFreshness, ReporterHealth, SampleQuality, SessionSummary,
+    UsageCoverage, UsageScope,
+};
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -552,12 +555,17 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
                     Span::raw("")
                 } else {
-                    let label = match session.activity {
-                        AgentActivity::Unknown => "agent unknown",
-                        AgentActivity::Idle => "agent idle",
-                        AgentActivity::Busy => "agent busy",
-                        AgentActivity::WaitingInput => "agent waiting input",
-                        AgentActivity::Error => "agent error",
+                    let label = if session.agent.is_some() {
+                        format!("agent{}", provider_activity(session))
+                    } else {
+                        match session.activity {
+                            AgentActivity::Unknown => "agent unknown",
+                            AgentActivity::Idle => "agent idle",
+                            AgentActivity::Busy => "agent busy",
+                            AgentActivity::WaitingInput => "agent waiting input",
+                            AgentActivity::Error => "agent error",
+                        }
+                        .to_owned()
                     };
                     Span::styled(format!("  {label}"), Style::default().fg(TEAL))
                 };
@@ -584,7 +592,13 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         );
         if rect.metadata.height > 1 {
             let metadata_hint = dashboard.history.as_ref().map_or_else(
-                || "─".repeat(usize::from(rect.metadata.width)),
+                || {
+                    selected
+                        .and_then(|session| {
+                            provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
+                        })
+                        .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width)))
+                },
                 |view| history_hint(view, dashboard.focused_size()),
             );
             frame.render_widget(
@@ -797,8 +811,14 @@ fn render_split_metadata(
     );
     if rect.metadata.height > 1 {
         frame.render_widget(
-            Paragraph::new("─".repeat(usize::from(rect.metadata.width)))
-                .style(Style::default().fg(MUTED).bg(BASE)),
+            Paragraph::new(
+                session
+                    .and_then(|session| {
+                        provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
+                    })
+                    .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width))),
+            )
+            .style(Style::default().fg(MUTED).bg(BASE)),
             Rect::new(
                 rect.metadata.x,
                 rect.metadata.y.saturating_add(1),
@@ -962,15 +982,11 @@ fn tree_line_text(
             };
             let text = match line {
                 0 => format!("  {status} {}", session.name),
-                1 => format!("     ├ {label}"),
+                1 => format!("     ├ {label}{}", provider_activity(session)),
                 _ => format!(
                     "     └ run {}  ctx {}",
                     format_elapsed_at(session.started_unix_ms, now_unix_ms),
-                    format_context(
-                        session.context_usage.as_ref(),
-                        now_unix_ms,
-                        matches!(session.phase, SessionPhase::Exited { .. }),
-                    )
+                    session_context(session, now_unix_ms)
                 ),
             };
             let mut style = if selected {
@@ -1002,6 +1018,135 @@ fn tree_line_text(
             }
             (clip_text(&text, width), style)
         }
+    }
+}
+
+// Bound snapshots are authoritative even when a component is unknown after clear.
+fn session_context(session: &SessionSummary, now: u64) -> String {
+    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    let Some(agent) = &session.agent else {
+        return format_context(session.context_usage.as_ref(), now, exited);
+    };
+    let Some(metrics) = &agent.metrics else {
+        return "—".into();
+    };
+    let context = &metrics.sample.context;
+    let sample = ContextUsageSnapshot {
+        report: ContextUsageReport {
+            source: ContextSource::Generic,
+            model: None,
+            conversation: None,
+            used_tokens: context.value.used_tokens,
+            capacity_tokens: context.value.capacity_tokens,
+        },
+        received_unix_ms: metrics.context_received_unix_ms,
+    };
+    let mut text = format_context(Some(&sample), now, exited);
+    if context.freshness == MeasurementFreshness::Uncertain {
+        text.push_str(" uncertain");
+    }
+    if context.value.quality == SampleQuality::Estimated {
+        text.push_str(" estimate");
+    }
+    text
+}
+
+fn provider_activity(session: &SessionSummary) -> String {
+    let Some(agent) = &session.agent else {
+        return String::new();
+    };
+    if agent.health.state == ReporterHealth::Unavailable {
+        return " unavailable".into();
+    }
+    let Some(activity) = &agent.activity else {
+        return " unknown".into();
+    };
+    let state = match activity.state {
+        AgentActivity::Unknown => "unknown",
+        AgentActivity::Idle => "idle",
+        AgentActivity::Busy => "busy",
+        AgentActivity::WaitingInput => "waiting",
+        AgentActivity::Error => "error",
+    };
+    let quality = match activity.quality {
+        SampleQuality::Confirmed => "confirmed",
+        SampleQuality::Observed => "observed",
+        SampleQuality::Estimated => "estimated",
+    };
+    format!(" {state} {quality}")
+}
+
+fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<String> {
+    let agent = session.agent.as_ref()?;
+    let Some(metrics) = &agent.metrics else {
+        return Some("tokens —  cost —".into());
+    };
+    let scope = |scope| match scope {
+        UsageScope::Conversation => "conv",
+        UsageScope::Invocation => "inv",
+    };
+    let age = |received, freshness| {
+        if matches!(session.phase, SessionPhase::Exited { .. })
+            || now
+                .checked_sub(received)
+                .is_none_or(|age| age >= crate::context::CONTEXT_STALE_AFTER_MS)
+        {
+            " stale"
+        } else if freshness == MeasurementFreshness::Uncertain {
+            " uncertain"
+        } else {
+            ""
+        }
+    };
+    let usage = &metrics.sample.usage;
+    // Input already includes cache subsets; reasoning is a subset of output.
+    let tokens = usage
+        .value
+        .input_tokens
+        .zip(usage.value.output_tokens)
+        .map(|(input, output)| (u128::from(input) + u128::from(output)).to_string())
+        .unwrap_or_else(|| "—".into());
+    let partial = if usage.value.coverage == UsageCoverage::Partial {
+        " partial"
+    } else {
+        ""
+    };
+    let cost = &metrics.sample.cost;
+    let amount = cost.value.as_ref().map_or_else(
+        || "—".into(),
+        |cost| {
+            let estimate = if cost.kind == CostKind::Estimated {
+                "estimate "
+            } else {
+                ""
+            };
+            let cents = (u128::from(cost.usd_ticks) + 50_000_000) / 100_000_000;
+            format!(
+                "{} {estimate}${}.{:02}",
+                scope(cost.scope),
+                cents / 100,
+                cents % 100
+            )
+        },
+    );
+    let full = format!(
+        "tokens {}{partial} {tokens}{}  cost {amount}{}",
+        scope(usage.value.scope),
+        age(metrics.usage_received_unix_ms, usage.freshness),
+        age(metrics.cost_received_unix_ms, cost.freshness)
+    );
+    if Line::raw(&full).width() <= width {
+        return Some(full);
+    }
+    let compact = full.replacen(" estimate ", " est ", 1);
+    if Line::raw(&compact).width() <= width {
+        Some(compact)
+    } else {
+        Some(
+            compact
+                .replacen("tokens ", "tok ", 1)
+                .replacen("  cost ", " cost ", 1),
+        )
     }
 }
 

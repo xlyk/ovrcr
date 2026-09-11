@@ -1,0 +1,3 @@
+command: rtk proxy cargo fmt --all -- --check
+
+exit=0

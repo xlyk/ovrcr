@@ -1,0 +1,9 @@
+record: summary of captured tool output
+revision: 36b3f5960e4b4f27931e1224597d2b06e0cf0e9d
+command: rtk cargo test -p ovrcr --lib report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume -- --exact
+exit: 101
+executed: 1
+passed: 0
+failed: 1
+filtered_out: 22
+failure: src/report/admission.rs:879 assertion failed because eligible_argv rejected the certified separate --resume UUIDv4 form.

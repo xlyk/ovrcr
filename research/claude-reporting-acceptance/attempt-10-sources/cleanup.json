@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "pid",
+    "id": 75748,
+    "state": "absent"
+  },
+  {
+    "kind": "pgid",
+    "id": 75748,
+    "state": "absent"
+  }
+]

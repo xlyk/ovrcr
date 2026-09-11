@@ -1,0 +1,3 @@
+command: rtk proxy cargo fmt --all -- --check
+base revision (Task2 working tree): 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0

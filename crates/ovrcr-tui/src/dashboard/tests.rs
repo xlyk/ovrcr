@@ -53,6 +53,8 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
+                agent: None,
+                agent_epoch: 0,
             }],
         }],
     });
@@ -862,6 +864,8 @@ fn mouse_release_precedes_the_replacement_view_request() {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
@@ -983,6 +987,8 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
@@ -1170,4 +1176,220 @@ fn panic_hook_ignores_non_main_threads() {
         panic::set_hook(prior);
     }
     PANIC_TERMINAL_RESTORED.with(|restored| restored.set(false));
+}
+
+#[test]
+fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
+    use crate::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
+    use crate::protocol::*;
+    use ratatui::backend::TestBackend;
+    fn measurement<T>(value: T) -> Measurement<T> {
+        Measurement {
+            value,
+            source: "fixture".into(),
+            source_revision: Some("1".into()),
+            source_sequence: Some(1),
+            freshness: MeasurementFreshness::SourceIdentified,
+        }
+    }
+    let now = 400_000;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 180,
+    });
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "p".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "p".into(),
+            name: "w".into(),
+            path: "/tmp/w".into(),
+            sessions: vec![SessionSummary {
+                id: SessionId(1),
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "claude".into(),
+                label: "claude".into(),
+                pid: Some(1),
+                started_unix_ms: now,
+                phase: SessionPhase::Running,
+                activity: AgentActivity::Busy,
+                context_usage: Some(ContextUsageSnapshot {
+                    report: ContextUsageReport {
+                        source: ContextSource::Generic,
+                        model: None,
+                        conversation: None,
+                        used_tokens: Some(99),
+                        capacity_tokens: Some(100),
+                    },
+                    received_unix_ms: now,
+                }),
+                agent: Some(AgentSnapshot {
+                    binding: AgentBinding {
+                        provider: AgentProvider::Claude,
+                        invocation: "private-invocation".into(),
+                        conversation: "private-conversation".into(),
+                        generation: 1,
+                    },
+                    activity: Some(ActivitySample {
+                        state: AgentActivity::Idle,
+                        quality: SampleQuality::Observed,
+                        turn: None,
+                    }),
+                    metrics: Some(MetricsSnapshot {
+                        sample: MetricsSample {
+                            model: None,
+                            context: measurement(ContextSample {
+                                used_tokens: None,
+                                capacity_tokens: Some(100),
+                                quality: SampleQuality::Observed,
+                            }),
+                            usage: measurement(UsageTotals {
+                                scope: UsageScope::Conversation,
+                                coverage: UsageCoverage::Partial,
+                                input_tokens: Some(20),
+                                output_tokens: Some(5),
+                                cache_read_tokens: Some(10),
+                                cache_write_tokens: None,
+                                reasoning_output_tokens: None,
+                            }),
+                            cost: measurement(None),
+                        },
+                        received_unix_ms: now,
+                        context_received_unix_ms: now,
+                        usage_received_unix_ms: now,
+                        cost_received_unix_ms: now,
+                    }),
+                    health: HealthSample {
+                        state: ReporterHealth::Connected,
+                        reason: None,
+                    },
+                    activity_revision: 1,
+                    metrics_revision: 1,
+                    health_revision: 1,
+                }),
+                agent_epoch: 1,
+            }],
+        }],
+    });
+    dashboard.select_session(SessionId(1));
+    fn drawn(dashboard: &Dashboard, now: u64, width: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, dashboard, now))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+    let text = drawn(&dashboard, now, 180);
+    for expected in [
+        "agent idle observed",
+        "ctx —",
+        "tokens conv partial 25",
+        "cost —",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    assert!(!text.contains("99%"));
+    assert!(!text.contains("private-"));
+    let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap();
+    agent.activity.as_mut().unwrap().quality = SampleQuality::Confirmed;
+    let metrics = agent.metrics.as_mut().unwrap();
+    metrics.sample.cost.value = Some(UsageCost {
+        usd_ticks: 0,
+        kind: CostKind::Reported,
+        scope: UsageScope::Invocation,
+    });
+    metrics.usage_received_unix_ms = 1;
+    metrics.sample.context.value.used_tokens = Some(50);
+    let text = drawn(&dashboard, now, 180);
+    for expected in [
+        "agent idle confirmed",
+        "ctx 50%",
+        "tokens conv partial 25 stale",
+        "cost inv $0.00",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap();
+    agent.health.state = ReporterHealth::Unavailable;
+    let metrics = agent.metrics.as_mut().unwrap();
+    metrics.sample.cost.value.as_mut().unwrap().kind = CostKind::Estimated;
+    metrics.sample.context.freshness = MeasurementFreshness::Uncertain;
+    let text = drawn(&dashboard, now, 180);
+    for expected in ["agent unavailable", "estimate $0.00", "50% uncertain"] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    for width in [1, 2, 10, 40, 80] {
+        let _ = drawn(&dashboard, now, width);
+    }
+    let mut second = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    second.id = SessionId(2);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(second);
+    assert!(dashboard.split_pane());
+    let text = drawn(&dashboard, now, 240);
+    assert_eq!(text.matches("tokens conv partial 25 stale").count(), 2);
+    assert_eq!(text.matches("cost inv estimate $0.00").count(), 2);
+    for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+        let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
+        metrics.sample.usage.value.input_tokens = Some(711_653);
+        metrics.sample.usage.value.output_tokens = Some(1);
+        metrics.sample.cost.value = Some(UsageCost {
+            usd_ticks: 4_700_000_000,
+            kind: CostKind::Estimated,
+            scope: UsageScope::Conversation,
+        });
+        metrics.cost_received_unix_ms = 1;
+    }
+    let pane_widths: Vec<_> = super::pane_rects(
+        Rect::new(0, 0, 166, 24),
+        dashboard.panes.len(),
+        dashboard.focused_pane,
+    )
+    .into_iter()
+    .map(|pane| pane.metadata.width)
+    .collect();
+    assert_eq!(pane_widths, [62, 63]);
+    let text = drawn(&dashboard, now, 166);
+    assert_eq!(
+        text.matches("tokens conv partial 711654 stale  cost conv est $0.47 stale")
+            .count(),
+        2,
+        "split metrics must preserve both freshness labels: {text}"
+    );
+    for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+        let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
+        metrics.sample.usage.value.input_tokens = Some(82_589);
+        metrics.sample.usage.value.output_tokens = Some(1);
+        metrics.sample.usage.freshness = MeasurementFreshness::Uncertain;
+        metrics.sample.cost.value.as_mut().unwrap().usd_ticks = 600_000_000;
+        metrics.sample.cost.freshness = MeasurementFreshness::Uncertain;
+        metrics.usage_received_unix_ms = now;
+        metrics.cost_received_unix_ms = now;
+    }
+    let text = drawn(&dashboard, now, 166);
+    assert_eq!(
+        text.matches("tok conv partial 82590 uncertain cost conv est $0.06 uncertain")
+            .count(),
+        2,
+        "62-column split metrics must preserve scope, values, and uncertainty: {text}"
+    );
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap()
+        .metrics = None;
+    assert!(!drawn(&dashboard, now, 240).contains("99%"));
 }

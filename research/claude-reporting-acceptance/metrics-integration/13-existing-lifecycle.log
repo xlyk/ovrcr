@@ -1,0 +1,138 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.19s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 15 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJkidps/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppl3n0u/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprJAHg6/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFHwKO2/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsLDhhJ/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6lo91x/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvFIcVv/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9m3AQd/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIyONDa/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpc4gCSv/repo/.git/
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprJAHg6/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFHwKO2/server.sock
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJkidps/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppl3n0u/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprJAHg6/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFHwKO2/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJkidps/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppl3n0u/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvFIcVv/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvFIcVv/server.sock
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6lo91x/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6lo91x/server.sock
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 99b0001] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9m3AQd/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsLDhhJ/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpc4gCSv/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIyONDa/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9m3AQd/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsLDhhJ/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpc4gCSv/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIyONDa/server.sock
+ovrcr server stopped
+test agent_hook_sequence_does_not_regress_state ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVF1vjE/repo/.git/
+[main (root-commit) 57a9834] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVF1vjE/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVF1vjE/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=reserve
+AGENT_OWNERSHIP native_pid=58504 native_pgid=58504 launcher_pid=58066 session_pgid=58042 private_endpoint_removed=true
+ovrcr server stopped
+test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWOrVly/repo/.git/
+[main (root-commit) 57a9834] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWOrVly/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWOrVly/server.sock
+ovrcr server stopped
+ADMISSION_PROXY request=supervisor
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+ovrcr server stopped
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_hook_capability_and_exit_are_enforced ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVQRynj/repo/.git/
+[main (root-commit) d8ddc8f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVQRynj/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVQRynj/server.sock
+ovrcr server stopped
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+ovrcr server stopped
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_hook_startup_registration_is_visible ... ok
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+ovrcr server stopped
+test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+ovrcr server stopped
+test agent_admission_failed_bind_status_disconnects_watch ... ok
+ovrcr server stopped
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+
+test result: ok. 13 passed; 0 failed; 2 ignored; 0 measured; 58 filtered out; finished in 4.61s

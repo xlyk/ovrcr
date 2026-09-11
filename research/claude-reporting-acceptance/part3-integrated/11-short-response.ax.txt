@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31831  elapsed: 1m  agent idle observed                                                                                  
+  ▼ auth-handoff                       │tokens conv partial 254251 uncertain  cost conv estimate $0.13 uncertain                                                      
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 31831  elapsed: 1m  agent idle observed                                                                                  
+		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 254251 uncertain  cost conv estimate $0.13 uncertain                                                      
+		6 text (settable)   - local                              │ ▐▛███▛█   Claude Code v2.1.268                                                                                               
+		7 text (settable)      ├ terminal                        │▝▜██████▀  Sonnet 5 · Claude API                                                                                              
+		8 text (settable)      └ run 11m  ctx —                  │  ▝▝ ▝▝    /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/workspaces/consigint/auth-handoff        
+		9 text (settable)   - review auth handoff                │                                                                                                                              
+		10 text (settable)      ├ grok / grok-4.6                 │  Fable 5.1 writes better code and reports progress on long tasks. Switch anytime with /model.                                
+		11 text (settable)      └ run 11m  ctx —                  │                                                                                                                              
+		12 text (settable)     integrated-seed                    │❯ Remember the word amber for this conversation. Reply exactly OVRCR_PART3_SEED_OK. Do not use tools.                         
+		13 text (settable)      ├ python3 unavailable             │                                                                                                                              
+		14 text (settable)      └ run 10m  ctx 4%~ uncertain      │⏺ OVRCR_PART3_SEED_OK                                                                                                         
+		15 text (settable)     integrated-long-resume             │                                                                                                                              
+		16 text (settable)      ├ python3 unavailable             │✻ Crunched for 1s · done 4:38 PM                                                                                              
+		17 text (settable)      └ run 7m  ctx 4%~ uncertain       │                                                                                                                              
+		18 text (settable)     integrated-short-resume            │❯ /exit                                                                                                                       
+		19 text (settable)      ├ python3 idle observed           │  ⎿  See ya!                                                                                                                  
+		20 text (settable)      └ run 1m  ctx 4% uncertain        │                                                                                                                              
+		21 text (settable)                                        │❯ Reply OVRCR_PART3_LONG_RESUME_OK followed by the remembered word. Do not use tools.                                         
+		22 text (settable)   ▼ worktree-lifecycle                 │  ⎿  1 agent type available                                                                                                   
+		23 text (settable)   - local                              │                                                                                                                              
+		24 text (settable)      ├ terminal                        │⏺ OVRCR_PART3_LONG_RESUME_OK amber                                                                                            
+		25 text (settable)      └ run 11m  ctx —                  │                                                                                                                              
+		26 text (settable)   - implement lifecycle cleanup        │✻ Cogitated for 1s · done 4:45 PM                                                                                             
+		27 text (settable)      ├ claude / sonnet-4               │                                                                                                                              
+		28 text (settable)      └ run 11m  ctx —                  │❯ Acceptance test: invoke the named ovrcr-failure-probe agent exactly once. Its nonexistent model deliberately tests child    
+		29 text (settable)   - review websocket shutdown          │  API failure. Do not substitute another model, retry it, or use other tools. After it returns its error, reply               
+		30 text (settable)      ├ codex / gpt-5.4                 │  OVRCR_PART3_CHILD_API_PARENT_OK.                                                                                            
+		31 text (settable)      └ run 11m  ctx —                  │                                                                                                                              
+		32 text (settable)   - plan snapshot restore              │⏺ ovrcr-failure-probe(Acceptance test invoking failure probe)                                                                 
+		33 text (settable)      ├ pi / grok-4.6                   │  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)                                                                      
+		34 text (settable)      └ run 11m  ctx —                  │                                                                                                                              
+		35 text (settable)                                        │⏺ I've launched the probe once, as instructed. I'll wait for its completion notification before reporting further — I won't   
+		36 text (settable) ▼ 󰉋 spacelift-agent                    │  retry or substitute it.                                                                                                     
+		37 text (settable)   ▼ pipeline-progress-v2               │                                                                                                                              
+		38 text (settable)   - local                              │✻ Baked for 4s · done 4:45 PM                                                                                                 
+		39 text (settable)      ├ terminal                        │                                                                                                                              
+		40 text (settable)      └ run 11m  ctx —                  │⏺ Agent "Acceptance test invoking failure probe" failed: Agent terminated early due to an API error: There's an issue with the
+		41 text (settable)   - build pipeline progress            │selected model (claude-ovrcr-child-invalid-2099). It may not exist or you may not have access to it. Run /model to pick a     
+		42 text (settable)      ├ claude / opus-4                 │different model. (error type model_not_found, HTTP 404, request id req_011CevedjFeXmErYdzabp1SW, model sent to the API:       
+		43 text (settable)      └ run 11m  ctx —                  │claude-ovrcr-child-invalid-2099)                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)   ▼ scope-quality                      │⏺ The probe returned the expected failure (model_not_found on claude-ovrcr-child-invalid-2099), as designed. No substitution  
+		46 text (settable)   - local                              │  or retry was performed.                                                                                                     
+		47 text (settable)      ├ terminal                        │                                                                                                                              
+		48 text (settable)      └ run 11m  ctx —                  │  OVRCR_PART3_CHILD_API_PARENT_OK                                                                                             
+		49 text (settable)   - review scope quality               │                                                                                                                              
+		50 text (settable)      ├ codex / gpt-5.4                 │✻ Churned for 6s · done 4:46 PM                                                                                               
+		51 text (settable)      └ run 11m  ctx —                  │                                                                                                                              
+		52 text (settable)                                        │❯ Reply OVRCR_PART3_SHORT_RESUME_OK followed by the remembered word. Do not use tools.                                        
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │⏺ OVRCR_PART3_SHORT_RESUME_OK amber                                                                                           
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │✻ Crunched for 1s · done 4:47 PM                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		59 text (settable)                                        │❯ what's the remembered word                                                                                                  
+		60 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		61 text (settable)                                        │  ctx 4%                                                                                                                      
+		62 text (settable)                                        │  ⏸ manual mode on · ← for agents                                                                                             
+		63 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                          
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31831  elapsed: 1m  agent idle observed                                                                                  
+  ▼ auth-handoff                       │tokens conv partial 254251 uncertain  cost conv estimate $0.13 uncertain                                                      
+  - local

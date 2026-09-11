@@ -1,0 +1,28 @@
+command: rtk proxy cargo test -p ovrcr --test resource_cli managed_usage_inspection -- --nocapture
+
+running 1 test
+test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... FAILED
+
+failures:
+
+failures:
+    managed_usage_inspection_preserves_scope_unknowns_and_component_ages
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.61s
+
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.83s
+     Running tests/resource_cli.rs (target/debug/deps/resource_cli-c61e6e00e04d209d)
+
+thread '<unnamed>' (32081329) panicked at tests/resource_cli.rs:753:78:
+called `Result::unwrap()` on an `Err` value: read protocol frame length
+
+Caused by:
+    Resource temporarily unavailable (os error 35)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'managed_usage_inspection_preserves_scope_unknowns_and_component_ages' (32081327) panicked at tests/resource_cli.rs:781:23:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+error: test failed, to rerun pass `-p ovrcr --test resource_cli`
+
+exit=101

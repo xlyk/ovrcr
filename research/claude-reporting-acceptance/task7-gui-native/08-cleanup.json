@@ -1,0 +1,258 @@
+{
+  "launcher_session": 78083,
+  "launcher_exit": 0,
+  "processes": [
+    {
+      "kind": "pid",
+      "id": 45755,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 46615,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 46767,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 46831,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 46891,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 46965,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47027,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47035,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47045,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47053,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47060,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47067,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47075,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 47080,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 49243,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 49249,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 56385,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 59441,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 70853,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 70854,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 70857,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 76546,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 79057,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 87646,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 87648,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 87650,
+      "state": "absent"
+    },
+    {
+      "kind": "pid",
+      "id": 98125,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 45724,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 46831,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 46891,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 46965,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47027,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47035,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47045,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47053,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47060,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47067,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47075,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 47080,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 49243,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 49249,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 56385,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 70853,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 70857,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 76546,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 79057,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 87646,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 87648,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 87650,
+      "state": "absent"
+    },
+    {
+      "kind": "pgid",
+      "id": 98125,
+      "state": "absent"
+    }
+  ],
+  "socket_absent": true,
+  "fixture_directory_absent": true
+}

@@ -1,0 +1,4 @@
+Command: rtk proxy rustfmt --edition 2024 --check src/report/collector.rs src/report/claude_metrics.rs tests/claude_reporting.rs
+HEAD: 697149ddd1568194a535907b4202b65f398f1b31 plus uncommitted helper and concurrent integration
+
+Exit status: 0

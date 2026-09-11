@@ -1,0 +1,163 @@
+command: rtk proxy cargo test --workspace --all-targets --all-features
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+    Blocking waiting for file lock on build directory
+   Compiling objc2-encode v4.1.0
+   Compiling smallvec v1.16.0
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling num-traits v0.2.19
+   Compiling bytemuck v1.25.2
+   Compiling zerocopy v0.8.56
+   Compiling objc-sys v0.3.5
+   Compiling simd-adler32 v0.3.10
+   Compiling polycool v0.4.0
+   Compiling adler2 v2.0.1
+   Compiling dispatch v0.2.0
+   Compiling uuid v1.26.0
+   Compiling linebender_resource_handle v0.1.1
+   Compiling crc32fast v1.5.1
+   Compiling parking_lot_core v0.9.12
+   Compiling core-foundation v0.9.4
+   Compiling miniz_oxide v0.9.1
+   Compiling objc2 v0.6.4
+   Compiling objc2 v0.5.2
+   Compiling bitflags v1.3.2
+   Compiling color v0.3.3
+   Compiling font-types v0.12.4
+   Compiling kurbo v0.13.1
+   Compiling accesskit v0.24.1
+   Compiling foreign-types-shared v0.3.1
+   Compiling fearless_simd v0.4.1
+   Compiling parking_lot v0.12.5
+   Compiling core-graphics-types v0.1.3
+   Compiling foreign-types v0.5.0
+   Compiling chrono v0.4.45
+   Compiling euclid v0.22.14
+   Compiling read-fonts v0.41.0
+   Compiling flate2 v1.1.10
+   Compiling emath v0.36.1
+   Compiling mio v1.2.3
+   Compiling zune-core v0.5.3
+   Compiling pin-project-lite v0.2.17
+   Compiling raw-window-handle v0.6.2
+   Compiling tracing-core v0.1.36
+   Compiling block2 v0.5.1
+   Compiling ecolor v0.36.1
+   Compiling guillotiere v0.7.0
+   Compiling peniko v0.6.1
+   Compiling signal-hook-mio v0.2.5
+   Compiling objc2-core-foundation v0.3.2
+   Compiling block2 v0.6.2
+   Compiling objc2-foundation v0.2.2
+   Compiling tracing v0.1.44
+   Compiling zune-jpeg v0.5.15
+   Compiling croner v3.0.1
+   Compiling chrono-tz v0.10.4
+   Compiling core-graphics v0.23.2
+   Compiling unicode-general-category v1.1.0
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling cursor-icon v1.2.0
+   Compiling epaint_default_fonts v0.36.1
+   Compiling profiling v1.0.18
+   Compiling dpi v0.1.2
+   Compiling self_cell v1.3.0
+   Compiling quick-error v2.0.1
+   Compiling weezl v0.1.12
+   Compiling fax v0.2.7
+   Compiling smol_str v0.2.2
+   Compiling pxfm v0.1.30
+   Compiling nohash-hasher v0.2.0
+   Compiling crossterm v0.29.0
+   Compiling png v0.18.1
+   Compiling accesskit_consumer v0.38.0
+   Compiling itertools v0.15.0
+   Compiling byteorder-lite v0.1.0
+   Compiling objc2-foundation v0.3.2
+   Compiling objc2-core-graphics v0.3.2
+   Compiling vello_common v0.1.0
+   Compiling tempfile v3.27.0
+   Compiling dispatch2 v0.3.1
+   Compiling cgl v0.3.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling libloading v0.8.9
+   Compiling ahash v0.8.12
+   Compiling half v2.7.1
+   Compiling portable-pty v0.9.0
+   Compiling ratatui v0.30.2
+   Compiling glow v0.17.0
+   Compiling vello_cpu v0.1.0
+   Compiling tiff v0.11.3
+   Compiling web-time v1.1.0
+   Compiling objc2-app-kit v0.2.2
+   Compiling moxcms v0.8.1
+   Compiling objc2-app-kit v0.3.2
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling harfrust v0.12.0
+   Compiling skrifa v0.44.0
+   Compiling winit v0.30.13
+   Compiling accesskit_macos v0.26.3
+   Compiling image v0.25.10
+   Compiling glutin v0.32.3
+   Compiling accesskit_winit v0.32.2
+   Compiling glutin-winit v0.5.0
+   Compiling epaint v0.36.1
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling arboard v3.6.1
+   Compiling egui v0.36.1
+   Compiling egui_glow v0.36.1
+   Compiling egui-winit v0.36.1
+   Compiling eframe v0.36.1
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.33s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-ac939afe00031cc6)
+
+running 12 tests
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test gui::input::tests::release_with_nothing_held_reports_nothing ... ok
+test gui::input::tests::drag_released_outside_ends_at_the_last_reported_cell ... ok
+test gui::input::tests::alt_letter_encodes_meta ... ok
+test gui::input::tests::unmodified_letter_keeps_its_text ... ok
+test gui::input::tests::wheel_points_accumulate_into_lines ... ok
+test gui::input::tests::wheel_ignores_off_axis_drift ... ok
+test gui::input::tests::drag_is_forwarded_in_button_motion_mode ... ok
+test gui::input::tests::press_encoding_matches_encode_mouse ... ok
+test gui::input::tests::special_keys_carry_modifiers ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ovrcr-c8a58305d6df8e29)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-91f170ab804c11a7)
+
+running 7 tests
+test terminal_fonts_render_mockup_glyphs_or_default_symbols ... ok
+test native_glyph_cache_evicts_entries_unused_last_frame ... ok
+test native_glyph::native_raster_retains_style_scale_and_opacity ... ok
+test terminal_paints_reserved_icon_cell_before_foreground_glyph ... ok
+test terminal_paints_missing_unicode_as_native_images ... ok
+test native_glyph_cache_keeps_a_screen_of_distinct_glyphs ... ok
+test command_palette_opens_when_another_control_has_focus ... FAILED
+
+failures:
+
+---- command_palette_opens_when_another_control_has_focus stdout ----
+OVRCR GUI cleanup failed: demo server exited unexpectedly; preserving fixture for recovery; demo retained at /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-uv8y7w
+Error: demo server exited: exit status: 1; cleanup failed: demo server exited unexpectedly; preserving fixture for recovery; demo retained at /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-uv8y7w
+
+
+failures:
+    command_palette_opens_when_another_control_has_focus
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+error: test failed, to rerun pass `-p ovrcr --bin ovrcr-gui`

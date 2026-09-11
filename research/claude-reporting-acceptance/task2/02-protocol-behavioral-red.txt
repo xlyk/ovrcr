@@ -1,0 +1,22 @@
+command: rtk proxy cargo test -p ovrcr-protocol --lib agent_report_reservation_wire_contract -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.68s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-10a25567881c671c)
+
+running 1 test
+
+thread 'codec::agent_foundation_red::agent_report_reservation_wire_contract' (30623386) panicked at crates/ovrcr-protocol/src/codec.rs:427:9:
+shared reservation request must decode: Err(Error("unknown variant `ReserveAgent`, expected one of `DashboardHello`, `DashboardGeometry`, `List`, `AddProject`, `RemoveProject`, `CreateWorkspace`, `RemoveWorkspace`, `CreateSession`, `RemoveSession`, `KillSession`, `PauseSession`, `ResumeSession`, `Select`, `Input`, `Resize`, `Shutdown`, `Inspect`, `ReadTerminal`, `SendTerminal`, `CloseTerminal`, `Task`, `AgentReport`, `HistoryBegin`, `HistoryPage`, `HistoryEnd`, `SetView`", line: 0, column: 0))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... FAILED
+
+failures:
+
+failures:
+    codec::agent_foundation_red::agent_report_reservation_wire_contract
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-protocol --lib`

@@ -1,0 +1,16 @@
+Command: rtk proxy cargo test -p ovrcr --test claude_reporting
+Uncommitted helper implementation
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.19s
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-42ec5856f1256076)
+
+running 4 tests
+test collector_differing_duplicate_freezes_before_replacement ... ok
+test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+
+Exit status: 0

@@ -1,0 +1,4 @@
+Command: rtk proxy cargo test -p ovrcr-tui --lib provider_dashboard_preserves_quality_unknowns_and_component_age
+Base: 8586a2574dc4de5562fd1451bcf63154848644a8 + new regression
+Exit: 101; executed 0 tests
+Compiler failure E0422/E0433: ContextUsageSnapshot, ContextUsageReport, ContextSource imported from crate root instead of context module. Corrected before behavioral RED attempt02.

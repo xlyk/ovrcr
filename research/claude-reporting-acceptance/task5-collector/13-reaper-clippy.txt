@@ -1,0 +1,6 @@
+Command: rtk proxy cargo clippy -p ovrcr --lib --test claude_reporting -- -D warnings
+HEAD: e21ddf4326235e1c31727da7e484e906ce0fe515 plus reaper correction and concurrent integration
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.77s
+
+Exit status: 0

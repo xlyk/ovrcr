@@ -1,0 +1,5 @@
+2026-09-10 coordinator evidence validation, exit 0
+JSON assertions: seed usage equals pre-resume usage exactly (one row); post-turn contains that unchanged row plus one distinct matching-conversation message/request pair; native exit codes for sessions 11/12/13/14 are 0/0/1/0; every recorded PID and PGID is absent; fixture root/socket absent.
+No Cargo tests were run for this source-discovery unit. GUI build completed successfully from c2fb7ea before native capture; launcher exec session 46982 exited 0.
+The session list probe failed with unrecognized subcommand (exit 2); the correct terminal list --json command supplied 06-inventory.json.
+Initial CUA clipboard call timed out; fresh UI observation and focused input recovered. No capture was manufactured or native payload rewritten.

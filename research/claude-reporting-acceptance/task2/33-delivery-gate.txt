@@ -1,0 +1,128 @@
+command: rtk proxy cargo test -p ovrcr-protocol -p ovrcr-runtime --lib
+base revision (Task2 working tree): 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-10a25567881c671c)
+
+running 22 tests
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+test codec::tests::preamble_round_trip ... ok
+test context::tests::context_claude_projection ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test context::tests::context_semantics ... ok
+test context::tests::context_json_validation ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-e053d05bcb14d016)
+
+running 90 tests
+test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+test config::tests::corrupt_registry_is_reported_and_not_replaced ... ok
+test config::tests::present_empty_registry_is_reported_and_not_replaced ... ok
+test server::tests::control_and_refresh_failures_preserve_both_causes ... ok
+test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+test server::tests::dashboard_overflow_closes_affected_connection ... ok
+test server::tests::dashboard_overflow_does_not_clear_replacement_slot ... ok
+test server::tests::dashboard_shutdown_completes_when_response_sink_is_closed ... ok
+test server::tests::dashboard_slot_is_released_when_registration_panics ... ok
+test config::tests::registry_round_trip_preserves_projects_and_workspaces ... ok
+test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+test server::tests::hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink ... ok
+test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+test server::tests::kill_failure_cleanup_retains_original_group_after_leader_exit ... ok
+test server::tests::accept_loop_survives_thread_spawn_failure ... ok
+test server::tests::lifecycle_response_preserves_error_chain_and_code ... ok
+test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+test server::tests::late_response_does_not_reach_a_replacement_dashboard ... ok
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+test server::tests::kill_and_close_refresh_failures_keep_exited_records ... ok
+test server::tests::pending_output_does_not_evict_dashboard_on_lifecycle_event ... ok
+test server::tests::raw_event_and_dispatch_queues_reject_the_65th_item ... ok
+test server::tests::registration_publishes_the_session_before_its_events_can_arrive ... ok
+test server::tests::relative_bound_socket_validates_spawn_and_child_cwd_is_distinct ... ok
+test server::tests::close_failure_retains_record_until_cleanup_can_finish ... ok
+test server::tests::history_capture_orders_with_output ... ok
+test server::tests::session_output_flows_while_another_session_spawns ... ok
+test server::tests::set_view_drops_a_session_removed_before_publication ... ok
+test server::tests::oversized_set_view_returns_invalid_request_without_resizing ... ok
+test server::tests::kill_session_termination_failure_revokes_and_retains_session ... ok
+test server::tests::shutdown_refresh_failure_keeps_exited_record_and_server_available ... ok
+test server::tests::shutdown_termination_failure_is_partial_and_server_remains_available ... ok
+test server::tests::shutdown_without_kill_rejects_paused_session ... ok
+test server::tests::split_delivery_dirty_revisions_are_isolated ... ok
+test server::tests::accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked ... ok
+test server::tests::split_delivery_snapshots_precede_increments ... ok
+test server::tests::stale_geometry_does_not_overwrite_replacement_size ... ok
+test server::tests::terminal_delivery_is_final_entry_and_closing_stays_sticky ... ok
+test server::tests::dashboard_shutdown_waits_for_stalled_writer_completion ... ok
+test server::tests::uncommitted_partial_failure_does_not_publish_hierarchy ... ok
+test server::tests::current_owner_rejects_hidden_input_and_unknown_view_session ... ok
+test server::tests::view_revision_floor_survives_exit_and_removal ... ok
+test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+test server::tests::history_owner_and_token_isolation ... ok
+test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+test session::shell_prompt::tests::compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone ... ok
+test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+test session::tests::final_output_is_parsed_before_session_becomes_removable ... ok
+test server::tests::invalid_view_preserves_populated_geometry_and_pty_sizes ... ok
+test session::tests::group_leader_timeout_override_keeps_the_default_bound ... ok
+test server::tests::history_page_overflow_disconnects_without_parser_wait ... ok
+test session::tests::pause_resume_exit_event_cannot_be_overwritten ... ok
+test session::tests::pause_resume_rejects_unsafe_group ... ok
+test session::tests::pause_resume_terminate_runs_term_handler ... ok
+test session::tests::pause_resume_terminate_serializes_competing_controls ... ok
+test server::tests::set_view_publishes_without_an_unfocused_pane_removed_before_publication ... ok
+test server::tests::partial_resize_connection_delivers_error_before_owner_close ... ok
+test session::tests::terminate_reaps_group_after_transient_sigcont_permission ... ok
+test server::tests::partial_resize_failure_does_not_restore_revision_after_owner_replacement ... ok
+test session::tests::terminate_removes_the_whole_process_group ... ok
+test session::tests::group_leader_timeout_kills_the_child ... ok
+test session::tests::pause_resume_phase_and_input_admission ... ok
+test session::tests::shell_round_trip_updates_the_current_screen ... ok
+test session::tests::resize_reaches_the_child_tty ... ok
+test session::tests::terminate_retains_sigcont_permission_error_when_group_remains ... ok
+test task_manager::tests::cleanup_reports_retained_directory_without_registry_ownership ... ok
+test server::tests::resize_is_rejected_for_a_split_view ... ok
+test task_manager::tests::corrupt_run_file_does_not_block_open ... ok
+test task_runner::tests::reused_pid_cannot_claim_process_group_or_children ... ok
+test task_runner::tests::surviving_member_preserves_owned_group_after_leader_exits ... ok
+test tasks::tests::prune_keeps_recent_runs_and_the_newest_per_task ... ok
+test session::tests::compact_zsh_prompt_preserves_config_and_reports_failure ... ok
+test task_manager::tests::cancellation_waits_for_admission_to_publish_its_worker ... ok
+test session::tests::terminate_retains_sigcont_permission_error_for_live_group ... ok
+test task_manager::tests::graceful_shutdown_refuses_a_run_crossing_admission ... ok
+test task_manager::tests::tick_does_not_reread_terminal_runs ... ok
+test session::tests::terminate_removes_job_control_subgroups ... ok
+test task_manager::tests::workspace_removal_protects_admitted_tasks_before_run_metadata_is_written ... ok
+test server::tests::view_publication_aborts_when_owner_disconnects_during_resize ... ok
+test server::tests::session_refresh_dispatch_failures_disconnect_without_blocking ... ok
+test server::tests::set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames ... ok
+test server::tests::partial_resize_blocked_writer_times_out_and_closes_owner ... ok
+test server::tests::split_delivery_rejects_stale_owner_and_input ... ok
+test server::tests::terminal_frame_survives_a_concurrent_lifecycle_event ... ok
+
+test result: ok. 90 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.94s

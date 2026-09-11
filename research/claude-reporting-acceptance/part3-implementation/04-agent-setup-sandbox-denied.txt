@@ -1,0 +1,28 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.74s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-d6579952c025c85d)
+
+running 7 tests
+
+thread 'doctor_inspects_unbound_and_unavailable_sessions_without_private_values' (38035813) panicked at tests/agent_setup.rs:239:71:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... FAILED
+test setup_quotes_actual_executable_path ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+signal=2 doctor_status=signal: 2 (SIGINT) owned_probe_pgid=70354 absent=ESRCH
+signal=15 doctor_status=signal: 15 (SIGTERM) owned_probe_pgid=70460 absent=ESRCH
+signal=1 doctor_status=signal: 1 (SIGHUP) owned_probe_pgid=70545 absent=ESRCH
+signal=3 doctor_status=signal: 3 (SIGQUIT) owned_probe_pgid=70750 absent=ESRCH
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+
+failures:
+
+    doctor_inspects_unbound_and_unavailable_sessions_without_private_values
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.29s
+
+error: test failed, to rerun pass `-p ovrcr --test agent_setup`

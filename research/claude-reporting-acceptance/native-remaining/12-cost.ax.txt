@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 10m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 711654 stale  cost conv estimate $0.45 stale
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 89531  elapsed: 10m  agent idle observed
+		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 711654 stale  cost conv estimate $0.45 stale
+		6 text (settable)   - local                              │
+		7 text (settable)      ├ terminal                        │✻ Sautéed for 1s · done 11:30 AM
+		8 text (settable)      └ run 16m  ctx —                  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+		9 text (settable)   - review auth handoff                │   Settings  Status   Config   Usage   Stats
+		10 text (settable)      ├ grok / grok-4.6                 │
+		11 text (settable)      └ run 16m  ctx —                  │   Session
+		12 text (settable)     claude-native-ready                │
+		13 text (settable)      ├ python3 unavailable             │   Total cost:            $0.4607
+		14 text (settable)      └ run 12m  ctx —~ uncertain       │   Total duration (API):  1m 31s
+		15 text (settable)     claude-acceptance                  │   Total duration (wall): 10m 41s
+		16 text (settable)      ├ python3 idle observed           │   Total code changes:    0 lines added, 0 lines removed
+		17 text (settable)      └ run 10m  ctx 5%~ uncertain      │   Usage by model:
+		18 text (settable)                                        │       claude-haiku-4-5:  911 input, 9 output, 0 cache read, 0 cache write ($0.0010)
+		19 text (settable)   ▼ worktree-lifecycle                 │        claude-sonnet-5:  5.6k input, 7.6k output, 1.1m cache read, 51.8k cache write ($0.4597)
+		20 text (settable)   - local                              │   Prompt cache (main):   15 requests · 97% of input tokens from cache · no misses · 1 expected rebuild (compaction or
+		21 text (settable)      ├ terminal                        │   tool-result clearing) · warm (1h TTL, last activity 1m 19s ago)
+		22 text (settable)      └ run 16m  ctx —                  │
+		23 text (settable)   - implement lifecycle cleanup        │   What's contributing to your limits usage?
+		24 text (settable)      ├ claude / sonnet-4               │   Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+		25 text (settable)      └ run 16m  ctx —                  │
+		26 text (settable)   - review websocket shutdown          │   Last 24h · these are independent characteristics of your usage, not a breakdown
+		27 text (settable)      ├ codex / gpt-5.4                 │
+		28 text (settable)      └ run 16m  ctx —                  │   28% of your usage came from subagents under "general-purpose"
+		29 text (settable)   - plan snapshot restore              │    If this runs frequently, consider configuring its subagents with a cheaper
+		30 text (settable)      ├ pi / grok-4.6                   │    model or tightening their prompts.
+		31 text (settable)      └ run 16m  ctx —                  │
+		32 text (settable)                                        │   Subagents               % of usage
+		33 text (settable) ▼ 󰉋 spacelift-agent                    │   general-purpose                28%
+		34 text (settable)   ▼ pipeline-progress-v2               │
+		35 text (settable)   - local                              │   d to day · w to week
+		36 text (settable)      ├ terminal                        │
+		37 text (settable)      └ run 16m  ctx —                  │   Esc to cancel
+		38 text (settable)   - build pipeline progress            │
+		39 text (settable)      ├ claude / opus-4                 │
+		40 text (settable)      └ run 16m  ctx —                  │
+		41 text (settable)                                        │
+		42 text (settable)   ▼ scope-quality                      │
+		43 text (settable)   - local                              │
+		44 text (settable)      ├ terminal                        │
+		45 text (settable)      └ run 16m  ctx —                  │
+		46 text (settable)   - review scope quality               │
+		47 text (settable)      ├ codex / gpt-5.4                 │
+		48 text (settable)      └ run 16m  ctx —                  │
+		49 text (settable)                                        │
+		50 text (settable)                                        │
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)                                        │
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 10m  agent idle observed
+  ▼ auth-handoff                       │tokens conv partial 711654 stale  cost conv estimate $0.45 stale
+  - local

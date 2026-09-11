@@ -1,0 +1,32 @@
+Command: rtk proxy cargo clippy -p ovrcr --bin ovrcr --test agent_setup -- -D warnings
+Exit: 101
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+error: this `if` statement can be collapsed
+   --> tests/agent_setup.rs:323:13
+    |
+323 | /             if let Ok(value) = std::fs::read_to_string(&ready) {
+324 | |                 if let Ok(pid) = value.parse::<libc::pid_t>() {
+325 | |                     break pid;
+326 | |                 }
+327 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+323 ~             if let Ok(value) = std::fs::read_to_string(&ready)
+324 ~                 && let Ok(pid) = value.parse::<libc::pid_t>() {
+325 |                     break pid;
+326 ~                 }
+    |
+
+error: could not compile `ovrcr` (test "agent_setup") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+
+Command: rtk proxy rustfmt --edition 2024 --check src/cli/agent_setup.rs src/cli/agent.rs src/cli/args.rs tests/agent_setup.rs
+Exit: 0
+
+Command: rtk proxy git diff --check
+Exit: 0

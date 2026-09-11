@@ -1,0 +1,133 @@
+{
+  "pids": [
+    {
+      "id": 65787,
+      "state": "absent"
+    },
+    {
+      "id": 65789,
+      "state": "absent"
+    },
+    {
+      "id": 65793,
+      "state": "absent"
+    },
+    {
+      "id": 65798,
+      "state": "absent"
+    },
+    {
+      "id": 65799,
+      "state": "absent"
+    },
+    {
+      "id": 65810,
+      "state": "absent"
+    },
+    {
+      "id": 65840,
+      "state": "absent"
+    },
+    {
+      "id": 65894,
+      "state": "absent"
+    },
+    {
+      "id": 65926,
+      "state": "absent"
+    },
+    {
+      "id": 65983,
+      "state": "absent"
+    },
+    {
+      "id": 66051,
+      "state": "absent"
+    },
+    {
+      "id": 66055,
+      "state": "absent"
+    },
+    {
+      "id": 66062,
+      "state": "absent"
+    },
+    {
+      "id": 66071,
+      "state": "absent"
+    },
+    {
+      "id": 66077,
+      "state": "absent"
+    },
+    {
+      "id": 66087,
+      "state": "absent"
+    },
+    {
+      "id": 66099,
+      "state": "absent"
+    },
+    {
+      "id": 66103,
+      "state": "absent"
+    },
+    {
+      "id": 73171,
+      "state": "absent"
+    }
+  ],
+  "pgids": [
+    {
+      "id": 65787,
+      "state": "absent"
+    },
+    {
+      "id": 65894,
+      "state": "absent"
+    },
+    {
+      "id": 65926,
+      "state": "absent"
+    },
+    {
+      "id": 65983,
+      "state": "absent"
+    },
+    {
+      "id": 66051,
+      "state": "absent"
+    },
+    {
+      "id": 66055,
+      "state": "absent"
+    },
+    {
+      "id": 66062,
+      "state": "absent"
+    },
+    {
+      "id": 66071,
+      "state": "absent"
+    },
+    {
+      "id": 66077,
+      "state": "absent"
+    },
+    {
+      "id": 66087,
+      "state": "absent"
+    },
+    {
+      "id": 66099,
+      "state": "absent"
+    },
+    {
+      "id": 66103,
+      "state": "absent"
+    }
+  ],
+  "directory_exists": false,
+  "socket_exists": false,
+  "limit": "Process-tree inventory was captured after native exit. Supervisor PID comes from create.json; this run did not retain separate native/collector PID or PGID observations."
+}

@@ -32,6 +32,15 @@ pub enum DispatchMessage {
         request: HistoryRequest,
         completion: std::sync::mpsc::SyncSender<()>,
     },
+    AgentCommand {
+        request: Request,
+        owner: Option<Arc<()>>,
+        completion: SyncSender<Response>,
+    },
+    AgentDisconnected {
+        session: SessionId,
+        owner: Arc<()>,
+    },
     Stop,
 }
 
@@ -57,7 +66,12 @@ pub enum HistoryRequest {
         snapshot: HistorySnapshotId,
     },
 }
-pub(super) fn bridge_events(events: Receiver<SessionEvent>, dispatch: SyncSender<DispatchMessage>) {
+pub(super) fn bridge_events(
+    events: impl Into<ReportingReceiver<SessionEvent>>,
+    dispatch: impl Into<ReportingSender<DispatchMessage>>,
+) {
+    let events = events.into();
+    let dispatch = dispatch.into();
     while let Ok(event) = events.recv() {
         if dispatch.send(DispatchMessage::Session(event)).is_err() {
             break;
@@ -65,7 +79,11 @@ pub(super) fn bridge_events(events: Receiver<SessionEvent>, dispatch: SyncSender
     }
 }
 
-pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessage>) {
+pub fn run_dispatcher(
+    state: Arc<ServerState>,
+    commands: impl Into<ReportingReceiver<DispatchMessage>>,
+) {
+    let commands = commands.into();
     while let Ok(command) = commands.recv() {
         match command {
             DispatchMessage::Session(event) => dispatch_session_event(&state, event),
@@ -95,6 +113,55 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: Receiver<DispatchMessag
             } => {
                 dispatch_history(&state, &owner, request_id, request);
                 let _ = completion.send(());
+            }
+            DispatchMessage::AgentCommand {
+                request,
+                owner,
+                completion,
+            } => {
+                let id = match &request {
+                    Request::ReserveAgent(r) => r.session,
+                    Request::Supervisor(r) => r.auth.session,
+                    Request::AgentStatus { auth, .. } | Request::SupervisorHello(auth) => {
+                        auth.session
+                    }
+                    _ => unreachable!(),
+                };
+                let session = state.sessions.lock().unwrap().get(&id).cloned();
+                let response = match session {
+                    Some(session) => {
+                        let before = session.summary();
+                        match session.agent_command(&request, owner.as_ref()) {
+                            Ok(response) => {
+                                let after = session.summary();
+                                if after != before {
+                                    dashboard_try_send(
+                                        &state,
+                                        ServerMessage::Event(ServerEvent::SessionChanged(
+                                            Box::new(after),
+                                        )),
+                                    );
+                                }
+                                response
+                            }
+                            Err(error) => error_for_lifecycle(error),
+                        }
+                    }
+                    None => error_response(ErrorCode::NotFound, "session not found"),
+                };
+                let _ = completion.send(response);
+            }
+            DispatchMessage::AgentDisconnected { session, owner } => {
+                if let Some(session) = state.sessions.lock().unwrap().get(&session).cloned()
+                    && session.agent_supervisor_disconnected(&owner)
+                {
+                    dashboard_try_send(
+                        &state,
+                        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                            session.summary(),
+                        ))),
+                    );
+                }
             }
             DispatchMessage::Stop => break,
         }

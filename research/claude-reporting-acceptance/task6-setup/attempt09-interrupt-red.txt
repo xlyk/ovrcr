@@ -1,0 +1,22 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup doctor_interrupt_cleans_its_owned_version_probe_before_exit -- --nocapture
+Revision: setup pre-correction working diff
+Exit: 101
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 1 test
+
+thread 'doctor_interrupt_cleans_its_owned_version_probe_before_exit' (32441404) panicked at tests/agent_setup.rs:332:9:
+doctor left owned probe group 24581 after signal 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... FAILED
+
+failures:
+
+failures:
+    doctor_interrupt_cleans_its_owned_version_probe_before_exit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.65s
+
+error: test failed, to rerun pass `-p ovrcr --test agent_setup`

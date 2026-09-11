@@ -1,0 +1,130 @@
+[
+  {
+    "pid": 33383,
+    "ppid": 33307,
+    "pgid": 33299,
+    "tpgid": 0,
+    "tty": "??",
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 33410,
+    "ppid": 33383,
+    "pgid": 33299,
+    "tpgid": 0,
+    "tty": "??",
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 33563,
+    "ppid": 33410,
+    "pgid": 33563,
+    "tpgid": 33563,
+    "tty": "ttys016",
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33625,
+    "ppid": 33410,
+    "pgid": 33625,
+    "tpgid": 33625,
+    "tty": "ttys017",
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33706,
+    "ppid": 33410,
+    "pgid": 33706,
+    "tpgid": 33706,
+    "tty": "ttys018",
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33767,
+    "ppid": 33410,
+    "pgid": 33767,
+    "tpgid": 33767,
+    "tty": "ttys019",
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 33773,
+    "ppid": 33410,
+    "pgid": 33773,
+    "tpgid": 33773,
+    "tty": "ttys020",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33783,
+    "ppid": 33410,
+    "pgid": 33783,
+    "tpgid": 33783,
+    "tty": "ttys022",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33793,
+    "ppid": 33410,
+    "pgid": 33793,
+    "tpgid": 33793,
+    "tty": "ttys023",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33801,
+    "ppid": 33410,
+    "pgid": 33801,
+    "tpgid": 33801,
+    "tty": "ttys024",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33809,
+    "ppid": 33410,
+    "pgid": 33809,
+    "tpgid": 33809,
+    "tty": "ttys025",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33814,
+    "ppid": 33410,
+    "pgid": 33814,
+    "tpgid": 33814,
+    "tty": "ttys026",
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 33816,
+    "ppid": 33383,
+    "pgid": 33816,
+    "tpgid": 33816,
+    "tty": "ttys027",
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 53638,
+    "ppid": 33410,
+    "pgid": 53638,
+    "tpgid": 53771,
+    "tty": "ttys028",
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run --provider claude -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/provider-version/bin/claude --setting-sources  --settings /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/provider-version/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 53771,
+    "ppid": 53638,
+    "pgid": 53771,
+    "tpgid": 53771,
+    "tty": "ttys028",
+    "command": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/provider-version/bin/claude --setting-sources  --settings /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/provider-version/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 64096,
+    "ppid": 53771,
+    "pgid": 53771,
+    "tpgid": 53771,
+    "tty": "ttys028",
+    "command": "caffeinate -i -t 300"
+  }
+]

@@ -1,0 +1,5 @@
+Command: cargo clippy -p ovrcr --all-targets --all-features -- -D warnings
+Revision: de8cd87 + P1/P2 corrections
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.33s
+Exit: 0

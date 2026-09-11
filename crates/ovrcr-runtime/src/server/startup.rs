@@ -80,6 +80,32 @@ pub(super) fn generate_hook_capability() -> Result<[u8; 32]> {
     Ok(capability)
 }
 pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
+    run_server_inner(paths, registry_path, None, None, None)
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+pub fn run_server_with_diagnostics(
+    paths: ServerPaths,
+    registry_path: PathBuf,
+    diagnostics: ServerQueueDiagnostics,
+) -> Result<()> {
+    run_server_inner(
+        paths,
+        registry_path,
+        Some(diagnostics.raw_events),
+        Some(diagnostics.dispatcher),
+        Some(diagnostics.dashboard),
+    )
+}
+
+fn run_server_inner(
+    paths: ServerPaths,
+    registry_path: PathBuf,
+    event_monitor: Option<reporting_queue::ReportingQueueMonitor>,
+    dispatch_monitor: Option<reporting_queue::ReportingQueueMonitor>,
+    #[cfg(feature = "acceptance-diagnostics")] dashboard_monitor: Option<DashboardQueueMonitor>,
+    #[cfg(not(feature = "acceptance-diagnostics"))] _dashboard_monitor: Option<()>,
+) -> Result<()> {
     let parent = paths
         .socket
         .parent()
@@ -136,8 +162,26 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
             return Err(error);
         }
     };
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) =
+        event_monitor
+            .as_ref()
+            .map_or_else(untracked_event_channel, |monitor| {
+                reporting_queue::reporting_channel_with_monitor(
+                    RAW_EVENT_QUEUE_CAPACITY,
+                    event_weight,
+                    monitor,
+                )
+            });
+    let (dispatch, dispatch_receiver) =
+        dispatch_monitor
+            .as_ref()
+            .map_or_else(untracked_dispatch_channel, |monitor| {
+                reporting_queue::reporting_channel_with_monitor(
+                    RAW_DISPATCH_QUEUE_CAPACITY,
+                    dispatch_weight,
+                    monitor,
+                )
+            });
     let state = Arc::new(ServerState {
         tasks: Some(Arc::clone(&task_manager)),
         socket: bound_socket,
@@ -160,6 +204,8 @@ pub fn run_server(paths: ServerPaths, registry_path: PathBuf) -> Result<()> {
         #[cfg(test)]
         before_dashboard_write_hook: Mutex::new(None),
         dashboard_slot: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor,
     });
     task_manager.start(Arc::downgrade(&state));
     let bridge_dispatch = dispatch.clone();

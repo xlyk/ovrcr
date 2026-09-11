@@ -1,0 +1,52 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/cli.rs (target/debug/deps/cli-655ca2a77720960e)
+
+running 29 tests
+test agent_hook_cli_requires_identity_without_starting_server ... ok
+test context_inspect_missing_session_fails ... ok
+test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+test malformed_offline_registry_is_reported_without_replacing_it ... ok
+test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+test new_and_existing_branch_flags_are_exclusive ... ok
+test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+test mutations_do_not_start_a_server ... ok
+test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+test claude_doctor_reports_exact_version_and_version_specific_resume_forms ... ok
+test pause_resume_cli_requires_id ... ok
+test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+test runtime_errors_include_the_cause_chain ... ok
+test terminal_workspace_filter_requires_project ... ok
+test resource_aliases_are_visible_and_parse_as_commands ... ok
+test version_flag_prints_package_version ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4xNJF9/repo/.git/
+test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+[main (root-commit) 385e028] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+context inspection cleanup: original_pgid=82314 original_pgid_absent=true before_fixture_teardown=true
+test context_helper_reports_from_managed_pty ... ok
+test agent_hook_cli_reaches_managed_session ... ok
+test context_helper_invalid_input_has_no_effect ... ok
+
+thread 'claude_statusline_renders_default_without_reporting_server' (38054408) panicked at tests/cli.rs:2066:5:
+assertion `left == right` failed
+  left: []
+ right: [99, 116, 120, 32, 50, 48, 37, 10]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test claude_statusline_renders_default_without_reporting_server ... FAILED
+test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+test context_helper_missing_server_does_not_start_one ... ok
+test session_command_keeps_arguments_after_separator ... ok
+test context_inspect_reports_unknown_and_sample ... ok
+test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+test agent_hook_cli_timeout_is_bounded ... ok
+test requests_time_out_against_a_wedged_server ... ok
+
+failures:
+
+    claude_statusline_renders_default_without_reporting_server
+
+test result: FAILED. 28 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.71s
+
+error: test failed, to rerun pass `-p ovrcr --test cli`

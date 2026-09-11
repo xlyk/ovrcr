@@ -1,0 +1,35 @@
+record: exact captured RED tool output for review correction
+base_revision: ce750874f4b7099c48cf3fc5c743eae0b95b1212 plus test-only wrong-source expectation
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --lib report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding -- --exact
+exit: 101
+executed: 1
+passed: 0
+failed: 1
+filtered_out: 25
+
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.00s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-a24d3eaf6784f9c6)
+
+running 1 test
+test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... FAILED
+
+failures:
+
+---- report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding stdout ----
+
+thread 'report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding' (36677601) panicked at src/report/admission.rs:1038:9:
+assertion failed: matches!(wrong_source.phase, Phase::Closed)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr --lib`

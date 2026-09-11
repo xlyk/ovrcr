@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/synthetic/claude/projects/fixture/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/synthetic/workspace",
+  "hook_event_name": "Stop",
+  "prompt_id": "00000000-0000-4000-8000-000000000011",
+  "permission_mode": "default",
+  "stop_hook_active": false,
+  "last_assistant_message": "Synthetic response.",
+  "background_tasks": [],
+  "session_crons": []
+}

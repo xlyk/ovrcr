@@ -1,0 +1,13 @@
+This was a test-development compile failure, not a product regression. It is
+retained from the first focused malicious-helper attempt.
+
+error[E0502]: cannot borrow `chunk` as immutable because it is also borrowed as mutable
+   --> src/report/collector.rs:123:63
+    |
+123 |             match self.output.read(&mut chunk[..remaining.min(chunk.len())]) {
+    |                                         ----------------------^^^^^--------
+
+error: could not compile `ovrcr` (lib) due to 1 previous error
+
+The slice length is now calculated before taking the mutable slice. The next
+focused attempt passed.

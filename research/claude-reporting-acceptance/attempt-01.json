@@ -1,0 +1,9 @@
+{
+  "attempt": 1,
+  "command": "rtk proxy cargo test -p ovrcr --lib claude",
+  "revision": "188a6456e42607634aedc72d3a93697faebcb0e1",
+  "exit_status": 0,
+  "tests": 3,
+  "passed": 3,
+  "failed": 0
+}

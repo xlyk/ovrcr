@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/synthetic/claude/projects/fixture/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/synthetic/workspace",
+  "version": "2.1.267",
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 200000,
+    "used_percentage": null,
+    "remaining_percentage": null,
+    "current_usage": null
+  }
+}

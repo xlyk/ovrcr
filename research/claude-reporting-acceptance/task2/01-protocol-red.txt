@@ -1,0 +1,25 @@
+command: rtk proxy cargo test -p ovrcr-protocol --lib agent_report_reservation_wire_contract -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+   Compiling strsim v0.11.1
+   Compiling syn v3.0.5
+   Compiling darling_core v0.20.11
+   Compiling serde_derive v1.0.229
+   Compiling darling_macro v0.20.11
+   Compiling darling v0.20.11
+   Compiling derive_builder_core v0.20.2
+   Compiling serde v1.0.229
+   Compiling derive_builder_macro v0.20.2
+   Compiling derive_builder v0.20.2
+   Compiling croner v3.0.1
+   Compiling bincode v2.0.1
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+error: no rules expected `.`
+   --> crates/ovrcr-protocol/src/codec.rs:423:48
+    |
+423 |             "session": 1, "capability": [7; 32].to_vec(), "operation": "reserve-one",
+    |                                                ^ no rules expected this token in macro call
+    |
+    = note: while trying to match end of macro
+
+error: could not compile `ovrcr-protocol` (lib test) due to 1 previous error

@@ -1,0 +1,12 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes
+Revision:setup validation correction
+Exit: 0
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 1 test
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.63s
+

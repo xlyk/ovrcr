@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -338,6 +338,8 @@ mod tests {
             phase: SessionPhase::Paused,
             activity: AgentActivity::Unknown,
             context_usage: None,
+            agent: None,
+            agent_epoch: 0,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
         let message = ServerMessage::Event(ServerEvent::SessionChanged(Box::new(paused)));
@@ -412,5 +414,21 @@ mod tests {
         let (mut left, mut right) = UnixStream::pair().unwrap();
         write_frame(&mut left, &request).unwrap();
         assert_eq!(read_frame::<ClientMessage>(&mut right).unwrap(), request);
+    }
+}
+
+#[cfg(test)]
+mod agent_foundation_red {
+    #[test]
+    fn agent_report_reservation_wire_contract() {
+        let request = serde_json::json!({"ReserveAgent": {
+            "session": 1, "capability": ([7; 32].to_vec()), "operation": "reserve-one",
+            "expected_epoch": 0, "invocation": "invocation-one", "provider": "Claude"
+        }});
+        let decoded = serde_json::from_value::<crate::Request>(request);
+        assert!(
+            decoded.is_ok(),
+            "shared reservation request must decode: {decoded:?}"
+        );
     }
 }

@@ -1,3 +1,8 @@
+pub mod admission;
+pub mod claude;
+pub mod claude_metrics;
+pub mod collector;
+
 use crate::protocol::{
     AgentReport, AgentUpdate, ClientMessage, ErrorCode, Request, Response, ServerMessage,
     read_frame, write_frame,
@@ -20,6 +25,8 @@ pub enum ReportFailure {
     Invalid,
     Unavailable,
     Timeout,
+    AdmissionUnavailable,
+    ReservationConflict,
 }
 
 #[derive(Debug)]
@@ -40,6 +47,10 @@ impl std::fmt::Display for ReportError {
             ReportFailure::Invalid => "hook identity or input is invalid",
             ReportFailure::Unavailable => "hook server is unavailable",
             ReportFailure::Timeout => "hook report timed out",
+            ReportFailure::AdmissionUnavailable => "agent admission is unavailable",
+            ReportFailure::ReservationConflict => {
+                "agent invocation conflicts with an active or newer reservation"
+            }
         })
     }
 }
@@ -98,6 +109,28 @@ fn hex_pair(pair: &[u8]) -> Option<u8> {
 }
 
 pub fn send_report(update: AgentUpdate, sequence: Option<u64>, deadline: Instant) -> Result<()> {
+    if let Some(path) = std::env::var_os("OVRCR_AGENT_SOCKET") {
+        let token = std::env::var("OVRCR_AGENT_TOKEN")
+            .ok()
+            .filter(|token| token.len() == 64)
+            .ok_or_else(|| report_error(ErrorCode::InvalidRequest, ReportFailure::Invalid))?;
+        let mut stream = connect_deadline(Path::new(&path), deadline)
+            .map_err(|error| map_transport_error(&error))?;
+        let mut io = DeadlineIo::new(&mut stream, deadline);
+        io.write_all(format!("{token}\n").as_bytes())?;
+        let mut response = [0u8; 22];
+        io.read_exact(&mut response)?;
+        if &response == b"admission-unavailable\n" {
+            return Err(report_error(
+                ErrorCode::Conflict,
+                ReportFailure::AdmissionUnavailable,
+            ));
+        }
+        return Err(report_error(
+            ErrorCode::InvalidRequest,
+            ReportFailure::Invalid,
+        ));
+    }
     let identity = HookIdentity::from_environment()?;
     let mut stream = connect_deadline(&identity.socket, deadline)
         .map_err(|error| map_transport_error(&error))?;
@@ -410,6 +443,252 @@ impl Write for DeadlineIo<'_> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.stream.flush()
+    }
+}
+
+/// The socket itself watches the unbound reservation from allocation through release.
+pub struct InvocationLease {
+    stream: UnixStream,
+    auth: ovrcr_protocol::SupervisorAuth,
+    socket: std::path::PathBuf,
+    binding: Option<ovrcr_protocol::AgentBinding>,
+    next_request: u64,
+    capability: [u8; 32],
+}
+impl InvocationLease {
+    fn publish_observation(
+        &self,
+        report: ovrcr_protocol::ProviderReport,
+        deadline: Instant,
+    ) -> Result<()> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        let response = agent_exchange(
+            &mut stream,
+            1,
+            Request::AgentReport(AgentReport {
+                session: self.auth.session,
+                capability: self.capability,
+                sequence: None,
+                update: AgentUpdate::Provider(report),
+            }),
+            deadline,
+        )?;
+        if response != Response::Ok {
+            bail!("observation publication unavailable");
+        }
+        Ok(())
+    }
+
+    fn command(
+        &mut self,
+        operation: String,
+        command: ovrcr_protocol::AgentCommand,
+        deadline: Instant,
+    ) -> Result<Response> {
+        self.next_request += 1;
+        agent_exchange(
+            &mut self.stream,
+            self.next_request,
+            Request::Supervisor(ovrcr_protocol::SupervisorRequest {
+                auth: self.auth.clone(),
+                operation,
+                command,
+            }),
+            deadline,
+        )
+    }
+    fn final_status(&self, operation: String, deadline: Instant) -> Result<Response> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        agent_exchange(
+            &mut stream,
+            1,
+            Request::AgentStatus {
+                auth: self.auth.clone(),
+                operation,
+            },
+            deadline,
+        )
+    }
+    fn operation_status(&mut self, operation: String, deadline: Instant) -> Result<Response> {
+        let mut stream = connect_deadline(&self.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        if agent_exchange(
+            &mut stream,
+            1,
+            Request::SupervisorHello(self.auth.clone()),
+            deadline,
+        )? != Response::Ok
+        {
+            bail!("supervisor is unavailable");
+        }
+        self.stream = stream;
+        self.next_request = 2;
+        agent_exchange(
+            &mut self.stream,
+            2,
+            Request::AgentStatus {
+                auth: self.auth.clone(),
+                operation,
+            },
+            deadline,
+        )
+    }
+}
+
+pub fn send_claude_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    send_claude_payload(input, "claude-hook", deadline)
+}
+pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
+    send_claude_payload(input, "claude-statusline", deadline)
+}
+fn send_claude_payload(input: &[u8], origin: &str, deadline: Instant) -> Result<()> {
+    let path = std::env::var_os("OVRCR_AGENT_SOCKET").context("no private invocation channel")?;
+    let token = std::env::var("OVRCR_AGENT_TOKEN")
+        .ok()
+        .filter(|value| value.len() == 64)
+        .context("invalid private invocation token")?;
+    #[derive(serde::Serialize)]
+    struct Envelope<'a> {
+        provider: &'static str,
+        origin: &'a str,
+        payload: &'a serde_json::value::RawValue,
+    }
+    let payload = serde_json::from_slice(input)?;
+    let request = serde_json::to_vec(&Envelope {
+        provider: "claude",
+        origin,
+        payload,
+    })?;
+    if request.len() > HOOK_INPUT_LIMIT {
+        bail!("hook input exceeds limit");
+    }
+    let mut stream = connect_deadline(Path::new(&path), deadline)?;
+    let mut io = DeadlineIo::new(&mut stream, deadline);
+    io.write_all(format!("{token}\n").as_bytes())?;
+    io.write_all(&(request.len() as u32).to_be_bytes())?;
+    io.write_all(&request)?;
+    let mut response = Vec::new();
+    io.take(64).read_to_end(&mut response)?;
+    if response == b"admission-accepted\n" || response == b"admission-ignored\n" {
+        Ok(())
+    } else {
+        bail!("agent admission is unavailable")
+    }
+}
+
+impl Drop for InvocationLease {
+    fn drop(&mut self) {
+        let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() else {
+            return;
+        };
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        let _ = agent_exchange(
+            &mut self.stream,
+            2,
+            Request::Supervisor(ovrcr_protocol::SupervisorRequest {
+                auth: self.auth.clone(),
+                operation,
+                command: ovrcr_protocol::AgentCommand::Release {
+                    expected_binding: self.binding.clone(),
+                },
+            }),
+            deadline,
+        );
+        // Closing also releases this exact connection generation if the reply was lost.
+    }
+}
+
+pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
+    use ovrcr_protocol::{
+        AgentOperationResult, AgentProvider, AgentSecret, ReserveAgent, SupervisorAuth,
+    };
+    let Ok(identity) = HookIdentity::from_environment() else {
+        return Ok(None);
+    };
+    let deadline = Instant::now() + std::time::Duration::from_secs(1);
+    let attempt = (|| -> Result<Option<InvocationLease>> {
+        let mut inspect = connect_deadline(&identity.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut inspect, deadline))?;
+        let Response::Inventory { sessions, .. } =
+            agent_exchange(&mut inspect, 1, Request::Inspect, deadline)?
+        else {
+            return Ok(None);
+        };
+        let Some(session) = sessions
+            .into_iter()
+            .find(|session| session.id == identity.session)
+        else {
+            return Ok(None);
+        };
+        drop(inspect);
+        let mut stream = connect_deadline(&identity.socket, deadline)?;
+        exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
+        let response = agent_exchange(
+            &mut stream,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                session: identity.session,
+                capability: AgentSecret(identity.capability),
+                operation: ovrcr_runtime::agent_runner::private_identifier()?,
+                expected_epoch: session.agent_epoch,
+                invocation: ovrcr_runtime::agent_runner::private_identifier()?,
+                provider: AgentProvider::Claude,
+            }),
+            deadline,
+        )?;
+        match response {
+            Response::AgentOperation(AgentOperationResult::Reserved(reservation)) => {
+                Ok(Some(InvocationLease {
+                    stream,
+                    socket: identity.socket.clone(),
+                    binding: None,
+                    next_request: 2,
+                    capability: identity.capability,
+                    auth: SupervisorAuth {
+                        session: identity.session,
+                        lease: reservation.lease,
+                    },
+                }))
+            }
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            } => Err(report_error(
+                ErrorCode::Conflict,
+                ReportFailure::ReservationConflict,
+            )),
+            _ => Ok(None),
+        }
+    })();
+    match attempt {
+        Err(error) if error.downcast_ref::<ReportError>().is_some() => Err(error),
+        Err(_) => Ok(None),
+        result => result,
+    }
+}
+
+fn agent_exchange(
+    stream: &mut UnixStream,
+    request_id: u64,
+    request: Request,
+    deadline: Instant,
+) -> Result<Response> {
+    let mut io = DeadlineIo::new(stream, deadline);
+    write_frame(
+        &mut io,
+        &ClientMessage {
+            request_id,
+            request,
+        },
+    )?;
+    match read_frame::<ServerMessage>(&mut io)? {
+        ServerMessage::Response {
+            request_id: received,
+            response,
+        } if received == request_id => Ok(response),
+        _ => bail!("invalid supervisor response"),
     }
 }
 

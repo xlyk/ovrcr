@@ -1,0 +1,25 @@
+command: rtk proxy cargo test -p ovrcr-runtime --lib agent_report -- --nocapture
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 0
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.35s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-e053d05bcb14d016)
+
+running 13 tests
+test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 75 filtered out; finished in 0.15s

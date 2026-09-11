@@ -1,0 +1,55 @@
+record: summary of captured review-correction verification
+base_revision: ce750874f4b7099c48cf3fc5c743eae0b95b1212 plus unstaged review correction
+environment: CARGO_INCREMENTAL=0 for every Cargo invocation
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --lib report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding -- --exact
+exit: 0
+executed: 1
+passed: 1
+failed: 0
+filtered_out: 25
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage -- --exact --nocapture
+first_exit: 101
+first_failure: sandbox denied the fixture server's Unix-socket bind with Operation not permitted; the fixture preserved its temporary root
+escalated_exit: 0
+executed: 1
+passed: 1
+failed: 0
+filtered_out: 74
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --lib report::admission::tests -- --nocapture
+first_exit: 101
+first_failure: sandbox denied four tests' private Unix-socket binds with Operation not permitted
+escalated_exit: 0
+executed: 9
+passed: 9
+failed: 0
+filtered_out: 17
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle agent_admission_ -- --nocapture
+execution: escalated for private PTY and Unix-socket fixtures
+exit: 0
+executed: 7
+passed: 7
+ignored: 1 native helper
+failed: 0
+filtered_out: 67
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test agent_setup -- --nocapture
+execution: escalated for its private Unix-socket fixture
+exit: 0
+executed: 7
+passed: 7
+failed: 0
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo clippy -p ovrcr --lib --tests -- -D warnings
+exit: 0
+
+command: rtk proxy env CARGO_INCREMENTAL=0 cargo fmt --all -- --check
+exit: 0
+
+command: rtk git diff --check
+exit: 0
+
+diagnostic_only: The previously failing doctor test passed 1/1 in a focused invocation, and the previously failing version-probe test passed 1/1 in a focused invocation. See resume-probe-diagnosis.md. These passing observations do not establish the prior failures' cause.

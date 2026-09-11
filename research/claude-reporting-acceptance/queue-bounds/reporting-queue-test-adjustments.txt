@@ -1,0 +1,34 @@
+These failures were test-development errors, not product regressions. Output is
+copied from the tool-observed focused attempts and retained without relabeling
+them as acceptance failures.
+
+Attempt 1: the refill test moved the receiver into a thread that returned only
+the first value. Dropping that receiver disconnected the refill producer.
+
+running 5 tests
+
+thread '<unnamed>' (34461814) panicked at crates/ovrcr-runtime/src/server/reporting_queue.rs:333:51:
+called `Result::unwrap()` on an `Err` value: SendError { .. }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+
+thread 'server::reporting_queue::tests::accounting_is_atomic_with_channel_refill' (34461805) panicked at crates/ovrcr-runtime/src/server/reporting_queue.rs:338:23:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... FAILED
+test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+
+failures:
+    server::reporting_queue::tests::accounting_is_atomic_with_channel_refill
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 93 filtered out; finished in 0.00s
+
+Attempt 2: the first lost-wakeup test patch placed a cfg(test) field in the
+wrong endpoint initializer.
+
+error[E0560]: struct `server::reporting_queue::ReportingSender<T>` has no field named `before_wait`
+   --> crates/ovrcr-runtime/src/server/reporting_queue.rs:308:13
+error[E0063]: missing field `before_wait` in initializer of `server::reporting_queue::ReportingReceiver<T>`
+   --> crates/ovrcr-runtime/src/server/reporting_queue.rs:317:9
+error: could not compile `ovrcr-runtime` (lib test) due to 2 previous errors

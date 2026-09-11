@@ -1,0 +1,7 @@
+{
+  "attempt": 2,
+  "kind": "native_cli",
+  "version": "2.1.267",
+  "result": "PTY launch failed under sandbox network restriction: api.anthropic.com ENOTFOUND",
+  "exit_status": 1
+}

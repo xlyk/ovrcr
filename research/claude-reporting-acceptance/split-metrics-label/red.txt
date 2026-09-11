@@ -1,0 +1,24 @@
+Source: uncommitted final source before width-aware metrics formatting
+Command: rtk proxy cargo test -p ovrcr-tui provider_dashboard_preserves_quality_unknowns_and_component_age -- --nocapture
+Exit: 101
+Executed: 1 failed, 0 passed, 37 filtered out
+
+thread 'dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age' panicked at crates/ovrcr-tui/src/dashboard/tests.rs:1357:5:
+assertion `left == right` failed: split metrics must preserve both freshness labels
+
+Observed left pane:
+tokens conv partial 711654 stale  cost conv estimate $0.47 sta
+
+Observed right pane:
+tokens conv partial 711654 stale  cost conv estimate $0.47 stal
+
+  left: 0
+ right: 2
+
+test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.02s
+
+This file retains the raw assertion, observed rendered pane rows, counts, and
+test result. The full TestBackend buffer in the tool output consisted primarily
+of spaces and unrelated dashboard rows and is intentionally not relabeled here
+as retained raw output.

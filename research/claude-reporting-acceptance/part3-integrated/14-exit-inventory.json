@@ -1,0 +1,580 @@
+[
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 1,
+    "label": "zsh",
+    "measurement_age_ms": null,
+    "name": "local",
+    "phase": "running",
+    "pid": 61385,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083382847,
+    "workspace": "worktree-lifecycle"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 2,
+    "label": "zsh",
+    "measurement_age_ms": null,
+    "name": "local",
+    "phase": "running",
+    "pid": 61423,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083382948,
+    "workspace": "auth-handoff"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 3,
+    "label": "zsh",
+    "measurement_age_ms": null,
+    "name": "local",
+    "phase": "running",
+    "pid": 61485,
+    "project": "spacelift-agent",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383030,
+    "workspace": "pipeline-progress-v2"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 4,
+    "label": "zsh",
+    "measurement_age_ms": null,
+    "name": "local",
+    "phase": "running",
+    "pid": 61533,
+    "project": "spacelift-agent",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383114,
+    "workspace": "scope-quality"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 5,
+    "label": "claude / sonnet-4",
+    "measurement_age_ms": null,
+    "name": "implement lifecycle cleanup",
+    "phase": "running",
+    "pid": 61542,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383124,
+    "workspace": "worktree-lifecycle"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 6,
+    "label": "codex / gpt-5.4",
+    "measurement_age_ms": null,
+    "name": "review websocket shutdown",
+    "phase": "running",
+    "pid": 61548,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383135,
+    "workspace": "worktree-lifecycle"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 7,
+    "label": "pi / grok-4.6",
+    "measurement_age_ms": null,
+    "name": "plan snapshot restore",
+    "phase": "running",
+    "pid": 61555,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383146,
+    "workspace": "worktree-lifecycle"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 8,
+    "label": "grok / grok-4.6",
+    "measurement_age_ms": null,
+    "name": "review auth handoff",
+    "phase": "running",
+    "pid": 61564,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383158,
+    "workspace": "auth-handoff"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 9,
+    "label": "claude / opus-4",
+    "measurement_age_ms": null,
+    "name": "build pipeline progress",
+    "phase": "running",
+    "pid": 61573,
+    "project": "spacelift-agent",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383170,
+    "workspace": "pipeline-progress-v2"
+  },
+  {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 0,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 10,
+    "label": "codex / gpt-5.4",
+    "measurement_age_ms": null,
+    "name": "review scope quality",
+    "phase": "running",
+    "pid": 61583,
+    "project": "spacelift-agent",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789083383180,
+    "workspace": "scope-quality"
+  },
+  {
+    "activity": "idle",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "f1f6266e-45fb-476f-a838-cd466877ebe3"
+      },
+      "activity_revision": 2,
+      "binding": {
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "generation": 1,
+        "invocation": "51e15be631232b2474719bd5613efdb2896a05873073e7c7e05facabe5fee03f",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": "incomplete_final_accounting",
+        "state": "Unavailable"
+      },
+      "health_revision": 4,
+      "metrics": {
+        "context_received_unix_ms": 1789083472928,
+        "cost_received_unix_ms": 1789083472928,
+        "received_unix_ms": 1789083632286,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 41233
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 505266000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 30408,
+              "cache_write_tokens": 10823,
+              "coverage": "Partial",
+              "input_tokens": 41233,
+              "output_tokens": 18,
+              "reasoning_output_tokens": 0,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789083472928
+      },
+      "metrics_revision": 4
+    },
+    "agent_epoch": 1,
+    "context_stale": true,
+    "context_usage": {
+      "received_unix_ms": 1789083472928,
+      "report": {
+        "capacity_tokens": 1000000,
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "model": "claude-sonnet-5",
+        "source": "claude_code_statusline",
+        "used_tokens": 41233
+      }
+    },
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 11,
+    "label": "python3",
+    "measurement_age_ms": {
+      "context": 720120,
+      "cost": 720120,
+      "usage": 720120
+    },
+    "name": "integrated-seed",
+    "phase": "exited",
+    "pid": null,
+    "project": "consigint",
+    "reporting_unavailable": true,
+    "started_unix_ms": 1789083460265,
+    "workspace": "auth-handoff"
+  },
+  {
+    "activity": "idle",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "54ac0754-cd7d-41a4-bdb1-c47be7d36a59"
+      },
+      "activity_revision": 8,
+      "binding": {
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "generation": 1,
+        "invocation": "62031d4d149ba709bd92425d70f6a820281e3d93af8264c6a3d689606db19f21",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": "incomplete_final_accounting",
+        "state": "Unavailable"
+      },
+      "health_revision": 2,
+      "metrics": {
+        "context_received_unix_ms": 1789083656206,
+        "cost_received_unix_ms": 1789083656206,
+        "received_unix_ms": 1789083981358,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 43173
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 1145300000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 197695,
+              "cache_write_tokens": 12738,
+              "coverage": "Partial",
+              "input_tokens": 210443,
+              "output_tokens": 374,
+              "reasoning_output_tokens": 64,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789083656206
+      },
+      "metrics_revision": 12
+    },
+    "agent_epoch": 1,
+    "context_stale": true,
+    "context_usage": {
+      "received_unix_ms": 1789083656206,
+      "report": {
+        "capacity_tokens": 1000000,
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "model": "claude-sonnet-5",
+        "source": "claude_code_statusline",
+        "used_tokens": 43173
+      }
+    },
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 12,
+    "label": "python3",
+    "measurement_age_ms": {
+      "context": 536842,
+      "cost": 536842,
+      "usage": 536842
+    },
+    "name": "integrated-long-resume",
+    "phase": "exited",
+    "pid": null,
+    "project": "consigint",
+    "reporting_unavailable": true,
+    "started_unix_ms": 1789083655690,
+    "workspace": "auth-handoff"
+  },
+  {
+    "activity": "idle",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "2253d4fb-774f-49b9-bd7c-2f05ba511c86"
+      },
+      "activity_revision": 2,
+      "binding": {
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "generation": 1,
+        "invocation": "9feed5326f9bcfc015d1610d7dd0361c4c66a34aa0cf40bbd599cf9f6c082ca5",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": "incomplete_final_accounting",
+        "state": "Unavailable"
+      },
+      "health_revision": 2,
+      "metrics": {
+        "context_received_unix_ms": 1789083998823,
+        "cost_received_unix_ms": 1789083998823,
+        "received_unix_ms": 1789084094290,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 43408
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 1342258000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 240943,
+              "cache_write_tokens": 12896,
+              "coverage": "Partial",
+              "input_tokens": 253851,
+              "output_tokens": 400,
+              "reasoning_output_tokens": 64,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789083998823
+      },
+      "metrics_revision": 5
+    },
+    "agent_epoch": 1,
+    "context_stale": true,
+    "context_usage": {
+      "received_unix_ms": 1789083998823,
+      "report": {
+        "capacity_tokens": 1000000,
+        "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+        "model": "claude-sonnet-5",
+        "source": "claude_code_statusline",
+        "used_tokens": 43408
+      }
+    },
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 13,
+    "label": "python3",
+    "measurement_age_ms": {
+      "context": 194225,
+      "cost": 194225,
+      "usage": 194225
+    },
+    "name": "integrated-short-resume",
+    "phase": "exited",
+    "pid": null,
+    "project": "consigint",
+    "reporting_unavailable": true,
+    "started_unix_ms": 1789083998309,
+    "workspace": "auth-handoff"
+  },
+  {
+    "activity": "idle",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Idle",
+        "turn": "2c92b765-74a9-4826-a8de-abb1fdabd8fe"
+      },
+      "activity_revision": 6,
+      "binding": {
+        "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+        "generation": 1,
+        "invocation": "2933cfe8fe5e65b815063a00a946f11feda71e0a934bd880960c92ac1ff3a3be",
+        "provider": "Claude"
+      },
+      "health": {
+        "reason": "incomplete_final_accounting",
+        "state": "Unavailable"
+      },
+      "health_revision": 2,
+      "metrics": {
+        "context_received_unix_ms": 1789084113230,
+        "cost_received_unix_ms": 1789084113230,
+        "received_unix_ms": 1789084173424,
+        "sample": {
+          "context": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "capacity_tokens": 1000000,
+              "quality": "Observed",
+              "used_tokens": 49069
+            }
+          },
+          "cost": {
+            "freshness": "Uncertain",
+            "source": "claude_statusline",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "kind": "Estimated",
+              "scope": "Conversation",
+              "usd_ticks": 856686000
+            }
+          },
+          "model": "claude-sonnet-5",
+          "usage": {
+            "freshness": "Uncertain",
+            "source": "claude_root_transcript",
+            "source_revision": null,
+            "source_sequence": null,
+            "value": {
+              "cache_read_tokens": 131998,
+              "cache_write_tokens": 12780,
+              "coverage": "Partial",
+              "input_tokens": 144784,
+              "output_tokens": 709,
+              "reasoning_output_tokens": 471,
+              "scope": "Conversation"
+            }
+          }
+        },
+        "usage_received_unix_ms": 1789084113230
+      },
+      "metrics_revision": 9
+    },
+    "agent_epoch": 1,
+    "context_stale": true,
+    "context_usage": {
+      "received_unix_ms": 1789084113230,
+      "report": {
+        "capacity_tokens": 1000000,
+        "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+        "model": "claude-sonnet-5",
+        "source": "claude_code_statusline",
+        "used_tokens": 49069
+      }
+    },
+    "exit_code": 0,
+    "exit_signal": null,
+    "id": 14,
+    "label": "python3",
+    "measurement_age_ms": {
+      "context": 79818,
+      "cost": 79818,
+      "usage": 79818
+    },
+    "name": "integrated-child-isolation",
+    "phase": "exited",
+    "pid": null,
+    "project": "consigint",
+    "reporting_unavailable": true,
+    "started_unix_ms": 1789084112728,
+    "workspace": "auth-handoff"
+  }
+]

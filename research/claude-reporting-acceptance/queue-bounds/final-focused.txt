@@ -1,0 +1,74 @@
+revision before Task 2 source commit: 090ca4926dbb8769d0de66ba9edf3193767efeaa
+
+command: cargo test -p ovrcr-runtime --lib --features acceptance-diagnostics -- --format terse
+host: macOS, outside sandbox
+exit: 0
+executed: 93
+passed: 93
+failed: 0
+ignored: 0
+duration: 7.83s
+
+command: cargo test --features acceptance-diagnostics --test claude_reporting
+host: macOS, outside sandbox
+exit: 0
+executed: 16
+passed: 16
+failed: 0
+duration: 2.27s
+
+command: cargo test --test server_lifecycle claude_metrics_
+host: macOS, outside sandbox
+exit: 0
+executed: 5
+passed: 5
+failed: 0
+filtered: 69
+duration: 3.05s
+
+command: cargo test --test server_lifecycle claude_metrics_collector_loss_propagates_while_native_stays_usable -- --nocapture
+host: macOS, outside sandbox
+exit: 0
+executed: 1
+passed: 1
+failed: 0
+filtered: 73
+duration: 2.49s
+
+command: cargo test -p ovrcr collector_process_loss_automatically_publishes_unavailable_health
+host: macOS, outside sandbox
+exit: 0
+executed: 1
+passed: 1
+failed: 0
+filtered: 419 across 19 suites
+
+command: cargo clippy -p ovrcr-runtime --all-targets --features acceptance-diagnostics -- -D warnings
+exit: 0
+result: no issues found
+
+command: cargo clippy -p ovrcr --tests --features acceptance-diagnostics -- -D warnings
+exit: 0
+result: no issues found
+
+command: cargo check -p ovrcr-runtime --features acceptance-diagnostics
+exit: 0
+result: finished dev profile after final payload-accounting update
+
+command: cargo fmt --all -- --check
+exit: 0
+
+command: git diff --check
+exit: 0
+
+cleanup: `cargo clean` removed 80,902 generated files (12.4GiB). A final exact
+process-table search for this worktree, `collector-helper`, and
+`__agent-collector` returned no rows; no task-owned fixtures remain running.
+
+Non-product attempts retained:
+- Sandboxed runtime suite: 84 passed, 9 failed because PTY/socket/process
+  operations returned PermissionDenied. It was rerun outside the sandbox.
+- A duplicate diagnostics runtime build failed before executing tests with
+  rustc LLVM `No space left on device`. `cargo clean` removed 12.4GiB of this
+  worktree's generated target output; the final diagnostics suite above then
+  passed.

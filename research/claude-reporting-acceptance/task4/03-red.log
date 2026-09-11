@@ -1,0 +1,28 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.18s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5RJwNO/repo/.git/
+[main (root-commit) 0ed7226] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5RJwNO/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5RJwNO/server.sock
+
+thread 'private_claude_activity_tracks_only_current_root_prompt_observations' (31849255) panicked at tests/server_lifecycle.rs:8170:9:
+assertion `left == right` failed: activity:UserPromptSubmit:A
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test private_claude_activity_tracks_only_current_root_prompt_observations ... FAILED
+
+failures:
+
+failures:
+    private_claude_activity_tracks_only_current_root_prompt_observations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 63 filtered out; finished in 1.69s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

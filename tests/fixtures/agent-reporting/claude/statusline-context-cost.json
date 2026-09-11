@@ -1,0 +1,23 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "transcript_path": "/synthetic/claude/projects/fixture/00000000-0000-4000-8000-000000000001.jsonl",
+  "cwd": "/synthetic/workspace",
+  "version": "2.1.267",
+  "prompt_id": "00000000-0000-4000-8000-000000000011",
+  "context_window": {
+    "total_input_tokens": 80,
+    "total_output_tokens": 8,
+    "context_window_size": 200000,
+    "used_percentage": 0.04,
+    "remaining_percentage": 99.96,
+    "current_usage": {
+      "input_tokens": 30,
+      "output_tokens": 8,
+      "cache_creation_input_tokens": 10,
+      "cache_read_input_tokens": 40
+    }
+  },
+  "cost": {
+    "total_cost_usd": 0.0123456789
+  }
+}

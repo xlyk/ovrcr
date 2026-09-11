@@ -1,0 +1,104 @@
+[
+  {
+    "event": "SubagentStop",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "ae2d8f0e5678e6389",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStart",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "a205ccbb67df9e456",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "StopFailure",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "a205ccbb67df9e456",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStop",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "abfdcc519941df4ee",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStop",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "a902501d45a471b09",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStop",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "agent_id": "aef0ab32bd7fd6be2",
+    "forward_exit": 0,
+    "before_available": false,
+    "after_available": false,
+    "agent_equal": null,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStart",
+    "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+    "agent_id": "a8031759fedf270a3",
+    "forward_exit": 0,
+    "before_available": true,
+    "after_available": true,
+    "agent_equal": false,
+    "changed_fields": [
+      "activity_revision"
+    ]
+  },
+  {
+    "event": "StopFailure",
+    "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+    "agent_id": "a8031759fedf270a3",
+    "forward_exit": 0,
+    "before_available": true,
+    "after_available": true,
+    "agent_equal": true,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStop",
+    "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+    "agent_id": "a365651220d35c63d",
+    "forward_exit": 0,
+    "before_available": true,
+    "after_available": true,
+    "agent_equal": true,
+    "changed_fields": []
+  },
+  {
+    "event": "SubagentStop",
+    "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+    "agent_id": "a08689f837043a8e4",
+    "forward_exit": 0,
+    "before_available": true,
+    "after_available": true,
+    "agent_equal": true,
+    "changed_fields": []
+  }
+]

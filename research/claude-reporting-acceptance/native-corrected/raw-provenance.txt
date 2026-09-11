@@ -1,0 +1,140 @@
+Retrospective provenance capture; not a contemporaneous pre-build snapshot.
+Captured at:
+2026-09-10T12:01:23-07:00
+
+$ git reflog --date=iso -8
+fd0c258 HEAD@{2026-09-10 11:59:10 -0700}: commit: ci: run isolated Linux reporting capacity acceptance
+463edcc HEAD@{2026-09-10 11:58:10 -0700}: commit: docs: record remaining Claude native and macOS acceptance
+7ec5634 HEAD@{2026-09-10 11:50:07 -0700}: commit: docs: normalize retained split regression output
+94566b5 HEAD@{2026-09-10 11:48:19 -0700}: commit: fix(tui): preserve uncertain labels in narrow metrics rows
+ba7d560 HEAD@{2026-09-10 11:41:51 -0700}: commit: fix(tui): fit provider freshness labels in split panes
+366c5d3 HEAD@{2026-09-10 11:27:20 -0700}: commit: test: initialize dashboard monitor in feature fixtures
+da6e4fc HEAD@{2026-09-10 11:20:31 -0700}: commit: test: verify same-conversation compaction context reporting
+d052acc HEAD@{2026-09-10 11:20:31 -0700}: commit: docs: normalize acceptance log endings
+
+$ stat -f ... bundle, build log, launcher result, split capture
+target/OVRCR GUI.app/Contents/MacOS/ovrcr|size=28859272|mtime=2026-09-10T11:51:36-0700|birth=2026-09-10T11:15:32-0700
+research/claude-reporting-acceptance/native-corrected/build-7ec5634.log|size=279|mtime=2026-09-10T11:51:36-0700|birth=2026-09-10T11:51:34-0700
+research/claude-reporting-acceptance/native-corrected/launcher.exit|size=2|mtime=2026-09-10T11:55:06-0700|birth=2026-09-10T11:55:06-0700
+research/claude-reporting-acceptance/native-corrected/03-split.png|size=97380|mtime=2026-09-10T11:53:51-0700|birth=2026-09-10T11:53:51-0700
+research/claude-reporting-acceptance/native-corrected/03-split.ax.txt|size=9873|mtime=2026-09-10T11:55:50-0700|birth=2026-09-10T11:53:51-0700
+
+$ git diff --name-only 7ec5634..HEAD
+.github/workflows/ci.yml
+docs/agent-reporting-support.md
+docs/linux/hosted-capacity.md
+plans/2026-09-10-claude-code-remaining-work.md
+research/claude-reporting-acceptance/final-remaining/clippy-7ec5634.exit
+research/claude-reporting-acceptance/final-remaining/clippy-7ec5634.log
+research/claude-reporting-acceptance/final-remaining/clippy-ba7d560.exit
+research/claude-reporting-acceptance/final-remaining/clippy-ba7d560.log
+research/claude-reporting-acceptance/final-remaining/doc-tests.exit
+research/claude-reporting-acceptance/final-remaining/doc-tests.log
+research/claude-reporting-acceptance/final-remaining/fmt-7ec5634.exit
+research/claude-reporting-acceptance/final-remaining/fmt-7ec5634.log
+research/claude-reporting-acceptance/final-remaining/fmt.exit
+research/claude-reporting-acceptance/final-remaining/fmt.log
+research/claude-reporting-acceptance/final-remaining/macos-clippy.exit
+research/claude-reporting-acceptance/final-remaining/macos-clippy.log
+research/claude-reporting-acceptance/final-remaining/macos-tests-attempt2.exit
+research/claude-reporting-acceptance/final-remaining/macos-tests-attempt2.log
+research/claude-reporting-acceptance/final-remaining/results.md
+research/claude-reporting-acceptance/final-remaining/text-normalization.md
+research/claude-reporting-acceptance/final-remaining/tui-7ec5634.exit
+research/claude-reporting-acceptance/final-remaining/tui-7ec5634.log
+research/claude-reporting-acceptance/final-remaining/tui-ba7d560.exit
+research/claude-reporting-acceptance/final-remaining/tui-ba7d560.log
+research/claude-reporting-acceptance/native-corrected/01-first.ax.txt
+research/claude-reporting-acceptance/native-corrected/02-two-turns.ax.txt
+research/claude-reporting-acceptance/native-corrected/02-two-turns.json
+research/claude-reporting-acceptance/native-corrected/02-two-turns.png
+research/claude-reporting-acceptance/native-corrected/03-split.ax.txt
+research/claude-reporting-acceptance/native-corrected/03-split.png
+research/claude-reporting-acceptance/native-corrected/04-detached.json
+research/claude-reporting-acceptance/native-corrected/05-reattached.ax.txt
+research/claude-reporting-acceptance/native-corrected/06-exited.ax.txt
+research/claude-reporting-acceptance/native-corrected/06-exited.json
+research/claude-reporting-acceptance/native-corrected/06-exited.png
+research/claude-reporting-acceptance/native-corrected/06-inventory.json
+research/claude-reporting-acceptance/native-corrected/build-7ec5634.log
+research/claude-reporting-acceptance/native-corrected/cleanup.json
+research/claude-reporting-acceptance/native-corrected/create.json
+research/claude-reporting-acceptance/native-corrected/launcher.exit
+research/claude-reporting-acceptance/native-corrected/owned-processes.json
+research/claude-reporting-acceptance/native-corrected/results.md
+research/claude-reporting-acceptance/native-corrected/text-normalization.md
+research/claude-reporting-acceptance/native-final/01-first-turn.ax.txt
+research/claude-reporting-acceptance/native-final/01-first-turn.json
+research/claude-reporting-acceptance/native-final/02-second-turn.json
+research/claude-reporting-acceptance/native-final/02-two-turns.ax.txt
+research/claude-reporting-acceptance/native-final/02-two-turns.png
+research/claude-reporting-acceptance/native-final/03-split.ax.txt
+research/claude-reporting-acceptance/native-final/03-split.png
+research/claude-reporting-acceptance/native-final/04-detached.json
+research/claude-reporting-acceptance/native-final/05-reattached.ax.txt
+research/claude-reporting-acceptance/native-final/06-exited.json
+research/claude-reporting-acceptance/native-final/07-api-error.ax.txt
+research/claude-reporting-acceptance/native-final/07-api-error.json
+research/claude-reporting-acceptance/native-final/07-api-error.png
+research/claude-reporting-acceptance/native-final/08-api-recovered.ax.txt
+research/claude-reporting-acceptance/native-final/08-api-recovered.json
+research/claude-reporting-acceptance/native-final/08-api-recovered.png
+research/claude-reporting-acceptance/native-final/09-api-exited.json
+research/claude-reporting-acceptance/native-final/09-before-cleanup.json
+research/claude-reporting-acceptance/native-final/09-inventory.json
+research/claude-reporting-acceptance/native-final/api-provider-signals.jsonl
+research/claude-reporting-acceptance/native-final/build-ba7d560.log
+research/claude-reporting-acceptance/native-final/cleanup.json
+research/claude-reporting-acceptance/native-final/create.json
+research/claude-reporting-acceptance/native-final/error-create.json
+research/claude-reporting-acceptance/native-final/launcher.exit
+research/claude-reporting-acceptance/native-final/owned-processes.json
+research/claude-reporting-acceptance/native-final/results.md
+research/claude-reporting-acceptance/native-final/text-normalization.md
+research/claude-reporting-acceptance/native-remaining/01-input.ax.txt
+research/claude-reporting-acceptance/native-remaining/01-input.png
+research/claude-reporting-acceptance/native-remaining/02-first-turn.ax.txt
+research/claude-reporting-acceptance/native-remaining/03-approval-wait.ax.txt
+research/claude-reporting-acceptance/native-remaining/03-approval-wait.json
+research/claude-reporting-acceptance/native-remaining/03-approval-wait.png
+research/claude-reporting-acceptance/native-remaining/04-approved-turn.json
+research/claude-reporting-acceptance/native-remaining/04-two-turns.ax.txt
+research/claude-reporting-acceptance/native-remaining/04-two-turns.png
+research/claude-reporting-acceptance/native-remaining/05-denial.ax.txt
+research/claude-reporting-acceptance/native-remaining/05-denied-turn.json
+research/claude-reporting-acceptance/native-remaining/06-continued-stop.ax.txt
+research/claude-reporting-acceptance/native-remaining/06-continued-stop.json
+research/claude-reporting-acceptance/native-remaining/07-compacted.json
+research/claude-reporting-acceptance/native-remaining/07-compaction.ax.txt
+research/claude-reporting-acceptance/native-remaining/07-compaction.png
+research/claude-reporting-acceptance/native-remaining/08-child-finished.json
+research/claude-reporting-acceptance/native-remaining/08-child.ax.txt
+research/claude-reporting-acceptance/native-remaining/09-elicitation-wait.json
+research/claude-reporting-acceptance/native-remaining/09-elicitation.ax.txt
+research/claude-reporting-acceptance/native-remaining/10-cancelled.ax.txt
+research/claude-reporting-acceptance/native-remaining/10-cancelled.json
+research/claude-reporting-acceptance/native-remaining/11-transient-source.json
+research/claude-reporting-acceptance/native-remaining/12-cost-comparison.json
+research/claude-reporting-acceptance/native-remaining/12-cost.ax.txt
+research/claude-reporting-acceptance/native-remaining/13-collector-loss.json
+research/claude-reporting-acceptance/native-remaining/14-pane-closed.json
+research/claude-reporting-acceptance/native-remaining/14-split.ax.txt
+research/claude-reporting-acceptance/native-remaining/14-split.png
+research/claude-reporting-acceptance/native-remaining/15-detached.json
+research/claude-reporting-acceptance/native-remaining/15-reattached.ax.txt
+research/claude-reporting-acceptance/native-remaining/16-clear-native.ax.txt
+research/claude-reporting-acceptance/native-remaining/16-clear-native.png
+research/claude-reporting-acceptance/native-remaining/16-cleared.json
+research/claude-reporting-acceptance/native-remaining/17-exited.ax.txt
+research/claude-reporting-acceptance/native-remaining/17-exited.json
+research/claude-reporting-acceptance/native-remaining/17-exited.png
+research/claude-reporting-acceptance/native-remaining/build-950710a.exit
+research/claude-reporting-acceptance/native-remaining/build-950710a.log
+research/claude-reporting-acceptance/native-remaining/capture.py
+research/claude-reporting-acceptance/native-remaining/cleanup.json
+research/claude-reporting-acceptance/native-remaining/owned-processes.json
+research/claude-reporting-acceptance/native-remaining/provider-signals.jsonl
+research/claude-reporting-acceptance/native-remaining/results.md
+research/claude-reporting-acceptance/native-remaining/text-normalization.md
+research/claude-reporting-acceptance/provider-capabilities.md
+research/claude-reporting-acceptance/remaining-matrix.md

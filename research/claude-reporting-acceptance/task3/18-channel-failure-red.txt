@@ -1,0 +1,25 @@
+Command: cargo test -p ovrcr --test cli agent_run_private_channel_failure -- --nocapture
+Revision: 32336e7 + correction (temp directory respects TMPDIR)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.45s
+     Running tests/cli.rs (target/debug/deps/cli-b86f5d1537cce9b7)
+
+running 1 test
+
+thread 'agent_run_private_channel_failure_runs_native_without_inherited_reporting' (31249290) panicked at tests/cli.rs:1990:5:
+assertion `left == right` failed: Output { status: ExitStatus(unix_wait_status(256)), stdout: "", stderr: "agent reporting unavailable; running native command\nInternal: Not a directory (os error 20) at path \"/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpSEERRy/not-a-directory/ovrcr-a-zJTMKX\"\n" }
+  left: Some(1)
+ right: Some(17)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... FAILED
+
+failures:
+
+failures:
+    agent_run_private_channel_failure_runs_native_without_inherited_reporting
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.56s
+
+error: test failed, to rerun pass `-p ovrcr --test cli`
+Exit: 101

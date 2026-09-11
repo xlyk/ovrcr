@@ -1,0 +1,38 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-a24d3eaf6784f9c6)
+
+running 9 tests
+test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+
+thread 'report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status' (38033099) panicked at src/report/admission.rs:1181:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'report::admission::tests::native_completion_drains_past_pending_pre_exit_eof' (38033104) panicked at src/report/admission.rs:1328:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+
+thread 'report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding' (38033101) panicked at src/report/admission.rs:1181:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+
+thread 'report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status' (38033102) panicked at src/report/admission.rs:1181:50:
+called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: "Operation not permitted" }
+test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... FAILED
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... FAILED
+test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... FAILED
+test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... FAILED
+test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+
+failures:
+
+    report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status
+    report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding
+    report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status
+    report::admission::tests::native_completion_drains_past_pending_pre_exit_eof
+
+test result: FAILED. 5 passed; 4 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.92s
+
+error: test failed, to rerun pass `-p ovrcr --lib`

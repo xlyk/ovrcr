@@ -1,0 +1,1 @@
+{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":11,"label":"python3","measurement_age_ms":null,"name":"claude-child-check","phase":"running","pid":73171,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789067707767,"workspace":"auth-handoff"}

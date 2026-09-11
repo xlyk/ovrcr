@@ -1,0 +1,38 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-aaad74af962a51f1)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp24w1O3/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp24w1O3/server.sock
+test fifty_session_reporting_capacity has been running for over 60 seconds
+
+thread '<unnamed>' (32514098) panicked at tests/claude_reporting_load.rs:166:66:
+called `Result::unwrap()` on an `Err` value: collector group cleanup unavailable
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (32514097) panicked at tests/claude_reporting_load.rs:166:66:
+called `Result::unwrap()` on an `Err` value: collector group cleanup unavailable
+
+thread '<unnamed>' (32514095) panicked at tests/claude_reporting_load.rs:166:66:
+called `Result::unwrap()` on an `Err` value: collector group cleanup unavailable
+
+thread '<unnamed>' (32514096) panicked at tests/claude_reporting_load.rs:166:66:
+called `Result::unwrap()` on an `Err` value: collector group cleanup unavailable
+
+thread '<unnamed>' (32514099) panicked at tests/claude_reporting_load.rs:166:66:
+called `Result::unwrap()` on an `Err` value: collector group cleanup unavailable
+
+thread 'fifty_session_reporting_capacity' (32513317) panicked at tests/claude_reporting_load.rs:189:66:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+ovrcr server stopped
+test fifty_session_reporting_capacity ... FAILED
+
+failures:
+
+failures:
+    fifty_session_reporting_capacity
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 67.19s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting_load`

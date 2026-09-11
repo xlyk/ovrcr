@@ -1,0 +1,15 @@
+{
+  "source_revision": "cad39abfbe955a304c2231a294debdc888b47c30",
+  "platform": "Linux aarch64, Docker --init, unprivileged user",
+  "rust": "1.98.0",
+  "passed": 562,
+  "failed": 0,
+  "ignored": 11,
+  "test_binaries": 23,
+  "workspace_exit": 0,
+  "clippy_exit": 0,
+  "fmt_exit": 0,
+  "doc_test_exit": 0,
+  "doc_tests_executed": 0,
+  "capacity_run": "pending Task 2 instrumentation"
+}

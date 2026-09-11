@@ -1,0 +1,18 @@
+Command: rtk proxy cargo test -p ovrcr --test claude_reporting -- --nocapture
+Uncommitted helper lifecycle and bounds
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+error[E0593]: closure is expected to take 1 argument, but it takes 2 arguments
+  --> src/report/admission.rs:46:14
+   |
+46 |     Box::new(move |input, deadline| receiver.handle(input, deadline))
+   |              ^^^^^^^^^^^^^^^^^^^^^^
+   |              |
+   |              expected closure that takes 1 argument
+   |              takes 2 arguments
+
+For more information about this error, try `rustc --explain E0593`.
+error: could not compile `ovrcr` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+
+Exit status: 101

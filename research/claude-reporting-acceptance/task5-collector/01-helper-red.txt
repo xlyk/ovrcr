@@ -1,0 +1,47 @@
+Command: rtk proxy cargo test -p ovrcr --test claude_reporting
+Uncommitted collector skeleton
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.72s
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-42ec5856f1256076)
+
+running 4 tests
+test collector_replacement_does_not_publish_a_smaller_prefix ... FAILED
+test collector_differing_duplicate_freezes_before_replacement ... FAILED
+test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... FAILED
+test collector_actual_helper_appends_partial_record_and_equal_replay ... FAILED
+
+failures:
+
+---- collector_replacement_does_not_publish_a_smaller_prefix stdout ----
+
+thread 'collector_replacement_does_not_publish_a_smaller_prefix' (32015849) panicked at tests/claude_reporting.rs:17:8:
+called `Result::unwrap()` on an `Err` value: not implemented
+
+---- collector_differing_duplicate_freezes_before_replacement stdout ----
+
+thread 'collector_differing_duplicate_freezes_before_replacement' (32015847) panicked at tests/claude_reporting.rs:17:8:
+called `Result::unwrap()` on an `Err` value: not implemented
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- collector_foreign_usage_and_nonregular_source_fail_without_content_leaks stdout ----
+
+thread 'collector_foreign_usage_and_nonregular_source_fail_without_content_leaks' (32015848) panicked at tests/claude_reporting.rs:17:8:
+called `Result::unwrap()` on an `Err` value: not implemented
+
+---- collector_actual_helper_appends_partial_record_and_equal_replay stdout ----
+
+thread 'collector_actual_helper_appends_partial_record_and_equal_replay' (32015846) panicked at tests/claude_reporting.rs:17:8:
+called `Result::unwrap()` on an `Err` value: not implemented
+
+
+failures:
+    collector_actual_helper_appends_partial_record_and_equal_replay
+    collector_differing_duplicate_freezes_before_replacement
+    collector_foreign_usage_and_nonregular_source_fail_without_content_leaks
+    collector_replacement_does_not_publish_a_smaller_prefix
+
+test result: FAILED. 0 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr --test claude_reporting`
+
+Exit status: 101

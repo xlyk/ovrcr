@@ -1,0 +1,33 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_admission_lost_bind_then_clear -- --nocapture
+Revision: de8cd87 + corrected blocking-mode proxy
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6PgTdw/repo/.git/
+[main (root-commit) a5c8be6] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6PgTdw/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6PgTdw/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+
+thread 'agent_admission_lost_bind_then_clear_resolves_without_another_startup' (31656798) panicked at tests/server_lifecycle.rs:7876:13:
+assertion `left == right` failed
+  left: Connected
+ right: Unavailable
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... FAILED
+
+failures:
+
+failures:
+    agent_admission_lost_bind_then_clear_resolves_without_another_startup
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 4.63s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101

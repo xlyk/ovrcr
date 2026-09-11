@@ -1,0 +1,60 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.82s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 4 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpd3uWb2/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5p5iCb/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa3cOiK/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIFH4qM/repo/.git/
+[main (root-commit) bddb604] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) bddb604] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) bddb604] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) bddb604] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIFH4qM/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpd3uWb2/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIFH4qM/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa3cOiK/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpd3uWb2/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5p5iCb/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5p5iCb/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa3cOiK/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'claude_metrics_route_collects_partial_usage_and_finalizes_native_exit' (32408500) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path' (32408499) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+
+thread 'claude_metrics_finalization_recovers_original_receipt_after_lost_ack' (32408498) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+ovrcr server stopped
+test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... FAILED
+ovrcr server stopped
+test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... FAILED
+ovrcr server stopped
+test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... FAILED
+ovrcr server stopped
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+
+failures:
+
+failures:
+    claude_metrics_finalization_recovers_original_receipt_after_lost_ack
+    claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path
+    claude_metrics_route_collects_partial_usage_and_finalizes_native_exit
+
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 69 filtered out; finished in 3.94s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

@@ -1,0 +1,156 @@
+command: rtk proxy cargo clippy -p ovrcr-protocol -p ovrcr-runtime --all-targets -- -D warnings
+revision: 6d273eb7b6c035e48f4128092ad5977c71f6b587
+exit: 101
+    Checking num-traits v0.2.19
+    Checking serde v1.0.229
+    Checking rustix v1.1.4
+    Checking log v0.4.34
+    Checking once_cell v1.21.4
+    Checking portable-pty v0.9.0
+    Checking bincode v2.0.1
+    Checking chrono v0.4.45
+    Checking tempfile v3.27.0
+    Checking croner v3.0.1
+    Checking chrono-tz v0.10.4
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-runtime/src/server/dispatch.rs:146:17
+    |
+146 | /                 if let Some(session) = state.sessions.lock().unwrap().get(&session).cloned() {
+147 | |                     if session.agent_supervisor_disconnected(&owner) {
+148 | |                         dashboard_try_send(
+149 | |                             &state,
+...   |
+155 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+146 ~                 if let Some(session) = state.sessions.lock().unwrap().get(&session).cloned()
+147 ~                     && session.agent_supervisor_disconnected(&owner) {
+148 |                         dashboard_try_send(
+...
+153 |                         );
+154 ~                     }
+    |
+
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-runtime/src/session/reporting.rs:233:13
+    |
+233 | /             if let Some((original, receipt)) = &reporting.reservation {
+234 | |                 if original.operation == reserve.operation {
+235 | |                     if original != reserve || !reporting.active() {
+236 | |                         bail!("stale reservation operation");
+...   |
+242 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+233 ~             if let Some((original, receipt)) = &reporting.reservation
+234 ~                 && original.operation == reserve.operation {
+235 |                     if original != reserve || !reporting.active() {
+...
+240 |                     )));
+241 ~                 }
+    |
+
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-runtime/src/session/reporting.rs:284:9
+    |
+284 | /         if let Some((original, result)) = &reporting.latest {
+285 | |             if Some(original.operation.as_str()) == operation && original.auth == *auth {
+286 | |                 match request {
+287 | |                     Request::AgentStatus { .. } => {
+...   |
+296 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+284 ~         if let Some((original, result)) = &reporting.latest
+285 ~             && Some(original.operation.as_str()) == operation && original.auth == *auth {
+286 |                 match request {
+...
+294 |                 }
+295 ~             }
+    |
+
+error: useless conversion to the same type: `std::boxed::Box<ovrcr_protocol::MetricsSample>`
+   --> crates/ovrcr-runtime/src/session/reporting.rs:358:64
+    |
+358 |                         observation: AgentObservation::Metrics(final_metrics.clone().into()),
+    |                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: consider removing `.into()`: `final_metrics.clone()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#useless_conversion
+    = note: `-D clippy::useless-conversion` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::useless_conversion)]`
+
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-runtime/src/session/reporting.rs:374:17
+    |
+374 | /                 if let AgentObservation::Health(health) = &report.observation {
+375 | |                     if health.state == ReporterHealth::Unavailable {
+376 | |                         if let Some(metrics) =
+377 | |                             reporting.snapshot.as_mut().and_then(|s| s.metrics.as_mut())
+...   |
+382 | |                 }
+    | |_________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+374 ~                 if let AgentObservation::Health(health) = &report.observation
+375 ~                     && health.state == ReporterHealth::Unavailable {
+376 |                         if let Some(metrics) =
+...
+380 |                         }
+381 ~                     }
+    |
+
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-runtime/src/session/reporting.rs:375:21
+    |
+375 | /                     if health.state == ReporterHealth::Unavailable {
+376 | |                         if let Some(metrics) =
+377 | |                             reporting.snapshot.as_mut().and_then(|s| s.metrics.as_mut())
+...   |
+381 | |                     }
+    | |_____________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+375 ~                     if health.state == ReporterHealth::Unavailable
+376 ~                         && let Some(metrics) =
+377 |                             reporting.snapshot.as_mut().and_then(|s| s.metrics.as_mut())
+378 |                         {
+379 |                             metrics.sample.usage.value.coverage = UsageCoverage::Partial;
+380 ~                         }
+    |
+
+error: unneeded `return` statement
+   --> crates/ovrcr-runtime/src/session/mod.rs:626:48
+    |
+626 |             AgentUpdate::Provider(provider) => return state.reporting.apply(provider, false),
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_return
+    = note: `-D clippy::needless-return` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_return)]`
+help: remove `return`
+    |
+626 -             AgentUpdate::Provider(provider) => return state.reporting.apply(provider, false),
+626 +             AgentUpdate::Provider(provider) => state.reporting.apply(provider, false),
+    |
+
+error: could not compile `ovrcr-runtime` (lib) due to 7 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ovrcr-runtime` (lib test) due to 7 previous errors

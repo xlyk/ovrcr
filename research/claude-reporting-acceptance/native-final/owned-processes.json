@@ -1,0 +1,164 @@
+[
+  {
+    "pid": 46136,
+    "ppid": 25168,
+    "pgid": 46136,
+    "command": "rtk proxy sh -c mkdir -p research/claude-reporting-acceptance/native-final; just gui > research/claude-reporting-acceptance/native-final/build-ba7d560.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-final/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 46208,
+    "ppid": 46136,
+    "pgid": 46136,
+    "command": "/bin/sh -c mkdir -p research/claude-reporting-acceptance/native-final; just gui > research/claude-reporting-acceptance/native-final/build-ba7d560.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-final/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 46228,
+    "ppid": 46208,
+    "pgid": 46136,
+    "command": "just gui"
+  },
+  {
+    "pid": 46257,
+    "ppid": 46228,
+    "pgid": 46136,
+    "command": "rtk proxy sh scripts/gui.sh"
+  },
+  {
+    "pid": 46299,
+    "ppid": 46257,
+    "pgid": 46136,
+    "command": "rtk proxy ./ovrcr-gui"
+  },
+  {
+    "pid": 48173,
+    "ppid": 46299,
+    "pgid": 46136,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 48206,
+    "ppid": 48173,
+    "pgid": 46136,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 48312,
+    "ppid": 48206,
+    "pgid": 48312,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 48372,
+    "ppid": 48206,
+    "pgid": 48372,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 48483,
+    "ppid": 48206,
+    "pgid": 48483,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 48585,
+    "ppid": 48206,
+    "pgid": 48585,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 48611,
+    "ppid": 48206,
+    "pgid": 48611,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48634,
+    "ppid": 48206,
+    "pgid": 48634,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48653,
+    "ppid": 48206,
+    "pgid": 48653,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48673,
+    "ppid": 48206,
+    "pgid": 48673,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48698,
+    "ppid": 48206,
+    "pgid": 48698,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48715,
+    "ppid": 48206,
+    "pgid": 48715,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 48718,
+    "ppid": 48173,
+    "pgid": 48718,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 54942,
+    "ppid": 48206,
+    "pgid": 54942,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run --provider claude -- /Users/xlyk/.local/bin/claude --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-fhbhlX/provider/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 54946,
+    "ppid": 54942,
+    "pgid": 54946,
+    "command": "/Users/xlyk/.local/bin/claude --session-id 1a5ab2ae-743a-4577-8511-326b600e5474 --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-fhbhlX/provider/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 55997,
+    "ppid": 54942,
+    "pgid": 55997,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr __agent-collector"
+  },
+  {
+    "pid": 58157,
+    "ppid": 54946,
+    "pgid": 54946,
+    "command": "caffeinate -i -t 300"
+  },
+  {
+    "pid": 67256,
+    "ppid": 48173,
+    "pgid": 67256,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 70265,
+    "ppid": 48206,
+    "pgid": 70265,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run --provider claude -- /Users/xlyk/.local/bin/claude --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-fhbhlX/provider/error-settings.json --strict-mcp-config --model ovrcr-acceptance-invalid-model"
+  },
+  {
+    "pid": 70269,
+    "ppid": 70265,
+    "pgid": 70269,
+    "command": "/Users/xlyk/.local/bin/claude --session-id 46e6474d-81e4-49f6-81b6-0ec889a89f67 --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-fhbhlX/provider/error-settings.json --strict-mcp-config --model ovrcr-acceptance-invalid-model"
+  },
+  {
+    "pid": 70294,
+    "ppid": 70265,
+    "pgid": 70294,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr __agent-collector"
+  },
+  {
+    "pid": 71949,
+    "ppid": 70269,
+    "pgid": 70269,
+    "command": "caffeinate -i -t 300"
+  }
+]

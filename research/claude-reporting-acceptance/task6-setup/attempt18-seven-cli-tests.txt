@@ -1,0 +1,21 @@
+Command: rtk proxy cargo test -p ovrcr --test agent_setup -- --nocapture
+Revision:2feda3b + configuration validation correction
+Exit: 0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-0c5d89b32bd041ca)
+
+running 7 tests
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+test setup_quotes_actual_executable_path ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+signal=2 doctor_status=signal: 2 (SIGINT) owned_probe_pgid=83834 absent=ESRCH
+signal=15 doctor_status=signal: 15 (SIGTERM) owned_probe_pgid=83887 absent=ESRCH
+signal=1 doctor_status=signal: 1 (SIGHUP) owned_probe_pgid=83896 absent=ESRCH
+signal=3 doctor_status=signal: 3 (SIGQUIT) owned_probe_pgid=84364 absent=ESRCH
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.66s
+

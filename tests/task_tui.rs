@@ -52,6 +52,8 @@ fn ready_dashboard() -> Dashboard {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
     dashboard.outer_area = Rect::new(0, 0, 80, 24);

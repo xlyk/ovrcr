@@ -1,0 +1,45 @@
+[
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JZg0mS/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-JZg0mS-workspaces-consigint-auth-handoff/3acc3193-a5b5-4f41-a93b-252c30e131bc.jsonl",
+    "device": 16777234,
+    "inode": 162099727,
+    "sessionId": "3acc3193-a5b5-4f41-a93b-252c30e131bc",
+    "uuid": "a842b9e7-7de8-4b50-895b-d2f18b6665ec",
+    "requestId": "req_011CevakoXbyuAMwjgbTRKJf",
+    "message_id": "msg_011CevakpNwwauVycpJgCcPu",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 41229,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 16,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 41229,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 16,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 41229,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 41229
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  }
+]

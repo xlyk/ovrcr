@@ -44,3 +44,125 @@ jobs:
         run: cargo test --workspace --all-targets --all-features
       - name: Doc tests
         run: cargo test --workspace --doc
+
+  linux:
+    name: linux
+    env:
+      SHELL: /bin/bash
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-headless
+          cache-on-failure: true
+      - name: Install shell test dependency
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Configure fixture Git identity
+        run: |
+          git config --global user.name "OVRCR CI"
+          git config --global user.email "ci@ovrcr.invalid"
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-targets
+      - name: Doc tests
+        run: cargo test --workspace --doc
+
+  linux-capacity:
+    name: linux capacity
+    env:
+      SHELL: /bin/bash
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-capacity
+          cache-on-failure: true
+      - name: Install shell test dependency
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Configure fixture Git identity
+        run: |
+          git config --global user.name "OVRCR CI"
+          git config --global user.email "ci@ovrcr.invalid"
+      - name: Record host provenance
+        run: |
+          mkdir -p target/hosted-linux-capacity/load
+          uname -a > target/hosted-linux-capacity/uname.txt
+          rustc -Vv > target/hosted-linux-capacity/rustc.txt
+          cargo -V > target/hosted-linux-capacity/cargo.txt
+          cat /proc/meminfo > target/hosted-linux-capacity/meminfo.txt
+          cat /proc/sys/net/core/somaxconn > target/hosted-linux-capacity/somaxconn.txt
+      - name: Run isolated 50-session capacity acceptance
+        timeout-minutes: 20
+        env:
+          OVRCR_LOAD_EVIDENCE: ${{ github.workspace }}/target/hosted-linux-capacity/load
+        run: |
+          set +e
+          cargo test --test claude_reporting_load --features acceptance-diagnostics fifty_session_reporting_capacity -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-capacity/test.log
+          result=${PIPESTATUS[0]}
+          echo "$result" > target/hosted-linux-capacity/test.exit
+          exit "$result"
+      - name: Upload capacity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/hosted-linux-capacity/
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-memory:
+    name: linux memory high-water
+    env:
+      SHELL: /bin/bash
+      CARGO_INCREMENTAL: 0
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-memory
+          cache-on-failure: true
+      - name: Compile memory fixture
+        run: cargo test --test claude_reporting_load --features acceptance-diagnostics --no-run
+      - name: Record isolated host provenance
+        run: |
+          mkdir -p target/hosted-linux-memory
+          git rev-parse HEAD > target/hosted-linux-memory/revision.txt
+          uname -a > target/hosted-linux-memory/uname.txt
+          rustc -Vv > target/hosted-linux-memory/rustc.txt
+          cat /proc/meminfo > target/hosted-linux-memory/meminfo.txt
+          df -k . > target/hosted-linux-memory/disk.txt
+          cat /proc/self/cgroup > target/hosted-linux-memory/cgroup.txt
+      - name: Run preflighted raw/index and sequential JSON acceptance
+        timeout-minutes: 15
+        env:
+          OVRCR_MEMORY_EVIDENCE: ${{ github.workspace }}/target/hosted-linux-memory
+        run: |
+          set +e
+          cargo test --test claude_reporting_load --features acceptance-diagnostics fifty_collector_raw_index_and_sequential_json_high_water -- --ignored --exact --nocapture 2>&1 | tee target/hosted-linux-memory/test.log
+          result=${PIPESTATUS[0]}
+          echo "$result" > target/hosted-linux-memory/test.exit
+          exit "$result"
+      - name: Upload memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-memory-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/hosted-linux-memory/
+          if-no-files-found: error
+          retention-days: 14

@@ -252,29 +252,25 @@ The [CLI reference](docs/cli-reference.md) has the full command list and aliases
 JSON record shapes, removal guards, the exact signal sequence `kill` uses, and a
 copy-pasteable transcript against a disposable repository.
 
-## Agent activity and context
+## Agent reporting
 
-Managed sessions inherit `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
-`OVRCR_HOOK_TOKEN`. A provider hook uses them to report state:
+Claude Code 2.1.267 can report observed activity, current context, partial token
+usage, and estimated cost through a supervised invocation:
 
 ```sh
-ovrcr report activity --state busy --sequence 1
-ovrcr report context --stdin-json < context.json
+ovrcr agent setup claude --print --settings ~/.claude/settings.json
+ovrcr new --project demo --workspace hooks --name agent -- ovrcr agent run --provider claude -- claude
+ovrcr session usage SESSION_ID
 ```
 
-OVRCR keeps the last accepted report in memory and shows it across detach and
-reconnect. Accepted activity states are `unknown`, `idle`, `busy`,
-`waiting-input`, and `error`. Context reports replace the whole stored sample and
-go stale after five minutes, which the dashboard marks with a trailing `~`
-(`25%~`).
+Review and merge the printed settings before launching. OVRCR never edits provider
+settings. See [Claude Code setup](docs/claude-code-setup.md) for composition,
+diagnostics, removal, and supported invocation limits, and the
+[support matrix](docs/agent-reporting-support.md) for acceptance evidence.
 
-`ovrcr report claude` and `ovrcr report claude-context` are ready-made adapters for
-Claude Code's hooks and status line. OVRCR never edits provider settings: you add
-the handlers yourself.
-
-See [agent reporting](docs/agent-reporting.md) for the adapters' event mapping,
-the report schema and validation rules, sequencing guarantees, and the
-`ovrcr session context` inspection command.
+Other harness integrations remain planned. Existing generic activity/context and
+legacy Claude adapters remain available for unbound sessions; their separate
+contracts are documented in [agent reporting](docs/agent-reporting.md).
 
 ## Scheduled tasks
 

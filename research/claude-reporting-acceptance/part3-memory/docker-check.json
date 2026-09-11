@@ -1,0 +1,4 @@
+{
+  "command": "docker version --format {{json .Server.Version}}",
+  "timed_out_seconds": 8
+}

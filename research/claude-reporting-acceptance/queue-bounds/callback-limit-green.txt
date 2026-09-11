@@ -1,0 +1,12 @@
+command: cargo test -p ovrcr-runtime invocation_channel_
+host: macOS, outside sandbox
+exit: 0
+executed: 2
+passed: 2
+failed: 0
+filtered: 91
+duration: 0.03s
+
+Fix under test: set only the accepted callback stream to blocking mode. The
+listener remains nonblocking and the existing 200ms authentication/read and
+800ms callback deadlines remain unchanged.

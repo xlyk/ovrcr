@@ -17,24 +17,38 @@ use std::net::Shutdown;
 
 #[test]
 fn raw_event_and_dispatch_queues_reject_the_65th_item() {
-    let (event_sender, _event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (event_sender, event_receiver) = event_channel();
     for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
         event_sender
             .try_send(SessionEvent::Output {
                 id: SessionId(1),
-                bytes: Vec::new(),
+                bytes: vec![0; 8192],
             })
             .unwrap();
     }
     assert!(matches!(
         event_sender.try_send(SessionEvent::Output {
             id: SessionId(1),
-            bytes: Vec::new(),
+            bytes: vec![0; 8192],
         }),
         Err(mpsc::TrySendError::Full(_))
     ));
+    assert_eq!(
+        event_sender.snapshot().pending_items,
+        RAW_EVENT_QUEUE_CAPACITY
+    );
+    assert_eq!(
+        event_sender.snapshot().pending_bytes,
+        RAW_EVENT_QUEUE_CAPACITY * 8192
+    );
+    assert_eq!(event_sender.snapshot().rejected, 1);
+    drop(event_receiver.recv().unwrap());
+    assert_eq!(
+        event_sender.snapshot().pending_items,
+        RAW_EVENT_QUEUE_CAPACITY - 1
+    );
 
-    let (dispatch_sender, _dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (dispatch_sender, dispatch_receiver) = dispatch_channel();
     for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
         dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
     }
@@ -42,6 +56,23 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
         dispatch_sender.try_send(DispatchMessage::Stop),
         Err(mpsc::TrySendError::Full(_))
     ));
+    assert_eq!(
+        dispatch_sender.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY
+    );
+    assert_eq!(dispatch_sender.snapshot().rejected, 1);
+    drop(dispatch_receiver.recv().unwrap());
+    assert_eq!(
+        dispatch_sender.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY - 1
+    );
+    drop(dispatch_receiver);
+    assert_eq!(dispatch_sender.snapshot().pending_items, 0);
+    assert!(matches!(
+        dispatch_sender.try_send(DispatchMessage::Stop),
+        Err(mpsc::TrySendError::Disconnected(_))
+    ));
+    assert_eq!(dispatch_sender.snapshot().rejected, 2);
 }
 
 #[test]
@@ -128,6 +159,50 @@ fn split_delivery_snapshots_precede_increments() {
     }
     assert!(!sink.replace_view(&view, 11, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
     assert!(sink.next().is_none());
+}
+
+#[test]
+fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
+    let sink = DashboardSink::new();
+    for _ in 0..DASHBOARD_QUEUE {
+        assert!(sink.enqueue_queued(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: SessionId(1),
+                revision: 1,
+                bytes: vec![b'x'; 32],
+            }),
+            completion: None,
+        }));
+    }
+    assert!(sink.enqueue_queued(DashboardOutbound {
+        message: ServerMessage::Event(ServerEvent::Output {
+            session: SessionId(1),
+            revision: 1,
+            bytes: vec![b'y'; 32],
+        }),
+        completion: None,
+    }));
+    let snapshot = sink.reporting_snapshot();
+    assert_eq!(snapshot.message_items + snapshot.dirty_items, 1);
+    assert_eq!(snapshot.dirty_items, 1);
+    assert_eq!(snapshot.terminal_items, 0);
+    assert!(snapshot.pending_bytes <= ovrcr_protocol::MAX_FRAME_BYTES);
+    assert_eq!(snapshot.rejected, 0);
+    let DashboardDelivery::Dirty { revision, session } = sink.next().unwrap() else {
+        panic!("expected dirty delivery");
+    };
+    sink.dirty_sent(revision, session);
+    assert!(sink.replace_view(
+        &DashboardView {
+            revision: 2,
+            panes: Vec::new(),
+            focused: None
+        },
+        7,
+        Vec::new(),
+    ));
+    drop(sink.next().unwrap());
+    assert_eq!(sink.reporting_snapshot().pending_items, 0);
 }
 
 #[test]
@@ -2105,10 +2180,27 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
 
 #[test]
 fn agent_report_queue_full_is_a_structured_conflict() {
-    let (state, _receiver) = test_state_with_dispatch(None, None);
-    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
-        state.dispatch.try_send(DispatchMessage::Stop).unwrap();
+    let (state, receiver) = test_state_with_dispatch(None, None);
+    for sequence in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        let (completion, _) = mpsc::sync_channel(1);
+        state
+            .dispatch
+            .try_send(DispatchMessage::AgentReport {
+                report: AgentReport {
+                    session: SessionId(sequence as u64 + 1),
+                    capability: [0_u8; 32],
+                    sequence: None,
+                    update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+                },
+                completion,
+            })
+            .unwrap();
     }
+    assert_eq!(
+        state.dispatch.snapshot().pending_items,
+        RAW_DISPATCH_QUEUE_CAPACITY
+    );
+    assert!(state.dispatch.snapshot().pending_bytes > 0);
     let mut role = ClientRole::Control;
     let response = state.handle_request(
         &mut role,
@@ -2126,6 +2218,11 @@ fn agent_report_queue_full_is_a_structured_conflict() {
             message: "dispatcher queue is full".into(),
         }
     );
+    assert_eq!(state.dispatch.snapshot().rejected, 1);
+    for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
+        drop(receiver.recv().unwrap());
+    }
+    assert_eq!(state.dispatch.snapshot().pending_items, 0);
 }
 
 #[test]
@@ -2269,9 +2366,9 @@ fn test_state(
 fn test_state_with_dispatch(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
-) -> (Arc<ServerState>, Receiver<DispatchMessage>) {
+) -> (Arc<ServerState>, ReportingReceiver<DispatchMessage>) {
     let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (dispatch, receiver) = dispatch_channel();
     (
         Arc::new(ServerState {
             tasks: None,
@@ -2287,11 +2384,13 @@ fn test_state_with_dispatch(
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Some(events.into())),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(stream.map(|(identity, stream)| DashboardSlot {
                 sink: dashboard.as_ref().unwrap().clone(),
                 identity,
@@ -2325,15 +2424,17 @@ fn test_state_with_socket(
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch,
+            dispatch: dispatch.into(),
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Some(events.into())),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(None),
         }),
         dispatch_receiver,
@@ -2343,6 +2444,13 @@ fn test_state_with_socket(
 
 fn spawn_live_test_session(
     id: SessionId,
+) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+    spawn_live_test_session_with_hook(id, None)
+}
+
+fn spawn_live_test_session_with_hook(
+    id: SessionId,
+    hook_env: Option<HookEnvironment>,
 ) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
@@ -2359,7 +2467,7 @@ fn spawn_live_test_session(
                 "-c".into(),
                 "trap '' HUP TERM; while :; do sleep 1; done".into(),
             ],
-            hook_env: None,
+            hook_env,
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
@@ -2451,7 +2559,11 @@ fn apply_test_session_events(
 fn saturated_control_state(
     session: &Arc<Session>,
     id: SessionId,
-) -> (Arc<ServerState>, Receiver<DispatchMessage>, UnixStream) {
+) -> (
+    Arc<ServerState>,
+    ReportingReceiver<DispatchMessage>,
+    UnixStream,
+) {
     let (server_stream, client_stream) = UnixStream::pair().unwrap();
     let sink = DashboardSink::new();
     let identity = Arc::new(());
@@ -4469,15 +4581,17 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         dashboard: Mutex::new(None),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone(),
+        dispatch: dispatch.clone().into(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
-        events: Mutex::new(Some(events)),
+        events: Mutex::new(Some(events.into())),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
         before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
         dashboard_slot: Mutex::new(None),
     });
     let dispatcher_state = Arc::clone(&state);
@@ -4681,15 +4795,17 @@ fn session_output_flows_while_another_session_spawns() {
         dashboard: Mutex::new(Some(sink.clone())),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone(),
+        dispatch: dispatch.clone().into(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
         dashboard_size: Mutex::new(None),
-        events: Mutex::new(Some(events)),
+        events: Mutex::new(Some(events.into())),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
         before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
         dashboard_slot: Mutex::new(Some(DashboardSlot {
             sink: sink.clone(),
             identity: owner.clone(),
@@ -5337,4 +5453,873 @@ fn accept_loop_survives_thread_spawn_failure() {
         }
     ));
     server.join().unwrap().unwrap();
+}
+
+mod agent_reporting {
+    use super::*;
+    use ovrcr_protocol::*;
+
+    struct Fixture {
+        _cwd: tempfile::TempDir,
+        session: Arc<Session>,
+        pgid: libc::pid_t,
+        owner: Arc<()>,
+        state: Arc<ServerState>,
+        dispatcher: Option<thread::JoinHandle<()>>,
+        bridge: Option<thread::JoinHandle<()>>,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let (cwd, session, events) = spawn_live_test_session_with_hook(
+                SessionId(900),
+                Some(HookEnvironment {
+                    socket: "/tmp/unused-agent-test.sock".into(),
+                    session: SessionId(900),
+                    capability: [7; 32],
+                }),
+            );
+            let (state, commands) = test_state_with_dispatch(None, None);
+            state
+                .sessions
+                .lock()
+                .unwrap()
+                .insert(SessionId(900), session.clone());
+            let dispatch_state = state.clone();
+            let dispatcher = thread::spawn(move || run_dispatcher(dispatch_state, commands));
+            let dispatch = state.dispatch.clone();
+            let bridge = thread::spawn(move || bridge_events(events, dispatch));
+            let pgid = session.summary().pid.unwrap() as libc::pid_t;
+            assert_eq!(unsafe { libc::getpgid(pgid) }, pgid);
+            eprintln!("agent reporting fixture owned pid/pgid={pgid}");
+            Self {
+                _cwd: cwd,
+                pgid,
+                owner: Arc::new(()),
+                session,
+                state,
+                dispatcher: Some(dispatcher),
+                bridge: Some(bridge),
+            }
+        }
+        fn request(&self, request: Request) -> Response {
+            if matches!(request, Request::ReserveAgent(_)) {
+                connections::handle_request_with_id(
+                    &self.state,
+                    &mut ClientRole::Control,
+                    request,
+                    1,
+                    Some(&self.owner),
+                )
+            } else {
+                self.state.handle_request(&mut ClientRole::Control, request)
+            }
+        }
+        fn reserve(&self, epoch: u64, operation: &str) -> Request {
+            Request::ReserveAgent(ReserveAgent {
+                session: SessionId(900),
+                capability: AgentSecret([7; 32]),
+                operation: operation.into(),
+                expected_epoch: epoch,
+                invocation: format!("invocation-{epoch}"),
+                provider: AgentProvider::Claude,
+            })
+        }
+        fn acquire(&self) -> SupervisorAuth {
+            let response = self.request(self.reserve(0, "reserve-first"));
+            let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = response
+            else {
+                panic!("reserve failed: {response:?}");
+            };
+            assert_eq!(reservation.epoch, 1);
+            SupervisorAuth {
+                session: SessionId(900),
+                lease: reservation.lease,
+            }
+        }
+        fn command(
+            &self,
+            auth: &SupervisorAuth,
+            operation: &str,
+            command: AgentCommand,
+        ) -> Response {
+            self.request(Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: operation.into(),
+                command,
+            }))
+        }
+        fn bind(
+            &self,
+            auth: &SupervisorAuth,
+            expected: Option<AgentBinding>,
+            conversation: &str,
+            operation: &str,
+        ) -> AgentBinding {
+            let response = self.command(
+                auth,
+                operation,
+                AgentCommand::Bind {
+                    expected_binding: expected,
+                    conversation: conversation.into(),
+                },
+            );
+            let Response::AgentOperation(AgentOperationResult::Bound(binding)) = response else {
+                panic!("bind failed: {response:?}");
+            };
+            binding
+        }
+        fn report(
+            &self,
+            binding: &AgentBinding,
+            revision: u64,
+            observation: AgentObservation,
+        ) -> Response {
+            self.request(Request::AgentReport(AgentReport {
+                session: SessionId(900),
+                capability: [7; 32],
+                sequence: None,
+                update: AgentUpdate::Provider(ProviderReport {
+                    binding: binding.clone(),
+                    revision,
+                    observation,
+                }),
+            }))
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.session.terminate(Duration::from_millis(100)).unwrap();
+            self.bridge.take().unwrap().join().unwrap();
+            self.state.dispatch.send(DispatchMessage::Stop).unwrap();
+            self.dispatcher.take().unwrap().join().unwrap();
+            assert!(wait_test_group_absent(self.pgid, Duration::from_secs(2)));
+            eprintln!("agent reporting fixture cleaned pgid={}", self.pgid);
+        }
+    }
+    fn activity(state: AgentActivity) -> AgentObservation {
+        AgentObservation::Activity(ActivitySample {
+            state,
+            quality: SampleQuality::Observed,
+            turn: None,
+        })
+    }
+    fn measurement<T>(value: T, revision: &str) -> Measurement<T> {
+        Measurement {
+            value,
+            source: "fixture".into(),
+            source_revision: Some(revision.into()),
+            source_sequence: Some(1),
+            freshness: MeasurementFreshness::SourceIdentified,
+        }
+    }
+    fn metrics() -> MetricsSample {
+        MetricsSample {
+            model: Some("test".into()),
+            context: measurement(
+                ContextSample {
+                    used_tokens: Some(10),
+                    capacity_tokens: Some(100),
+                    quality: SampleQuality::Confirmed,
+                },
+                "context-1",
+            ),
+            usage: measurement(
+                UsageTotals {
+                    scope: UsageScope::Conversation,
+                    coverage: UsageCoverage::Complete,
+                    input_tokens: Some(20),
+                    output_tokens: Some(30),
+                    cache_read_tokens: Some(2),
+                    cache_write_tokens: Some(3),
+                    reasoning_output_tokens: Some(4),
+                },
+                "usage-1",
+            ),
+            cost: measurement(
+                Some(UsageCost {
+                    usd_ticks: 100,
+                    kind: CostKind::Reported,
+                    scope: UsageScope::Conversation,
+                }),
+                "cost-1",
+            ),
+        }
+    }
+    fn rejected(response: Response) {
+        assert!(
+            matches!(response, Response::Error { .. }),
+            "expected rejection: {response:?}"
+        );
+    }
+
+    #[test]
+    fn agent_report_reservation_retry_and_stale_compare_exchange() {
+        let f = Fixture::new();
+        let reserve = f.reserve(0, "reserve-first");
+        let first = f.request(reserve.clone());
+        assert!(
+            matches!(
+                first,
+                Response::AgentOperation(AgentOperationResult::Reserved(_))
+            ),
+            "{first:?}"
+        );
+        assert_eq!(
+            f.request(reserve),
+            first,
+            "lost reservation response must recover same lease"
+        );
+        rejected(f.request(f.reserve(0, "delayed-reserve")));
+        rejected(f.request(f.reserve(1, "active-replacement")));
+        assert_eq!(f.session.summary().agent_epoch, 1);
+        let Response::AgentOperation(AgentOperationResult::Reserved(r)) = first else {
+            unreachable!()
+        };
+        let auth = SupervisorAuth {
+            session: SessionId(900),
+            lease: r.lease,
+        };
+        let a = f.bind(&auth, None, "A", "bind-a");
+        let duplicate = f.command(
+            &auth,
+            "bind-a",
+            AgentCommand::Bind {
+                expected_binding: None,
+                conversation: "A".into(),
+            },
+        );
+        assert_eq!(
+            duplicate,
+            Response::AgentOperation(AgentOperationResult::Bound(a.clone()))
+        );
+        let b = f.bind(&auth, Some(a.clone()), "B", "bind-b");
+        let a2 = f.bind(&auth, Some(b), "A", "bind-a2");
+        assert!(a2.generation > a.generation);
+        rejected(f.command(
+            &auth,
+            "late-bind",
+            AgentCommand::Bind {
+                expected_binding: Some(a.clone()),
+                conversation: "C".into(),
+            },
+        ));
+        rejected(f.command(
+            &auth,
+            "late-release",
+            AgentCommand::Release {
+                expected_binding: Some(a.clone()),
+            },
+        ));
+        rejected(f.report(&a, 99, activity(AgentActivity::Idle)));
+        assert_eq!(f.session.summary().agent.unwrap().binding, a2);
+    }
+
+    #[test]
+    fn agent_report_independent_streams_atomic_components_and_authentication() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let a = f.bind(&auth, None, "A", "bind");
+        assert_eq!(f.report(&a, 8, activity(AgentActivity::Busy)), Response::Ok);
+        assert_eq!(
+            f.report(&a, 20, AgentObservation::Metrics(metrics().into())),
+            Response::Ok
+        );
+        assert_eq!(
+            f.report(&a, 9, activity(AgentActivity::WaitingInput)),
+            Response::Ok
+        );
+        let before = f.session.summary();
+        rejected(f.report(&a, 19, AgentObservation::Metrics(metrics().into())));
+        rejected(f.request(Request::AgentReport(AgentReport {
+            session: SessionId(900),
+            capability: [8; 32],
+            sequence: None,
+            update: AgentUpdate::Provider(ProviderReport {
+                binding: a.clone(),
+                revision: 100,
+                observation: activity(AgentActivity::Idle),
+            }),
+        })));
+        rejected(f.request(Request::AgentReport(AgentReport {
+            session: SessionId(901),
+            capability: [7; 32],
+            sequence: None,
+            update: AgentUpdate::Activity(AgentActivity::Idle),
+        })));
+        rejected(f.request(Request::AgentReport(AgentReport {
+            session: SessionId(900),
+            capability: [7; 32],
+            sequence: None,
+            update: AgentUpdate::Activity(AgentActivity::Idle),
+        })));
+        assert_eq!(f.session.summary(), before);
+        let mut next = metrics();
+        next.usage.value.input_tokens = Some(22);
+        next.usage.source_revision = Some("usage-2".into());
+        next.usage.source_sequence = Some(2);
+        assert_eq!(
+            f.report(&a, 21, AgentObservation::Metrics(next.clone().into())),
+            Response::Ok
+        );
+        let new = f.session.summary().agent.unwrap().metrics.unwrap();
+        let old = before.agent.unwrap().metrics.unwrap();
+        assert_eq!(new.context_received_unix_ms, old.context_received_unix_ms);
+        assert_eq!(new.cost_received_unix_ms, old.cost_received_unix_ms);
+        let before = f.session.summary();
+        next.context.value.used_tokens = None;
+        rejected(f.report(&a, 22, AgentObservation::Metrics(next.clone().into())));
+        assert_eq!(
+            f.session.summary(),
+            before,
+            "conflict must reject whole snapshot and freshness"
+        );
+        next.context.source_revision = Some("context-2".into());
+        next.context.source_sequence = Some(2);
+        next.cost.value = None;
+        next.cost.source_revision = Some("cost-2".into());
+        next.cost.source_sequence = Some(2);
+        assert_eq!(
+            f.report(&a, 22, AgentObservation::Metrics(next.into())),
+            Response::Ok
+        );
+        assert_eq!(
+            f.session
+                .summary()
+                .context_usage
+                .unwrap()
+                .report
+                .used_tokens,
+            None
+        );
+        assert_eq!(
+            f.session
+                .summary()
+                .agent
+                .unwrap()
+                .metrics
+                .unwrap()
+                .sample
+                .cost
+                .value,
+            None
+        );
+    }
+    #[test]
+    fn agent_report_component_order_survives_uncertain_clear() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let a = f.bind(&auth, None, "A", "bind");
+        let mut latest = metrics();
+        latest.context.source_revision = Some("context-2".into());
+        latest.context.source_sequence = Some(2);
+        assert_eq!(
+            f.report(&a, 1, AgentObservation::Metrics(latest.clone().into())),
+            Response::Ok
+        );
+        rejected(f.report(&a, 2, AgentObservation::Metrics(metrics().into())));
+        let mut conflicting = latest.clone();
+        conflicting.context.value.used_tokens = Some(15);
+        rejected(f.report(&a, 2, AgentObservation::Metrics(conflicting.into())));
+        let mut clear = latest.clone();
+        clear.context.value.used_tokens = None;
+        clear.context.source_revision = None;
+        clear.context.source_sequence = None;
+        clear.context.freshness = MeasurementFreshness::Uncertain;
+        assert_eq!(
+            f.report(&a, 2, AgentObservation::Metrics(clear.into())),
+            Response::Ok
+        );
+        let cleared = f.session.summary();
+        rejected(f.report(&a, 3, AgentObservation::Metrics(metrics().into())));
+        assert_eq!(f.session.summary(), cleared);
+        latest.context.source = "different-source".into();
+        latest.context.source_sequence = Some(3);
+        latest.context.source_revision = Some("context-3".into());
+        rejected(f.report(&a, 3, AgentObservation::Metrics(latest.into())));
+    }
+
+    fn supervisor_connection(
+        f: &Fixture,
+        auth: &SupervisorAuth,
+    ) -> (UnixStream, thread::JoinHandle<()>) {
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let state = f.state.clone();
+        let handle = thread::spawn(move || connections::handle_connection(state, server));
+        exchange_preamble(&mut client).unwrap();
+        write_frame(
+            &mut client,
+            &ClientMessage {
+                request_id: 1,
+                request: Request::SupervisorHello(auth.clone()),
+            },
+        )
+        .unwrap();
+        let response = read_frame::<ServerMessage>(&mut client).unwrap();
+        assert_eq!(
+            response,
+            ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok
+            }
+        );
+        (client, handle)
+    }
+
+    #[test]
+    fn agent_report_supervisor_connection_loss_and_late_cleanup() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let a = f.bind(&auth, None, "A", "bind");
+        assert_eq!(f.report(&a, 1, activity(AgentActivity::Busy)), Response::Ok);
+        assert_eq!(
+            f.report(&a, 1, AgentObservation::Metrics(metrics().into())),
+            Response::Ok
+        );
+        let (old, old_handler) = supervisor_connection(&f, &auth);
+        let before = f.session.summary();
+        let (new, new_handler) = supervisor_connection(&f, &auth);
+        assert_eq!(
+            f.session.summary(),
+            before,
+            "attachment cannot reset activity/metrics"
+        );
+        drop(old);
+        old_handler.join().unwrap();
+        // Join + FIFO dispatcher status gives a deterministic cleanup barrier.
+        f.request(Request::AgentStatus {
+            auth: auth.clone(),
+            operation: "bind".into(),
+        });
+        assert_eq!(
+            f.session.summary(),
+            before,
+            "old supervisor closure cannot affect replacement connection"
+        );
+        // Ordinary one-shot report transport closes without changing health.
+        let (server, mut report) = UnixStream::pair().unwrap();
+        let state = f.state.clone();
+        let handler = thread::spawn(move || connections::handle_connection(state, server));
+        exchange_preamble(&mut report).unwrap();
+        write_frame(
+            &mut report,
+            &ClientMessage {
+                request_id: 2,
+                request: Request::AgentReport(AgentReport {
+                    session: SessionId(900),
+                    capability: [7; 32],
+                    sequence: None,
+                    update: AgentUpdate::Provider(ProviderReport {
+                        binding: a.clone(),
+                        revision: 2,
+                        observation: activity(AgentActivity::WaitingInput),
+                    }),
+                }),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut report).unwrap(),
+            ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok
+            }
+        );
+        handler.join().unwrap();
+        assert_eq!(
+            f.session.summary().agent.unwrap().health.state,
+            ReporterHealth::Connected
+        );
+        drop(new);
+        new_handler.join().unwrap();
+        f.request(Request::AgentStatus {
+            auth: auth.clone(),
+            operation: "bind".into(),
+        });
+        let lost = f.session.summary().agent.unwrap();
+        assert_eq!(lost.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            lost.health.reason.as_deref(),
+            Some("supervisor_disconnected")
+        );
+        assert_eq!(lost.activity.unwrap().state, AgentActivity::WaitingInput);
+        assert_eq!(
+            lost.metrics.unwrap().sample.usage.value.coverage,
+            UsageCoverage::Partial
+        );
+        rejected(f.report(&a, 3, activity(AgentActivity::Idle)));
+        let response = f.request(f.reserve(1, "reserve-second"));
+        assert!(matches!(
+            response,
+            Response::AgentOperation(AgentOperationResult::Reserved(_))
+        ));
+        rejected(f.command(
+            &auth,
+            "old-cleanup",
+            AgentCommand::Release {
+                expected_binding: Some(a),
+            },
+        ));
+        assert_eq!(f.session.summary().agent_epoch, 2);
+    }
+
+    #[test]
+    fn agent_report_finalize_atomic_retry_and_exit_rejection() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let a = f.bind(&auth, None, "A", "bind");
+        assert_eq!(
+            f.report(&a, 1, AgentObservation::Metrics(metrics().into())),
+            Response::Ok
+        );
+        let mut invalid = metrics();
+        invalid.usage.value.input_tokens = Some(0);
+        let before = f.session.summary();
+        rejected(f.command(
+            &auth,
+            "final",
+            AgentCommand::Finalize {
+                binding: a.clone(),
+                revision: 2,
+                final_metrics: invalid.into(),
+            },
+        ));
+        assert_eq!(f.session.summary(), before);
+        let command = AgentCommand::Finalize {
+            binding: a.clone(),
+            revision: 2,
+            final_metrics: metrics().into(),
+        };
+        let result = f.command(&auth, "final", command.clone());
+        assert_eq!(
+            result,
+            Response::AgentOperation(AgentOperationResult::Released)
+        );
+        assert_eq!(f.command(&auth, "final", command), result);
+        assert_eq!(
+            f.request(Request::AgentStatus {
+                auth: auth.clone(),
+                operation: "final".into()
+            }),
+            result
+        );
+        assert_eq!(
+            f.session
+                .summary()
+                .agent
+                .unwrap()
+                .metrics
+                .unwrap()
+                .sample
+                .usage
+                .value
+                .coverage,
+            UsageCoverage::Complete
+        );
+        rejected(f.report(&a, 3, activity(AgentActivity::Idle)));
+        let response = f.request(f.reserve(1, "reserve-second"));
+        let Response::AgentOperation(AgentOperationResult::Reserved(r)) = response else {
+            panic!("{response:?}");
+        };
+        let new_auth = SupervisorAuth {
+            session: SessionId(900),
+            lease: r.lease,
+        };
+        let new_a = f.bind(&new_auth, None, "A", "new-bind");
+        assert!(new_a.generation > a.generation);
+        rejected(f.request(Request::AgentStatus {
+            auth,
+            operation: "final".into(),
+        }));
+        assert_eq!(
+            f.report(&new_a, 1, activity(AgentActivity::Busy)),
+            Response::Ok
+        );
+        assert_eq!(
+            f.report(&new_a, 1, AgentObservation::Metrics(metrics().into())),
+            Response::Ok
+        );
+        f.session.terminate(Duration::from_millis(100)).unwrap();
+        let exited = f.session.summary();
+        assert!(matches!(exited.phase, SessionPhase::Exited { .. }));
+        assert_eq!(
+            exited
+                .agent
+                .as_ref()
+                .unwrap()
+                .metrics
+                .as_ref()
+                .unwrap()
+                .sample
+                .usage
+                .value
+                .coverage,
+            UsageCoverage::Partial
+        );
+        rejected(f.report(&new_a, 2, activity(AgentActivity::Idle)));
+        assert_eq!(f.session.summary(), exited);
+    }
+
+    #[test]
+    fn agent_report_rejects_decreases_after_unknown_and_collector_loss() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let a = f.bind(&auth, None, "A", "bind");
+        assert_eq!(
+            f.report(&a, 1, AgentObservation::Metrics(metrics().into())),
+            Response::Ok
+        );
+        let mut unknown = metrics();
+        unknown.usage.value.input_tokens = None;
+        unknown.usage.source_revision = Some("usage-2".into());
+        unknown.usage.source_sequence = Some(2);
+        assert_eq!(
+            f.report(&a, 2, AgentObservation::Metrics(unknown.clone().into())),
+            Response::Ok
+        );
+        unknown.usage.value.input_tokens = Some(19);
+        unknown.usage.source_revision = Some("usage-3".into());
+        unknown.usage.source_sequence = Some(3);
+        let before = f.session.summary();
+        rejected(f.report(&a, 3, AgentObservation::Metrics(unknown.into())));
+        assert_eq!(f.session.summary(), before);
+        let health = ProviderReport {
+            binding: a.clone(),
+            revision: 1,
+            observation: AgentObservation::Health(HealthSample {
+                state: ReporterHealth::Unavailable,
+                reason: Some("collector_lost".into()),
+            }),
+        };
+        rejected(f.report(&a, 1, health.observation.clone()));
+        assert_eq!(
+            f.command(&auth, "lost", AgentCommand::Health(health)),
+            Response::AgentOperation(AgentOperationResult::HealthUpdated)
+        );
+        let mut latest = metrics();
+        latest.usage.source_revision = Some("usage-3".into());
+        latest.usage.source_sequence = Some(3);
+        assert_eq!(
+            f.report(&a, 3, AgentObservation::Metrics(latest.into())),
+            Response::Ok
+        );
+        assert_eq!(
+            f.session
+                .summary()
+                .agent
+                .unwrap()
+                .metrics
+                .unwrap()
+                .sample
+                .usage
+                .value
+                .coverage,
+            UsageCoverage::Partial,
+            "report replay cannot repair collector loss"
+        );
+    }
+
+    #[test]
+    fn agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate() {
+        let f = Fixture::new();
+        let original = f.reserve(0, "lost-reservation");
+        let (completion, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        f.state
+            .dispatch
+            .send(DispatchMessage::AgentCommand {
+                request: original.clone(),
+                owner: Some(f.owner.clone()),
+                completion,
+            })
+            .unwrap();
+        // The following request is processed after the committed but undelivered reservation.
+        let response = f.request(original.clone());
+        let Response::AgentOperation(AgentOperationResult::Reserved(r)) = &response else {
+            panic!("{response:?}");
+        };
+        assert_eq!(r.epoch, 1);
+        assert_eq!(f.request(original), response);
+        let mut changed = f.reserve(0, "lost-reservation");
+        if let Request::ReserveAgent(r) = &mut changed {
+            r.invocation = "different".into();
+        }
+        rejected(f.request(changed));
+        let auth = SupervisorAuth {
+            session: SessionId(900),
+            lease: r.lease.clone(),
+        };
+        assert_eq!(
+            f.command(
+                &auth,
+                "release",
+                AgentCommand::Release {
+                    expected_binding: None
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::Released)
+        );
+        rejected(f.request(f.reserve(0, "delayed-original-epoch")));
+        assert_eq!(f.session.summary().agent_epoch, 1);
+        assert!(matches!(
+            f.request(f.reserve(1, "next-invocation")),
+            Response::AgentOperation(AgentOperationResult::Reserved(AgentReservation {
+                epoch: 2,
+                ..
+            }))
+        ));
+        rejected(f.command(
+            &auth,
+            "release",
+            AgentCommand::Release {
+                expected_binding: None,
+            },
+        ));
+        assert_eq!(f.session.summary().agent_epoch, 2);
+    }
+    #[test]
+    fn agent_report_reservation_connection_loss_releases_unbound_slot() {
+        let f = Fixture::new();
+        let original = f.reserve(0, "orphan-reservation");
+        let (server, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let state = f.state.clone();
+        let handler = thread::spawn(move || connections::handle_connection(state, server));
+        exchange_preamble(&mut client).unwrap();
+        write_frame(
+            &mut client,
+            &ClientMessage {
+                request_id: 1,
+                request: original.clone(),
+            },
+        )
+        .unwrap();
+        let response = read_frame::<ServerMessage>(&mut client).unwrap();
+        assert!(matches!(
+            response,
+            ServerMessage::Response {
+                response: Response::AgentOperation(AgentOperationResult::Reserved(_)),
+                ..
+            }
+        ));
+        let (new_server, mut new_client) = UnixStream::pair().unwrap();
+        new_client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let state = f.state.clone();
+        let new_handler = thread::spawn(move || connections::handle_connection(state, new_server));
+        exchange_preamble(&mut new_client).unwrap();
+        write_frame(
+            &mut new_client,
+            &ClientMessage {
+                request_id: 1,
+                request: original.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut new_client).unwrap(),
+            response
+        );
+        drop(client);
+        handler.join().unwrap();
+        // Late close of the original socket must leave the reattached reservation live.
+        write_frame(
+            &mut new_client,
+            &ClientMessage {
+                request_id: 1,
+                request: original.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame::<ServerMessage>(&mut new_client).unwrap(),
+            response
+        );
+        drop(new_client);
+        new_handler.join().unwrap();
+        assert_eq!(
+            f.request(original),
+            Response::AgentOperation(AgentOperationResult::Released),
+            "lost reservation connection must release even before bind/Hello"
+        );
+        assert_eq!(f.session.summary().agent_epoch, 1);
+        assert!(matches!(
+            f.request(f.reserve(1, "replacement-reservation")),
+            Response::AgentOperation(AgentOperationResult::Reserved(AgentReservation {
+                epoch: 2,
+                ..
+            }))
+        ));
+    }
+    #[test]
+    fn agent_report_legacy_remains_available_until_binding() {
+        let f = Fixture::new();
+        let legacy = |activity| {
+            Request::AgentReport(AgentReport {
+                session: SessionId(900),
+                capability: [7; 32],
+                sequence: None,
+                update: AgentUpdate::Activity(activity),
+            })
+        };
+        assert_eq!(f.request(legacy(AgentActivity::Busy)), Response::Ok);
+        assert_eq!(
+            f.request(Request::AgentReport(AgentReport {
+                session: SessionId(900),
+                capability: [7; 32],
+                sequence: None,
+                update: AgentUpdate::Context(ovrcr_protocol::context::ContextUsageReport {
+                    source: ovrcr_protocol::context::ContextSource::Generic,
+                    model: None,
+                    conversation: None,
+                    used_tokens: Some(10),
+                    capacity_tokens: Some(100)
+                })
+            })),
+            Response::Ok
+        );
+        let context_before = f.session.summary().context_usage;
+        let auth = f.acquire();
+        assert_eq!(f.session.summary().context_usage, context_before);
+        assert_eq!(
+            f.session.summary().activity,
+            AgentActivity::Busy,
+            "reservation is not a new conversation binding"
+        );
+        assert_eq!(f.request(legacy(AgentActivity::WaitingInput)), Response::Ok);
+        let a = f.bind(&auth, None, "A", "bind");
+        assert!(
+            f.session.summary().context_usage.is_none(),
+            "new binding becomes the sole context authority"
+        );
+        rejected(f.request(legacy(AgentActivity::Idle)));
+        assert_eq!(
+            f.command(
+                &auth,
+                "release",
+                AgentCommand::Release {
+                    expected_binding: Some(a)
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::Released)
+        );
+        let sink = DashboardSink::new();
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        *f.state.dashboard.lock().unwrap() = Some(sink.clone());
+        *f.state.dashboard_slot.lock().unwrap() = Some(DashboardSlot {
+            sink: sink.clone(),
+            identity: Arc::new(()),
+            stream,
+            history: None,
+            next_history_id: 1,
+        });
+        assert_eq!(f.request(legacy(AgentActivity::WaitingInput)), Response::Ok);
+        assert_eq!(f.session.summary().activity, AgentActivity::WaitingInput);
+        assert!(sink.queue.lock().unwrap().messages.iter().any(|outbound| matches!(&outbound.message, ServerMessage::Event(ServerEvent::SessionChanged(summary)) if summary.activity == AgentActivity::WaitingInput)), "legacy takeover must publish even when the old legacy value matches");
+    }
 }

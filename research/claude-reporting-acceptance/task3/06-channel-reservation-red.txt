@@ -1,0 +1,29 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_owns_native_group -- --nocapture
+Revision: 8108941 + Task3 working tree
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpafNoYO/repo/.git/
+[main (root-commit) 810d671] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpafNoYO/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpafNoYO/server.sock
+
+thread 'agent_run_owns_native_group_and_restores_terminal_after_forwarded_term' (31115311) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "NATIVE_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "agent reporting unavailable; running native command\n\nrunning 1 test\n\nthread 'agent_run_native_helper' (31115616) panicked at tests/server_lifecycle.rs:7113:59:\nprivate invocation endpoint\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest agent_run_native_helper ... FAILED\n\nfailures:\n\nfailures:\n    agent_run_native_helper\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.00s\n\nWRAPPER_FINISHED=101" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... FAILED
+
+failures:
+
+failures:
+    agent_run_owns_native_group_and_restores_terminal_after_forwarded_term
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 2.87s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101

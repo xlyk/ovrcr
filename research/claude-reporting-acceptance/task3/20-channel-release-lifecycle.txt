@@ -1,0 +1,36 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_ -- --nocapture
+Revision: 32336e7 + P1 correction
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 4 tests
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpENgfdE/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8M2E66/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8E7OYY/repo/.git/
+[main (root-commit) 8d800d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8d800d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8d800d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8E7OYY/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8M2E66/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8E7OYY/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8M2E66/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpENgfdE/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpENgfdE/server.sock
+AGENT_OWNERSHIP native_pid=41954 native_pgid=41954 launcher_pid=41808 session_pgid=41799 private_endpoint_removed=true
+ovrcr server stopped
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+ovrcr server stopped
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 52 filtered out; finished in 1.58s
+Exit: 0

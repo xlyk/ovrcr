@@ -699,3 +699,130 @@ fn remove_project_reports_workspaces_remain() {
     );
     drop(fixture);
 }
+
+#[test]
+fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
+    use ovrcr::protocol::*;
+    use serde_json::json;
+    use std::os::unix::net::UnixListener;
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("usage.sock");
+    let measurement = |value| json!({"value":value,"source":"fixture","source_revision":null,"source_sequence":null,"freshness":"Uncertain"});
+    let mut agent = json!({
+        "binding":{"provider":"Claude","invocation":"invocation-a","conversation":"conversation-a","generation":1},
+        "activity":{"state":"Idle","quality":"Observed","turn":"prompt-a"},
+        "metrics":{
+            "sample":{
+                "model":"fixture-model",
+                "context":measurement(json!({"used_tokens":null,"capacity_tokens":100,"quality":"Observed"})),
+                "usage":measurement(json!({"scope":"Conversation","coverage":"Partial","input_tokens":12,"output_tokens":3,"cache_read_tokens":4,"cache_write_tokens":2,"reasoning_output_tokens":null})),
+                "cost":measurement(json!(null))
+            },
+            "received_unix_ms":4000,"context_received_unix_ms":1000,"usage_received_unix_ms":3000,"cost_received_unix_ms":2000
+        },
+        "health":{"state":"Unavailable","reason":"source_completion_unverified"},
+        "activity_revision":2,"metrics_revision":3,"health_revision":1
+    });
+    for scenario in 0..6 {
+        let case = scenario / 2;
+        let inventory = scenario % 2 == 1;
+        if case == 1 {
+            agent["metrics"]["sample"]["cost"]["value"] =
+                json!({"usd_ticks":0,"kind":"Estimated","scope":"Invocation"});
+        }
+        let expected = if case == 2 {
+            json!(null)
+        } else {
+            agent.clone()
+        };
+        let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
+            "id":7,"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
+        }]}]}]})).unwrap();
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        stream
+                            .set_write_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        exchange_preamble(&mut stream).unwrap();
+                        let message: ClientMessage = read_frame(&mut stream).unwrap();
+                        let response = if inventory {
+                            assert!(matches!(message.request, Request::Inspect));
+                            Response::Inventory {
+                                registry: ovrcr::config::Registry::default(),
+                                sessions: snapshot.projects[0].workspaces[0].sessions.clone(),
+                            }
+                        } else {
+                            assert!(matches!(message.request, Request::List));
+                            Response::Hierarchy(snapshot)
+                        };
+                        write_frame(
+                            &mut stream,
+                            &ServerMessage::Response {
+                                request_id: message.request_id,
+                                response,
+                            },
+                        )
+                        .unwrap();
+                        return;
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(if inventory {
+                vec!["--json", "terminal", "list"]
+            } else {
+                vec!["session", "usage", "7"]
+            })
+            .env("OVRCR_CONFIG", root.path().join("config.toml"))
+            .env("OVRCR_SOCKET", &socket)
+            .output()
+            .unwrap();
+        server.join().unwrap();
+        std::fs::remove_file(&socket).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let value = if inventory { &response[0] } else { &response };
+        assert_eq!(value[if inventory { "id" } else { "session" }], 7);
+        assert_eq!(value["agent"], expected);
+        if case < 2 {
+            assert_eq!(value["reporting_unavailable"], true);
+            let ages = &value["measurement_age_ms"];
+            assert_eq!(
+                ages["context"].as_u64().unwrap() - ages["usage"].as_u64().unwrap(),
+                2000
+            );
+            assert_eq!(
+                ages["cost"].as_u64().unwrap() - ages["usage"].as_u64().unwrap(),
+                1000
+            );
+            assert!(
+                value["agent"]["metrics"]["sample"]["context"]["value"]["used_tokens"].is_null()
+            );
+        } else {
+            assert!(value["reporting_unavailable"].is_null());
+            assert!(value["measurement_age_ms"].is_null());
+        }
+    }
+}

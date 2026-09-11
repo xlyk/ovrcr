@@ -27,6 +27,7 @@ use std::time::Duration;
 mod connections;
 mod dispatch;
 mod outbound;
+mod reporting_queue;
 mod startup;
 
 use connections::{
@@ -44,6 +45,10 @@ use outbound::{
     dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
 };
 pub use outbound::{DashboardOutbound, DashboardSink};
+#[cfg(feature = "acceptance-diagnostics")]
+pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
+#[cfg(feature = "acceptance-diagnostics")]
+pub use startup::run_server_with_diagnostics;
 pub use startup::{ServerPaths, prepare_socket_directory, run_server};
 use startup::{generate_hook_capability, validate_bound_socket, wake_accept};
 
@@ -88,6 +93,81 @@ pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
 #[cfg(test)]
+use reporting_queue::reporting_channel;
+#[cfg(feature = "acceptance-diagnostics")]
+pub use reporting_queue::{ReportingQueueMonitor, ReportingQueueSnapshot};
+pub(crate) use reporting_queue::{ReportingReceiver, ReportingSender};
+
+fn event_weight(event: &SessionEvent) -> usize {
+    match event {
+        SessionEvent::Output { bytes, .. } => bytes.len(),
+        SessionEvent::Exited { phase, .. } => {
+            bincode::serde::encode_to_vec(phase, bincode::config::standard())
+                .map_or(0, |bytes| bytes.len())
+        }
+    }
+}
+
+fn dispatch_weight(message: &DispatchMessage) -> usize {
+    match message {
+        DispatchMessage::AgentReport { report, .. } => {
+            bincode::serde::encode_to_vec(report, bincode::config::standard())
+                .map_or(0, |v| v.len())
+        }
+        DispatchMessage::AgentCommand { request, .. } => {
+            bincode::serde::encode_to_vec(request, bincode::config::standard())
+                .map_or(0, |bytes| bytes.len())
+        }
+        DispatchMessage::SetView { view, .. } => {
+            bincode::serde::encode_to_vec(view, bincode::config::standard())
+                .map_or(0, |bytes| bytes.len())
+        }
+        DispatchMessage::Session(event) => event_weight(event),
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+fn event_channel() -> (
+    ReportingSender<SessionEvent>,
+    ReportingReceiver<SessionEvent>,
+) {
+    reporting_channel(RAW_EVENT_QUEUE_CAPACITY, event_weight)
+}
+
+#[cfg(test)]
+fn dispatch_channel() -> (
+    ReportingSender<DispatchMessage>,
+    ReportingReceiver<DispatchMessage>,
+) {
+    reporting_channel(RAW_DISPATCH_QUEUE_CAPACITY, dispatch_weight)
+}
+
+fn untracked_event_channel() -> (
+    ReportingSender<SessionEvent>,
+    ReportingReceiver<SessionEvent>,
+) {
+    let (sender, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    (sender.into(), receiver.into())
+}
+
+fn untracked_dispatch_channel() -> (
+    ReportingSender<DispatchMessage>,
+    ReportingReceiver<DispatchMessage>,
+) {
+    let (sender, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    (sender.into(), receiver.into())
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[derive(Clone, Default)]
+pub struct ServerQueueDiagnostics {
+    pub raw_events: ReportingQueueMonitor,
+    pub dispatcher: ReportingQueueMonitor,
+    pub dashboard: DashboardQueueMonitor,
+}
+
+#[cfg(test)]
 type ResizeHook = Arc<dyn Fn(&Session, TerminalSize) -> Result<()> + Send + Sync>;
 
 pub struct ServerState {
@@ -100,11 +180,11 @@ pub struct ServerState {
     pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
-    pub dispatch: SyncSender<DispatchMessage>,
+    pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
     pub dashboard_size: Mutex<Option<DashboardGeometry>>,
-    pub events: Mutex<Option<SyncSender<SessionEvent>>>,
+    pub events: Mutex<Option<ReportingSender<SessionEvent>>>,
     #[cfg(test)]
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
     #[cfg(test)]
@@ -115,6 +195,8 @@ pub struct ServerState {
     #[cfg(test)]
     pub(super) before_dashboard_write_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     dashboard_slot: Mutex<Option<DashboardSlot>>,
+    #[cfg(feature = "acceptance-diagnostics")]
+    dashboard_monitor: Option<DashboardQueueMonitor>,
 }
 
 pub struct DashboardGeometry {
@@ -409,14 +491,16 @@ impl ServerState {
             dashboard: Mutex::new(None),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch,
+            dispatch: dispatch.into(),
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             dashboard_size: Mutex::new(None),
-            events: Mutex::new(Some(events)),
+            events: Mutex::new(Some(events.into())),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
+            #[cfg(feature = "acceptance-diagnostics")]
+            dashboard_monitor: None,
             dashboard_slot: Mutex::new(None),
         })
     }

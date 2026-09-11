@@ -1,0 +1,19 @@
+{
+  "accepted_points": 6,
+  "accepted_requests": 8,
+  "empty_allowlisted_requests": 6,
+  "ignored_metrics": 7,
+  "ignored_non_sum_metrics": 0,
+  "last_request_unix_ns": 1789081808406893000,
+  "rejected_bad_path": 0,
+  "rejected_capacity_points": 0,
+  "rejected_capacity_requests": 0,
+  "rejected_malformed_json": 0,
+  "rejected_missing_length": 0,
+  "rejected_oversized": 0,
+  "rejected_points": 0,
+  "rejected_query_source_values": {},
+  "rejected_schema": 0,
+  "rejected_token_type_values": {},
+  "requests_total": 8
+}

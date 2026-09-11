@@ -1,0 +1,115 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-379d91e394a34aa8)
+
+running 1 test
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpEmgTdd/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpEmgTdd/server.sock
+test fifty_session_reporting_capacity has been running for over 60 seconds
+collector=3 pid=40882 reaped cancel=Ok(())
+collector=4 pid=40883 reaped cancel=Ok(())
+collector=2 pid=40881 reaped cancel=Ok(())
+collector=33 pid=40912 reaped cancel=Ok(())
+collector=29 pid=40908 reaped cancel=Ok(())
+collector=49 pid=40928 reaped cancel=Ok(())
+collector=18 pid=40897 reaped cancel=Ok(())
+collector=43 pid=40922 reaped cancel=Ok(())
+collector=6 pid=40885 reaped cancel=Ok(())
+collector=39 pid=40918 reaped cancel=Ok(())
+collector=1 pid=40880 reaped cancel=Ok(())
+collector=26 pid=40905 reaped cancel=Ok(())
+collector=45 pid=40924 reaped cancel=Ok(())
+collector=7 pid=40886 reaped cancel=Ok(())
+collector=19 pid=40898 reaped cancel=Ok(())
+collector=38 pid=40917 reaped cancel=Ok(())
+collector=5 pid=40884 reaped cancel=Ok(())
+collector=12 pid=40891 reaped cancel=Ok(())
+collector=14 pid=40893 reaped cancel=Ok(())
+collector=34 pid=40913 reaped cancel=Ok(())
+collector=0 pid=40879 reaped cancel=Ok(())
+collector=15 pid=40894 reaped cancel=Ok(())
+collector=9 pid=40888 reaped cancel=Ok(())
+collector=32 pid=40911 reaped cancel=Ok(())
+session=0 reports=600 stale_rejected=60 max_schedule_late_us=13023
+collector=25 pid=40904 reaped cancel=Ok(())
+collector=41 pid=40920 reaped cancel=Ok(())
+collector=11 pid=40890 reaped cancel=Ok(())
+collector=10 pid=40889 reaped cancel=Ok(())
+session=1 reports=600 stale_rejected=60 max_schedule_late_us=12629
+collector=22 pid=40901 reaped cancel=Ok(())
+collector=13 pid=40892 reaped cancel=Ok(())
+collector=35 pid=40914 reaped cancel=Ok(())
+collector=28 pid=40907 reaped cancel=Ok(())
+collector=23 pid=40902 reaped cancel=Ok(())
+session=2 reports=600 stale_rejected=60 max_schedule_late_us=12373
+session=3 reports=600 stale_rejected=60 max_schedule_late_us=12978
+session=4 reports=600 stale_rejected=60 max_schedule_late_us=12783
+collector=27 pid=40906 reaped cancel=Ok(())
+collector=20 pid=40899 reaped cancel=Ok(())
+collector=37 pid=40916 reaped cancel=Ok(())
+collector=47 pid=40926 reaped cancel=Ok(())
+session=5 reports=600 stale_rejected=60 max_schedule_late_us=12865
+collector=44 pid=40923 reaped cancel=Ok(())
+collector=30 pid=40909 reaped cancel=Ok(())
+session=6 reports=600 stale_rejected=60 max_schedule_late_us=12167
+session=7 reports=600 stale_rejected=60 max_schedule_late_us=13105
+collector=48 pid=40927 reaped cancel=Ok(())
+collector=24 pid=40903 reaped cancel=Ok(())
+collector=16 pid=40895 reaped cancel=Ok(())
+collector=40 pid=40919 reaped cancel=Ok(())
+collector=42 pid=40921 reaped cancel=Ok(())
+collector=46 pid=40925 reaped cancel=Ok(())
+collector=31 pid=40910 reaped cancel=Ok(())
+collector=17 pid=40896 reaped cancel=Ok(())
+collector=21 pid=40900 reaped cancel=Ok(())
+collector=36 pid=40915 reaped cancel=Ok(())
+collector=8 pid=40887 reaped cancel=Ok(())
+session=8 reports=600 stale_rejected=60 max_schedule_late_us=12814
+session=9 reports=600 stale_rejected=60 max_schedule_late_us=13027
+session=10 reports=600 stale_rejected=60 max_schedule_late_us=12929
+session=11 reports=600 stale_rejected=60 max_schedule_late_us=12660
+session=12 reports=600 stale_rejected=60 max_schedule_late_us=12907
+session=13 reports=600 stale_rejected=60 max_schedule_late_us=12962
+session=14 reports=600 stale_rejected=60 max_schedule_late_us=12960
+session=15 reports=600 stale_rejected=60 max_schedule_late_us=12900
+session=16 reports=600 stale_rejected=60 max_schedule_late_us=13077
+session=17 reports=600 stale_rejected=60 max_schedule_late_us=12891
+session=18 reports=600 stale_rejected=60 max_schedule_late_us=12690
+session=19 reports=600 stale_rejected=60 max_schedule_late_us=12840
+session=20 reports=600 stale_rejected=60 max_schedule_late_us=12423
+session=21 reports=600 stale_rejected=60 max_schedule_late_us=12899
+session=22 reports=600 stale_rejected=60 max_schedule_late_us=12457
+session=23 reports=600 stale_rejected=60 max_schedule_late_us=12960
+session=24 reports=600 stale_rejected=60 max_schedule_late_us=13136
+session=25 reports=600 stale_rejected=60 max_schedule_late_us=13087
+session=26 reports=600 stale_rejected=60 max_schedule_late_us=12525
+session=27 reports=600 stale_rejected=60 max_schedule_late_us=12457
+session=28 reports=600 stale_rejected=60 max_schedule_late_us=12931
+session=29 reports=600 stale_rejected=60 max_schedule_late_us=13033
+session=30 reports=600 stale_rejected=60 max_schedule_late_us=12845
+session=31 reports=600 stale_rejected=60 max_schedule_late_us=12223
+session=32 reports=600 stale_rejected=60 max_schedule_late_us=12872
+session=33 reports=600 stale_rejected=60 max_schedule_late_us=13120
+session=34 reports=600 stale_rejected=60 max_schedule_late_us=12813
+session=35 reports=600 stale_rejected=60 max_schedule_late_us=12906
+session=36 reports=600 stale_rejected=60 max_schedule_late_us=13056
+session=37 reports=600 stale_rejected=60 max_schedule_late_us=12916
+session=38 reports=600 stale_rejected=60 max_schedule_late_us=12996
+session=39 reports=600 stale_rejected=60 max_schedule_late_us=12752
+session=40 reports=600 stale_rejected=60 max_schedule_late_us=12741
+session=41 reports=600 stale_rejected=60 max_schedule_late_us=12983
+session=42 reports=600 stale_rejected=60 max_schedule_late_us=12994
+session=43 reports=600 stale_rejected=60 max_schedule_late_us=12867
+session=44 reports=600 stale_rejected=60 max_schedule_late_us=12927
+session=45 reports=600 stale_rejected=60 max_schedule_late_us=12686
+session=46 reports=600 stale_rejected=60 max_schedule_late_us=13050
+session=47 reports=600 stale_rejected=60 max_schedule_late_us=12085
+session=48 reports=600 stale_rejected=60 max_schedule_late_us=13020
+session=49 reports=600 stale_rejected=60 max_schedule_late_us=12190
+reports=30000 seconds=60 collectors=50 failed_collectors=5 controls=2078 p99_us=4627 max_us=6727 baseline_kib=127216 peak_kib=1551408 growth_kib=1424192
+dashboard_frames=30216 dashboard_output_frames=61
+ovrcr server stopped
+all 50 owned PTY PIDs absent after server shutdown
+test fifty_session_reporting_capacity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 67.30s

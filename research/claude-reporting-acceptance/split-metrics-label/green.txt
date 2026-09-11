@@ -1,0 +1,20 @@
+Source: same uncommitted source with width-aware metrics formatting
+Command: rtk proxy cargo test -p ovrcr-tui provider_dashboard_preserves_quality_unknowns_and_component_age -- --nocapture
+Exit: 0
+
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.22s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.02s
+
+Command: rtk proxy cargo clippy -p ovrcr-tui --lib -- -D warnings
+Exit: 0
+
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.98s
+
+After rustfmt, `cargo fmt --all -- --check` and `git diff --check` exited zero.

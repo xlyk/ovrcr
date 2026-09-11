@@ -1,0 +1,11 @@
+Command: rtk proxy cargo fmt --all -- --check
+fmt_exit=0
+Command: rtk proxy cargo clippy -p ovrcr-tui --lib -- -D warnings
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.48s
+clippy_exit=0
+
+Evidence note: trailing whitespace from the raw assertion output was normalized in
+red-uncertain.txt, red-uncertain-attempt2.txt, and failed-tok-only.txt; visible
+content was unchanged. The earlier scoped git diff --check did not inspect these
+then-untracked evidence files.

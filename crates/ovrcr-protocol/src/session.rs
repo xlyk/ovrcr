@@ -40,5 +40,7 @@ pub struct SessionSummary {
     pub started_unix_ms: u64,
     pub phase: SessionPhase,
     pub activity: AgentActivity,
+    pub agent: Option<crate::AgentSnapshot>,
+    pub agent_epoch: u64,
     pub context_usage: Option<ContextUsageSnapshot>,
 }

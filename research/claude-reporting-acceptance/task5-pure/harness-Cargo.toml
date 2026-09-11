@@ -1,0 +1,11 @@
+[package]
+name="ovrcr-task5-pure"
+version="0.0.0"
+edition="2024"
+[lib]
+path="/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/src/report/claude_metrics.rs"
+[dependencies]
+anyhow="1"
+serde={version="1",features=["derive"]}
+serde_json={version="1",features=["raw_value"]}
+ovrcr-protocol={path="/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol"}

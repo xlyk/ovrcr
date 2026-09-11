@@ -1,0 +1,5 @@
+session=1 pid=Some(9760) phase=Running epoch=0 agent=None
+session=3 pid=None phase=Exited { code: Some(0), signal: None } epoch=1 agent=Some(AgentSnapshot { binding: AgentBinding { provider: Claude, invocation: "invocation-A", conversation: "conversation-A", generation: 1 }, activity: None, metrics: None, health: HealthSample { state: Unavailable, reason: Some("unfinalized_release") }, activity_revision: 0, metrics_revision: 0, health_revision: 1 })
+session=2 pid=None phase=Exited { code: Some(1), signal: None } epoch=1 agent=None
+
+exit=0

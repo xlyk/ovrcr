@@ -1,0 +1,160 @@
+{
+  "pids": [
+    {
+      "id": 15954,
+      "state": "absent"
+    },
+    {
+      "id": 15958,
+      "state": "absent"
+    },
+    {
+      "id": 17930,
+      "state": "absent"
+    },
+    {
+      "id": 33133,
+      "state": "absent"
+    },
+    {
+      "id": 92669,
+      "state": "absent"
+    },
+    {
+      "id": 92710,
+      "state": "absent"
+    },
+    {
+      "id": 92753,
+      "state": "absent"
+    },
+    {
+      "id": 92779,
+      "state": "absent"
+    },
+    {
+      "id": 92786,
+      "state": "absent"
+    },
+    {
+      "id": 94933,
+      "state": "absent"
+    },
+    {
+      "id": 94967,
+      "state": "absent"
+    },
+    {
+      "id": 95130,
+      "state": "absent"
+    },
+    {
+      "id": 95162,
+      "state": "absent"
+    },
+    {
+      "id": 95204,
+      "state": "absent"
+    },
+    {
+      "id": 95253,
+      "state": "absent"
+    },
+    {
+      "id": 95257,
+      "state": "absent"
+    },
+    {
+      "id": 95265,
+      "state": "absent"
+    },
+    {
+      "id": 95309,
+      "state": "absent"
+    },
+    {
+      "id": 95317,
+      "state": "absent"
+    },
+    {
+      "id": 95327,
+      "state": "absent"
+    },
+    {
+      "id": 95366,
+      "state": "absent"
+    },
+    {
+      "id": 95414,
+      "state": "absent"
+    }
+  ],
+  "pgids": [
+    {
+      "id": 15954,
+      "state": "absent"
+    },
+    {
+      "id": 15958,
+      "state": "absent"
+    },
+    {
+      "id": 17930,
+      "state": "absent"
+    },
+    {
+      "id": 33133,
+      "state": "absent"
+    },
+    {
+      "id": 92669,
+      "state": "absent"
+    },
+    {
+      "id": 95130,
+      "state": "absent"
+    },
+    {
+      "id": 95162,
+      "state": "absent"
+    },
+    {
+      "id": 95204,
+      "state": "absent"
+    },
+    {
+      "id": 95253,
+      "state": "absent"
+    },
+    {
+      "id": 95257,
+      "state": "absent"
+    },
+    {
+      "id": 95265,
+      "state": "absent"
+    },
+    {
+      "id": 95309,
+      "state": "absent"
+    },
+    {
+      "id": 95317,
+      "state": "absent"
+    },
+    {
+      "id": 95327,
+      "state": "absent"
+    },
+    {
+      "id": 95366,
+      "state": "absent"
+    },
+    {
+      "id": 95414,
+      "state": "absent"
+    }
+  ],
+  "directory_exists": false,
+  "socket_exists": false
+}

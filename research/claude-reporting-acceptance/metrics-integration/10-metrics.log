@@ -1,0 +1,49 @@
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.86s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 4 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpt1kqZ8/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVnrmJI/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7VqNOp/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZdleJ7/repo/.git/
+[main (root-commit) 66b4fff] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 66b4fff] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 66b4fff] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 66b4fff] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpt1kqZ8/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVnrmJI/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVnrmJI/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpt1kqZ8/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZdleJ7/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7VqNOp/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7VqNOp/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZdleJ7/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+ADMISSION_PROXY request=status
+ovrcr server stopped
+test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+ovrcr server stopped
+test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+ovrcr server stopped
+test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 2.76s

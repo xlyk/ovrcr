@@ -1,9 +1,48 @@
-# Agent activity and context reporting
+# Agent reporting
 
 OVRCR does not guess what an agent is doing. A provider hook reports activity and
 context occupancy explicitly, and the dashboard shows the last accepted report.
 Terminal output, elapsed silence, keyboard input, and process liveness never imply
 that an agent is busy or idle.
+
+## Managed Claude Code
+
+For the supported version, setup instructions, and current acceptance limits, see
+[Claude Code setup](claude-code-setup.md) and the
+[support matrix](agent-reporting-support.md).
+
+The supervised integration binds one initial Claude Code conversation to one
+invocation. Activity, current context, cumulative usage, cost, and reporting health
+are separate observations. `Stop` means observed idle, not confirmed completion.
+A matching `permission_prompt` notification means observed waiting for input;
+`PermissionRequest` alone does not establish that state.
+
+Usage covers recognized records from the root transcript and remains **partial**,
+even after EOF, Stop, or process exit. It does not certify all auxiliary work or
+billing. Input tokens already include cache-read and cache-write subsets; do not
+add those subsets again. Cost is independently scoped, source-reported estimated
+conversation cost. Missing values are unknown, while explicit zero remains zero.
+Component ages are independent. Native source freshness is uncertain; receiving a
+callback does not prove it is the newest provider sample.
+
+The dashboard keeps the full `estimate` label when the metrics row fits. In a
+narrow or split pane it uses `est` so scoped cost and both component freshness
+labels remain visible. If that row is still too wide, it also shortens `tokens`
+to `tok` and removes one separator space while preserving the scopes, values,
+coverage, and freshness labels.
+
+Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
+inventory. Both retain the raw binding, activity, metrics, and source health.
+Reporting transport can be connected while usage or cost is unknown. A conversation
+switch such as `/clear` makes the old binding unavailable; it does not create a
+new binding automatically. Start a fresh supervised invocation to track another
+conversation.
+
+## Legacy unbound reporting
+
+The commands below retain the earlier PTY-scoped reporting contract for sessions
+without a supervised agent binding. Their event mappings and freshness rules are
+not the managed Claude contract above.
 
 Every managed session receives `OVRCR_HOOK_SOCKET`, `OVRCR_SESSION_ID`, and
 `OVRCR_HOOK_TOKEN` in its child environment. The `report` commands require those
@@ -39,7 +78,7 @@ mix, and sequence counters cannot restart between turns. This provides ordering
 checks, without causal ordering, exactly-once delivery, health claims, retries, or
 an implicit timeout meaning for provider work.
 
-### Claude Code activity hooks
+### Legacy Claude Code activity hooks
 
 Claude Code command hooks can translate supported hook events into activity
 reports. Add these entries manually to the existing `~/.claude/settings.json`,
@@ -151,7 +190,7 @@ This always emits bare JSON and does not start a server:
 }
 ```
 
-### Claude Code status line
+### Legacy Claude Code status line
 
 Claude Code can supply status-line context. Apply this manually in a disposable
 Claude configuration and preserve any existing status-line setting.

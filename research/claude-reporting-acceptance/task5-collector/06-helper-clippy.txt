@@ -1,0 +1,32 @@
+Command: rtk proxy cargo clippy -p ovrcr --all-targets -- -D warnings
+Uncommitted staged helper and concurrent integration
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+error: this `if` statement can be collapsed
+    --> tests/server_lifecycle.rs:7749:33
+     |
+7749 | / ...   if let Request::AgentStatus { operation, .. } = &message.request {
+7750 | | ...       if final_operation.lock().unwrap().as_ref() == Some(operation)
+7751 | | ...           && matches!(&response, ServerMessage::Response { response: Response::AgentOperation(ovrcr::protocol::AgentOperatio...
+7752 | | ...           final_status_verified.store(true, Ordering::SeqCst);
+7753 | | ...       }
+7754 | | ...   }
+     | |_______^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+     = note: `-D clippy::collapsible-if` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+     |
+7749 ~                                 if let Request::AgentStatus { operation, .. } = &message.request
+7750 ~                                     && final_operation.lock().unwrap().as_ref() == Some(operation)
+7751 |                                         && matches!(&response, ServerMessage::Response { response: Response::AgentOperation(ovrcr::protocol::AgentOperationResult::Released), .. }) {
+7752 |                                         final_status_verified.store(true, Ordering::SeqCst);
+7753 ~                                     }
+     |
+
+error: could not compile `ovrcr` (test "server_lifecycle") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+
+Exit status: 101

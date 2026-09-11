@@ -1,0 +1,260 @@
+[
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "3f418f1a-412d-4ff4-85b5-60c04eafd17d",
+    "requestId": "req_011Ceve5SfrnJhqTEXwuYBbT",
+    "message_id": "msg_011Ceve5T8tnGa2UH8SC7caz",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 10823,
+      "cache_read_input_tokens": 30408,
+      "output_tokens": 18,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 10823,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 18,
+          "cache_read_input_tokens": 30408,
+          "cache_creation_input_tokens": 10823,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 10823
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  },
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "99611402-42e4-4931-8e0a-c8182fd73bf2",
+    "requestId": "req_011CeveabguKWbR13D1rMooE",
+    "message_id": "msg_011CeveacFtAme195KMMyYQ5",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 441,
+      "cache_read_input_tokens": 41231,
+      "output_tokens": 25,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 441,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 25,
+          "cache_read_input_tokens": 41231,
+          "cache_creation_input_tokens": 441,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 441
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  },
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "bbd8bd2c-7b0c-436f-bea0-1a412588e722",
+    "requestId": "req_011CevedUtTT5aZXVnut1pbd",
+    "message_id": "msg_011CevedVPDaEPzXjn83idcm",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 144,
+      "cache_read_input_tokens": 41697,
+      "output_tokens": 210,
+      "output_tokens_details": {
+        "thinking_tokens": 64
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 144,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 210,
+          "cache_read_input_tokens": 41697,
+          "cache_creation_input_tokens": 144,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 144
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  },
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "f13774bd-91f2-44b0-9b75-df925b6f7abf",
+    "requestId": "req_011CevedUtTT5aZXVnut1pbd",
+    "message_id": "msg_011CevedVPDaEPzXjn83idcm",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 144,
+      "cache_read_input_tokens": 41697,
+      "output_tokens": 210,
+      "output_tokens_details": {
+        "thinking_tokens": 64
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 144,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 210,
+          "cache_read_input_tokens": 41697,
+          "cache_creation_input_tokens": 144,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 144
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  },
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "cb7203f3-5b73-4d29-bb8b-6fa3d552ccdd",
+    "requestId": "req_011CevedjH8yKMX2NVC38peE",
+    "message_id": "msg_011CevedjkvE4j9AgTn2juJ7",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 677,
+      "cache_read_input_tokens": 41841,
+      "output_tokens": 44,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 677,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 44,
+          "cache_read_input_tokens": 41841,
+          "cache_creation_input_tokens": 677,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 677
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  },
+  {
+    "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2euS7D/provider-version/projects/-private-var-folders-j9-h6rlffxd1r794s9g9ps-52t40000gn-T-ovrcr-gui-2euS7D-workspaces-consigint-auth-handoff/2140c13e-36a9-4f89-b219-39bdb01aa94d.jsonl",
+    "device": 16777234,
+    "inode": 162154954,
+    "sessionId": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "uuid": "d37c48e6-122e-4306-95ef-3205c9d43715",
+    "requestId": "req_011CevedqVwXA9REwGQtHj6h",
+    "message_id": "msg_011Cevedr2wNf7Jw1xKQnNA6",
+    "isSidechain": false,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 653,
+      "cache_read_input_tokens": 42518,
+      "output_tokens": 77,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 653,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "not_available",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 77,
+          "cache_read_input_tokens": 42518,
+          "cache_creation_input_tokens": 653,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 653
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  }
+]

@@ -1,13 +1,14 @@
 use super::*;
+use crate::server::ReportingSender;
 use std::io::{self, Read};
-use std::sync::{Arc, mpsc::SyncSender};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 pub(super) fn read_pty(
     mut reader: Box<dyn Read + Send>,
     session: Arc<Session>,
-    events: SyncSender<SessionEvent>,
+    events: ReportingSender<SessionEvent>,
 ) {
     let mut buffer = [0_u8; 8192];
     loop {
@@ -37,7 +38,7 @@ pub(super) fn read_pty(
 pub(super) fn wait_for_child(
     child: &mut (dyn portable_pty::Child + Send + Sync),
     session: Arc<Session>,
-    events: SyncSender<SessionEvent>,
+    events: ReportingSender<SessionEvent>,
 ) {
     let phase = match child.wait() {
         Ok(status) => SessionPhase::Exited {

@@ -54,6 +54,8 @@ fn dashboard_fixture() -> Dashboard {
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
+        agent: None,
+        agent_epoch: 0,
     };
     dashboard.hierarchy = HierarchySnapshot {
         projects: vec![

@@ -1,0 +1,156 @@
+[
+  {
+    "case": "02-seed-response",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 1,
+    "reference": {
+      "input_tokens": 41233,
+      "output_tokens": 18,
+      "cache_read_tokens": 30408,
+      "cache_write_tokens": 10823,
+      "reasoning_output_tokens": 0
+    },
+    "actual": {
+      "cache_read_tokens": 30408,
+      "cache_write_tokens": 10823,
+      "coverage": "Partial",
+      "input_tokens": 41233,
+      "output_tokens": 18,
+      "reasoning_output_tokens": 0,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "06-long-before-input",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 1,
+    "reference": {
+      "input_tokens": 41233,
+      "output_tokens": 18,
+      "cache_read_tokens": 30408,
+      "cache_write_tokens": 10823,
+      "reasoning_output_tokens": 0
+    },
+    "actual": {
+      "cache_read_tokens": 30408,
+      "cache_write_tokens": 10823,
+      "coverage": "Partial",
+      "input_tokens": 41233,
+      "output_tokens": 18,
+      "reasoning_output_tokens": 0,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "07-long-response",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 2,
+    "reference": {
+      "input_tokens": 82907,
+      "output_tokens": 43,
+      "cache_read_tokens": 71639,
+      "cache_write_tokens": 11264,
+      "reasoning_output_tokens": 0
+    },
+    "actual": {
+      "cache_read_tokens": 71639,
+      "cache_write_tokens": 11264,
+      "coverage": "Partial",
+      "input_tokens": 82907,
+      "output_tokens": 43,
+      "reasoning_output_tokens": 0,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "08-child-api",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 5,
+    "reference": {
+      "input_tokens": 210443,
+      "output_tokens": 374,
+      "cache_read_tokens": 197695,
+      "cache_write_tokens": 12738,
+      "reasoning_output_tokens": 64
+    },
+    "actual": {
+      "cache_read_tokens": 197695,
+      "cache_write_tokens": 12738,
+      "coverage": "Partial",
+      "input_tokens": 210443,
+      "output_tokens": 374,
+      "reasoning_output_tokens": 64,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "10-short-before-input",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 5,
+    "reference": {
+      "input_tokens": 210443,
+      "output_tokens": 374,
+      "cache_read_tokens": 197695,
+      "cache_write_tokens": 12738,
+      "reasoning_output_tokens": 64
+    },
+    "actual": {
+      "cache_read_tokens": 197695,
+      "cache_write_tokens": 12738,
+      "coverage": "Partial",
+      "input_tokens": 210443,
+      "output_tokens": 374,
+      "reasoning_output_tokens": 64,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "11-short-response",
+    "conversation": "2140c13e-36a9-4f89-b219-39bdb01aa94d",
+    "distinct_root_requests": 6,
+    "reference": {
+      "input_tokens": 253851,
+      "output_tokens": 400,
+      "cache_read_tokens": 240943,
+      "cache_write_tokens": 12896,
+      "reasoning_output_tokens": 64
+    },
+    "actual": {
+      "cache_read_tokens": 240943,
+      "cache_write_tokens": 12896,
+      "coverage": "Partial",
+      "input_tokens": 253851,
+      "output_tokens": 400,
+      "reasoning_output_tokens": 64,
+      "scope": "Conversation"
+    },
+    "matches": true
+  },
+  {
+    "case": "13-child-isolation",
+    "conversation": "99f110e5-9dfd-4101-b52c-56d0f9c7098c",
+    "distinct_root_requests": 3,
+    "reference": {
+      "input_tokens": 144784,
+      "output_tokens": 709,
+      "cache_read_tokens": 131998,
+      "cache_write_tokens": 12780,
+      "reasoning_output_tokens": 471
+    },
+    "actual": {
+      "cache_read_tokens": 131998,
+      "cache_write_tokens": 12780,
+      "coverage": "Partial",
+      "input_tokens": 144784,
+      "output_tokens": 709,
+      "reasoning_output_tokens": 471,
+      "scope": "Conversation"
+    },
+    "matches": true
+  }
+]

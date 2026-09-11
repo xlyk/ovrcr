@@ -1,0 +1,22 @@
+Command: cargo test -p ovrcr --lib initial_admission_probe_cleans -- --nocapture
+Revision: de8cd87 + review regressions
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.58s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-ec23741c41dca536)
+
+running 1 test
+
+thread 'report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit' (31589516) panicked at src/report/admission.rs:528:13:
+version probe left its descendant after leader exit 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... FAILED
+
+failures:
+
+failures:
+    report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.39s
+
+error: test failed, to rerun pass `-p ovrcr --lib`
+Exit: 101

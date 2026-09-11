@@ -1,0 +1,29 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_owns_native_group -- --nocapture
+Revision: 8108941 + Task3 working tree
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzpO3M9/repo/.git/
+[main (root-commit) ad36a7a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzpO3M9/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzpO3M9/server.sock
+
+thread 'agent_run_owns_native_group_and_restores_terminal_after_forwarded_term' (31142420) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "NATIVE_INPUT=after-continue"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "agent admission unavailable; running native command\n\nrunning 1 test\nNATIVE_READY\n^CNATIVE_INTERRUPTS=1\nafter-interrupt\nNATIVE_INPUT=after-interrupt\n^Z\nthread 'agent_run_native_helper' (31143169) panicked at tests/server_lifecycle.rs:7136:17:\nassertion `left != right` failed: native modes must survive job-control stop\n  left: 0\n right: 0\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest agent_run_native_helper ... FAILED\n\nfailures:\n\nfailures:\n    agent_run_native_helper\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.05s\n\nWRAPPER_FINISHED=101" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... FAILED
+
+failures:
+
+failures:
+    agent_run_owns_native_group_and_restores_terminal_after_forwarded_term
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 3.47s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101

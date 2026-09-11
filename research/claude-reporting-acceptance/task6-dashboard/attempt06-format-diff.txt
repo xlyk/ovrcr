@@ -1,0 +1,5 @@
+Command: rtk proxy rustfmt --edition 2024 --check crates/ovrcr-tui/src/dashboard/render.rs crates/ovrcr-tui/src/dashboard/tests.rs
+Exit: 0
+
+Command: rtk proxy git diff --check -- crates/ovrcr-tui
+Exit: 0

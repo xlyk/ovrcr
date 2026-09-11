@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 8m  agent waiting observed
+  ▼ auth-handoff                       │tokens conv partial 565090 stale  cost conv estimate $0.39 stale
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 89531  elapsed: 8m  agent waiting observed
+		5 text (settable)   ▼ auth-handoff                       │tokens conv partial 565090 stale  cost conv estimate $0.39 stale
+		6 text (settable)   - local                              │
+		7 text (settable)      ├ terminal                        │
+		8 text (settable)      └ run 13m  ctx —                  │  Read 1 file, ran 1 shell command
+		9 text (settable)   - review auth handoff                │  ⎿  Interrupted · What should Claude do instead?
+		10 text (settable)      ├ grok / grok-4.6                 │
+		11 text (settable)      └ run 13m  ctx —                  │✻ Cogitated for 2s · done 11:23 AM
+		12 text (settable)     claude-native-ready                │
+		13 text (settable)      ├ python3 unavailable             │❯ Reply with exactly OVRCR_BEFORE_STOP. Do not use tools unless a hook asks you to continue.
+		14 text (settable)      └ run 10m  ctx —~ uncertain       │
+		15 text (settable)   ? claude-acceptance                  │⏺ OVRCR_BEFORE_STOP
+		16 text (settable)      ├ python3 waiting observed        │
+		17 text (settable)      └ run 8m  ctx 4%~ uncertain       │⏺ Ran 1 stop hook
+		18 text (settable)                                        │  ⎿  Stop hook error: Continue this acceptance turn: read approval-fixture.txt, then reply exactly OVRCR_CONTINUED_OK.
+		19 text (settable)   ▼ worktree-lifecycle                 │  Do not write files.
+		20 text (settable)   - local                              │
+		21 text (settable)      ├ terminal                        │  Read 1 file
+		22 text (settable)      └ run 13m  ctx —                  │
+		23 text (settable)   - implement lifecycle cleanup        │⏺ OVRCR_CONTINUED_OK
+		24 text (settable)      ├ claude / sonnet-4               │
+		25 text (settable)      └ run 13m  ctx —                  │✻ Cooked for 3s · done 11:24 AM
+		26 text (settable)   - review websocket shutdown          │
+		27 text (settable)      ├ codex / gpt-5.4                 │❯ /compact
+		28 text (settable)      └ run 13m  ctx —                  │  ⎿  Compacted (ctrl+o to see full summary)
+		29 text (settable)   - plan snapshot restore              │  ⎿  Read approval-fixture.txt (1 lines)
+		30 text (settable)      ├ pi / grok-4.6                   │
+		31 text (settable)      └ run 13m  ctx —                  │❯ Use one subagent to read approval-fixture.txt and report OVRCR_CHILD_OK. Do not modify anything. After it returns, reply
+		32 text (settable)                                        │  exactly OVRCR_ROOT_AFTER_CHILD_OK.
+		33 text (settable) ▼ 󰉋 spacelift-agent                    │
+		34 text (settable)   ▼ pipeline-progress-v2               │⏺ Agent(Read fixture file and report token)
+		35 text (settable)   - local                              │  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+		36 text (settable)      ├ terminal                        │
+		37 text (settable)      └ run 13m  ctx —                  │⏺ The subagent is running; I'll reply once it completes.
+		38 text (settable)   - build pipeline progress            │
+		39 text (settable)      ├ claude / opus-4                 │✻ Waiting for 1 background agent to finish
+		40 text (settable)      └ run 13m  ctx —                  │
+		41 text (settable)                                        │⏺ Agent "Read fixture file and report token" finished · 3s
+		42 text (settable)   ▼ scope-quality                      │
+		43 text (settable)   - local                              │⏺ OVRCR_ROOT_AFTER_CHILD_OK
+		44 text (settable)      ├ terminal                        │
+		45 text (settable)      └ run 13m  ctx —                  │✻ Worked for 8s · done 11:27 AM
+		46 text (settable)   - review scope quality               │
+		47 text (settable)      ├ codex / gpt-5.4                 │❯ Use AskUserQuestion to ask me to choose between Alpha and Beta for this disposable test. After I answer, reply exactly
+		48 text (settable)      └ run 13m  ctx —                  │  OVRCR_ANSWERED_OK.
+		49 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		50 text (settable)                                        │ ☐ Test Choice
+		51 text (settable)                                        │
+		52 text (settable)                                        │Choose between Alpha and Beta for this disposable test.
+		53 text (settable)                                        │
+		54 text (settable)                                        │❯ 1. Alpha
+		55 text (settable)                                        │     Select Alpha
+		56 text (settable)                                        │  2. Beta
+		57 text (settable)                                        │     Select Beta
+		58 text (settable)                                        │  3. Type something.
+		59 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		60 text (settable)                                        │  4. Chat about this
+		61 text (settable)                                        │
+		62 text (settable)                                        │Enter to select · ↑/↓ to navigate · Esc to cancel
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime
+▼ 󰉋 consigint                          │pid: 89531  elapsed: 8m  agent waiting observed
+  ▼ auth-handoff                       │tokens conv partial 565090 stale  cost conv estimate $0.39 stale
+  - local

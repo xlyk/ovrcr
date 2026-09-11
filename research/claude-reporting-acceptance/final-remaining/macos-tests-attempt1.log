@@ -1,0 +1,37 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-tui)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+error[E0063]: missing field `dashboard_monitor` in initializer of `server::ServerState`
+   --> crates/ovrcr-runtime/src/server/mod.rs:484:18
+    |
+484 |         Arc::new(Self {
+    |                  ^^^^ missing `dashboard_monitor`
+
+error[E0063]: missing field `dashboard_monitor` in initializer of `server::ServerState`
+    --> crates/ovrcr-runtime/src/server/tests.rs:2373:18
+     |
+2373 |         Arc::new(ServerState {
+     |                  ^^^^^^^^^^^ missing `dashboard_monitor`
+
+error[E0063]: missing field `dashboard_monitor` in initializer of `server::ServerState`
+    --> crates/ovrcr-runtime/src/server/tests.rs:2415:18
+     |
+2415 |         Arc::new(ServerState {
+     |                  ^^^^^^^^^^^ missing `dashboard_monitor`
+
+error[E0063]: missing field `dashboard_monitor` in initializer of `server::ServerState`
+    --> crates/ovrcr-runtime/src/server/tests.rs:4570:26
+     |
+4570 |     let state = Arc::new(ServerState {
+     |                          ^^^^^^^^^^^ missing `dashboard_monitor`
+
+error[E0063]: missing field `dashboard_monitor` in initializer of `server::ServerState`
+    --> crates/ovrcr-runtime/src/server/tests.rs:4775:26
+     |
+4775 |     let state = Arc::new(ServerState {
+     |                          ^^^^^^^^^^^ missing `dashboard_monitor`
+
+For more information about this error, try `rustc --explain E0063`.
+error: could not compile `ovrcr-runtime` (lib test) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...

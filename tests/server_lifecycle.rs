@@ -7094,3 +7094,2711 @@ impl Drop for CliLifecycleGuard {
         }
     }
 }
+
+fn write_claude_exec_fixture(path: &Path) {
+    std::fs::write(
+        path,
+        r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  printf '2.1.267 (Claude Code)\n'
+  exit 0
+fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_run_native_exec_helper --nocapture
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn unix_socket_path(fd: libc::c_int, peer: bool) -> Option<Vec<u8>> {
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    let result = unsafe {
+        if peer {
+            libc::getpeername(
+                fd,
+                (&mut address as *mut libc::sockaddr_un).cast(),
+                &mut length,
+            )
+        } else {
+            libc::getsockname(
+                fd,
+                (&mut address as *mut libc::sockaddr_un).cast(),
+                &mut length,
+            )
+        }
+    };
+    if result != 0 || address.sun_family != libc::AF_UNIX as libc::sa_family_t {
+        return None;
+    }
+    let address_start = (&address as *const libc::sockaddr_un).cast::<u8>();
+    let path_start = address.sun_path.as_ptr().cast::<u8>();
+    let path_offset = unsafe { path_start.offset_from(address_start) as usize };
+    let path_length = (length as usize)
+        .saturating_sub(path_offset)
+        .min(address.sun_path.len());
+    let bytes = unsafe { std::slice::from_raw_parts(path_start, path_length) };
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    (end > 0).then(|| bytes[..end].to_vec())
+}
+
+#[test]
+#[ignore = "native exec descriptor fixture launched through agent run"]
+fn agent_run_native_exec_helper() {
+    use std::fmt::Write as _;
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let probe = PathBuf::from(std::env::var_os("OVRCR_TEST_PROBE").unwrap());
+    let stay_alive = std::env::var("OVRCR_NATIVE_STAY_ALIVE").as_deref() == Ok("1");
+    if stay_alive {
+        unsafe {
+            libc::signal(libc::SIGHUP, libc::SIG_IGN);
+        }
+    }
+    let expected_watch = std::env::var_os("OVRCR_EXPECT_WATCH_SOCKET").unwrap();
+    let private_listener = std::env::var_os("OVRCR_AGENT_SOCKET").unwrap();
+    std::fs::write(
+        probe.with_extension("socket"),
+        Path::new(&private_listener).as_os_str().as_bytes(),
+    )
+    .unwrap();
+    let expected_watch = Path::new(&expected_watch).as_os_str().as_bytes();
+    let private_listener = Path::new(&private_listener).as_os_str().as_bytes();
+    let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+        0
+    );
+    let descriptor_limit = if limit.rlim_cur == libc::RLIM_INFINITY {
+        65_536
+    } else {
+        limit.rlim_cur.min(65_536) as libc::c_int
+    };
+    let mut metadata = String::new();
+    let mut watch_inherited = false;
+    let mut listener_inherited = false;
+    for fd in 0..descriptor_limit {
+        if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+            continue;
+        }
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::fstat(fd, &mut stat) }, 0);
+        let kind = stat.st_mode & libc::S_IFMT;
+        if kind == libc::S_IFSOCK {
+            let local = unix_socket_path(fd, false);
+            let peer = unix_socket_path(fd, true);
+            watch_inherited |=
+                local.as_deref() == Some(expected_watch) || peer.as_deref() == Some(expected_watch);
+            listener_inherited |= local.as_deref() == Some(private_listener)
+                || peer.as_deref() == Some(private_listener);
+            writeln!(
+                metadata,
+                "fd={fd} type=socket local={} peer={}",
+                local
+                    .as_deref()
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_else(|| "-".into()),
+                peer.as_deref()
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_else(|| "-".into())
+            )
+            .unwrap();
+        } else {
+            let kind = if kind == libc::S_IFCHR {
+                "character"
+            } else if kind == libc::S_IFREG {
+                "regular"
+            } else if kind == libc::S_IFIFO {
+                "fifo"
+            } else {
+                "other"
+            };
+            writeln!(metadata, "fd={fd} type={kind}").unwrap();
+        }
+    }
+    for fd in 0..=2 {
+        assert!(
+            unsafe { libc::fcntl(fd, libc::F_GETFD) } >= 0,
+            "stdio fd {fd} closed"
+        );
+        if std::env::var("OVRCR_EXPECT_TTY").as_deref() == Ok("1") {
+            assert_eq!(unsafe { libc::isatty(fd) }, 1, "stdio fd {fd} lost its PTY");
+        }
+    }
+    writeln!(metadata, "supervisor_watch_inherited={watch_inherited}").unwrap();
+    writeln!(metadata, "private_listener_inherited={listener_inherited}").unwrap();
+    std::fs::write(probe.with_extension("fds"), metadata).unwrap();
+    assert!(
+        !watch_inherited,
+        "native exec inherited the supervisor watch socket"
+    );
+    assert!(
+        !listener_inherited,
+        "native exec inherited the private listener socket"
+    );
+
+    let conversation = std::env::var("OVRCR_TEST_UUID").unwrap();
+    if let Some(transcript) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+        let row = serde_json::json!({"type":"assistant","sessionId":conversation,"isSidechain":false,"requestId":"lifecycle","message":{"id":"lifecycle","usage":{"input_tokens":7,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}});
+        std::fs::write(&transcript, format!("{row}\n")).unwrap();
+    }
+    std::fs::write(
+        &probe,
+        format!(
+            "{} {} {}\n",
+            std::process::id(),
+            unsafe { libc::getpgrp() },
+            unsafe { libc::getppid() }
+        ),
+    )
+    .unwrap();
+    std::fs::write(probe.with_extension("uuid"), &conversation).unwrap();
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "source": "startup",
+        "session_id": conversation,
+        "transcript_path": std::env::var_os("OVRCR_TEST_TRANSCRIPT")
+            .map(|path| path.to_string_lossy().into_owned()),
+    }))
+    .unwrap();
+    ovrcr::report::send_claude_hook(&payload, Instant::now() + Duration::from_secs(1)).unwrap();
+    println!("NATIVE_EXEC_STDOUT_READY");
+    eprintln!("NATIVE_EXEC_STDERR_READY");
+    std::io::stdout().flush().unwrap();
+    std::io::stderr().flush().unwrap();
+    if stay_alive {
+        loop {
+            thread::park_timeout(Duration::from_secs(1));
+        }
+    }
+    let mut input = String::new();
+    std::io::stdin().lock().read_line(&mut input).unwrap();
+    println!("NATIVE_EXEC_STDIN={}", input.trim_end());
+}
+
+fn owned_collector_group(supervisor_pid: libc::pid_t) -> libc::pid_t {
+    let processes = Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid=,command="])
+        .output()
+        .unwrap();
+    assert!(processes.status.success());
+    let children: Vec<_> = String::from_utf8(processes.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|row| {
+            let mut fields = row.split_whitespace();
+            let pid = fields.next()?.parse::<libc::pid_t>().ok()?;
+            let parent = fields.next()?.parse::<libc::pid_t>().ok()?;
+            let group = fields.next()?.parse::<libc::pid_t>().ok()?;
+            (parent == supervisor_pid && fields.any(|arg| arg == "__agent-collector"))
+                .then_some((pid, group))
+        })
+        .collect();
+    assert_eq!(children.len(), 1, "expected one task-owned collector");
+    assert_eq!(children[0].0, children[0].1, "collector must own its group");
+    children[0].1
+}
+
+#[test]
+fn agent_run_supervisor_sigkill_releases_reporting_watch() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentActivity, AgentCommand, AgentObservation, AgentProvider, AgentReport,
+        AgentUpdate, ProviderReport, ReporterHealth, Response, SampleQuality, SupervisorRequest,
+        UsageCoverage,
+    };
+    let fixture = ControlFixture::new_bounded();
+    let setup = fixture.create_hook_child("setup", "agent-supervisor-crash-setup");
+    let setup_pgid = fixture.original_pgid(setup.session);
+    let proxy = AdmissionProxy::new(
+        fixture._root.path().join("supervisor-watch.sock"),
+        fixture.socket.clone(),
+        AdmissionFault::Passthrough,
+    );
+    let native = fixture._root.path().join("claude");
+    write_claude_exec_fixture(&native);
+    let probe = fixture._root.path().join("supervisor-crash-probe");
+    let transcript = fixture._root.path().join("supervisor-crash.jsonl");
+    let summary = fixture.create_session_summary(
+        "agent-supervisor-crash",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$6" OVRCR_NATIVE_STAY_ALIVE=1; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'KILLED_SUPERVISOR_EXIT=%s\nOUTER_SURVIVED\n' "$code"; while :; do sleep 1; done"#.into(),
+            "agent-supervisor-crash-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.clone().into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            probe.clone().into_os_string(),
+            proxy.path.clone().into_os_string(),
+            transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDOUT_READY");
+    let old_processes: Vec<libc::pid_t> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let (native_pid, native_pgid, supervisor_pid) =
+        (old_processes[0], old_processes[1], old_processes[2]);
+    assert_eq!(
+        native_pid, native_pgid,
+        "native fixture must own its process group"
+    );
+    assert_ne!(supervisor_pid, summary.pid.unwrap() as libc::pid_t);
+    fixture.process_groups.lock().unwrap().push(native_pgid);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let old_snapshot = loop {
+        if let Some(snapshot) = fixture.session_summary(summary.id).agent
+            && snapshot.metrics.is_some()
+        {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "root binding and retained metrics were not ready"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert_eq!(old_snapshot.binding.provider, AgentProvider::Claude);
+    assert_eq!(old_snapshot.health.state, ReporterHealth::Connected);
+    let old_auth = proxy
+        .supervisor
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("proxy did not observe the supervisor reservation");
+    let old_binding = proxy
+        .binding
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("proxy did not observe the root binding");
+    assert_eq!(old_binding, old_snapshot.binding);
+    let collector_pgid = owned_collector_group(supervisor_pid);
+    fixture.process_groups.lock().unwrap().push(collector_pgid);
+
+    assert_eq!(unsafe { libc::kill(supervisor_pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let disconnected = loop {
+        let current = fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("bound snapshot disappeared after supervisor crash");
+        if current.health.reason.as_deref() == Some("supervisor_disconnected") {
+            break current;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "server retained ownership after supervisor SIGKILL"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert!(
+        wait_group_absent(collector_pgid, Duration::from_secs(2)),
+        "collector group survived supervisor death"
+    );
+    assert_eq!(disconnected.health.state, ReporterHealth::Unavailable);
+    assert_ne!(
+        disconnected.metrics.unwrap().sample.usage.value.coverage,
+        UsageCoverage::Complete
+    );
+    assert_eq!(
+        unsafe { libc::kill(native_pid, 0) },
+        0,
+        "native did not survive supervisor"
+    );
+    fixture.wait_terminal_contains(summary.id, "OUTER_SURVIVED");
+    assert_eq!(
+        unsafe { libc::kill(summary.pid.unwrap() as libc::pid_t, 0) },
+        0,
+        "outer fixture shell did not survive supervisor"
+    );
+
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().map(str::to_owned).collect();
+    let capability = parse_hook_capability(&identity[2]).unwrap();
+    let replacement_probe = fixture._root.path().join("replacement-probe");
+    let replacement_transcript = fixture._root.path().join("replacement.jsonl");
+    let replacement = fixture.create_session_summary(
+        "agent-supervisor-replacement",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_SESSION_ID="$6" OVRCR_HOOK_TOKEN="$7" OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$8"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'REPLACEMENT_FINISHED=%s\n' "$code"; IFS= read -r done; printf REPLACEMENT_OUTER_FINISHED; exit "$code""#.into(),
+            "agent-supervisor-replacement-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            replacement_probe.clone().into_os_string(),
+            identity[0].clone().into(),
+            identity[1].clone().into(),
+            identity[2].clone().into(),
+            replacement_transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&replacement);
+    fixture.wait_terminal_contains(replacement.id, "NATIVE_EXEC_STDOUT_READY");
+    let replacement_processes: Vec<libc::pid_t> = std::fs::read_to_string(&replacement_probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|value| value.parse().unwrap())
+        .collect();
+    let replacement_pgid = replacement_processes[1];
+    let replacement_supervisor_pid = replacement_processes[2];
+    fixture
+        .process_groups
+        .lock()
+        .unwrap()
+        .push(replacement_pgid);
+    let replacement_uuid =
+        std::fs::read_to_string(replacement_probe.with_extension("uuid")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let replacement_binding = loop {
+        if let Some(snapshot) = fixture.session_summary(summary.id).agent
+            && snapshot.binding.conversation == replacement_uuid
+        {
+            break snapshot.binding;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "replacement invocation did not bind"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert_ne!(replacement_binding, old_binding);
+
+    let late_report = fixture.request(Request::AgentReport(AgentReport {
+        session: summary.id,
+        capability,
+        sequence: None,
+        update: AgentUpdate::Provider(ProviderReport {
+            binding: old_binding.clone(),
+            revision: 99,
+            observation: AgentObservation::Activity(ActivitySample {
+                state: AgentActivity::Busy,
+                quality: SampleQuality::Observed,
+                turn: None,
+            }),
+        }),
+    }));
+    assert!(matches!(late_report, Response::Error { .. }));
+    let late_release = fixture.request(Request::Supervisor(SupervisorRequest {
+        auth: old_auth,
+        operation: "late-old-release".into(),
+        command: AgentCommand::Release {
+            expected_binding: Some(old_binding),
+        },
+    }));
+    assert!(matches!(late_release, Response::Error { .. }));
+    let after_late = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(after_late.binding, replacement_binding);
+    assert_eq!(after_late.health.state, ReporterHealth::Connected);
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: replacement.id,
+            text: "finish".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(replacement.id, "NATIVE_EXEC_STDIN=finish");
+    fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_FINISHED=0");
+    assert!(wait_group_absent(replacement_pgid, Duration::from_secs(2)));
+    wait_pid_absent(replacement_supervisor_pid, Duration::from_secs(2));
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: replacement.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_OUTER_FINISHED");
+    fixture.wait_exited(replacement.id);
+    assert!(wait_group_absent(
+        replacement.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+
+    assert_eq!(unsafe { libc::kill(-native_pgid, libc::SIGKILL) }, 0);
+    assert!(wait_group_absent(native_pgid, Duration::from_secs(2)));
+    let callback_socket =
+        PathBuf::from(std::fs::read_to_string(probe.with_extension("socket")).unwrap());
+    let callback_directory = callback_socket.parent().unwrap();
+    assert!(
+        callback_directory
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("ovrcr-a-")
+    );
+    std::fs::remove_dir_all(callback_directory).unwrap();
+    assert!(!callback_directory.exists());
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: summary.id,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: setup.session,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(setup.session);
+    assert!(wait_group_absent(setup_pgid, Duration::from_secs(2)));
+    assert!(
+        fixture
+            .process_groups
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .all(|pgid| !group_exists(pgid))
+    );
+}
+
+#[test]
+fn agent_run_native_exec_does_not_inherit_supervisor_lease() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-exec-descriptor-setup");
+    let native = fixture._root.path().join("claude");
+    write_claude_exec_fixture(&native);
+    let probe = fixture._root.path().join("exec-descriptor-probe");
+    let transcript = fixture._root.path().join("exec-descriptor.jsonl");
+    let summary = fixture.create_session_summary(
+        "agent-exec-descriptor",
+        vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_EXPECT_WATCH_SOCKET="$5" OVRCR_EXPECT_TTY=1 OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; code=$?; printf 'NATIVE_EXEC_FINISHED=%s\n' "$code"; IFS= read -r done; printf OUTER_EXEC_FINISHED; exit "$code""#.into(),
+            "agent-exec-descriptor-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.into_os_string(),
+            std::env::current_exe().unwrap().into_os_string(),
+            probe.clone().into_os_string(),
+            fixture.socket.clone().into_os_string(),
+            transcript.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDOUT_READY");
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDERR_READY");
+    let descriptors = std::fs::read_to_string(probe.with_extension("fds")).unwrap();
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=0 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=1 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "fd=2 type=character")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "supervisor_watch_inherited=false")
+    );
+    assert!(
+        descriptors
+            .lines()
+            .any(|line| line == "private_listener_inherited=false")
+    );
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("native callback did not bind the invocation");
+    assert_eq!(
+        bound.binding.conversation,
+        std::fs::read_to_string(probe.with_extension("uuid")).unwrap()
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "descriptor-input".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_STDIN=descriptor-input");
+    fixture.wait_terminal_contains(summary.id, "NATIVE_EXEC_FINISHED=0");
+    let native_pgid = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse::<libc::pid_t>()
+        .unwrap();
+    assert!(
+        wait_group_absent(native_pgid, Duration::from_secs(2)),
+        "native process group remained after completion"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "OUTER_EXEC_FINISHED");
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as libc::pid_t,
+        Duration::from_secs(2)
+    ));
+}
+
+#[test]
+#[ignore = "native child fixture launched through agent run"]
+fn agent_run_native_helper() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    let path = std::path::PathBuf::from(std::env::var_os("OVRCR_NATIVE_PROBE").unwrap());
+    let interrupts = Arc::new(AtomicUsize::new(0));
+    let terminated = Arc::new(AtomicBool::new(false));
+    let count = interrupts.clone();
+    unsafe {
+        signal_hook::low_level::register(libc::SIGINT, move || {
+            count.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+    }
+    signal_hook::flag::register(libc::SIGTERM, terminated.clone()).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "{} {} {} {}\n",
+            std::process::id(),
+            unsafe { libc::getpgrp() },
+            unsafe { libc::getppid() },
+            unsafe { libc::tcgetpgrp(0) }
+        ),
+    )
+    .unwrap();
+    assert!(std::env::var_os("OVRCR_HOOK_SOCKET").is_none());
+    assert!(std::env::var_os("OVRCR_SESSION_ID").is_none());
+    assert!(std::env::var_os("OVRCR_HOOK_TOKEN").is_none());
+    let endpoint = std::env::var_os("OVRCR_AGENT_SOCKET").expect("private invocation endpoint");
+    let token = std::env::var("OVRCR_AGENT_TOKEN").expect("private invocation token");
+    use std::os::unix::fs::PermissionsExt as _;
+    assert_eq!(
+        std::fs::metadata(&endpoint).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(std::path::Path::new(&endpoint).parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    std::fs::write(path.with_extension("endpoint"), endpoint.as_encoded_bytes()).unwrap();
+    let mut wrong = UnixStream::connect(&endpoint).unwrap();
+    wrong
+        .write_all(format!("{}\n", "0".repeat(64)).as_bytes())
+        .unwrap();
+    let mut rejected = String::new();
+    wrong.read_to_string(&mut rejected).unwrap();
+    assert!(rejected.is_empty(), "incorrect token authenticated");
+    let mut callback = UnixStream::connect(endpoint).unwrap();
+    use std::io::{Read as _, Write as _};
+    callback.write_all(format!("{token}\n").as_bytes()).unwrap();
+    let mut response = String::new();
+    callback.read_to_string(&mut response).unwrap();
+    assert_eq!(response, "admission-unavailable\n");
+    let report = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args(["report", "activity", "--state", "busy"])
+        .output()
+        .unwrap();
+    assert!(!report.status.success());
+    assert!(
+        String::from_utf8_lossy(&report.stderr).contains("admission is unavailable"),
+        "{report:?}"
+    );
+    let mut modes: libc::termios = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::tcgetattr(0, &mut modes) }, 0);
+    modes.c_lflag |= libc::ECHO;
+    assert_eq!(unsafe { libc::tcsetattr(0, libc::TCSANOW, &modes) }, 0);
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::ioctl(0, libc::TIOCGWINSZ, &mut size) }, 0);
+    assert_eq!((size.ws_row, size.ws_col), (40, 120));
+    println!("NATIVE_READY");
+    let mut last = 0;
+    loop {
+        if terminated.load(Ordering::SeqCst) {
+            println!("NATIVE_TERM");
+            std::process::exit(23);
+        }
+        let next = interrupts.load(Ordering::SeqCst);
+        if next != last {
+            std::fs::write(path.with_extension("interrupts"), next.to_string()).unwrap();
+            println!("NATIVE_INTERRUPTS={next}");
+            last = next;
+        }
+        let mut poll = libc::pollfd {
+            fd: 0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut poll, 1, 20) } > 0 {
+            let mut bytes = [0u8; 128];
+            let n = unsafe { libc::read(0, bytes.as_mut_ptr().cast(), bytes.len()) };
+            if n > 0 {
+                assert_eq!(unsafe { libc::tcgetattr(0, &mut modes) }, 0);
+                assert_ne!(
+                    modes.c_lflag & libc::ECHO,
+                    0,
+                    "native modes must survive job-control stop"
+                );
+                println!(
+                    "NATIVE_INPUT={}",
+                    String::from_utf8_lossy(&bytes[..n as usize]).trim()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-run-setup");
+    let probe = fixture._root.path().join("native-probe");
+    let summary = fixture.create_session_summary("agent-run", vec![
+        "sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3.identity"; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf SHELL_RESTORED; exit "$code""#.into(),
+        "agent-run-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        1,
+        "reserve before native spawn"
+    );
+    assert!(
+        fixture.session_summary(summary.id).agent.is_none(),
+        "admission remains unavailable"
+    );
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    let (pid, pgid, launcher, foreground) = (values[0], values[1], values[2], values[3]);
+    assert_eq!(pgid, pid, "native must own its process group");
+    assert_ne!(pgid, summary.pid.unwrap() as i32);
+    assert_eq!(
+        foreground, pgid,
+        "native owns inherited terminal foreground"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{3}".into(),
+            submit: false
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INTERRUPTS=1");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-interrupt".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-interrupt");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("interrupts")).unwrap(),
+        "1"
+    );
+    let peer = PausePeer {
+        pid,
+        pgid,
+        address: probe.clone(),
+        preexit_marker: String::new(),
+    };
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "\u{1a}".into(),
+            submit: false
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&peer, Duration::from_secs(2));
+    wait_peer_stopped(
+        &PausePeer {
+            pid: launcher,
+            pgid: summary.pid.unwrap() as i32,
+            address: probe.clone(),
+            preexit_marker: String::new(),
+        },
+        Duration::from_secs(2),
+    );
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-continue".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-continue");
+    assert_eq!(
+        fixture.request(Request::PauseSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    wait_peer_stopped(&peer, Duration::from_secs(2));
+    assert_eq!(
+        fixture.request(Request::ResumeSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "after-runtime-resume".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "NATIVE_INPUT=after-runtime-resume");
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let invoke = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+        command
+            .args([
+                "agent",
+                "run",
+                "--provider",
+                "claude",
+                "--",
+                "/bin/sh",
+                "-c",
+                "printf SECOND_NATIVE",
+            ])
+            .env("OVRCR_HOOK_SOCKET", identity[0])
+            .env("OVRCR_SESSION_ID", identity[1])
+            .env("OVRCR_HOOK_TOKEN", identity[2]);
+        command
+    };
+    let conflict = invoke().output().unwrap();
+    assert!(
+        !conflict.status.success(),
+        "active reservation must refuse native spawn"
+    );
+    assert!(
+        conflict.stdout.is_empty(),
+        "conflicting native command spawned"
+    );
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 1);
+    assert_eq!(unsafe { libc::kill(launcher, libc::SIGTERM) }, 0);
+    fixture.wait_terminal_contains(summary.id, "WRAPPER_FINISHED=23");
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("before")).unwrap(),
+        std::fs::read_to_string(probe.with_extension("after")).unwrap(),
+        "restore shell termios"
+    );
+    let failed = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/definitely-missing-ovrcr-native",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let reused = invoke().output().unwrap();
+    assert!(
+        reused.status.success(),
+        "released lease must permit next invocation: {:?}",
+        reused
+    );
+    assert_eq!(reused.stdout, b"SECOND_NATIVE");
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 3);
+    assert!(fixture.session_summary(summary.id).agent.is_none());
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "SHELL_RESTORED");
+    let endpoint = std::fs::read_to_string(probe.with_extension("endpoint")).unwrap();
+    assert!(
+        !std::path::Path::new(&endpoint).exists(),
+        "private invocation socket remains"
+    );
+    println!(
+        "AGENT_OWNERSHIP native_pid={pid} native_pgid={pgid} launcher_pid={launcher} session_pgid={} private_endpoint_removed=true",
+        summary.pid.unwrap()
+    );
+    assert!(
+        wait_group_absent(pgid, Duration::from_secs(2)),
+        "native group remains"
+    );
+}
+
+#[test]
+fn agent_run_runtime_kill_reaches_owned_native_group() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-kill-setup");
+    let probe = fixture._root.path().join("kill-probe");
+    let summary=fixture.create_session_summary("agent-kill",vec![
+        "sh".into(),"-c".into(),r#"export OVRCR_NATIVE_PROBE="$3"; exec "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture"#.into(),
+        "agent-kill-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),std::env::current_exe().unwrap().into_os_string(),probe.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "NATIVE_READY");
+    let values: Vec<i32> = std::fs::read_to_string(&probe)
+        .unwrap()
+        .split_whitespace()
+        .map(|s| s.parse().unwrap())
+        .collect();
+    assert_eq!(values[0], values[1]);
+    assert_eq!(
+        fixture.request(Request::KillSession {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(summary.id);
+    assert!(wait_group_absent(values[1], Duration::from_secs(2)));
+    assert!(wait_group_absent(
+        summary.pid.unwrap() as i32,
+        Duration::from_secs(2)
+    ));
+}
+
+#[test]
+fn agent_run_channel_failure_releases_reservation_before_native_fallback() {
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "agent-channel-failure-setup");
+    let blocked = fixture._root.path().join("not-a-directory");
+    std::fs::write(&blocked, "blocked").unwrap();
+    let identity_path = fixture._root.path().join("fallback.identity");
+    let summary=fixture.create_session_summary("agent-channel-failure",vec![
+        "sh".into(),"-c".into(),
+        r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3"; TMPDIR="$2" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-secret "$1" agent run --provider claude -- /bin/sh -c 'test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99; printf FALLBACK_READY; IFS= read -r line; exit 17'; code=$?; printf 'FALLBACK_EXIT=%s\n' "$code"; exit "$code""#.into(),
+        "agent-channel-failure".into(),env!("CARGO_BIN_EXE_ovrcr").into(),blocked.into_os_string(),identity_path.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "FALLBACK_READY");
+    assert_eq!(
+        fixture.session_summary(summary.id).agent_epoch,
+        1,
+        "the reservation was allocated before channel setup"
+    );
+    let identity = std::fs::read_to_string(identity_path).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let next = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf NEXT_RESERVED",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    assert!(
+        next.status.success(),
+        "reservation retained during untracked native fallback: {next:?}"
+    );
+    assert_eq!(next.stdout, b"NEXT_RESERVED");
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 2);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "finish".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "FALLBACK_EXIT=17");
+    fixture.wait_exited(summary.id);
+}
+
+#[test]
+#[ignore = "native admission fixture launched through agent run"]
+fn agent_admission_native_helper() {
+    use std::io::{BufRead, Write};
+    let expected = std::env::var("OVRCR_TEST_UUID").unwrap();
+    let probe = std::path::PathBuf::from(std::env::var_os("OVRCR_TEST_PROBE").unwrap());
+    std::fs::write(&probe, &expected).unwrap();
+    std::fs::write(
+        probe.with_extension("channel"),
+        format!(
+            "{}\n{}\n",
+            std::env::var("OVRCR_AGENT_SOCKET").unwrap(),
+            std::env::var("OVRCR_AGENT_TOKEN").unwrap()
+        ),
+    )
+    .unwrap();
+    let write_transcript = || {
+        if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+            let row = serde_json::json!({"type":"assistant","sessionId":expected,"isSidechain":false,"requestId":"r","message":{"id":"m","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}});
+            std::fs::write(path, format!("{row}\n")).unwrap();
+        }
+    };
+    if std::env::var("OVRCR_TEST_DELAY_TRANSCRIPT").as_deref() != Ok("1") {
+        write_transcript();
+    }
+    println!("ADMISSION_READY");
+    for (index, line) in std::io::stdin().lock().lines().enumerate() {
+        let line = line.unwrap();
+        if line == "exit" {
+            break;
+        }
+        let mut payload = serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected,"agent_type":"fixture-root"});
+        if let Some(path) = std::env::var_os("OVRCR_TEST_TRANSCRIPT") {
+            payload["transcript_path"] = path.to_string_lossy().as_ref().into();
+        }
+        match line.as_str() {
+            "kill-collector" => {
+                let parent = unsafe { libc::getppid() };
+                let processes = Command::new("ps")
+                    .args(["-axo", "pid=,ppid=,command="])
+                    .output()
+                    .unwrap();
+                assert!(processes.status.success());
+                let collector = String::from_utf8(processes.stdout)
+                    .unwrap()
+                    .lines()
+                    .find_map(|row| {
+                        let mut fields = row.split_whitespace();
+                        let pid = fields.next()?.parse::<i32>().ok()?;
+                        let ppid = fields.next()?.parse::<i32>().ok()?;
+                        let command = fields.collect::<Vec<_>>().join(" ");
+                        (ppid == parent && command.contains("__agent-collector")).then_some(pid)
+                    })
+                    .expect("task-owned collector child");
+                assert_eq!(unsafe { libc::kill(-collector, libc::SIGKILL) }, 0);
+                println!("ADMISSION_CALLBACK={index}");
+                continue;
+            }
+            "create-transcript" => write_transcript(),
+            "grow-transcript" => {
+                use std::io::Write;
+                let path = std::env::var_os("OVRCR_TEST_TRANSCRIPT").unwrap();
+                let row = serde_json::json!({"type":"assistant","sessionId":expected,"isSidechain":false,"requestId":"r2","message":{"id":"m2","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}}});
+                writeln!(
+                    std::fs::OpenOptions::new().append(true).open(path).unwrap(),
+                    "{row}"
+                )
+                .unwrap();
+            }
+            "statusline"
+            | "statusline-replay"
+            | "statusline-wrong"
+            | "statusline-unknown"
+            | "statusline-lower"
+            | "statusline-context-unknown" => {
+                payload = serde_json::json!({"session_id":expected,"cost":{"total_cost_usd":0.25},"context_window":{"context_window_size":100,"current_usage":{"input_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}});
+                if line == "statusline-wrong" {
+                    payload["session_id"] = "foreign".into();
+                }
+                if line == "statusline-unknown" {
+                    payload["cost"] = serde_json::Value::Null;
+                }
+                if line == "statusline-lower" {
+                    payload["cost"]["total_cost_usd"] = 0.1.into();
+                }
+                if line == "statusline-context-unknown" {
+                    payload["context_window"]["current_usage"] = serde_json::Value::Null;
+                    payload["context_window"]["used_percentage"] = serde_json::Value::Null;
+                    payload["context_window"]["remaining_percentage"] = serde_json::Value::Null;
+                }
+            }
+            "wrong" => payload["session_id"] = "wrong-conversation".into(),
+            "resume-root" => payload["source"] = "resume".into(),
+            "missing-source" => {
+                payload.as_object_mut().unwrap().remove("source");
+            }
+            "child" => payload["agent_id"] = "child-1".into(),
+            "malformed-child" => payload["agent_id"] = serde_json::Value::Null,
+            "empty-child" => payload["agent_id"] = "".into(),
+            "numeric-child" => payload["agent_id"] = 17.into(),
+            "child-event" => payload["hook_event_name"] = "SubagentStart".into(),
+            "clear" => {
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "clear".into();
+            }
+            "branch" => {
+                payload["source"] = "fork".into();
+                payload["session_id"] = "uncertified-other-root".into();
+            }
+            "resume-transition" => payload["source"] = "resume".into(),
+            "compact" => {
+                payload["hook_event_name"] = "SessionStart".into();
+                payload["source"] = "compact".into();
+            }
+            "end-other" => {
+                payload["hook_event_name"] = "SessionEnd".into();
+                payload["reason"] = "logout".into();
+            }
+            "root" | "foreign" | "generic" => {}
+            value if value.starts_with("activity:") => {
+                let parts: Vec<_> = value.split(':').collect();
+                payload["hook_event_name"] = parts[1].into();
+                if parts[2] != "missing" {
+                    payload["prompt_id"] = parts[2].into();
+                }
+                if parts.get(3) == Some(&"child") {
+                    payload["agent_id"] = "child".into();
+                }
+                if parts.get(3) == Some(&"wrong") {
+                    payload["session_id"] = "foreign".into();
+                }
+                if parts.get(3) == Some(&"malformed") {
+                    payload["prompt_id"] = serde_json::Value::Null;
+                }
+                if parts.get(3) == Some(&"control") {
+                    payload["prompt_id"] = "bad\nprompt".into();
+                }
+                if parts.get(3) == Some(&"oversized") {
+                    payload["prompt_id"] = "p".repeat(257).into();
+                }
+                if parts[1] == "StopFailure" {
+                    payload["error"] = "rate_limit".into();
+                }
+                payload["notification_type"] = if parts.get(3) == Some(&"generic") {
+                    "idle_prompt"
+                } else {
+                    "permission_prompt"
+                }
+                .into();
+                payload["stop_hook_active"] = true.into();
+            }
+            _ => panic!("unknown admission fixture instruction"),
+        }
+        if line == "foreign" {
+            let request = serde_json::to_vec(
+                &serde_json::json!({"provider":"pi","origin":"claude-hook","payload":payload}),
+            )
+            .unwrap();
+            let mut stream =
+                UnixStream::connect(std::env::var_os("OVRCR_AGENT_SOCKET").unwrap()).unwrap();
+            stream
+                .write_all(format!("{}\n", std::env::var("OVRCR_AGENT_TOKEN").unwrap()).as_bytes())
+                .unwrap();
+            stream
+                .write_all(&(request.len() as u32).to_be_bytes())
+                .unwrap();
+            stream.write_all(&request).unwrap();
+            let mut response = String::new();
+            std::io::Read::read_to_string(&mut stream, &mut response).unwrap();
+            assert_eq!(response, "admission-ignored\n");
+            println!("ADMISSION_CALLBACK={index}");
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+        if line.starts_with("statusline") {
+            command.args(["report", "claude-statusline", "--stdin-json"]);
+        } else if line == "generic" {
+            command.args(["report", "activity", "--state", "busy"]);
+        } else {
+            command.args(["report", "claude", "--stdin-json"]);
+        }
+        let mut callback = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        callback
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(serde_json::to_string(&payload).unwrap().as_bytes())
+            .unwrap();
+        let output = callback.wait_with_output().unwrap();
+        if line.starts_with("statusline") {
+            assert_eq!(
+                output.stdout,
+                if line == "statusline-context-unknown" {
+                    "ctx —\n".as_bytes()
+                } else {
+                    b"ctx 20%\n".as_slice()
+                }
+            );
+        } else {
+            assert!(output.stdout.is_empty(), "hooks must be stdout silent");
+        }
+        println!("ADMISSION_CALLBACK={index}");
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AdmissionFault {
+    Passthrough,
+    LostBind,
+    RejectHealth,
+    RejectStatus,
+    RejectActivity,
+    LostFinalize,
+}
+struct AdmissionProxy {
+    final_status_verified: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    supervisor: std::sync::Arc<std::sync::Mutex<Option<ovrcr::protocol::SupervisorAuth>>>,
+    binding: std::sync::Arc<std::sync::Mutex<Option<ovrcr::protocol::AgentBinding>>>,
+    path: std::path::PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    streams: std::sync::Arc<std::sync::Mutex<Vec<UnixStream>>>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+impl AdmissionProxy {
+    fn new(path: std::path::PathBuf, target: std::path::PathBuf, fault: AdmissionFault) -> Self {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let streams = Arc::new(Mutex::new(Vec::new()));
+        let thread_stop = stop.clone();
+        let thread_streams = streams.clone();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let final_operation = Arc::new(Mutex::new(None::<String>));
+        let final_status_verified = Arc::new(AtomicBool::new(false));
+        let thread_final_status = final_status_verified.clone();
+        let supervisor = Arc::new(Mutex::new(None));
+        let thread_supervisor = supervisor.clone();
+        let binding = Arc::new(Mutex::new(None));
+        let thread_binding = binding.clone();
+        let thread = thread::spawn(move || {
+            let mut handlers = Vec::new();
+            while !thread_stop.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut front, _)) => {
+                        front.set_nonblocking(false).unwrap();
+                        thread_streams
+                            .lock()
+                            .unwrap()
+                            .push(front.try_clone().unwrap());
+                        let target = target.clone();
+                        let streams = thread_streams.clone();
+                        let dropped = dropped.clone();
+                        let final_operation = final_operation.clone();
+                        let final_status_verified = thread_final_status.clone();
+                        let supervisor = thread_supervisor.clone();
+                        let binding = thread_binding.clone();
+                        handlers.push(thread::spawn(move || {
+                            if ovrcr::protocol::exchange_preamble(&mut front).is_err() {
+                                return;
+                            }
+                            let Ok(mut upstream) = connect_server(&target) else {
+                                return;
+                            };
+                            streams.lock().unwrap().push(upstream.try_clone().unwrap());
+                            while let Ok(message) = read_frame::<ClientMessage>(&mut front) {
+                                eprintln!(
+                                    "ADMISSION_PROXY request={}",
+                                    match &message.request {
+                                        Request::Inspect => "inspect",
+                                        Request::ReserveAgent(_) => "reserve",
+                                        Request::SupervisorHello(_) => "hello",
+                                        Request::AgentStatus { .. } => "status",
+                                        Request::Supervisor(_) => "supervisor",
+                                        _ => "other",
+                                    }
+                                );
+                                let reject = matches!(
+                                    (&message.request, fault),
+                                    (
+                                        Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                            command: ovrcr::protocol::AgentCommand::Health(_),
+                                            ..
+                                        }),
+                                        AdmissionFault::RejectHealth
+                                    ) | (Request::AgentStatus { .. }, AdmissionFault::RejectStatus)
+                                        | (Request::AgentReport(_), AdmissionFault::RejectActivity)
+                                );
+                                if reject {
+                                    if matches!(fault, AdmissionFault::RejectHealth) {
+                                        continue;
+                                    }
+                                    if write_frame(
+                                        &mut front,
+                                        &ServerMessage::Response {
+                                            request_id: message.request_id,
+                                            response: Response::Error {
+                                                code: ovrcr::protocol::ErrorCode::Conflict,
+                                                message: "fixture rejected publication".into(),
+                                            },
+                                        },
+                                    )
+                                    .is_err()
+                                    {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                if write_frame(&mut upstream, &message).is_err() {
+                                    break;
+                                }
+                                let Ok(response) = read_frame::<ServerMessage>(&mut upstream)
+                                else {
+                                    break;
+                                };
+                                if let (
+                                    Request::ReserveAgent(reserve),
+                                    ServerMessage::Response {
+                                        response:
+                                            Response::AgentOperation(
+                                                ovrcr::protocol::AgentOperationResult::Reserved(
+                                                    reservation,
+                                                ),
+                                            ),
+                                        ..
+                                    },
+                                ) = (&message.request, &response)
+                                {
+                                    *supervisor.lock().unwrap() =
+                                        Some(ovrcr::protocol::SupervisorAuth {
+                                            session: reserve.session,
+                                            lease: reservation.lease.clone(),
+                                        });
+                                }
+                                if let ServerMessage::Response {
+                                    response:
+                                        Response::AgentOperation(
+                                            ovrcr::protocol::AgentOperationResult::Bound(current),
+                                        ),
+                                    ..
+                                } = &response
+                                {
+                                    *binding.lock().unwrap() = Some(current.clone());
+                                }
+                                let is_bind = matches!(
+                                    &message.request,
+                                    Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                        command: ovrcr::protocol::AgentCommand::Bind { .. },
+                                        ..
+                                    })
+                                );
+                                if let Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                    command: ovrcr::protocol::AgentCommand::Finalize { .. },
+                                    operation,
+                                    ..
+                                }) = &message.request
+                                {
+                                    *final_operation.lock().unwrap() = Some(operation.clone());
+                                }
+                                if let Request::AgentStatus { operation, .. } = &message.request
+                                    && final_operation.lock().unwrap().as_ref() == Some(operation)
+                                    && matches!(
+                                        &response,
+                                        ServerMessage::Response {
+                                            response: Response::AgentOperation(
+                                                ovrcr::protocol::AgentOperationResult::Released
+                                            ),
+                                            ..
+                                        }
+                                    )
+                                {
+                                    final_status_verified.store(true, Ordering::SeqCst);
+                                }
+                                let is_finalize = matches!(
+                                    &message.request,
+                                    Request::Supervisor(ovrcr::protocol::SupervisorRequest {
+                                        command: ovrcr::protocol::AgentCommand::Finalize { .. },
+                                        ..
+                                    })
+                                );
+                                if is_finalize
+                                    && matches!(fault, AdmissionFault::LostFinalize)
+                                    && !dropped.swap(true, Ordering::SeqCst)
+                                {
+                                    continue;
+                                }
+                                if is_bind
+                                    && matches!(
+                                        fault,
+                                        AdmissionFault::LostBind | AdmissionFault::RejectStatus
+                                    )
+                                    && !dropped.swap(true, Ordering::SeqCst)
+                                {
+                                    continue;
+                                }
+                                if write_frame(&mut front, &response).is_err() {
+                                    break;
+                                }
+                            }
+                            let _ = upstream.shutdown(std::net::Shutdown::Both);
+                        }));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::park_timeout(Duration::from_millis(2))
+                    }
+                    Err(_) => break,
+                }
+            }
+            for handler in handlers {
+                handler.join().unwrap();
+            }
+        });
+        Self {
+            path,
+            stop,
+            streams,
+            thread: Some(thread),
+            final_status_verified,
+            supervisor,
+            binding,
+        }
+    }
+}
+impl Drop for AdmissionProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        for stream in self.streams.lock().unwrap().iter() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+#[test]
+fn agent_admission_lost_bind_then_clear_resolves_without_another_startup() {
+    assert_initial_admission("clear", Some(AdmissionFault::LostBind));
+}
+#[test]
+fn agent_admission_failed_unavailable_publication_disconnects_watch() {
+    assert_initial_admission("clear", Some(AdmissionFault::RejectHealth));
+}
+#[test]
+fn agent_admission_failed_bind_status_disconnects_watch() {
+    assert_initial_admission("clear", Some(AdmissionFault::RejectStatus));
+}
+
+#[test]
+fn agent_admission_private_claude_route_binds_once_and_clear_retains_lease() {
+    assert_initial_admission("clear", None);
+}
+#[test]
+fn agent_admission_branch_freezes_without_replacement_or_reopening() {
+    assert_initial_admission("branch", None);
+}
+
+#[test]
+fn agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage() {
+    assert_agent_admission_resume("--resume", "2.1.267");
+}
+
+#[test]
+fn agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle() {
+    assert_agent_admission_resume("-r", "2.1.268");
+}
+
+fn assert_agent_admission_resume(resume_flag: &str, version: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "resume-admission-setup");
+    let native = fixture._root.path().join("claude");
+    std::fs::write(
+        &native,
+        format!(r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '{version} (Claude Code)\n'; exit 0; fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#),
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let expected = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+    let make_session = |name: &str, probe: &std::path::Path, transcript: &std::path::Path| {
+        fixture.create_session_summary(name, vec![
+            "sh".into(),
+            "-c".into(),
+            r#"stty -echo; export OVRCR_HOOK_SOCKET="$7" OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$5" OVRCR_TEST_TRANSCRIPT="$6"; "$1" agent run --provider claude -- "$2" "$8" "$3" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf RESUME_ADMISSION_FINISHED; IFS= read -r done"#.into(),
+            "resume-admission-fixture".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            native.clone().into_os_string(),
+            expected.into(),
+            probe.as_os_str().into(),
+            std::env::current_exe().unwrap().into_os_string(),
+            transcript.as_os_str().into(),
+            fixture.socket.clone().into_os_string(),
+            resume_flag.into(),
+        ])
+    };
+
+    let rejected_probe = fixture._root.path().join("wrong-source-resume-probe");
+    let rejected_transcript = fixture._root.path().join("wrong-source-resume.jsonl");
+    let rejected = make_session("wrong-source-resume", &rejected_probe, &rejected_transcript);
+    fixture.record_process_group(&rejected);
+    fixture.wait_terminal_contains_until(
+        rejected.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    for (index, command) in ["root", "resume-root"].into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: rejected.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(rejected.id, &format!("ADMISSION_CALLBACK={index}"));
+        assert!(
+            fixture.session_summary(rejected.id).agent.is_none(),
+            "{command} reopened admission after contradictory startup source"
+        );
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: rejected.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(rejected.id, "RESUME_ADMISSION_FINISHED");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: rejected.id,
+            text: "done".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_exited(rejected.id);
+
+    let probe = fixture._root.path().join("resume-admission-probe");
+    let transcript = fixture._root.path().join("resumed-root.jsonl");
+    let summary = make_session("resume-admission", &probe, &transcript);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert_eq!(
+        std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
+        format!(
+            "{resume_flag}\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&probe).unwrap(), expected);
+    assert!(fixture.session_summary(summary.id).agent.is_none());
+
+    for (index, command) in ["wrong", "child", "missing-source", "resume-root"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if command != "resume-root" {
+            assert!(
+                fixture.session_summary(summary.id).agent.is_none(),
+                "{command} admitted the resumed conversation"
+            );
+        }
+    }
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("matching resume root did not bind");
+    assert_eq!(bound.binding.conversation, expected);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        if current.metrics.as_ref().is_some_and(|metrics| {
+            metrics.sample.usage.value.input_tokens == Some(10)
+                && metrics.sample.usage.value.output_tokens == Some(1)
+        }) {
+            assert_eq!(
+                current.metrics.unwrap().sample.usage.value.scope,
+                ovrcr::protocol::UsageScope::Conversation
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "pre-invocation transcript usage was not collected"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    for (index, command) in [
+        "activity:UserPromptSubmit:A",
+        "activity:Stop:A",
+        "grow-transcript",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        if current.metrics.as_ref().is_some_and(|metrics| {
+            metrics.sample.usage.value.input_tokens == Some(60)
+                && metrics.sample.usage.value.output_tokens == Some(6)
+        }) {
+            assert_eq!(
+                current.activity.unwrap().state,
+                ovrcr::session::AgentActivity::Idle
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "new resumed-turn transcript record was not counted once"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "compact".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=7");
+    let compact = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(compact.binding, bound.binding);
+    assert_eq!(
+        compact.health.state,
+        ovrcr::protocol::ReporterHealth::Connected
+    );
+
+    for (index, command) in ["resume-transition", "clear", "branch", "resume-root"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 8));
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(
+            current.health.state,
+            ovrcr::protocol::ReporterHealth::Unavailable
+        );
+    }
+
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "RESUME_ADMISSION_FINISHED");
+}
+
+fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>) {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "admission-setup");
+    let proxy = fault.map(|fault| {
+        AdmissionProxy::new(
+            fixture._root.path().join("proxy.sock"),
+            fixture.socket.clone(),
+            fault,
+        )
+    });
+    let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native,r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
+  printf '2.1.267 (Claude Code)\n'; exit 0
+fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("admission-probe");
+    let make_session = |name: &str, probe: &std::path::Path| {
+        fixture.create_session_summary(name,vec![
+        "sh".into(),"-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
+        "admission-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),std::env::current_exe().unwrap().into_os_string(),probe.to_path_buf().into_os_string(),reporting_socket.clone().into_os_string(),
+    ])
+    };
+    let summary = make_session("admission", &probe);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    let expected = std::fs::read_to_string(&probe).unwrap();
+    assert_eq!(expected.len(), 36, "supervisor must select a fresh UUID");
+    let argv = std::fs::read_to_string(probe.with_extension("argv")).unwrap();
+    assert_eq!(
+        argv,
+        format!(
+            "--session-id\n{expected}\n--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+        )
+    );
+    assert_eq!(fixture.session_summary(summary.id).agent_epoch, 1);
+    for (index, command) in [
+        "wrong",
+        "child",
+        "malformed-child",
+        "empty-child",
+        "numeric-child",
+        "child-event",
+        "foreign",
+        "generic",
+        "root",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if command != "root" {
+            assert!(
+                fixture.session_summary(summary.id).agent.is_none(),
+                "{command} admitted"
+            );
+        }
+    }
+    let bound = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("eligible root must bind");
+    assert_eq!(bound.binding.conversation, expected);
+    assert!(bound.activity.is_none());
+    let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
+    let identity: Vec<_> = identity.lines().collect();
+    let capability = parse_hook_capability(identity[2]).unwrap();
+    assert_eq!(
+        fixture.request(Request::AgentReport(ovrcr::protocol::AgentReport {
+            session: summary.id,
+            capability,
+            sequence: None,
+            update: ovrcr::protocol::AgentUpdate::Provider(ovrcr::protocol::ProviderReport {
+                binding: bound.binding.clone(),
+                revision: 9,
+                observation: ovrcr::protocol::AgentObservation::Activity(
+                    ovrcr::protocol::ActivitySample {
+                        state: ovrcr::session::AgentActivity::Busy,
+                        quality: ovrcr::protocol::SampleQuality::Observed,
+                        turn: None,
+                    }
+                ),
+            }),
+        })),
+        Response::Ok
+    );
+    let commands = if fault.is_some() {
+        vec![closing_command]
+    } else {
+        vec!["root", "end-other", closing_command, "root"]
+    };
+    for (index, command) in commands.into_iter().enumerate() {
+        let closure_started = Instant::now();
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 9));
+        if command == closing_command {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while fixture
+                .session_summary(summary.id)
+                .agent
+                .as_ref()
+                .unwrap()
+                .health
+                .state
+                == ovrcr::protocol::ReporterHealth::Connected
+                && Instant::now() < deadline
+            {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+        if command == closing_command && fault.is_some() {
+            assert!(
+                closure_started.elapsed() < Duration::from_millis(1400),
+                "closure exceeded its callback deadline plus fixture observation allowance"
+            );
+        }
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(current.activity_revision, 9);
+        if command == closing_command {
+            assert_eq!(
+                current.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+        }
+    }
+    if matches!(
+        fault,
+        Some(AdmissionFault::RejectHealth | AdmissionFault::RejectStatus)
+    ) {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "root".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=10");
+        let current = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(current.binding, bound.binding);
+        assert_eq!(
+            current.health.state,
+            ovrcr::protocol::ReporterHealth::Unavailable
+        );
+    }
+    let conflict = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        .args([
+            "agent",
+            "run",
+            "--provider",
+            "claude",
+            "--",
+            "/bin/sh",
+            "-c",
+            "printf SHOULD_NOT_SPAWN",
+        ])
+        .env("OVRCR_HOOK_SOCKET", identity[0])
+        .env("OVRCR_SESSION_ID", identity[1])
+        .env("OVRCR_HOOK_TOKEN", identity[2])
+        .output()
+        .unwrap();
+    if matches!(
+        fault,
+        Some(AdmissionFault::RejectHealth | AdmissionFault::RejectStatus)
+    ) {
+        assert!(
+            conflict.status.success(),
+            "failed reporting ownership must be relinquished"
+        );
+    } else {
+        assert!(!conflict.status.success());
+        assert!(conflict.stdout.is_empty());
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_FINISHED");
+    if closing_command == "clear" && fault.is_none() {
+        use std::io::{Read, Write};
+        let old = std::fs::read_to_string(probe.with_extension("channel")).unwrap();
+        let old: Vec<_> = old.lines().collect();
+        assert!(
+            UnixStream::connect(old[0]).is_err(),
+            "completed invocation endpoint remains"
+        );
+        let next_probe = fixture._root.path().join("next-admission-probe");
+        let next = make_session("next-admission", &next_probe);
+        fixture.record_process_group(&next);
+        fixture.wait_terminal_contains(next.id, "ADMISSION_READY");
+        let next_uuid = std::fs::read_to_string(&next_probe).unwrap();
+        assert_ne!(next_uuid, expected);
+        let channel = std::fs::read_to_string(next_probe.with_extension("channel")).unwrap();
+        let channel: Vec<_> = channel.lines().collect();
+        let mut stale = UnixStream::connect(channel[0]).unwrap();
+        stale.write_all(format!("{}\n", old[1]).as_bytes()).unwrap();
+        let mut response = Vec::new();
+        stale.read_to_end(&mut response).unwrap();
+        assert!(response.is_empty());
+        assert!(
+            fixture.session_summary(next.id).agent.is_none(),
+            "old token admitted new invocation"
+        );
+        let mut old_payload = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["report", "claude", "--stdin-json"])
+            .env("OVRCR_AGENT_SOCKET", channel[0])
+            .env("OVRCR_AGENT_TOKEN", channel[1])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        old_payload.stdin.take().unwrap().write_all(serde_json::to_string(&serde_json::json!({"hook_event_name":"SessionStart","source":"startup","session_id":expected})).unwrap().as_bytes()).unwrap();
+        let old_output = old_payload.wait_with_output().unwrap();
+        assert!(old_output.status.success());
+        assert!(old_output.stdout.is_empty());
+        assert!(
+            fixture.session_summary(next.id).agent.is_none(),
+            "old UUID admitted new invocation"
+        );
+
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: next.id,
+                text: "root".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(next.id, "ADMISSION_CALLBACK=0");
+        assert_eq!(
+            fixture
+                .session_summary(next.id)
+                .agent
+                .unwrap()
+                .binding
+                .conversation,
+            next_uuid
+        );
+        assert_eq!(
+            fixture.session_summary(summary.id).agent.unwrap().binding,
+            bound.binding
+        );
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: next.id,
+                text: "exit".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(next.id, "ADMISSION_FINISHED");
+    }
+}
+
+#[test]
+fn agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "admission-argv-setup");
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native,r#"#!/bin/sh
+if [ "$1" = --version ]; then
+  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
+  case "$OVRCR_TEST_VERSION" in
+    fail) exit 2;;
+    timeout) printf '%s' "$$" > "$OVRCR_TEST_PROBE.pid"; while :; do sleep 1; done;;
+    *) printf '%s (Claude Code)\n' "$OVRCR_TEST_VERSION";;
+  esac
+  exit 0
+fi
+printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+printf NATIVE_UNCHANGED
+IFS= read -r line
+exit 19
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let blocked = fixture._root.path().join("blocked-tempdir");
+    std::fs::write(&blocked, "file").unwrap();
+    for (index, (argument, version, mode)) in [
+        ("--resume=foreign", "2.1.267", "normal"),
+        ("--resume", "2.1.268", "normal"),
+        ("-r", "2.1.268", "normal"),
+        ("--unknown-mode", "2.1.267", "normal"),
+        ("doctor", "2.1.267", "normal"),
+        ("--model=sonnet", "2.1.266", "normal"),
+        ("--model=sonnet", "2.1.269", "normal"),
+        ("--model=sonnet", "fail", "normal"),
+        ("--model=sonnet", "timeout", "normal"),
+        ("--model=sonnet", "2.1.267", "blocked"),
+        ("--model=sonnet", "2.1.267", "missing"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let probe = fixture._root.path().join(format!("argv-{index}"));
+        let summary=fixture.create_session_summary(&format!("argv-{index}"),vec![
+            "sh".into(),"-c".into(),
+            r#"stty -echo; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_VERSION="$4" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-token; case "$6" in blocked) export TMPDIR="$7";; missing) unset OVRCR_HOOK_SOCKET OVRCR_SESSION_ID OVRCR_HOOK_TOKEN;; esac; "$1" agent run --provider claude -- "$2" "$5"; code=$?; printf 'UNCHANGED_EXIT=%s\n' "$code"; exit "$code""#.into(),
+            "argv-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),probe.clone().into_os_string(),version.into(),argument.into(),mode.into(),blocked.clone().into_os_string(),
+        ]);
+        fixture.record_process_group(&summary);
+        fixture.wait_terminal_contains_until(
+            summary.id,
+            "NATIVE_UNCHANGED",
+            Instant::now() + Duration::from_secs(4),
+        );
+        assert_eq!(
+            std::fs::read_to_string(probe.with_extension("argv")).unwrap(),
+            format!("{argument}\n"),
+            "case {index}"
+        );
+        assert!(fixture.session_summary(summary.id).agent.is_none());
+        if version == "timeout" {
+            let pid = std::fs::read_to_string(probe.with_extension("pid"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(
+                wait_group_absent(pid, Duration::from_secs(2)),
+                "version probe group remained"
+            );
+        }
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "finish".into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "UNCHANGED_EXIT=19");
+        fixture.wait_exited(summary.id);
+    }
+}
+
+#[test]
+fn private_claude_activity_tracks_only_current_root_prompt_observations() {
+    assert_claude_activity(false);
+}
+#[test]
+fn private_claude_activity_delivery_failure_disconnects_without_stopping_native() {
+    assert_claude_activity(true);
+}
+fn assert_claude_activity(fail_delivery: bool) {
+    use ovrcr::protocol::{AgentActivity, SampleQuality};
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "activity-setup");
+    let proxy = fail_delivery.then(|| {
+        AdmissionProxy::new(
+            fixture._root.path().join("activity-proxy.sock"),
+            fixture.socket.clone(),
+            AdmissionFault::RejectActivity,
+        )
+    });
+    let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("activity-probe");
+    let summary = fixture.create_session_summary("activity", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4"; "$1" agent run --provider claude -- "$2"; printf ACTIVITY_FINISHED; IFS= read -r done"#.into(),
+        "activity-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.into_os_string(), std::env::current_exe().unwrap().into_os_string(), reporting_socket.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+    let cases = [
+        ("root", None, 0, None),
+        (
+            "activity:UserPromptSubmit:A",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:UserPromptSubmit:A:control",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:UserPromptSubmit:A:oversized",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:child",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:wrong",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Stop:A:malformed",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        ("root", Some(AgentActivity::Busy), 1, Some("A")),
+        (
+            "activity:PermissionRequest:A",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Notification:A:generic",
+            Some(AgentActivity::Busy),
+            1,
+            Some("A"),
+        ),
+        (
+            "activity:Notification:A",
+            Some(AgentActivity::WaitingInput),
+            2,
+            Some("A"),
+        ),
+        ("activity:Stop:A", Some(AgentActivity::Idle), 3, Some("A")),
+        (
+            "activity:PreToolUse:A",
+            Some(AgentActivity::Busy),
+            4,
+            Some("A"),
+        ),
+        (
+            "activity:UserPromptSubmit:B",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        ("activity:Stop:A", Some(AgentActivity::Busy), 5, Some("B")),
+        (
+            "activity:Notification:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:StopFailure:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:Stop:missing",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:PostToolUse:A",
+            Some(AgentActivity::Busy),
+            5,
+            Some("B"),
+        ),
+        (
+            "activity:StopFailure:B",
+            Some(AgentActivity::Error),
+            6,
+            Some("B"),
+        ),
+        (
+            "activity:PostToolUseFailure:B",
+            Some(AgentActivity::Busy),
+            7,
+            Some("B"),
+        ),
+        ("clear", Some(AgentActivity::Busy), 7, Some("B")),
+        ("activity:Stop:B", Some(AgentActivity::Busy), 7, Some("B")),
+        (
+            "activity:UserPromptSubmit:C",
+            Some(AgentActivity::Busy),
+            7,
+            Some("B"),
+        ),
+    ];
+    for (index, (command, state, revision, turn)) in cases.into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+        if fail_delivery && index == 1 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+                if snapshot.health.state == ovrcr::protocol::ReporterHealth::Unavailable {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "failed delivery left reporter connected"
+                );
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            assert_eq!(snapshot.activity_revision, 0);
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: "activity:UserPromptSubmit:B".into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+            let closed = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(closed.binding, snapshot.binding);
+            assert_eq!(closed.activity_revision, 0);
+            assert_eq!(
+                closed.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+            break;
+        }
+        if command.ends_with(":control") || command.ends_with(":oversized") {
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Connected
+            );
+        }
+        assert_eq!(snapshot.activity_revision, revision, "{command}");
+        assert_eq!(
+            snapshot.activity.as_ref().map(|a| a.state),
+            state,
+            "{command}"
+        );
+        if let Some(activity) = snapshot.activity {
+            assert_eq!(activity.quality, SampleQuality::Observed);
+            assert_eq!(activity.turn.as_deref(), turn);
+        }
+        assert_eq!(snapshot.binding.generation, 1);
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "ACTIVITY_FINISHED");
+}
+
+#[test]
+fn fresh_pty_does_not_inherit_outer_managed_reporting_channel() {
+    let root = tempfile::tempdir().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "fresh_pty_outer_channel_helper",
+            "--nocapture",
+        ])
+        .env("OVRCR_AGENT_SOCKET", root.path().join("stale-outer.sock"))
+        .env("OVRCR_AGENT_TOKEN", "7".repeat(64))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "isolated inherited environment fixture subprocess"]
+fn fresh_pty_outer_channel_helper() {
+    assert!(std::env::var_os("OVRCR_AGENT_SOCKET").is_some());
+    assert!(std::env::var_os("OVRCR_AGENT_TOKEN").is_some());
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "fresh-channel-setup");
+    let evidence = fixture._root.path().join("fresh-env");
+    let summary = fixture.create_session_summary("fresh-channel", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"printf '%s%s' "${OVRCR_AGENT_SOCKET+x}" "${OVRCR_AGENT_TOKEN+x}" > "$2"; "$1" report activity --state busy; printf FRESH_REPORT_FINISHED; IFS= read -r done"#.into(),
+        "fresh-report".into(), env!("CARGO_BIN_EXE_ovrcr").into(), evidence.clone().into_os_string(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains(summary.id, "FRESH_REPORT_FINISHED");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        ovrcr::session::AgentActivity::Busy,
+        "fresh capability must reach its own runtime instead of the outer private endpoint"
+    );
+    assert_eq!(
+        std::fs::read_to_string(evidence).unwrap(),
+        "",
+        "private outer channel must not reach a fresh PTY"
+    );
+}
+
+#[test]
+fn claude_metrics_route_collects_partial_usage_and_finalizes_native_exit() {
+    assert_claude_metrics_completion(false, false, false, false);
+}
+#[test]
+fn claude_metrics_finalization_recovers_original_receipt_after_lost_ack() {
+    assert_claude_metrics_completion(true, false, false, false);
+}
+#[test]
+fn claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path() {
+    assert_claude_metrics_completion(false, true, false, false);
+}
+#[test]
+fn claude_metrics_clear_freezes_components_and_prevents_reader_reopening() {
+    assert_claude_metrics_completion(false, false, true, false);
+}
+#[test]
+fn claude_metrics_collector_loss_propagates_while_native_stays_usable() {
+    assert_claude_metrics_completion(false, false, false, true);
+}
+fn assert_claude_metrics_completion(
+    lose_ack: bool,
+    missing: bool,
+    clear: bool,
+    kill_collector: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "metrics-setup");
+    let proxy = lose_ack.then(|| {
+        AdmissionProxy::new(
+            fixture._root.path().join("metrics-proxy.sock"),
+            fixture.socket.clone(),
+            AdmissionFault::LostFinalize,
+        )
+    });
+    let socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
+    let native = fixture._root.path().join("claude");
+    std::fs::write(&native, r#"#!/bin/sh
+if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
+OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+"#).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("metrics-probe");
+    let transcript = fixture._root.path().join("root-transcript.jsonl");
+    let summary = fixture.create_session_summary("metrics", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4" OVRCR_TEST_TRANSCRIPT="$6" OVRCR_TEST_DELAY_TRANSCRIPT="$7"; "$1" agent run --provider claude -- "$2"; printf METRICS_FINISHED; IFS= read -r done"#.into(),
+        "metrics-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.into_os_string(), std::env::current_exe().unwrap().into_os_string(), socket.clone().into_os_string(), transcript.into_os_string(), if missing { "1" } else { "0" }.into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "ADMISSION_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    let commands = if missing {
+        vec![
+            "root",
+            "activity:UserPromptSubmit:A",
+            "statusline",
+            "create-transcript",
+        ]
+    } else {
+        vec!["root", "statusline"]
+    };
+    for (index, command) in commands.into_iter().enumerate() {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={index}"));
+        if missing && index == 2 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+                if snapshot.health.state == ovrcr::protocol::ReporterHealth::Unavailable {
+                    assert_eq!(
+                        snapshot.activity.unwrap().state,
+                        ovrcr::protocol::AgentActivity::Busy
+                    );
+                    assert_eq!(
+                        snapshot.metrics.unwrap().sample.context.value.used_tokens,
+                        Some(20)
+                    );
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "missing source health must be visible"
+                );
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let before = loop {
+        let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+        if snapshot.metrics.as_ref().is_some_and(|m| {
+            m.sample.usage.value.input_tokens == Some(10)
+                && m.sample.context.value.used_tokens == Some(20)
+        }) && snapshot.health.state == ovrcr::protocol::ReporterHealth::Connected
+        {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "actual statusline/collector metrics not published"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    if kill_collector {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "kill-collector".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=2");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let current = fixture.session_summary(summary.id);
+            let agent = current.agent.unwrap();
+            if agent.health.reason.as_deref() == Some("collector_unavailable") {
+                assert!(matches!(
+                    current.phase,
+                    ovrcr::session::SessionPhase::Running
+                ));
+                assert_eq!(agent.binding, before.binding);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "collector loss was not propagated"
+            );
+            thread::park_timeout(Duration::from_millis(5));
+        }
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: "statusline".into(),
+                submit: true,
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, "ADMISSION_CALLBACK=3");
+    }
+    if !missing {
+        for (index, command) in ["statusline-replay", "statusline-wrong"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 2));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.metrics_revision, before.metrics_revision);
+            assert_eq!(snapshot.metrics, before.metrics);
+        }
+    }
+    if !missing && !clear && !kill_collector {
+        for (index, command) in ["statusline-unknown", "statusline-lower", "statusline"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Connected
+            );
+            assert_eq!(
+                snapshot
+                    .metrics
+                    .unwrap()
+                    .sample
+                    .cost
+                    .value
+                    .map(|cost| cost.usd_ticks),
+                if index == 2 {
+                    Some(2_500_000_000)
+                } else {
+                    None
+                }
+            );
+        }
+    }
+    if !lose_ack && !missing && !clear && !kill_collector {
+        let compact_before = fixture.session_summary(summary.id).agent.unwrap();
+        for (index, command) in ["compact", "statusline-context-unknown", "statusline"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 7));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.binding, before.binding);
+            let metrics = snapshot.metrics.unwrap();
+            assert_eq!(
+                metrics.sample.usage.value,
+                compact_before.metrics.as_ref().unwrap().sample.usage.value
+            );
+            assert_eq!(
+                metrics
+                    .sample
+                    .cost
+                    .value
+                    .as_ref()
+                    .map(|cost| cost.usd_ticks),
+                Some(2_500_000_000)
+            );
+            match index {
+                0 => assert_eq!(metrics, compact_before.metrics.as_ref().unwrap().clone()),
+                1 => {
+                    assert_eq!(metrics.sample.context.value.used_tokens, None);
+                    assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                }
+                2 => {
+                    assert_eq!(metrics.sample.context.value.used_tokens, Some(20));
+                    assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    if clear {
+        for (index, command) in ["clear", "grow-transcript", "statusline-unknown", "root"]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                fixture.request(Request::SendTerminal {
+                    session: summary.id,
+                    text: command.into(),
+                    submit: true
+                }),
+                Response::Ok
+            );
+            fixture
+                .wait_terminal_contains(summary.id, &format!("ADMISSION_CALLBACK={}", index + 4));
+            let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+            assert_eq!(snapshot.metrics, before.metrics);
+            assert_eq!(snapshot.binding, before.binding);
+            assert_eq!(
+                snapshot.health.state,
+                ovrcr::protocol::ReporterHealth::Unavailable
+            );
+        }
+    }
+    let started = Instant::now();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "METRICS_FINISHED",
+        Instant::now() + Duration::from_secs(3),
+    );
+    assert!(started.elapsed() < Duration::from_millis(2500));
+    let after = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(after.binding, before.binding);
+    assert_eq!(
+        after.health.reason.as_deref(),
+        Some(if clear {
+            "unfinalized_release"
+        } else {
+            "incomplete_final_accounting"
+        })
+    );
+    let metrics = after.metrics.unwrap();
+    assert_eq!(
+        metrics.sample.usage.value.coverage,
+        ovrcr::protocol::UsageCoverage::Partial
+    );
+    assert_eq!(metrics.sample.usage.value.input_tokens, Some(10));
+    assert_eq!(metrics.sample.cost.value.unwrap().usd_ticks, 2_500_000_000);
+    assert_eq!(
+        metrics.context_received_unix_ms,
+        before.metrics.unwrap().context_received_unix_ms
+    );
+    if let Some(proxy) = &proxy {
+        assert!(
+            proxy
+                .final_status_verified
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "must recover original committed finalization receipt without reattaching"
+        );
+    }
+}
+
+#[test]
+fn native_exit_is_bounded_when_reporting_callback_stalls() {
+    use std::os::unix::process::CommandExt;
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "native_exit_stalled_reporting_helper",
+            "--nocapture",
+        ])
+        .process_group(0)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            unsafe {
+                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+            }
+            let _ = child.wait();
+            panic!("owned reporting fixture exceeded exit bound");
+        }
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("NATIVE_EXIT_17"));
+}
+#[test]
+#[ignore = "isolated signal handler and native supervision fixture"]
+fn native_exit_stalled_reporting_helper() {
+    use ovrcr_runtime::agent_runner::{HookEvent, run_native};
+    let root = tempfile::tempdir().unwrap();
+    let marker = root.path().join("callback-entered");
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (finished, finish) = std::sync::mpsc::channel();
+    let child_marker = marker.clone();
+    let started = Instant::now();
+    let status = run_native(
+        &[
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"while test ! -f "$1"; do sleep 0.01; done; printf NATIVE_EXIT_17; exit 17"#.into(),
+            "native-exit".into(),
+            child_marker.into_os_string(),
+        ],
+        move |available, _| {
+            assert!(available);
+            Some(Box::new(move |event| {
+                if matches!(event, HookEvent::Poll { .. }) {
+                    std::fs::write(&marker, "entered").unwrap();
+                    let _ = blocked.recv();
+                    let _ = finished.send(());
+                }
+                Vec::new()
+            }))
+        },
+    )
+    .unwrap();
+    assert_eq!(status.code(), Some(17));
+    assert!(started.elapsed() < Duration::from_millis(2500));
+    release.send(()).unwrap();
+    finish.recv_timeout(Duration::from_secs(1)).unwrap();
+}

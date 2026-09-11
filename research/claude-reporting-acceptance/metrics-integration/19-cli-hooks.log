@@ -1,0 +1,11 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.65s
+     Running tests/cli.rs (target/debug/deps/cli-6b6ba4db7807183d)
+
+running 4 tests
+test agent_hook_cli_requires_identity_without_starting_server ... ok
+test agent_hook_cli_reaches_managed_session ... ok
+test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+test agent_hook_cli_timeout_is_bounded ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 3.02s

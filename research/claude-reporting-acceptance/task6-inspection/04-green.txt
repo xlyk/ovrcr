@@ -1,0 +1,12 @@
+command: rtk proxy cargo test -p ovrcr --test resource_cli managed_usage_inspection -- --nocapture
+
+running 1 test
+test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.61s
+
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running tests/resource_cli.rs (target/debug/deps/resource_cli-c61e6e00e04d209d)
+
+exit=0

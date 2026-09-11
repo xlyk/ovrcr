@@ -1,0 +1,8 @@
+Command: cargo fmt --all -- --check
+Revision: 304a2e0 + initial admission
+
+Exit: 0
+Command: git diff --check
+Revision: 304a2e0 + initial admission
+
+Exit: 0

@@ -1,0 +1,44 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.00s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-04a9b59d3a101a99)
+
+running 1 test
+
+thread 'fresh_pty_does_not_inherit_outer_managed_reporting_channel' (31943477) panicked at tests/server_lifecycle.rs:8358:5:
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2efW8s/repo/.git/
+[main (root-commit) 36d8114] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test fresh_pty_outer_channel_helper ... FAILED
+
+failures:
+
+failures:
+    fresh_pty_outer_channel_helper
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 66 filtered out; finished in 1.43s
+
+
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2efW8s/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2efW8s/server.sock
+
+thread 'fresh_pty_outer_channel_helper' (31943480) panicked at tests/server_lifecycle.rs:8376:5:
+assertion `left == right` failed: fresh capability must reach its own runtime instead of the outer private endpoint
+  left: Unknown
+ right: Busy
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... FAILED
+
+failures:
+
+failures:
+    fresh_pty_does_not_inherit_outer_managed_reporting_channel
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 66 filtered out; finished in 1.54s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

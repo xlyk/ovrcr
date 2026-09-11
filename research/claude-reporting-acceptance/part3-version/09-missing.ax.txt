@@ -1,0 +1,68 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: closed  elapsed: 3m                                                                                                         
+  ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: closed  elapsed: 3m                                                                                                         
+		5 text (settable)   ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │agent admission unavailable; running native command                                                                              
+		7 text (settable)      ├ terminal                        │No conversation found with session ID: 11111111-2222-4333-8444-555555555555                                                      
+		8 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		9 text (settable)   - review auth handoff                │                                                                                                                                 
+		10 text (settable)      ├ grok / grok-4.6                 │                                                                                                                                 
+		11 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		12 text (settable)     version-seed                       │                                                                                                                                 
+		13 text (settable)      ├ python3                         │                                                                                                                                 
+		14 text (settable)      └ run 12m  ctx —                  │                                                                                                                                 
+		15 text (settable)     version-missing                    │                                                                                                                                 
+		16 text (settable)      ├ python3                         │                                                                                                                                 
+		17 text (settable)      └ run 3m  ctx —                   │                                                                                                                                 
+		18 text (settable)                                        │                                                                                                                                 
+		19 text (settable)   ▼ worktree-lifecycle                 │                                                                                                                                 
+		20 text (settable)   - local                              │                                                                                                                                 
+		21 text (settable)      ├ terminal                        │                                                                                                                                 
+		22 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		23 text (settable)   - implement lifecycle cleanup        │                                                                                                                                 
+		24 text (settable)      ├ claude / sonnet-4               │                                                                                                                                 
+		25 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		26 text (settable)   - review websocket shutdown          │                                                                                                                                 
+		27 text (settable)      ├ codex / gpt-5.4                 │                                                                                                                                 
+		28 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		29 text (settable)   - plan snapshot restore              │                                                                                                                                 
+		30 text (settable)      ├ pi / grok-4.6                   │                                                                                                                                 
+		31 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		32 text (settable)                                        │                                                                                                                                 
+		33 text (settable) ▼ 󰉋 spacelift-agent                    │                                                                                                                                 
+		34 text (settable)   ▼ pipeline-progress-v2               │                                                                                                                                 
+		35 text (settable)   - local                              │                                                                                                                                 
+		36 text (settable)      ├ terminal                        │                                                                                                                                 
+		37 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		38 text (settable)   - build pipeline progress            │                                                                                                                                 
+		39 text (settable)      ├ claude / opus-4                 │                                                                                                                                 
+		40 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		41 text (settable)                                        │                                                                                                                                 
+		42 text (settable)   ▼ scope-quality                      │                                                                                                                                 
+		43 text (settable)   - local                              │                                                                                                                                 
+		44 text (settable)      ├ terminal                        │                                                                                                                                 
+		45 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		46 text (settable)   - review scope quality               │                                                                                                                                 
+		47 text (settable)      ├ codex / gpt-5.4                 │                                                                                                                                 
+		48 text (settable)      └ run 15m  ctx —                  │                                                                                                                                 
+		49 text (settable)                                        │                                                                                                                                 
+		50 text (settable)                                        │                                                                                                                                 
+		51 text (settable)                                        │                                                                                                                                 
+		52 text (settable)                                        │                                                                                                                                 
+		53 text (settable) ERROR: Session exited                                                                                                                                                    
+	54 close button
+	55 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	56 minimize button
+	57 text OVRCR GUI
+58 menu bar
+	59 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                   [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: closed  elapsed: 3m                                                                                                         
+  ▼ auth-handoff                       │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

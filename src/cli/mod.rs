@@ -1,3 +1,5 @@
+mod agent;
+mod agent_setup;
 mod args;
 mod output;
 mod report;
@@ -66,6 +68,10 @@ fn run(cli: Cli) -> AppResult<()> {
         .map_err(RuntimeError::internal);
     };
     match command {
+        Command::AgentCollector => {
+            ovrcr::report::collector::run_helper().map_err(RuntimeError::internal)
+        }
+        Command::Agent { command } => agent::run(command),
         Command::Task(args) => {
             ovrcr::task_cli::run_task(args.command, json_output).map_err(RuntimeError::internal)
         }
@@ -145,6 +151,9 @@ fn run(cli: Cli) -> AppResult<()> {
         Command::Session {
             command: SessionCommand::Context { id },
         } => inspect_session_context(id),
+        Command::Session {
+            command: SessionCommand::Usage { id },
+        } => inspect_session_usage(id),
         Command::Session {
             command: SessionCommand::Remove { id },
         } => mutate_without_start(

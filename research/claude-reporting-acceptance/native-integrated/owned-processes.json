@@ -1,0 +1,134 @@
+[
+  {
+    "pid": 92669,
+    "ppid": 25168,
+    "pgid": 92669,
+    "command": "rtk proxy sh -c mkdir -p research/claude-reporting-acceptance/native-integrated; git rev-parse HEAD > research/claude-reporting-acceptance/native-integrated/source.txt; git status --porcelain --untracked-files=no > research/claude-reporting-acceptance/native-integrated/tracked-status.txt; just gui > research/claude-reporting-acceptance/native-integrated/build.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-integrated/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 92710,
+    "ppid": 92669,
+    "pgid": 92669,
+    "command": "/bin/sh -c mkdir -p research/claude-reporting-acceptance/native-integrated; git rev-parse HEAD > research/claude-reporting-acceptance/native-integrated/source.txt; git status --porcelain --untracked-files=no > research/claude-reporting-acceptance/native-integrated/tracked-status.txt; just gui > research/claude-reporting-acceptance/native-integrated/build.log 2>&1; result=$?; echo \"$result\" > research/claude-reporting-acceptance/native-integrated/launcher.exit; exit \"$result\""
+  },
+  {
+    "pid": 92753,
+    "ppid": 92710,
+    "pgid": 92669,
+    "command": "just gui"
+  },
+  {
+    "pid": 92779,
+    "ppid": 92753,
+    "pgid": 92669,
+    "command": "rtk proxy sh scripts/gui.sh"
+  },
+  {
+    "pid": 92786,
+    "ppid": 92779,
+    "pgid": 92669,
+    "command": "rtk proxy ./ovrcr-gui"
+  },
+  {
+    "pid": 94933,
+    "ppid": 92786,
+    "pgid": 92669,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 94967,
+    "ppid": 94933,
+    "pgid": 92669,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 95130,
+    "ppid": 94967,
+    "pgid": 95130,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 95162,
+    "ppid": 94967,
+    "pgid": 95162,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 95204,
+    "ppid": 94967,
+    "pgid": 95204,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 95253,
+    "ppid": 94967,
+    "pgid": 95253,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 95257,
+    "ppid": 94967,
+    "pgid": 95257,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95265,
+    "ppid": 94967,
+    "pgid": 95265,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95309,
+    "ppid": 94967,
+    "pgid": 95309,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95317,
+    "ppid": 94967,
+    "pgid": 95317,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95327,
+    "ppid": 94967,
+    "pgid": 95327,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95366,
+    "ppid": 94967,
+    "pgid": 95366,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 95414,
+    "ppid": 94933,
+    "pgid": 95414,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  },
+  {
+    "pid": 15954,
+    "ppid": 94967,
+    "pgid": 15954,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run --provider claude -- /Users/xlyk/.local/bin/claude --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-ZnTRSP/provider/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 15958,
+    "ppid": 15954,
+    "pgid": 15958,
+    "command": "/Users/xlyk/.local/bin/claude --session-id 55cb32e6-723d-4665-a182-e76c2e22eb4c --setting-sources  --settings /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-ZnTRSP/provider/settings.json --strict-mcp-config --model sonnet"
+  },
+  {
+    "pid": 17930,
+    "ppid": 15954,
+    "pgid": 17930,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr __agent-collector"
+  },
+  {
+    "pid": 33133,
+    "ppid": 94933,
+    "pgid": 33133,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  }
+]

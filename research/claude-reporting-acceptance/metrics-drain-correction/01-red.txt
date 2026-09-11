@@ -1,0 +1,32 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.89s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-cfec07582b757f52)
+
+running 1 test
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+
+thread '<unnamed>' (32619459) panicked at src/report/admission.rs:902:80:
+called `Result::unwrap()` on an `Err` value: read protocol frame length
+
+Caused by:
+    Resource temporarily unavailable (os error 35)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread '<unnamed>' (32619460) panicked at src/report/admission.rs:916:72:
+called `Result::unwrap()` on an `Err` value: read protocol frame length
+
+Caused by:
+    failed to fill whole buffer
+
+thread 'report::admission::tests::native_completion_drains_past_pending_pre_exit_eof' (32619458) panicked at src/report/admission.rs:984:46:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... FAILED
+
+failures:
+
+failures:
+    report::admission::tests::native_completion_drains_past_pending_pre_exit_eof
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p ovrcr --lib`

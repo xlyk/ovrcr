@@ -1,0 +1,30 @@
+Command: cargo test -p ovrcr --test server_lifecycle agent_run_owns_native_group -- --nocapture
+Revision: 8108941 + Task3 working tree
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.51s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-0ff545f009b0fac9)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpASM938/repo/.git/
+[main (root-commit) 4609dd8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpASM938/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpASM938/server.sock
+
+thread 'agent_run_owns_native_group_and_restores_terminal_after_forwarded_term' (31155781) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "NATIVE_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "agent admission unavailable; running native command\n\nrunning 1 test\n\nthread 'agent_run_native_helper' (31156161) panicked at tests/server_lifecycle.rs:7122:5:\nassertion failed: String::from_utf8_lossy(&report.stderr).contains(\"admission is unavailable\")\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest agent_run_native_helper ... FAILED\n\nfailures:\n\nfailures:\n    agent_run_native_helper\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.01s\n\nWRAPPER_FINISHED=101" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... FAILED
+
+failures:
+
+failures:
+    agent_run_owns_native_group_and_restores_terminal_after_forwarded_term
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 2.87s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+Exit: 101

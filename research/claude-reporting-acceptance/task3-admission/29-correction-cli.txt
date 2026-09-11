@@ -1,0 +1,13 @@
+Command: cargo test -p ovrcr --test cli agent_run_
+Revision: de8cd87 + P1/P2 corrections
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/claude-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running tests/cli.rs (target/debug/deps/cli-b86f5d1537cce9b7)
+
+running 3 tests
+test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.70s
+Exit: 0

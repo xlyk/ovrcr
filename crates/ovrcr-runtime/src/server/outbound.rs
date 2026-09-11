@@ -18,9 +18,101 @@ pub(super) struct DashboardQueue {
     dirty: HashMap<(u64, SessionId), DirtyState>,
     closed: bool,
     closing: bool,
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
+    peak_items: usize,
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
+    peak_bytes: usize,
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
+    rejected: u64,
+}
+
+#[cfg(any(test, feature = "acceptance-diagnostics"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DashboardQueueSnapshot {
+    pub pending_items: usize,
+    pub pending_bytes: usize,
+    pub peak_items: usize,
+    pub peak_bytes: usize,
+    pub rejected: u64,
+    pub message_items: usize,
+    pub terminal_items: usize,
+    pub dirty_items: usize,
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+#[derive(Clone, Default)]
+pub struct DashboardQueueMonitor {
+    sink: Arc<Mutex<Option<std::sync::Weak<DashboardSink>>>>,
+}
+
+#[cfg(feature = "acceptance-diagnostics")]
+impl DashboardQueueMonitor {
+    pub fn snapshot(&self) -> Option<DashboardQueueSnapshot> {
+        self.sink
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|sink| sink.reporting_snapshot())
+    }
+
+    pub(super) fn register(&self, sink: &Arc<DashboardSink>) {
+        *self.sink.lock().unwrap() = Some(Arc::downgrade(sink));
+    }
 }
 
 impl DashboardQueue {
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
+    fn snapshot(&self) -> DashboardQueueSnapshot {
+        let message_bytes = self
+            .messages
+            .iter()
+            .map(|outbound| encoded_len(&outbound.message))
+            .sum::<usize>();
+        let terminal_bytes = self
+            .terminal
+            .as_ref()
+            .map_or(0, |outbound| encoded_len(&outbound.message));
+        let dirty_bytes = self
+            .dirty
+            .keys()
+            .map(|(revision, session)| {
+                encoded_len(&ServerMessage::Event(ServerEvent::ScreenDirty {
+                    session: *session,
+                    revision: *revision,
+                }))
+            })
+            .sum::<usize>();
+        DashboardQueueSnapshot {
+            pending_items: self.messages.len()
+                + usize::from(self.terminal.is_some())
+                + self.dirty.len(),
+            pending_bytes: message_bytes + terminal_bytes + dirty_bytes,
+            peak_items: self.peak_items,
+            peak_bytes: self.peak_bytes,
+            rejected: self.rejected,
+            message_items: self.messages.len(),
+            terminal_items: usize::from(self.terminal.is_some()),
+            dirty_items: self.dirty.len(),
+        }
+    }
+
+    fn record_peak(&mut self) {
+        #[cfg(any(test, feature = "acceptance-diagnostics"))]
+        {
+            let snapshot = self.snapshot();
+            self.peak_items = self.peak_items.max(snapshot.pending_items);
+            self.peak_bytes = self.peak_bytes.max(snapshot.pending_bytes);
+        }
+    }
+
+    fn record_rejected(&mut self) {
+        #[cfg(any(test, feature = "acceptance-diagnostics"))]
+        {
+            self.rejected += 1;
+        }
+    }
+
     /// Replace every queued output frame with a pending dirty marker for
     /// its revision and session, so the dashboard re-reads the screen instead.
     fn coalesce_output(&mut self) {
@@ -72,6 +164,12 @@ impl DashboardSink {
                 dirty: HashMap::new(),
                 closed: false,
                 closing: false,
+                #[cfg(any(test, feature = "acceptance-diagnostics"))]
+                peak_items: 0,
+                #[cfg(any(test, feature = "acceptance-diagnostics"))]
+                peak_bytes: 0,
+                #[cfg(any(test, feature = "acceptance-diagnostics"))]
+                rejected: 0,
             }),
             wake: Condvar::new(),
         })
@@ -80,9 +178,11 @@ impl DashboardSink {
     pub(super) fn enqueue(&self, outbound: DashboardOutbound) -> Enqueue {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
+            queue.record_rejected();
             return Enqueue::Closed;
         }
         if queue.closing {
+            queue.record_rejected();
             return Enqueue::Draining;
         }
         if let ServerMessage::Event(ServerEvent::Output {
@@ -105,6 +205,7 @@ impl DashboardSink {
                     )
                 });
                 queue.dirty.insert(key, DirtyState::Pending);
+                queue.record_peak();
                 self.wake.notify_one();
                 return Enqueue::Queued;
             }
@@ -116,11 +217,13 @@ impl DashboardSink {
             queue.coalesce_output();
             if queue.messages.len() == DASHBOARD_QUEUE {
                 queue.closed = true;
+                queue.record_rejected();
                 self.wake.notify_all();
                 return Enqueue::Closed;
             }
         }
         queue.messages.push_back(outbound);
+        queue.record_peak();
         self.wake.notify_one();
         Enqueue::Queued
     }
@@ -189,6 +292,7 @@ impl DashboardSink {
             return false;
         }
         queue.messages.extend(messages);
+        queue.record_peak();
         self.wake.notify_one();
         true
     }
@@ -196,9 +300,11 @@ impl DashboardSink {
     pub(super) fn enqueue_terminal(&self, outbound: DashboardOutbound) -> Enqueue {
         let mut queue = self.queue.lock().unwrap();
         if queue.closed {
+            queue.record_rejected();
             return Enqueue::Closed;
         }
         if queue.closing {
+            queue.record_rejected();
             // A terminal frame is already queued; the writer closes this
             // connection once it has flushed that one.
             return Enqueue::Draining;
@@ -216,11 +322,13 @@ impl DashboardSink {
         queue.dirty.clear();
         if too_large || queue.messages.len() == DASHBOARD_QUEUE {
             queue.closed = true;
+            queue.record_rejected();
             queue.terminal = None;
             self.wake.notify_all();
             return Enqueue::Closed;
         }
         queue.terminal = Some(outbound);
+        queue.record_peak();
         self.wake.notify_one();
         Enqueue::Queued
     }
@@ -270,10 +378,24 @@ impl DashboardSink {
         queue.closed || queue.closing
     }
 
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
+    pub fn reporting_snapshot(&self) -> DashboardQueueSnapshot {
+        let mut snapshot = self.queue.lock().unwrap().snapshot();
+        snapshot.peak_items = snapshot.peak_items.max(snapshot.pending_items);
+        snapshot.peak_bytes = snapshot.peak_bytes.max(snapshot.pending_bytes);
+        snapshot
+    }
+
     #[cfg(test)]
     pub(super) fn dirty_keys(&self) -> Vec<(u64, SessionId)> {
         self.queue.lock().unwrap().dirty.keys().copied().collect()
     }
+}
+
+#[cfg(any(test, feature = "acceptance-diagnostics"))]
+fn encoded_len(message: &ServerMessage) -> usize {
+    bincode::serde::encode_to_vec(message, bincode::config::standard())
+        .map_or(0, |bytes| bytes.len())
 }
 
 pub(super) struct DashboardSlot {

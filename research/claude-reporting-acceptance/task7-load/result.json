@@ -1,0 +1,19 @@
+{
+  "accepted_updates": 30000,
+  "stale_rejections": 3000,
+  "seconds": 60,
+  "control_samples": 2388,
+  "control_p99_us": 1205,
+  "control_max_us": 2822,
+  "baseline_rss_kib": 127088,
+  "peak_sampled_rss_kib": 1546480,
+  "growth_kib": 1419392,
+  "growth_gib": 1.3536376953125,
+  "max_schedule_lateness_us": 5584,
+  "max_accounting_identities": 65536,
+  "max_accounting_charged_bytes": 7973172,
+  "max_ps_cpu_percent_fill": 1165.9,
+  "max_ps_cpu_percent_load": 6.0,
+  "internal_queue_counters": "not exposed; acceptance remains open",
+  "final_cleanup": "50 helpers reaped while parent alive; 50 PTY PIDs absent after shutdown"
+}
