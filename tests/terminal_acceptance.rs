@@ -1443,7 +1443,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     )?;
     dashboard.wait_for(b"mouse", wait_deadline())?;
     dashboard.wait_for(b"agent runtime", wait_deadline())?;
-    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.click_visible_text("  - mouse")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
@@ -1498,7 +1498,7 @@ fn default_dashboard_acceptance_wrapper_exercises_pty_controls() -> Result<()> {
     );
     dashboard.send(b"\x07")?;
     dashboard.wait_for(b"BROWSE", wait_deadline())?;
-    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.click_visible_text("  - mouse")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"\r")?;
     dashboard.send(b"MOUSE_TOKEN\r")?;
@@ -1649,7 +1649,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     eprintln!("copy acceptance outer dashboard pid/pgid while alive: {outer_pid:?}/{outer_pgid:?}");
     dashboard.wait_for(b"mouse", wait_deadline())?;
     dashboard.wait_for(b"agent runtime", wait_deadline())?;
-    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.click_visible_text("  - mouse")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
@@ -1793,7 +1793,7 @@ fn pause_resume_dashboard_round_trip() -> Result<()> {
     )?;
     dashboard.wait_for(b"mouse", wait_deadline())?;
     dashboard.wait_for(b"agent runtime", wait_deadline())?;
-    dashboard.send(b"\x1b[<0;5;10M")?;
+    dashboard.click_visible_text("  - mouse")?;
     dashboard.wait_for(b"MOUSE_READY", wait_deadline())?;
     dashboard.send(b"k")?;
     dashboard.wait_for(b"WAITING_READY", wait_deadline())?;
