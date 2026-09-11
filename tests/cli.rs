@@ -199,7 +199,41 @@ fn agent_hook_cli_requires_identity_without_starting_server() {
 }
 
 #[test]
+fn response_ready_cli_parses_before_requiring_hook_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(&root)
+        .args(["--json", "report", "activity", "--state", "response-ready"])
+        .env_remove("OVRCR_HOOK_SOCKET")
+        .env_remove("OVRCR_SESSION_ID")
+        .env_remove("OVRCR_HOOK_TOKEN")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("hook identity"),
+        "{:?}",
+        output
+    );
+    assert!(!root.path().join("server.sock").exists());
+}
+
+#[test]
 fn agent_hook_cli_reaches_managed_session() {
+    assert_activity_reaches_managed_session("busy", ovrcr::session::AgentActivity::Busy);
+}
+
+#[test]
+fn response_ready_cli_reaches_managed_session() {
+    assert_activity_reaches_managed_session(
+        "response-ready",
+        ovrcr::session::AgentActivity::ResponseReady,
+    );
+}
+
+fn assert_activity_reaches_managed_session(
+    activity: &str,
+    expected: ovrcr::session::AgentActivity,
+) {
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("repo");
     let workspaces = root.path().join("workspaces");
@@ -280,7 +314,7 @@ fn agent_hook_cli_reaches_managed_session() {
 
     let marker = root.path().join("hook-child.marker");
     let report_stdout = root.path().join("hook-report.stdout");
-    let script = r#"printf CHILD_READY > "$2"; "$1" --json report activity --state busy --sequence 1 > "$3" && printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#;
+    let script = r#"printf CHILD_READY > "$2"; "$1" --json report activity --state busy --sequence 1 > "$3" && printf HOOK_DONE >> "$2"; while IFS= read -r line; do :; done"#.replace("--state busy", &format!("--state {activity}"));
     let created = run(&[
         "new",
         "--project",
@@ -292,7 +326,7 @@ fn agent_hook_cli_reaches_managed_session() {
         "--",
         "sh",
         "-c",
-        script,
+        &script,
         "hook-child",
         bin,
         marker.to_str().unwrap(),
@@ -313,10 +347,10 @@ fn agent_hook_cli_reaches_managed_session() {
         "managed hook child did not invoke reporter"
     );
     let activity_deadline = Instant::now() + Duration::from_secs(3);
-    let mut observed_busy = false;
+    let mut observed_activity = false;
     while Instant::now() < activity_deadline {
         if let Ok(Response::Hierarchy(snapshot)) = cli_request(&socket, Request::List) {
-            observed_busy = snapshot
+            observed_activity = snapshot
                 .projects
                 .iter()
                 .flat_map(|project| project.workspaces.iter())
@@ -324,15 +358,31 @@ fn agent_hook_cli_reaches_managed_session() {
                 .any(|session| {
                     session.id == SessionId(id)
                         && matches!(session.phase, SessionPhase::Running)
-                        && session.activity == ovrcr::session::AgentActivity::Busy
+                        && session.activity == expected
                 });
-            if observed_busy {
+            if observed_activity {
                 break;
             }
         }
         std::thread::park_timeout(Duration::from_millis(10));
     }
-    assert!(observed_busy, "managed server never observed Busy activity");
+    assert!(
+        observed_activity,
+        "managed server never observed {expected:?} activity"
+    );
+    let listed = run(&["--json", "terminal", "list"]);
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert_eq!(row["activity"], activity.replace('-', "_"));
+    assert!(
+        row["agent"].is_null(),
+        "manual activity must not invent provider metrics"
+    );
     let completion_deadline = Instant::now() + Duration::from_secs(3);
     while std::fs::read_to_string(&marker).unwrap_or_default() != "CHILD_READYHOOK_DONE"
         && Instant::now() < completion_deadline
@@ -2149,5 +2199,21 @@ fn claude_statusline_preserves_decimal_and_renders_after_reporting_timeout() {
         let envelope = server.join().unwrap();
         assert!(envelope.contains("1.00000000005"));
         assert!(envelope.contains("claude-statusline"));
+    }
+}
+
+#[test]
+fn codex_setup_and_doctor_help_expose_provider_dispatch() {
+    for action in ["setup", "doctor"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["agent", action, "--help"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(help.contains("claude, codex"), "{help}");
+        if action == "doctor" {
+            assert!(!help.contains("[default: claude]"));
+        }
     }
 }

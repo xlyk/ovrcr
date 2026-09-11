@@ -3,6 +3,19 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 
+// These setup/doctor fixtures launch temporary executables under bounded native
+// probe deadlines. Coordinate their cold starts; this suite checks reporting and
+// cleanup contracts, not concurrent provider-launch throughput. Use the same
+// poison-tolerant env_lock pattern as server_lifecycle so every assertion still
+// runs after an unrelated fixture failure.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
@@ -44,6 +57,7 @@ fn setup(root: &tempfile::TempDir, value: &Value) -> (Value, String) {
 }
 #[test]
 fn setup_preserves_settings_and_external_renderer_bytes_once() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let output_path = root.path().join("received");
     let calls = root.path().join("calls");
@@ -89,6 +103,7 @@ fn setup_preserves_settings_and_external_renderer_bytes_once() {
 }
 #[test]
 fn setup_migrates_only_exact_legacy_statusline_and_marks_hooks() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     for prefix in ["ovrcr".to_string(), env!("CARGO_BIN_EXE_ovrcr").to_string()] {
         let (value, _) = setup(
@@ -124,6 +139,7 @@ fn setup_migrates_only_exact_legacy_statusline_and_marks_hooks() {
 }
 #[test]
 fn setup_quotes_actual_executable_path() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("ovrcr ' quoted");
     std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &binary).unwrap();
@@ -150,6 +166,7 @@ fn setup_quotes_actual_executable_path() {
 }
 #[test]
 fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");
     for (version, expected_status, expected_version) in [
@@ -232,6 +249,7 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
 
 #[test]
 fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
+    let _env_lock = env_lock();
     use ovrcr::protocol::*;
     use std::os::unix::net::UnixListener;
     for bound in [false, true] {
@@ -311,6 +329,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
 
 #[test]
 fn doctor_interrupt_cleans_its_owned_version_probe_before_exit() {
+    let _env_lock = env_lock();
     use std::os::unix::process::ExitStatusExt;
     use std::time::{Duration, Instant};
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
@@ -379,6 +398,7 @@ fn doctor_interrupt_cleans_its_owned_version_probe_before_exit() {
 
 #[test]
 fn doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let (base, _) = setup(&root, &json!({}));
     for (case, expected) in [
@@ -432,5 +452,215 @@ fn doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes() {
             result["configuration"]["effective_configuration"],
             "unverified"
         );
+    }
+}
+
+#[test]
+fn codex_setup_preserves_handlers_trust_and_quotes_noop_helper() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let binary = root.path().join("ovrcr ' quoted");
+    std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &binary).unwrap();
+    let path = root.path().join("config with spaces.toml");
+    let original = r#"
+[projects.example]
+trust_level = "trusted"
+[hooks.state.example]
+trusted_hash = "preserve-only"
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo first"
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo second"
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "my-approval-handler"
+"#;
+    std::fs::write(&path, original).unwrap();
+    let run = || {
+        Command::new(&binary)
+            .args(["agent", "setup", "codex", "--print", "--settings"])
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+    let output = run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    let value: toml::Value = toml::from_str(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+    let before: toml::Value = toml::from_str(original).unwrap();
+    assert_eq!(value["projects"], before["projects"]);
+    assert_eq!(value["hooks"]["state"], before["hooks"]["state"]);
+    assert_eq!(
+        value["hooks"]["PermissionRequest"],
+        before["hooks"]["PermissionRequest"]
+    );
+    assert_eq!(value["hooks"]["Stop"][0], before["hooks"]["Stop"][0]);
+    for event in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "Interrupt",
+        "SessionEnd",
+    ] {
+        let groups = value["hooks"][event].as_array().unwrap();
+        let cmd = groups.last().unwrap()["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.starts_with("exec '"));
+        // Execute the actual emitted shell command, including its quoted absolute path.
+        let mut helper = Command::new("sh");
+        helper
+            .env("OVRCR_CONFIG", root.path().join("registry.toml"))
+            .env("OVRCR_SOCKET", root.path().join("socket"));
+        helper
+            .args(["-c", cmd])
+            .env_remove("OVRCR_HOOK_TOKEN")
+            .env_remove("OVRCR_HOOK_SOCKET")
+            .env_remove("OVRCR_AGENT_TOKEN")
+            .env_remove("OVRCR_AGENT_SOCKET")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        let mut child = helper.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("{{\"hook_event_name\":\"{event}\"}}\n").as_bytes())
+            .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert!(result.status.success());
+        assert!(result.stdout.is_empty());
+    }
+    std::fs::write(&path, &output.stdout).unwrap();
+    let repeated = run();
+    assert_eq!(output.stdout, repeated.stdout);
+    assert!(!root.path().join("socket").exists());
+}
+
+#[test]
+fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    for (provider, response) in [
+        ("codex", "codex-cli 0.153.0"),
+        ("claude", "2.1.268 (Claude Code)"),
+    ] {
+        let executable = root.path().join(provider);
+        std::fs::write(&executable, format!("#!/bin/sh\n[ \"$#\" = 1 ] && [ \"$1\" = --version ] || exit 81\nprintf '%s\\n' '{response}'\n")).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = command(&root)
+            .args(["agent", "doctor", provider, "--json"])
+            .env("PATH", root.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["provider"], provider);
+        assert_eq!(value["executable"], provider);
+        assert_eq!(value["probe_status"], "supported");
+    }
+    let executable = root.path().join("codex version with spaces");
+    for response in ["codex-cli 0.152.0", "codex-cli 0.153.1", "NEVER_PRINT_ME"] {
+        std::fs::write(
+            &executable,
+            format!("#!/bin/sh\nprintf '%s\\n' '{response}'\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = command(&root)
+            .args(["agent", "doctor", "codex", "--json", "--executable"])
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("NEVER_PRINT_ME"));
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["probe_status"], "unsupported");
+        assert_eq!(value["capabilities"]["initial_invocation"]["fresh"], false);
+    }
+    assert!(!root.path().join("socket").exists());
+    assert!(!root.path().join("registry.toml").exists());
+}
+
+#[test]
+fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    let setup = command(&root)
+        .args(["agent", "setup", "codex", "--print"])
+        .output()
+        .unwrap();
+    assert!(setup.status.success());
+    let base: toml::Value = toml::from_str(std::str::from_utf8(&setup.stdout).unwrap()).unwrap();
+    let path = root.path().join("settings.toml");
+    for case in ["base", "filtered", "async", "wrong_type", "invalid"] {
+        let mut value = base.clone();
+        match case {
+            "filtered" => {
+                value["hooks"]["Stop"][0]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("matcher".into(), "never".into());
+            }
+            "async" => {
+                value["hooks"]["Stop"][0]["hooks"][0]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("async".into(), true.into());
+            }
+            "wrong_type" => value["hooks"]["Stop"][0]["hooks"][0]["type"] = "prompt".into(),
+            _ => {}
+        }
+        let bytes = if case == "invalid" {
+            "NEVER_PRINT_ME = [".into()
+        } else {
+            toml::to_string(&value).unwrap()
+        };
+        std::fs::write(&path, &bytes).unwrap();
+        let output = command(&root)
+            .args(["agent", "doctor", "codex", "--json", "--settings"])
+            .arg(&path)
+            .arg("--executable")
+            .arg(root.path().join("missing"))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("NEVER_PRINT_ME"));
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["probe_status"], "unavailable");
+        assert_eq!(
+            result["configuration"]["status"],
+            if case == "base" {
+                "supplied_file_supported"
+            } else if case == "invalid" {
+                "unverified"
+            } else {
+                "supplied_file_unsupported_or_unverified"
+            }
+        );
+        assert_eq!(
+            result["release_status"],
+            "accepted_exact_0.153.0_hooks_only"
+        );
+        assert_eq!(result["configuration"]["hook_trust"], "unverified");
+        assert_eq!(result["configuration"]["delivery"], "unverified");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
+        if case == "invalid" {
+            let output = command(&root)
+                .args(["agent", "setup", "codex", "--print", "--settings"])
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(!String::from_utf8_lossy(&output.stderr).contains("NEVER_PRINT_ME"));
+        }
     }
 }

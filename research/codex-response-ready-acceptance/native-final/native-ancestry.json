@@ -1,0 +1,50 @@
+[
+  {
+    "pid": 55894,
+    "ppid": 42209,
+    "pgid": 55894,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr agent run codex -- /opt/homebrew/Caskroom/codex/0.153.0/bin/codex --no-alt-screen -C /private/tmp/ovrcr-codex-final-attc4w4m/workspace"
+  },
+  {
+    "pid": 42209,
+    "ppid": 41584,
+    "pgid": 42209,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 41584,
+    "ppid": 41552,
+    "pgid": 41525,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 41552,
+    "ppid": 41533,
+    "pgid": 41525,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 41533,
+    "ppid": 41532,
+    "pgid": 41525,
+    "command": "rtk proxy ./ovrcr-gui"
+  },
+  {
+    "pid": 41532,
+    "ppid": 41527,
+    "pgid": 41525,
+    "command": "rtk proxy sh scripts/gui.sh"
+  },
+  {
+    "pid": 41527,
+    "ppid": 41525,
+    "pgid": 41525,
+    "command": "just gui"
+  },
+  {
+    "pid": 41525,
+    "ppid": 25168,
+    "pgid": 41525,
+    "command": "rtk proxy env CARGO_INCREMENTAL=0 just gui"
+  }
+]

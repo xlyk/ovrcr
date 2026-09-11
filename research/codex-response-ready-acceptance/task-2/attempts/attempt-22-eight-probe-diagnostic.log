@@ -1,0 +1,35 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test codex_reporting codex_version_probe_concurrent_fast_children -- --exact --nocapture
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.41s
+     Running tests/codex_reporting.rs (target/debug/deps/codex_reporting-8fb6182269d31481)
+
+running 1 test
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=150.749584ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=285.084083ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=419.220625ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=553.815708ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=683.85975ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=846.290792ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=949.443166ms
+PROBE_DIAGNOSTIC deadline
+PROBE_DIAGNOSTIC failure status=Ok(ExitStatus(unix_wait_status(9))) bytes=0 elapsed=1.001921125s
+
+thread '<unnamed>' (41939962) panicked at tests/codex_reporting.rs:129:13:
+assertion failed: ovrcr::report::codex::supported_version(executable.as_os_str())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'codex_version_probe_concurrent_fast_children' (41939960) panicked at tests/codex_reporting.rs:135:23:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+test codex_version_probe_concurrent_fast_children ... FAILED
+
+failures:
+
+failures:
+    codex_version_probe_concurrent_fast_children
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 1.01s
+
+error: test failed, to rerun pass `-p ovrcr --test codex_reporting`
+
+Exit: 101

@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31071  elapsed: 6m  agent unavailable                                                                                    
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+    local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 31071  elapsed: 6m  agent unavailable                                                                                    
+		5 text (settable)   ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+		6 text (settable)     local                              │  110                                                                                                                         
+		7 text (settable)      ├ terminal unavailable            │  111                                                                                                                         
+		8 text (settable)      └ run 6m  ctx —                   │  112                                                                                                                         
+		9 text (settable)   - review auth handoff                │  113                                                                                                                         
+		10 text (settable)      ├ grok / grok-4.6                 │  114                                                                                                                         
+		11 text (settable)      └ run 6m  ctx —                   │  115                                                                                                                         
+		12 text (settable)                                        │  116                                                                                                                         
+		13 text (settable)   ▼ worktree-lifecycle                 │  117                                                                                                                         
+		14 text (settable)   - local                              │  118                                                                                                                         
+		15 text (settable)      ├ terminal                        │  119                                                                                                                         
+		16 text (settable)      └ run 6m  ctx —                   │  120                                                                                                                         
+		17 text (settable)   - implement lifecycle cleanup        │  121                                                                                                                         
+		18 text (settable)      ├ claude / sonnet-4               │  122                                                                                                                         
+		19 text (settable)      └ run 6m  ctx —                   │  123                                                                                                                         
+		20 text (settable)   - review websocket shutdown          │  124                                                                                                                         
+		21 text (settable)      ├ codex / gpt-5.4                 │  125                                                                                                                         
+		22 text (settable)      └ run 6m  ctx —                   │  126                                                                                                                         
+		23 text (settable)   - plan snapshot restore              │  127                                                                                                                         
+		24 text (settable)      ├ pi / grok-4.6                   │  128                                                                                                                         
+		25 text (settable)      └ run 6m  ctx —                   │  129                                                                                                                         
+		26 text (settable)                                        │  130                                                                                                                         
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │  131                                                                                                                         
+		28 text (settable)   ▼ pipeline-progress-v2               │  132                                                                                                                         
+		29 text (settable)   - local                              │  133                                                                                                                         
+		30 text (settable)      ├ terminal                        │  134                                                                                                                         
+		31 text (settable)      └ run 6m  ctx —                   │  135                                                                                                                         
+		32 text (settable)   - build pipeline progress            │  136                                                                                                                         
+		33 text (settable)      ├ claude / opus-4                 │  137                                                                                                                         
+		34 text (settable)      └ run 6m  ctx —                   │  138                                                                                                                         
+		35 text (settable)                                        │  139                                                                                                                         
+		36 text (settable)   ▼ scope-quality                      │  140                                                                                                                         
+		37 text (settable)   - local                              │  141                                                                                                                         
+		38 text (settable)      ├ terminal                        │  142                                                                                                                         
+		39 text (settable)      └ run 6m  ctx —                   │  143                                                                                                                         
+		40 text (settable)   - review scope quality               │  144                                                                                                                         
+		41 text (settable)      ├ codex / gpt-5.4                 │  145                                                                                                                         
+		42 text (settable)      └ run 6m  ctx —                   │  146                                                                                                                         
+		43 text (settable)                                        │  147                                                                                                                         
+		44 text (settable)                                        │  148                                                                                                                         
+		45 text (settable)                                        │  149                                                                                                                         
+		46 text (settable)                                        │  150                                                                                                                         
+		47 text (settable)                                        │  151                                                                                                                         
+		48 text (settable)                                        │  152                                                                                                                         
+		49 text (settable)                                        │  153                                                                                                                         
+		50 text (settable)                                        │  154                                                                                                                         
+		51 text (settable)                                        │  155                                                                                                                         
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.
+		54 text (settable)                                        │Token usage: total=7,532 input=7,496 (+ 39,168 cached) output=36                                                              
+		55 text (settable)                                        │To continue this session, run:                                                                                                
+		56 text (settable)                                        │  codex resume 01a08f0c-5f37-7dd3-af49-abdb1e54d979                                                                           
+		57 text (settable)                                        │Or run codex resume and select Reply OVRCR_CODEX_READY_ONE.                                                                   
+		58 text (settable)                                        │auth-handoff › printf 'CODEX_NATIVE_EXIT=%s\n' "$?"                                                                           
+		59 text (settable)                                        │CODEX_NATIVE_EXIT=0                                                                                                           
+		60 text (settable)                                        │auth-handoff › stty size                                                                                                      
+		61 text (settable)                                        │57 126                                                                                                                        
+		62 text (settable)                                        │auth-handoff ›                                                                                                                
+		63 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                          
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31071  elapsed: 6m  agent unavailable                                                                                    
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+    local

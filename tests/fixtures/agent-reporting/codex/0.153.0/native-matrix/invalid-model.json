@@ -1,0 +1,11 @@
+{
+  "thread_id": "01a08e67-9ad8-7ab0-b14b-18416bde3324",
+  "turn_id": "01a08e67-9b08-7a01-a5e2-6a03b1ea53d6",
+  "event_type": "task_complete",
+  "error": {
+    "message": "{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'ovrcr-source-probe-nonexistent' model is not supported when using Codex with a ChatGPT account.\"}}",
+    "codex_error_info": "other"
+  },
+  "usage_records": 0,
+  "native_error_visible": true
+}

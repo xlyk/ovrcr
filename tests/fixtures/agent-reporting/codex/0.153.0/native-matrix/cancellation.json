@@ -1,0 +1,35 @@
+{
+  "interrupt_callback": [
+    {
+      "sequence": 22,
+      "received_at": 1789095288.127427,
+      "peer_pid": 11173,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "Interrupt",
+        "turn_id": "01a08e63-4481-75d2-a6eb-f53fb7b84e1f"
+      },
+      "decision": "accept_root_event"
+    }
+  ],
+  "assistant_completion_marker_absent": true,
+  "boundaries": [
+    {
+      "timestamp": "2026-09-11T02:54:48.138Z",
+      "ordinal": 86,
+      "type": "event_msg",
+      "payload": {
+        "type": "turn_aborted",
+        "turn_id": "01a08e63-4481-75d2-a6eb-f53fb7b84e1f",
+        "started_at": 1789095265,
+        "completed_at": 1789095288,
+        "duration_ms": 22726,
+        "reason": "interrupted"
+      }
+    }
+  ]
+}

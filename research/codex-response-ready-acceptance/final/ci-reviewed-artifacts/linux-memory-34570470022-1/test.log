@@ -1,0 +1,8 @@
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+[1m[92m     Running[0m tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-0fc3a6db463816a8)
+
+running 1 test
+test fifty_collector_raw_index_and_sequential_json_high_water ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 46.06s
+

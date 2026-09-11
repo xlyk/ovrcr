@@ -1,0 +1,13 @@
+COMMAND: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test cli reaches_managed_session
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.16s
+     Running tests/cli.rs (target/debug/deps/cli-655ca2a77720960e)
+
+running 2 tests
+test agent_hook_cli_reaches_managed_session ... ok
+test response_ready_cli_reaches_managed_session ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 2.69s
+
+
+EXIT: 0

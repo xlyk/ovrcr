@@ -1,0 +1,19 @@
+{
+  "session_id": "01a08e40-4e38-7201-a363-05acbb2d8762",
+  "transcript_path": "/private/tmp/ovrcr-codex-auth-hbxxyxjr/provider/sessions/2026/09/10/rollout-2026-09-10T19-16-14-01a08e40-4e38-7201-a363-05acbb2d8762.jsonl",
+  "hook_event_name": "SessionStart",
+  "source": "startup",
+  "ancestry": [
+    "48614 17622 codex",
+    "17622 17588 /bin/sh",
+    "17588 17570 /private/tmp/ovrcr-codex-gui-v5mlcy8w/Codex Source Fixture.app/Contents/MacOS/ovrcr",
+    "17570 17569 /private/tmp/ovrcr-codex-gui-v5mlcy8w/Codex Source Fixture.app/Contents/MacOS/ovrcr-gui",
+    "17569 25168 rtk",
+    "25168 24909 /Applications/ChatGPT.app/Contents/Resources/codex",
+    "24909     1 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    "1     0 /sbin/launchd"
+  ],
+  "expected_root_pid": 48614,
+  "root_ancestor_present": true,
+  "binding_decision": "not admitted: process route awaiting review"
+}

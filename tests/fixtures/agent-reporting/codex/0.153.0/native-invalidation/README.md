@@ -1,0 +1,11 @@
+# Native history-invalidation reproduction
+
+One isolated Codex 0.153.0 reproduction at OVRCR 213954f7b6177ef3e217f93359cdc092a75016fc, on macOS. The original OVRCR GUI was a generic terminal host; no product adapter or current-checkout product acceptance is claimed. Binary SHA256 a29d9e86eef88cbbd69f97ce8c590b1d0a287c8f77424f5eef226b883d7eaa22.
+
+The same OS peer/parent observer and launch/snapshot helpers as ../native-matrix were reused in a new private fixture. Only the first prompt marker changed to OVRCR_BEFORE_REVERT_ONE. Twelve task-owned hooks were explicitly trusted in disposable config. Existing auth reuse was user-authorized; temporary copy removed after native exit. No live configuration or trust changed.
+
+Actual CUA sequence: observe assistant OVRCR_BEFORE_REVERT_ONE, submit and observe OVRCR_BEFORE_REVERT_TWO., empty composer Escape/Escape, selected latest prompt Enter. Native UI says "You’re continuing from this point in a new conversation" and restores the second prompt without submitting. At this boundary old file SHA/inode/size remains identical and zero callbacks have arrived since the fifth event. Replace composer with Reply exactly OVRCR_AFTER_BACKTRACK. and submit; native output OVRCR_AFTER_BACKTRACK. follows. Screenshots and AX retained in coordinator tool trace; this directory contains sanitized source/OS evidence only.
+
+First postfork work produces authenticated SessionStart(new ID, source=startup), UserPromptSubmit, Stop. The exact new path supplied by that OS-authenticated callback has a matching header and forked_from_id pointing at the original root. The prototype rejects conflicting startup and never rebinds. That rejection is not a production permanent-close test. Native /exit returns to shell; GUI Cmd-Q and observer shutdown clean up 15 recorded PIDs / 14 groups. No second transition or native matrix was run.
+
+The material finding is a callback-free foreground-switch interval, followed by lazy startup on first work. No TUI text or newest-file selection was used for root admission. Snapshot arithmetic is evidence, not a tested reporting adapter. See the research/history-invalidation note for pinned owning-source analysis and the source-gate decision.

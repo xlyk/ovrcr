@@ -1,0 +1,13 @@
+30608 30588 30580 Thu Sep 10 22:57:37 2026     /Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+30890 30608 30580 Thu Sep 10 22:57:38 2026     /Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+31018 30890 31018 Thu Sep 10 22:57:39 2026     /bin/zsh
+31071 30890 31071 Thu Sep 10 22:57:39 2026     /bin/zsh
+31158 30890 31158 Thu Sep 10 22:57:39 2026     /bin/zsh
+31243 30890 31243 Thu Sep 10 22:57:39 2026     /bin/zsh
+31250 30890 31250 Thu Sep 10 22:57:39 2026     /bin/sh
+31258 30890 31258 Thu Sep 10 22:57:39 2026     /bin/sh
+31266 30890 31266 Thu Sep 10 22:57:39 2026     /bin/sh
+31273 30890 31273 Thu Sep 10 22:57:39 2026     /bin/sh
+31283 30890 31283 Thu Sep 10 22:57:39 2026     /bin/sh
+31294 30890 31294 Thu Sep 10 22:57:39 2026     /bin/sh
+31296 30608 31296 Thu Sep 10 22:57:39 2026     /Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr

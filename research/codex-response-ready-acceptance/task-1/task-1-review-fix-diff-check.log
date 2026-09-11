@@ -1,0 +1,4 @@
+BASE: bfbf38d
+COMMAND: rtk proxy git diff --check
+
+EXIT: 0

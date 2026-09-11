@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209  elapsed: 6m  agent busy observed                                                                                  
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ⠦ local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 42209  elapsed: 6m  agent busy observed                                                                                  
+		5 text (settable)   ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+		6 text (settable)   ⠦ local                              │                                                                                                                              
+		7 text (settable)      ├ terminal busy observed          │                                                                                                                              
+		8 text (settable)      └ run 6m  ctx —                   │› Reply exactly FINAL_READY_ONE.                                                                                              
+		9 text (settable)   - review auth handoff                │                                                                                                                              
+		10 text (settable)      ├ grok / grok-4.6                 │                                                                                                                              
+		11 text (settable)      └ run 6m  ctx —                   │• FINAL_READY_ONE                                                                                                             
+		12 text (settable)                                        │                                                                                                                              
+		13 text (settable)   ▼ worktree-lifecycle                 │                                                                                                                              
+		14 text (settable)   - local                              │› For this disposable acceptance test, spawn one child agent with the sole task to reply CHILD_READY_MARKER without tools.    
+		15 text (settable)      ├ terminal                        │  Wait for it. Then run /bin/sleep 20 in this workspace and finally reply exactly FINAL_READY_TWO. Do not read or edit any    
+		16 text (settable)      └ run 6m  ctx —                   │  files.                                                                                                                      
+		17 text (settable)   - implement lifecycle cleanup        │                                                                                                                              
+		18 text (settable)      ├ claude / sonnet-4               │                                                                                                                              
+		19 text (settable)      └ run 6m  ctx —                   │• I’ll spawn the child agent, wait for its reply, then run the 20-second sleep.                                               
+		20 text (settable)   - review websocket shutdown          │                                                                                                                              
+		21 text (settable)      ├ codex / gpt-5.4                 │• Started `/root/acceptance_child`                                                                                            
+		22 text (settable)      └ run 6m  ctx —                   │                                                                                                                              
+		23 text (settable)   - plan snapshot restore              │• Waiting for agents                                                                                                          
+		24 text (settable)      ├ pi / grok-4.6                   │                                                                                                                              
+		25 text (settable)      └ run 6m  ctx —                   │• Completed `/root/acceptance_child`                                                                                          
+		26 text (settable)                                        │                                                                                                                              
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │• Finished waiting                                                                                                            
+		28 text (settable)   ▼ pipeline-progress-v2               │  └ No agents completed yet                                                                                                   
+		29 text (settable)   - local                              │                                                                                                                              
+		30 text (settable)      ├ terminal                        │• Ran /bin/sleep 20                                                                                                           
+		31 text (settable)      └ run 6m  ctx —                   │  └ (no output)                                                                                                               
+		32 text (settable)   - build pipeline progress            │                                                                                                                              
+		33 text (settable)      ├ claude / opus-4                 │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		34 text (settable)      └ run 6m  ctx —                   │                                                                                                                              
+		35 text (settable)                                        │• FINAL_READY_TWO                                                                                                             
+		36 text (settable)   ▼ scope-quality                      │                                                                                                                              
+		37 text (settable)   - local                              │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		38 text (settable)      ├ terminal                        │                                                                                                                              
+		39 text (settable)      └ run 6m  ctx —                   │                                                                                                                              
+		40 text (settable)   - review scope quality               │› Spawn one child agent to reply CHILD_GATE_DONE without tools. After it completes, run /bin/sh -c 'while [ ! -f child-       
+		41 text (settable)      ├ codex / gpt-5.4                 │  release ]; do /bin/sleep 1; done' in this workspace. This controlled acceptance gate will be released externally. Finally   
+		42 text (settable)      └ run 6m  ctx —                   │  reply FINAL_CHILD_GATE_READY. Read no other files and make no edits.                                                        
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │• I’ll wait for the child’s reply, then run the gate command until it is released externally.                                 
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │• Started `/root/gate_child`                                                                                                  
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │• Waiting for agents                                                                                                          
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │• Completed `/root/gate_child`                                                                                                
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │• Finished waiting                                                                                                            
+		54 text (settable)                                        │  └ No agents completed yet                                                                                                   
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │• Waiting for background terminal (56s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close     
+		57 text (settable)                                        │  └ /bin/sh -c 'while [ ! -f child-release ]; do /bin/sleep 1; done'                                                          
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │› Ask Codex to do anything                                                                                                    
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │  gpt-6-astra default · /private/tmp/ovrcr-codex-final-attc4w4m/workspace · Main [default]                                    
+		63 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                          
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209  elapsed: 6m  agent busy observed                                                                                  
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ⠦ local

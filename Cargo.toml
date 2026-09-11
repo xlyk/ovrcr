@@ -57,6 +57,7 @@ path = "src/bin/ovrcr-gui.rs"
 required-features = ["gui"]
 
 [dependencies]
+toml = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }

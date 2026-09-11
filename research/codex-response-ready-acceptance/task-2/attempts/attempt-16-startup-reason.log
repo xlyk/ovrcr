@@ -1,0 +1,66 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle codex_managed -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 4 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0QByXn/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppMTaYh/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMRGn8F/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpycdKSK/repo/.git/
+[main (root-commit) df6bfc7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) df6bfc7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) df6bfc7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) df6bfc7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppMTaYh/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0QByXn/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppMTaYh/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0QByXn/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMRGn8F/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpycdKSK/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMRGn8F/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpycdKSK/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+
+thread 'codex_managed_native_death_never_synthesizes_ready_and_removes_socket' (41890269) panicked at tests/server_lifecycle.rs:9938:5:
+unexpected initial admission gate: TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "Codex reporting unavailable (version probe unsupported or unavailable); running native command\n\nrunning 1 test\nCODEX_NATIVE_READY" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'codex_managed_hooks_ready_interrupt_duplicates_and_rebind' (41890266) panicked at tests/server_lifecycle.rs:9938:5:
+unexpected initial admission gate: TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "Codex reporting unavailable (version probe unsupported or unavailable); running native command\n\nrunning 1 test\nCODEX_NATIVE_READY" }
+ovrcr server stopped
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+ovrcr server stopped
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+ovrcr server stopped
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... FAILED
+ovrcr server stopped
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... FAILED
+
+failures:
+
+failures:
+    codex_managed_hooks_ready_interrupt_duplicates_and_rebind
+    codex_managed_native_death_never_synthesizes_ready_and_removes_socket
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 80 filtered out; finished in 3.89s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+
+Exit: 101

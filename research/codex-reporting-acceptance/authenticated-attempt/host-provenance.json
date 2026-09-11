@@ -1,0 +1,9 @@
+{
+  "source_app": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app",
+  "copied_app": "/private/tmp/ovrcr-codex-gui-v5mlcy8w/Codex Source Fixture.app",
+  "purpose": "generic native terminal host; not current-checkout product acceptance",
+  "binary_sha256": {
+    "ovrcr": "3cfd506428656ff8a5fe58ebc1c0e1c71cc5c9a25d9b13b1e947c00fd38aa38c",
+    "ovrcr-gui": "d051031bfd7550770eb1275244c623114fc4049f764f8d8b5871dd5acc35141b"
+  }
+}

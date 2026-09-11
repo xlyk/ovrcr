@@ -1,0 +1,4 @@
+BASE: 2db1897
+COMMAND: rtk proxy cargo fmt --all
+
+EXIT: 0

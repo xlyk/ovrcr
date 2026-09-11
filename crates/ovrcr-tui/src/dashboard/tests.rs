@@ -1339,6 +1339,175 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     assert!(!text.contains("ctx "));
     assert!(!text.contains("99%"));
     assert!(!text.contains("private-"));
+    // Ready keeps its observed quality and unknown metrics independently of reporter health.
+    let original = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    {
+        let session = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
+        session.activity = serde_json::from_str("\"ResponseReady\"").unwrap();
+        let agent = session.agent.as_mut().unwrap();
+        agent.activity.as_mut().unwrap().state = session.activity;
+        agent.metrics = None;
+    }
+    let ready_text = drawn(&dashboard, now, 180);
+    assert!(
+        ready_text.contains("response ready · observed"),
+        "{ready_text}"
+    );
+    assert!(ready_text.contains("tokens —  cost —"));
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap()
+        .health
+        .state = ReporterHealth::Unavailable;
+    // Background Codex health must survive sidebar clipping, independently of the focused session.
+    let mut foreground = original.clone();
+    foreground.id = SessionId(2);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(foreground);
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap()
+        .binding
+        .provider = AgentProvider::Codex;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].label =
+        "long Codex label that cannot fit".into();
+    dashboard.select_session(SessionId(2));
+    for width in [80, 100, 120] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
+            .unwrap();
+        let row: String = (0..39)
+            .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+            .collect();
+        assert!(
+            row.contains("unavailable") && row.contains("response ready"),
+            "background Codex row: {row}"
+        );
+        assert!(row.starts_with("     └"), "compact Codex detail: {row}");
+        let next_row: String = (0..39)
+            .map(|x| terminal.backend().buffer()[(x, 5)].symbol())
+            .collect();
+        assert!(
+            next_row.contains(&original.name),
+            "the next session follows the readiness detail: {next_row}"
+        );
+    }
+    dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
+    dashboard.select_session(SessionId(1));
+    for width in [80, 100, 120] {
+        for exited in [false, true] {
+            dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = if exited {
+                SessionPhase::Exited {
+                    code: Some(0),
+                    signal: None,
+                }
+            } else {
+                SessionPhase::Running
+            };
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
+                .unwrap();
+            let rect = super::pane_rects(Rect::new(0, 0, width, 24), 1, 0)[0].metadata;
+            let row: String = (rect.x..rect.right())
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect();
+            assert!(
+                row.contains(if exited { "pid: closed" } else { "pid: 1" }),
+                "{row}"
+            );
+            assert!(
+                row.contains("unavailable") && row.contains("response ready"),
+                "single width={width}: {row}"
+            );
+        }
+    }
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    let exited_text = drawn(&dashboard, now, 180);
+    assert!(exited_text.contains("closed"), "{exited_text}");
+    assert!(
+        exited_text.contains("response ready · observed"),
+        "{exited_text}"
+    );
+    for width in [1, 2, 10, 40, 80] {
+        let text = drawn(&dashboard, now, width);
+        assert_eq!(text.chars().count(), usize::from(width) * 24);
+    }
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Running;
+    let mut ready_second = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    ready_second.id = SessionId(2);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(ready_second);
+    assert!(dashboard.split_pane());
+    // Read the actual pane metadata cells: sidebar labels cannot satisfy these assertions.
+    for width in [122, 142, 166, 202, 240] {
+        for unavailable in [false, true] {
+            for exited in [false, true] {
+                for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+                    session.name = "a".into();
+                    session.phase = if exited {
+                        SessionPhase::Exited {
+                            code: Some(0),
+                            signal: None,
+                        }
+                    } else {
+                        SessionPhase::Running
+                    };
+                    session.agent.as_mut().unwrap().health.state = if unavailable {
+                        ReporterHealth::Unavailable
+                    } else {
+                        ReporterHealth::Connected
+                    };
+                }
+                for pane in &mut dashboard.panes {
+                    pane.ready = true;
+                }
+                let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+                terminal
+                    .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
+                    .unwrap();
+                let rects =
+                    super::pane_rects(Rect::new(0, 0, width, 24), 2, dashboard.focused_pane);
+                assert_eq!(rects.len(), 2);
+                for rect in rects {
+                    let row: String = (rect.metadata.x..rect.metadata.right())
+                        .map(|x| terminal.backend().buffer()[(x, rect.metadata.y)].symbol())
+                        .collect();
+                    let context = format!(
+                        "width={width}, pane_width={}, exited={exited}, unavailable={unavailable}: {row}",
+                        rect.metadata.width
+                    );
+                    assert!(
+                        row.contains(if exited { "pid: closed" } else { "pid: 1" }),
+                        "{context}"
+                    );
+                    assert!(row.contains("response ready"), "{context}");
+                    assert_eq!(row.contains("unavailable"), unavailable, "{context}");
+                    if rect.metadata.width >= 62 {
+                        assert!(row.contains("response ready · observed"), "{context}");
+                    }
+                    if unavailable && rect.metadata.width == 40 {
+                        assert!(
+                            row.ends_with('…'),
+                            "readiness quality is visibly clipped: {context}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    dashboard.panes.pop();
+    dashboard.focused_pane = 0;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0] = original;
     let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()

@@ -1,0 +1,16 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test codex_reporting codex_version_probe_concurrent_fast_children -- --exact --nocapture
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running tests/codex_reporting.rs (target/debug/deps/codex_reporting-8fb6182269d31481)
+
+running 1 test
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=209.255708ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=341.630208ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=470.445667ms
+PROBE_DIAGNOSTIC status=Ok(ExitStatus(unix_wait_status(0))) bytes=18 elapsed=606.0575ms
+test codex_version_probe_concurrent_fast_children ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.62s
+
+
+Exit: 0

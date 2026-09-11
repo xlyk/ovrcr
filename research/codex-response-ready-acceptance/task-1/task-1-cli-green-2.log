@@ -1,0 +1,17 @@
+COMMAND: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test cli response_ready -- --nocapture
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.13s
+     Running tests/cli.rs (target/debug/deps/cli-655ca2a77720960e)
+
+running 2 tests
+test response_ready_cli_parses_before_requiring_hook_identity ... ok
+test response_ready_cli_reaches_managed_session ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 1.65s
+
+
+EXIT: 0

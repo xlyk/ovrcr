@@ -1,0 +1,14 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --lib report::codex::tests -- --nocapture
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.16s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-a24d3eaf6784f9c6)
+
+running 3 tests
+test report::codex::tests::codex_closed_turn_duplicate_is_checked_before_capacity ... ok
+test report::codex::tests::codex_identity_count_exhaustion_disables_instead_of_evicting ... ok
+test report::codex::tests::codex_identity_byte_exhaustion_disables_instead_of_evicting ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.22s
+
+
+Exit: 0

@@ -1,0 +1,20 @@
+{
+  "directory": "/private/tmp/ovrcr-codex-native-z6hxwo6_",
+  "argv": [
+    "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex",
+    "--no-alt-screen",
+    "-C",
+    "/private/tmp/ovrcr-codex-native-z6hxwo6_/workspace"
+  ],
+  "environment_keys": [
+    "CODEX_HOME",
+    "HOME",
+    "LANG",
+    "PATH",
+    "TERM"
+  ],
+  "started_at": 1789091255.945966,
+  "credentials_supplied": false,
+  "input_sent": false,
+  "pid": 53183
+}
