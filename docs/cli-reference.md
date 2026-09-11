@@ -210,7 +210,7 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 
 `phase` is `running`, `paused`, or `exited`; `exit_code` and `exit_signal` are
 nullable and set only for `exited`. `activity` is one of `unknown`, `idle`, `busy`,
-`waiting_input`, or `error`, and is the latest accepted provider observation.
+`waiting_input`, `response_ready`, or `error`, and is the latest accepted provider observation.
 Capability and hook transport fields are never included. The legacy
 `ovrcr list --json` hierarchy and the default human-readable list omit
 `context_usage` and `context_stale` and otherwise keep their existing shape.

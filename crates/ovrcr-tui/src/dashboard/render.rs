@@ -552,7 +552,13 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         .pid
                         .map_or_else(|| "—".to_string(), |pid| pid.to_string())
                 };
-                let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                let activity = if matches!(session.phase, SessionPhase::Exited { .. })
+                    && !session
+                        .agent
+                        .as_ref()
+                        .and_then(|agent| agent.activity.as_ref())
+                        .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+                {
                     Span::raw("")
                 } else {
                     let label = if session.agent.is_some() {
@@ -564,6 +570,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                             AgentActivity::Busy => "agent busy",
                             AgentActivity::WaitingInput => "agent waiting input",
                             AgentActivity::Error => "agent error",
+                            AgentActivity::ResponseReady => "agent response ready",
                         }
                         .to_owned()
                     };
@@ -780,6 +787,19 @@ fn render_split_metadata(
     } else {
         format!("{prefix}loading {name}")
     };
+    if let Some(session) = session
+        && session
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.activity.as_ref())
+            .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+    {
+        append_metadata_field(
+            &mut text,
+            provider_activity(session).trim(),
+            rect.metadata.width,
+        );
+    }
     if pane.ready
         && let Some(session) = session
     {
@@ -976,6 +996,7 @@ fn tree_line_text(
                 (_, AgentActivity::Idle) => ' ',
                 (_, AgentActivity::WaitingInput) => '?',
                 (_, AgentActivity::Error) => '!',
+                (_, AgentActivity::ResponseReady) => '✓',
                 (SessionPhase::Running, AgentActivity::Busy) => {
                     SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
                 }
@@ -1055,6 +1076,21 @@ fn provider_activity(session: &SessionSummary) -> String {
     let Some(agent) = &session.agent else {
         return String::new();
     };
+    if let Some(activity) = &agent.activity
+        && activity.state == AgentActivity::ResponseReady
+    {
+        let quality = match activity.quality {
+            SampleQuality::Confirmed => "confirmed",
+            SampleQuality::Observed => "observed",
+            SampleQuality::Estimated => "estimated",
+        };
+        let health = if agent.health.state == ReporterHealth::Unavailable {
+            " · unavailable"
+        } else {
+            ""
+        };
+        return format!(" response ready · {quality}{health}");
+    }
     if agent.health.state == ReporterHealth::Unavailable {
         return " unavailable".into();
     }
@@ -1067,6 +1103,7 @@ fn provider_activity(session: &SessionSummary) -> String {
         AgentActivity::Busy => "busy",
         AgentActivity::WaitingInput => "waiting",
         AgentActivity::Error => "error",
+        AgentActivity::ResponseReady => "response ready",
     };
     let quality = match activity.quality {
         SampleQuality::Confirmed => "confirmed",

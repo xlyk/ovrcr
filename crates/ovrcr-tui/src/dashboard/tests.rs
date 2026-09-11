@@ -1296,6 +1296,66 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     }
     assert!(!text.contains("99%"));
     assert!(!text.contains("private-"));
+    // Ready keeps its observed quality and unknown metrics independently of reporter health.
+    let original = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    {
+        let session = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
+        session.activity = serde_json::from_str("\"ResponseReady\"").unwrap();
+        let agent = session.agent.as_mut().unwrap();
+        agent.activity.as_mut().unwrap().state = session.activity;
+        agent.metrics = None;
+    }
+    let ready_text = drawn(&dashboard, now, 180);
+    assert!(
+        ready_text.contains("response ready · observed"),
+        "{ready_text}"
+    );
+    assert!(ready_text.contains("tokens —  cost —"));
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap()
+        .health
+        .state = ReporterHealth::Unavailable;
+    let unavailable_text = drawn(&dashboard, now, 180);
+    assert!(
+        unavailable_text.contains("claude response ready · observe…"),
+        "{unavailable_text}"
+    );
+    assert!(
+        unavailable_text.contains("response ready · observed · unavailable"),
+        "{unavailable_text}"
+    );
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    let exited_text = drawn(&dashboard, now, 180);
+    assert!(exited_text.contains("closed"), "{exited_text}");
+    assert!(
+        exited_text.contains("response ready · observed"),
+        "{exited_text}"
+    );
+    for width in [1, 2, 10, 40, 80] {
+        let text = drawn(&dashboard, now, width);
+        assert_eq!(text.chars().count(), usize::from(width) * 24);
+    }
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Running;
+    let mut ready_second = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    ready_second.id = SessionId(2);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(ready_second);
+    assert!(dashboard.split_pane());
+    let split_text = drawn(&dashboard, now, 240);
+    assert!(
+        split_text.contains("response ready · observed"),
+        "{split_text}"
+    );
+    dashboard.panes.pop();
+    dashboard.focused_pane = 0;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0] = original;
     let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent
         .as_mut()

@@ -712,6 +712,18 @@ mod wire_snapshot {
                 .enumerate()
                 .map(|(i, v)| (format!("AgentResponse::{i}"), encode(v))),
         );
+        all.extend(
+            [
+                AgentActivity::Unknown,
+                AgentActivity::Idle,
+                AgentActivity::Busy,
+                AgentActivity::WaitingInput,
+                AgentActivity::Error,
+                AgentActivity::ResponseReady,
+            ]
+            .iter()
+            .map(|state| (format!("AgentActivity::{state:?}"), encode(state))),
+        );
         all
     }
 
@@ -824,6 +836,12 @@ mod wire_snapshot {
         ("AgentResponse::1", "0a010003696e7604636f6e7601"),
         ("AgentResponse::2", "0a02"),
         ("AgentResponse::3", "0a03"),
+        ("AgentActivity::Unknown", "00"),
+        ("AgentActivity::Idle", "01"),
+        ("AgentActivity::Busy", "02"),
+        ("AgentActivity::WaitingInput", "03"),
+        ("AgentActivity::Error", "04"),
+        ("AgentActivity::ResponseReady", "05"),
     ];
 
     #[test]

@@ -27,6 +27,7 @@ pub enum AgentActivity {
     Busy,
     WaitingInput,
     Error,
+    ResponseReady,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,4 +44,25 @@ pub struct SessionSummary {
     pub agent: Option<crate::AgentSnapshot>,
     pub agent_epoch: u64,
     pub context_usage: Option<ContextUsageSnapshot>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_ready_and_existing_activity_wire_spellings_round_trip() {
+        for state in [
+            "Unknown",
+            "Idle",
+            "Busy",
+            "WaitingInput",
+            "Error",
+            "ResponseReady",
+        ] {
+            let wire = format!("\"{state}\"");
+            let decoded: AgentActivity = serde_json::from_str(&wire).unwrap();
+            assert_eq!(serde_json::to_string(&decoded).unwrap(), wire);
+        }
+    }
 }

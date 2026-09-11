@@ -97,6 +97,7 @@ pub(super) enum Command {
 #[derive(Subcommand)]
 pub(super) enum ReportCommand {
     Activity {
+        /// unknown, idle, busy, waiting-input, response-ready, or error.
         #[arg(long, value_parser = parse_activity_state)]
         state: AgentActivity,
         #[arg(long)]
@@ -268,7 +269,10 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
         "busy" => Ok(AgentActivity::Busy),
         "waiting-input" => Ok(AgentActivity::WaitingInput),
         "error" => Ok(AgentActivity::Error),
-        _ => Err("must be one of: unknown, idle, busy, waiting-input, error".into()),
+        "response-ready" => Ok(AgentActivity::ResponseReady),
+        _ => {
+            Err("must be one of: unknown, idle, busy, waiting-input, response-ready, error".into())
+        }
     }
 }
 
