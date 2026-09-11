@@ -1,0 +1,25 @@
+{
+  "recorded_pids": [
+    17570,
+    17588,
+    17614,
+    17622,
+    48614,
+    17630,
+    17638,
+    17640,
+    17642,
+    17644,
+    17646,
+    17648,
+    17650,
+    17651
+  ],
+  "all_recorded_pids_absent": true,
+  "gui_launcher_exit": 0,
+  "demo_tmp_empty": true,
+  "copied_app_removed": true,
+  "temporary_auth_removed": true,
+  "first_gui_native_group_38891_absent": true,
+  "pre_gui_pty_group_4322_absent": true
+}

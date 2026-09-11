@@ -1,0 +1,103 @@
+[
+  {
+    "timestamp": "2026-09-11T02:16:14.185Z",
+    "ordinal": 0,
+    "type": "session_meta",
+    "payload": {
+      "id": "01a08e40-4e38-7201-a363-05acbb2d8762",
+      "session_id": "01a08e40-4e38-7201-a363-05acbb2d8762",
+      "cli_version": "0.153.0",
+      "source": "cli",
+      "history_mode": "paginated",
+      "context_window": {
+        "window_id": "01a08e40-4e38-7201-a363-05b1e9c542d9"
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-11T02:16:14.185Z",
+    "ordinal": 1,
+    "type": "event_msg",
+    "payload": {
+      "type": "task_started",
+      "turn_id": "01a08e40-4e67-7d62-bc7f-0755978ae906",
+      "model_context_window": 258400,
+      "started_at": 1789092974
+    }
+  },
+  {
+    "timestamp": "2026-09-11T02:16:17.689Z",
+    "ordinal": 12,
+    "type": "token_usage_record",
+    "payload": {
+      "thread_id": "01a08e40-4e38-7201-a363-05acbb2d8762",
+      "turn_id": "01a08e40-4e67-7d62-bc7f-0755978ae906",
+      "session_id": "01a08e40-4e38-7201-a363-05acbb2d8762",
+      "root_turn_id": "01a08e40-4e67-7d62-bc7f-0755978ae906",
+      "response_id": "resp_087fc499f5df1557016aa3646fe76c87d2b5150917c4040ba6",
+      "usage": {
+        "input_tokens": 14649,
+        "cached_input_tokens": 11904,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 12,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 14661
+      },
+      "turn_token_usage": {
+        "input_tokens": 14649,
+        "cached_input_tokens": 11904,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 12,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 14661
+      },
+      "thread_token_usage": {
+        "input_tokens": 14649,
+        "cached_input_tokens": 11904,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 12,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 14661
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-11T02:16:17.690Z",
+    "ordinal": 13,
+    "type": "event_msg",
+    "payload": {
+      "type": "token_count",
+      "info": {
+        "total_token_usage": {
+          "input_tokens": 14649,
+          "cached_input_tokens": 11904,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 12,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 14661
+        },
+        "last_token_usage": {
+          "input_tokens": 14649,
+          "cached_input_tokens": 11904,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 12,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 14661
+        },
+        "model_context_window": 258400
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-11T02:16:17.692Z",
+    "ordinal": 14,
+    "type": "event_msg",
+    "payload": {
+      "type": "task_complete",
+      "turn_id": "01a08e40-4e67-7d62-bc7f-0755978ae906",
+      "started_at": 1789092974,
+      "completed_at": 1789092977,
+      "duration_ms": 3508
+    }
+  }
+]

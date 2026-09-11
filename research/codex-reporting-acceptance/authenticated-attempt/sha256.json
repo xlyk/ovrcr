@@ -1,0 +1,19 @@
+{
+  "checkpoint.md": "595d3c56a85e8315fe3d1f21b850470b8416a56bd647b4ad61d170e81dfdfd22",
+  "cleanup.json": "6b70d50e6ff366d10a1c497f78fa2b30e0a291b2e6dce64ee282349ff89b20f9",
+  "expected-root.json": "1ffd3a6769b0daecc4c046d6b9642d3d883faaf4ae2fce75f47d7e8bcbf27869",
+  "gui-first-cleanup.json": "ea944651c54dc3360b63f60f2339be02cac795c3ba095cefc462920eacad2e61",
+  "gui-launch-before-trust.json": "d57f6b717410c4904677796c2294669851b7d45317774577596b750bbc8c4399",
+  "gui-launch.json": "c928f87975df83c81de08ae8624094be5674d1e8a3283a624cc6cd2719bfa26c",
+  "gui-launch.py": "3c40778a8ba1ff9a245a6542670d0eac3bdb62403c95dd53f254a4d6378cf5f5",
+  "gui-native-process.txt": "45de8a4e33f7f7812d0678d7ac5a34fee98c5a87572a61a223d5c029ee354d38",
+  "harness.py": "05bc8dcaef02538585ced2baae4f4ca60f35810f034c7f8c8ed77293312b9934",
+  "header-validation.json": "07778528f3471e323aa77ec017580300197449fe8ed576ccb9b60e600119c798",
+  "hook-event.json": "97eaa62f3409a91cb04ac93660afb3d3717eb2703534bdbc0c736dd7ac8a935e",
+  "hook.py": "cdf1bbf8a0a41bcf6e3165d25073015057e7e8d2a21170895159979ce2e0bbb8",
+  "host-provenance.json": "a66664bbf592daf1232469a6cc143348c0fbd69a7e27c9dba80cd003c7037b35",
+  "record-start.json": "9857385df949d3039d94363e1b9623319beb57cc94bb1cca13118b5c06d65325",
+  "record.json": "97ffb43659ac9c05cde50a02080180d3178dd36b110c350e30a441e9d0eb1d25",
+  "root-source-allowlist.json": "f8e4001e9cef45d4230897277bfe0c53a78ff7aa601dd1da1aa65b9af9be9f6c",
+  "terminal.txt": "a68577bdd09095f59c908a84636c7655674a3c3089f762dea2a9144cde6ab94f"
+}

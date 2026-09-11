@@ -131,6 +131,8 @@ Version/help/schema evidence is recorded in [the source contract](../research/co
 
 No safe observation route is certified; root-only callback routing and current paginated lineage remain open. The native matrix now has a concrete authentication prerequisite, so dependent implementation stops. All other Task 1 acceptance checkboxes remain open. Source-only comparison and PTY onboarding are not adapter delivery.
 
+Authenticated continuation at `084698e`: user authorized existing credentials. Isolated CUA hook trust and a root response succeeded; matching native parent/header and first-turn token observations are retained in [the authenticated checkpoint](../research/codex-reporting-acceptance/authenticated-attempt/checkpoint.md). ENOSPC stopped the incomplete matrix. No further Task 1 checkbox is closed; receiver-side OS peer/native-parent identity and remaining source invariants still need proof. No adapter work follows this partial evidence.
+
 ## Task 2: Wire Codex launch, transport and root admission
 
 **Files:** `src/report.rs`, new `src/report/codex.rs`, `src/cli/{args,agent,report,mod}.rs`, `tests/{server_lifecycle,cli}.rs`. Runtime changes only if the source contract demonstrates missing provider-independent process metadata.
