@@ -207,6 +207,8 @@ final-accounting boundary.
 
 ## Codex source gate, 2026-09-11
 
+The separately authorized [targeted invalidation follow-up](../research/codex-reporting-acceptance/history-invalidation.md) reproduced native backtracking into a new conversation with no observation hook until the next prompt. Same-ID paginated revert has a distinct shutdown/reload path. The remaining gap is continuous foreground identity, not ordinary root-token parsing; no source gate or product capability is marked complete.
+
 Codex CLI 0.153.0 has no safe ongoing source route or implemented managed reporting adapter/setup yet. The [contract](../research/codex-reporting-acceptance/source-contract.md) records receiver-side OS peer/parent attribution, exact paginated header, native two-turn/permission/child/cancellation/error evidence and metric references. Authentication was explicitly authorized and temporary credentials removed. Earlier blocked checkpoints remain historical evidence.
 
 Task 1 is blocked: retained evidence does not establish reliable invalidation when an admitted native process changes its current paginated lineage. Fresh argv cannot prevent such operations. Tasks 2–3 must not begin; the finite investigation stops here. Linux, current-checkout OVRCR GUI acceptance and capacity gates are unrun. Usage is Partial and scoped to the admitted root thread; WaitingInput, native remaining percentage and cost are Unknown. Resume and broad transitions remain disabled. Ordinary native Codex behavior is preserved; see [setup status](codex-reporting-setup.md). Existing Claude acceptance does not cover Codex.

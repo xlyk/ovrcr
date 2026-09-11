@@ -1,5 +1,7 @@
 # Codex reporting setup status
 
+The [targeted invalidation probe](../research/codex-reporting-acceptance/history-invalidation.md) confirmed that native backtracking can switch to a fork without an observation hook until its next prompt. Startup conflict detection therefore does not establish continuous foreground identity. Managed reporting remains unavailable under the current contract; fixed-original-thread or next-work-only reporting would require an explicit scope change.
+
 OVRCR has no implemented managed Codex reporting setup yet. Ordinary native `codex` remains usable. No proposed managed command should be installed from this source investigation.
 
 The [source contract](../research/codex-reporting-acceptance/source-contract.md) is blocked on a reliable detectable invalidation/current-lineage guarantee for the exact-version 0.153.0 hook-to-rollout candidate. Fresh launch grammar does not prevent native in-process history changes; unchanged file identity does not prove the file is still selected. No safe ongoing route is selected, and Tasks 2–3 must not begin. A task-owned macOS receiver prototype verified OS peer/parent attribution and matching paginated header, then native CUA verified two turns, permission, child, cancellation, error and numeric references. Credentials were reused with explicit authorization only in disposable configuration and removed afterward; live settings were preserved.
