@@ -10750,9 +10750,12 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
         "first host no longer blocks the queue"
     );
     dashboard.select("codex-queued", "CODEX_CALLBACK=1");
+    // Seeing this response consumes its candidate permanently, even if the
+    // pane becomes hidden again before the busy host finishes.
+    dashboard.select("setup", "HOOK_READY");
     assert!(
         group_exists(blocked_pid),
-        "queue released before the view changed"
+        "queue released before the visible-to-hidden transition"
     );
     assert_eq!(unsafe { libc::kill(-blocked_pid, libc::SIGTERM) }, 0);
     assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));

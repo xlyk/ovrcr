@@ -119,6 +119,10 @@ impl Dashboard {
     }
 
     fn observe_desktop_session(&mut self, session: &SessionSummary, initial: bool) {
+        self.desktop.pending.retain(|notification| {
+            notification.session != session.id
+                || notification_matches_session(notification, session)
+        });
         // Health and lifecycle changes do not necessarily advance the activity revision.
         if let Some(delivery) = &self.desktop.in_flight
             && delivery.notification.session == session.id
@@ -194,6 +198,11 @@ impl Dashboard {
     }
 
     pub(super) fn emit_desktop_notifications(&mut self) -> bool {
+        // Cancellation is permanent even when the host is busy: a response seen
+        // in a pane must not reappear as a notification after that pane is hidden.
+        let mut pending = std::mem::take(&mut self.desktop.pending);
+        pending.retain(|notification| self.desktop_notification_valid(notification));
+        self.desktop.pending = pending;
         let mut changed = false;
         if let Some(delivery) = &self.desktop.in_flight {
             if !self.desktop_notification_valid(&delivery.notification) {
@@ -489,6 +498,88 @@ mod tests {
         d.key(KeyCode::Char('N'));
         deliver(&mut d, snapshot(1, "a", AgentActivity::Busy));
         d
+    }
+    fn queued_behind_active() -> (Dashboard, mpsc::Receiver<(u64, Delivery)>) {
+        let mut d = dashboard();
+        let mut hierarchy = snapshot(2, "a", AgentActivity::ResponseReady);
+        let mut other = session(&mut hierarchy).clone();
+        other.id = SessionId(2);
+        other.name = "queued".into();
+        other.agent.as_mut().unwrap().binding.invocation = "second-invocation".into();
+        hierarchy.projects[0].workspaces[0].sessions.push(other);
+        deliver(&mut d, hierarchy);
+        d.desktop.in_flight = Some(Delivery {
+            notification: d.desktop.pending.pop_front().unwrap(),
+            state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+        });
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let (_failed, failures) = mpsc::sync_channel(1);
+        d.desktop.host = Some(DesktopHost {
+            sender,
+            failures,
+            enabled: true,
+            epoch: Arc::new(AtomicU64::new(0)),
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        });
+        assert_eq!(d.desktop.pending.len(), 1);
+        (d, receiver)
+    }
+    #[test]
+    fn desktop_queued_visible_then_hidden_candidate_stays_cancelled() {
+        let (mut d, receiver) = queued_behind_active();
+        d.select_session(SessionId(2));
+        d.emit_desktop_notifications();
+        assert!(
+            d.desktop.pending.is_empty(),
+            "visible queued response must be consumed while host remains busy"
+        );
+        d.select_session(SessionId(1));
+        d.desktop
+            .in_flight
+            .as_ref()
+            .unwrap()
+            .state
+            .store(DELIVERY_FINISHED, Ordering::Release);
+        d.emit_desktop_notifications();
+        assert!(
+            receiver.try_recv().is_err(),
+            "hiding again must not restore cancelled response"
+        );
+    }
+    #[test]
+    fn desktop_queued_health_loss_then_recovery_stays_cancelled() {
+        let (mut d, receiver) = queued_behind_active();
+        let mut queued = d.hierarchy.projects[0].workspaces[0].sessions[1].clone();
+        queued.agent.as_mut().unwrap().metrics_revision = 5;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            queued.clone(),
+        ))));
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "unrelated metrics never revoke activity"
+        );
+        queued.agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            queued.clone(),
+        ))));
+        queued.agent.as_mut().unwrap().health.state = ReporterHealth::Connected;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            queued,
+        ))));
+        assert!(
+            d.desktop.pending.is_empty(),
+            "same-revision health recovery must not revive cancelled Ready"
+        );
+        d.desktop
+            .in_flight
+            .as_ref()
+            .unwrap()
+            .state
+            .store(DELIVERY_FINISHED, Ordering::Release);
+        d.emit_desktop_notifications();
+        assert!(receiver.try_recv().is_err());
     }
     #[test]
     fn desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery() {
@@ -814,17 +905,39 @@ mod tests {
     #[test]
     fn desktop_pending_candidates_are_bounded_and_identity_text_is_not_code() {
         let mut d = dashboard();
-        for revision in 2..102 {
-            let mut event = snapshot(
-                revision,
-                &format!("turn-{revision}"),
-                AgentActivity::ResponseReady,
-            );
-            session(&mut event).name = "name\nwith\u{1b}controls <b> & \"$(secret)\"".into();
-            deliver(&mut d, event);
-        }
+        let mut hierarchy = snapshot(2, "turn-2", AgentActivity::ResponseReady);
+        let template = session(&mut hierarchy).clone();
+        hierarchy.projects[0].workspaces[0].sessions = (1..=50)
+            .map(|id| {
+                let mut session = template.clone();
+                session.id = SessionId(id);
+                session.name = "name\nwith\u{1b}controls <b> & \"$(secret)\"".into();
+                if id > 1 {
+                    session.agent.as_mut().unwrap().binding.invocation = format!("invocation-{id}");
+                }
+                session
+            })
+            .collect();
+        deliver(&mut d, hierarchy);
         assert_eq!(d.desktop.pending.len(), QUEUE_CAPACITY);
-        let notice = &d.desktop.pending[0];
+        // Newer activity replaces only its session's obsolete candidate; all
+        // fifty live sessions remain representable in the bounded backlog.
+        for revision in 3..102 {
+            let mut session = d.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+            let agent = session.agent.as_mut().unwrap();
+            agent.activity_revision = revision;
+            agent.activity.as_mut().unwrap().turn = Some(format!("turn-{revision}"));
+            d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                session,
+            ))));
+            assert_eq!(d.desktop.pending.len(), QUEUE_CAPACITY);
+        }
+        let notice = d
+            .desktop
+            .pending
+            .iter()
+            .find(|notice| notice.session == SessionId(1))
+            .unwrap();
         assert_eq!(
             notice.body,
             "project / workspace / namewithcontrols <b> & \"$(secret)\" (#1)"
@@ -852,13 +965,11 @@ mod tests {
             );
         }
         d.desktop.pending.clear();
-        deliver(
-            &mut d,
-            snapshot(101, "turn-101", AgentActivity::ResponseReady),
-        );
+        let repeated = d.hierarchy.clone();
+        deliver(&mut d, repeated);
         assert!(
             d.desktop.pending.is_empty(),
-            "queue overflow does not replay"
+            "consumed bounded backlog does not replay"
         );
     }
     #[test]
