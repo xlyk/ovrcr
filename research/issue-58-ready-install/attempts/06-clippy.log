@@ -1,0 +1,6 @@
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-protocol)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-terminal)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-tui)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install)
+    Finished `dev` profile [unoptimized] target(s) in 4.65s
