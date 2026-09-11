@@ -1,0 +1,9 @@
+Command: rtk proxy python3 /private/tmp/ovrcr-codex-native-attempt.py
+Sandboxed attempt, command exit 1.
+Task directory: /private/tmp/ovrcr-codex-native-sd67gle4
+After a bounded 12-second PTY read, /bin/ps process inspection raised:
+PermissionError: [Errno 1] Operation not permitted: '/bin/ps'
+The initial harness closed its PTY in finally, but did not persist captured bytes or PID before this exception. Native output, PID, PGID, wait status and group absence are therefore unavailable for attempt 01. Do not reconstruct a PID from unrelated process state.
+Follow-up permitted exact-argv process filter found no match (rg exit 1):
+/opt/homebrew/Caskroom/codex/0.153.0/bin/codex --no-alt-screen -C /private/tmp/ovrcr-codex-native-sd67gle4/workspace
+This is not full process-group cleanup proof. Its task directory remains for recovery/review. No broad process cleanup or unrelated process signaling occurred. A broad read-only process listing was accidentally printed during cleanup inspection; it was not retained as evidence and supplied no ownership claim.

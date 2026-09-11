@@ -2,7 +2,7 @@
 
 Inspected 2026-09-10 PDT / 2026-09-11 UTC at OVRCR revision `a89d6a05648aa41a8ec2eab15f3e5b8be83c3932`, branch `codex/codex-reporting`, base `983dd42a05690b15db073e6c1d8454d5a889db63`. No runtime edits or native reporting support are delivered.
 
-**Decision: no route selected.** One bounded source-comparison pass establishes candidates, not the safe exact-root binding required by Task 1. Dependent adapter work stops. This is a certification blocker, not a claim that Codex cannot expose a rollout file. No native matrix was run, no repeat was used, and no authentication, trust bypass, approval responder, live session query, or live configuration change occurred.
+**Decision: no route selected.** One bounded source-comparison pass establishes candidates, not the safe exact-root binding required by Task 1. Dependent adapter work stops. This is a certification blocker, not a claim that Codex cannot expose a rollout file. The initial zero-attempt checkpoint was rejected in independent review. The corrected [native attempt](native-attempt/results.md) used the permitted matrix and one repeat, reached the actual login selector, and stopped without selecting authentication. No credentials, trust bypass, approval responder, live session query, or live configuration change occurred.
 
 ## Provenance
 
@@ -62,7 +62,7 @@ A current; delayed prior-turn completion => no new-turn idle.
 
 All six are unrun: no admitted source or adapter exists. In particular the two-request sum is an identified-record alternative, not permission to sum cumulative notifications. Missing metric components remain unknown, never zero.
 
-## Launch grammar and native gate matrix
+## Launch grammar and initial native gate checkpoint
 
 | Form | Native grammar evidence | Managed reporting |
 | --- | --- | --- |
@@ -71,12 +71,12 @@ All six are unrun: no admitted source or adapter exists. In particular the two-r
 | Picker/last, fork, in-process switch | Mentioned native commands, not investigated for admission | Disabled/deferred. |
 | `--remote` | Help lists websocket/Unix endpoints | Does not certify safe passive connection or permit substituting native launch topology. |
 
-Fresh startup, two turns, approval wait/allow, cancellation, root failure, child activity, selected resume, observer disconnect, numeric comparison, and process-group lifecycle are **blocked/not run**. There is no native output marker, screenshot, AX capture, provider request, or native event fixture. One matrix was allowed but zero were attempted because no safe observation route was certified within the allowed boundary. Authentication/trust was neither attempted nor encountered as an observed UI failure. No live app-server or native sessions were started, so there are no owned process groups/sockets to clean up.
+At initial checkpoint `d47e99f`, no native attempt had run. Independent review required using the authorized attempt; the [correction](native-attempt/results.md) now records an actual isolated native sign-in selector. The first harness attempt failed at sandboxed process inspection; the single repeat captured onboarding and verified its owned group cleanup. Authentication was not selected. Root hooks, two turns, approval wait/allow, cancellation, root failure, child activity, selected resume, observer disconnect and numeric comparison remain blocked/not run. There is no assistant output marker, screenshot, AX capture, provider request or hook-event fixture. Attempt 01 PID/group cleanup remains unverified; its exact scratch directory is retained.
 
 ## Command outcomes and remaining gate
 
 All shell invocations used RTK after the initial instruction read (that read was a plain `cat`, exit 0). Version/help/app-server help/schema generation each exited 0 with the existing PATH-alias `Operation not permitted` warning. Daemon help and migration help exited 0; neither daemon management nor migration was executed. Installed package/hash inspection exited 0. Public release lookup initially failed network access; explicit read-only escalation succeeded (tag/tree/source reads). One guessed source path `core/src/session.rs` returned HTTP 404 and base64 decoding failed; the correct tree-listed `core/src/session/mod.rs` subsequently succeeded. This is retained as a failed source lookup, not a native observation failure or a second comparison pass.
 
-No Rust tests, parser tests, native acceptance, Linux gate, hosted capacity job, or 50-session test was run for these documentation/source fixtures. Existing Claude results are not Codex acceptance. Independent review of this source-negative decision remains required.
+No Rust tests, parser tests, completed native acceptance matrix, Linux gate, hosted capacity job, or 50-session test was run for these documentation/source fixtures. Native startup boundary evidence is recorded separately above. Existing Claude results are not Codex acceptance. Independent review of this source-negative decision remains required.
 
-To unblock, establish an exact passive observer primitive preserving native approvals, **or** certify the existing hook-to-file candidate through a trusted task-owned invocation/root binding, matching current header/lineage and paginated record semantics. Isolated no-credential startup is authorized, but was not attempted because source certification was stopped first; this is an unrun gate, not an observed authentication failure. Lack of blanket authentication/trust authorization is not evidence that either primitive is impossible. Additional authorization would only become relevant if a concrete native certification step actually needed credentials or persisted trust. Do not start Tasks 2–4 from schema availability alone. Initial explicit resume remains contingent on identity proof; broad transitions, Confirmed completion, Complete accounting, notifications and pricing remain deferred.
+To unblock, establish an exact passive observer primitive preserving native approvals, **or** certify the existing hook-to-file candidate through a trusted task-owned invocation/root binding, matching current header/lineage and paginated record semantics. The authorized no-credential startup now demonstrably stops at native authentication onboarding. Continuing this matrix requires an authentication route; no credentials or login choice were supplied. This is a concrete prerequisite, not proof that the file route is impossible. Trust was not encountered. The one source pass and native attempt plus permitted repeat are exhausted. Do not start Tasks 2–4 from schema availability alone. Initial explicit resume remains contingent on identity proof; broad transitions, Confirmed completion, Complete accounting, notifications and pricing remain deferred.

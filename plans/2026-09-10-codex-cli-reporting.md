@@ -96,7 +96,7 @@ These are proposed signatures, not existing APIs. `send_native_payload` reuses t
 
 **Interface produced:** A table mapping each native event to root identity, turn identity, source path/endpoint, ordering, usage scope/category and version. The selected route and supported launch grammar are explicit; unsupported rows have a named missing primitive.
 
-- [ ] Record version/help and generate candidate schema in a task-owned temporary directory:
+- [x] Record version/help and generate candidate schema in a task-owned temporary directory:
 
 ```sh
 rtk proxy codex --version
@@ -124,6 +124,12 @@ A current; delayed prior-turn completion => no new-turn idle.
 - [ ] Write the supported event/field definitions before implementing parsing; mark inaccessible cost or unavailable components unknown. Record a review decision for the source contract. Gate outcome is either one selected safe route or a concrete blocker, never an assumed fallback.
 
 **Exit:** Safe exact root binding plus named status/context/token sources are established, or dependent work stops. A source-negative result does not count as an implemented adapter.
+
+### Task 1 blocked checkpoint, 2026-09-11 UTC
+
+Version/help/schema evidence is recorded in [the source contract](../research/codex-reporting-acceptance/source-contract.md). Independent review rejected the initial zero-native-attempt stopping point. The corrected [isolated native attempt](../research/codex-reporting-acceptance/native-attempt/results.md) reached the authentication selector without selecting login. Its one repeat addressed sandboxed process-inspection failure. No native conversation, hook binding, transcript header, metric reference or GUI/AX acceptance is claimed. Repeat process-group cleanup passed; the first attempt's unpersisted PID/group cleanup remains unverified and its task directory is retained.
+
+No safe observation route is certified; root-only callback routing and current paginated lineage remain open. The native matrix now has a concrete authentication prerequisite, so dependent implementation stops. All other Task 1 acceptance checkboxes remain open. Source-only comparison and PTY onboarding are not adapter delivery.
 
 ## Task 2: Wire Codex launch, transport and root admission
 
