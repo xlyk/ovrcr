@@ -1,15 +1,15 @@
 //! Dashboard-local opt-in delivery. Only accepted root activity identities enter this module.
 use super::{Dashboard, DashboardAction};
 use ovrcr_protocol::{
-    AgentActivity, AgentBinding, AgentProvider, HierarchySnapshot, SampleQuality, SessionId,
-    SessionPhase, SessionSummary,
+    AgentActivity, AgentBinding, AgentProvider, HierarchySnapshot, ReporterHealth, SampleQuality,
+    SessionId, SessionPhase, SessionSummary,
 };
 use std::collections::{HashMap, VecDeque};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     mpsc,
 };
 use std::thread::{self, JoinHandle};
@@ -35,11 +35,34 @@ struct Notification {
     body: String,
 }
 
+const DELIVERY_ACTIVE: u8 = 0;
+const DELIVERY_CANCELLED: u8 = 1;
+const DELIVERY_FINISHED: u8 = 2;
+
+#[derive(Clone)]
+struct Delivery {
+    notification: Notification,
+    state: Arc<AtomicU8>,
+}
+
+impl Delivery {
+    fn cancel(&self) {
+        let _ = self.state.compare_exchange(
+            DELIVERY_ACTIVE,
+            DELIVERY_CANCELLED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+}
+
 #[derive(Default)]
 pub(super) struct DesktopNotifications {
     initialized: bool,
     observed: HashMap<SessionId, Observed>,
     pending: VecDeque<Notification>,
+    in_flight: Option<Delivery>,
+    pub(super) wake: Option<std::os::unix::net::UnixStream>,
     pub(super) notice: Option<String>,
     host: Option<DesktopHost>,
 }
@@ -91,7 +114,18 @@ impl Dashboard {
         self.desktop.observed.retain(|id, _| existing.contains(id));
     }
 
-    pub(super) fn observe_desktop_session(&mut self, session: &SessionSummary, initial: bool) {
+    pub(super) fn observe_desktop_update(&mut self, session: &SessionSummary) {
+        self.observe_desktop_session(session, !self.desktop.initialized);
+    }
+
+    fn observe_desktop_session(&mut self, session: &SessionSummary, initial: bool) {
+        // Health and lifecycle changes do not necessarily advance the activity revision.
+        if let Some(delivery) = &self.desktop.in_flight
+            && delivery.notification.session == session.id
+            && !notification_matches_session(&delivery.notification, session)
+        {
+            delivery.cancel();
+        }
         let Some(agent) = &session.agent else {
             return;
         };
@@ -152,28 +186,41 @@ impl Dashboard {
         }
     }
 
+    fn desktop_notification_valid(&self, notification: &Notification) -> bool {
+        self.settings.desktop_notifications
+            && !self.desktop_session_visible(notification.session)
+            && super::state::find_session(self, notification.session)
+                .is_some_and(|session| notification_matches_session(notification, session))
+    }
+
     pub(super) fn emit_desktop_notifications(&mut self) -> bool {
         let mut changed = false;
-        while let Some(notification) = self.desktop.pending.pop_front() {
-            if !self.settings.desktop_notifications
-                || self.desktop_session_visible(notification.session)
-            {
-                continue;
+        if let Some(delivery) = &self.desktop.in_flight {
+            if !self.desktop_notification_valid(&delivery.notification) {
+                delivery.cancel();
             }
-            let valid =
-                super::state::find_session(self, notification.session).is_some_and(|session| {
-                    ready_session(session)
-                        && session.agent_epoch == notification.observed.epoch
-                        && session.agent.as_ref().is_some_and(|agent| {
-                            agent.binding == notification.observed.binding
-                                && agent.activity_revision == notification.observed.revision
-                        })
-                });
-            if !valid {
+            if delivery.state.load(Ordering::Acquire) == DELIVERY_FINISHED {
+                self.desktop.in_flight = None;
+            }
+        }
+        // Keep queued responses in the dashboard until the single host operation finishes.
+        // They are validated against current identity and geometry at actual dispatch time.
+        while self.desktop.in_flight.is_none() {
+            let Some(notification) = self.desktop.pending.pop_front() else {
+                break;
+            };
+            if !self.desktop_notification_valid(&notification) {
                 continue;
             }
             if self.desktop.host.is_none() {
-                match DesktopHost::start() {
+                let host = self
+                    .desktop
+                    .wake
+                    .as_ref()
+                    .map(std::os::unix::net::UnixStream::try_clone)
+                    .transpose()
+                    .and_then(DesktopHost::start);
+                match host {
                     Ok(host) => self.desktop.host = Some(host),
                     Err(_) => {
                         self.desktop.notice = Some("Desktop notifications unavailable".into());
@@ -182,8 +229,14 @@ impl Dashboard {
                     }
                 }
             }
-            if let Some(host) = &self.desktop.host {
-                host.send(notification);
+            let delivery = Delivery {
+                notification,
+                state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
+            };
+            if let Some(host) = &self.desktop.host
+                && host.send(delivery.clone())
+            {
+                self.desktop.in_flight = Some(delivery);
             }
         }
         if let Some(host) = &self.desktop.host
@@ -199,10 +252,20 @@ impl Dashboard {
     }
 }
 
+fn notification_matches_session(notification: &Notification, session: &SessionSummary) -> bool {
+    ready_session(session)
+        && session.agent_epoch == notification.observed.epoch
+        && session.agent.as_ref().is_some_and(|agent| {
+            agent.binding == notification.observed.binding
+                && agent.activity_revision == notification.observed.revision
+        })
+}
+
 fn ready_session(session: &SessionSummary) -> bool {
     session.phase == SessionPhase::Running
         && session.agent.as_ref().is_some_and(|agent| {
             agent.binding.provider == AgentProvider::Codex
+                && agent.health.state == ReporterHealth::Connected
                 && agent.activity_revision > 0
                 && agent.activity.as_ref().is_some_and(|activity| {
                     activity.state == AgentActivity::ResponseReady
@@ -220,7 +283,7 @@ fn safe_identity(text: &str) -> String {
 }
 
 struct DesktopHost {
-    sender: mpsc::SyncSender<(u64, Notification)>,
+    sender: mpsc::SyncSender<(u64, Delivery)>,
     failures: mpsc::Receiver<u64>,
     enabled: bool,
     epoch: Arc<AtomicU64>,
@@ -229,8 +292,8 @@ struct DesktopHost {
 }
 
 impl DesktopHost {
-    fn start() -> std::io::Result<Self> {
-        let (sender, receiver) = mpsc::sync_channel::<(u64, Notification)>(QUEUE_CAPACITY);
+    fn start(mut wake: Option<std::os::unix::net::UnixStream>) -> std::io::Result<Self> {
+        let (sender, receiver) = mpsc::sync_channel::<(u64, Delivery)>(1);
         let (failure, failures) = mpsc::sync_channel(1);
         let epoch = Arc::new(AtomicU64::new(0));
         let stop = Arc::new(AtomicBool::new(false));
@@ -240,19 +303,22 @@ impl DesktopHost {
             .name("ovrcr-desktop-notifications".into())
             .spawn(move || {
                 while !worker_stop.load(Ordering::Acquire) {
-                    let Ok((ticket, notification)) = receiver.recv_timeout(HOST_POLL) else {
+                    let Ok((ticket, delivery)) = receiver.recv_timeout(HOST_POLL) else {
                         continue;
                     };
-                    if worker_epoch.load(Ordering::Acquire) != ticket
-                        || worker_stop.load(Ordering::Acquire)
-                    {
-                        continue;
-                    }
-                    if !run_host(&notification, || {
-                        worker_stop.load(Ordering::Acquire)
-                            || worker_epoch.load(Ordering::Acquire) != ticket
-                    }) {
+                    let cancelled = || {
+                        worker_epoch.load(Ordering::Acquire) != ticket
+                            || worker_stop.load(Ordering::Acquire)
+                            || delivery.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
+                    };
+                    let success = cancelled() || run_host(&delivery.notification, cancelled);
+                    let report_failure = !success && !cancelled();
+                    delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
+                    if report_failure {
                         let _ = failure.try_send(ticket);
+                    }
+                    if let Some(wake) = &mut wake {
+                        super::event_loop::notify_dashboard_wake(wake);
                     }
                 }
             })?;
@@ -271,12 +337,12 @@ impl DesktopHost {
             self.epoch.fetch_add(1, Ordering::AcqRel);
         }
     }
-    fn send(&self, notification: Notification) {
-        if self.enabled {
-            let _ = self
+    fn send(&self, delivery: Delivery) -> bool {
+        self.enabled
+            && self
                 .sender
-                .try_send((self.epoch.load(Ordering::Acquire), notification));
-        }
+                .try_send((self.epoch.load(Ordering::Acquire), delivery))
+                .is_ok()
     }
 }
 
@@ -423,6 +489,111 @@ mod tests {
         d.key(KeyCode::Char('N'));
         deliver(&mut d, snapshot(1, "a", AgentActivity::Busy));
         d
+    }
+    #[test]
+    fn desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery() {
+        let mut d = dashboard();
+        let mut unavailable = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut unavailable)
+            .agent
+            .as_mut()
+            .unwrap()
+            .health
+            .state = ReporterHealth::Unavailable;
+        deliver(&mut d, unavailable);
+        assert!(d.desktop.pending.is_empty());
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        assert!(
+            d.desktop.pending.is_empty(),
+            "health recovery cannot replay Ready"
+        );
+        deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+    }
+    #[test]
+    fn desktop_health_loss_before_dispatch_cancels_pending_ready() {
+        let mut d = dashboard();
+        let (sender, received) = mpsc::sync_channel(QUEUE_CAPACITY);
+        let (_failed, failures) = mpsc::sync_channel(1);
+        d.desktop.host = Some(DesktopHost {
+            sender,
+            failures,
+            enabled: true,
+            epoch: Arc::new(AtomicU64::new(0)),
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        });
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        let mut unavailable = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut unavailable)
+            .agent
+            .as_mut()
+            .unwrap()
+            .health
+            .state = ReporterHealth::Unavailable;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut unavailable).clone(),
+        ))));
+        d.emit_desktop_notifications();
+        assert!(
+            received.try_recv().is_err(),
+            "unavailable historical Ready reached host queue"
+        );
+    }
+    #[test]
+    fn desktop_session_event_before_hello_is_part_of_attach_baseline() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 120,
+        });
+        d.key(KeyCode::Char('N'));
+        let mut ready = snapshot(2, "old", AgentActivity::ResponseReady);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut ready).clone(),
+        ))));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: 1,
+            response: Response::Hierarchy(ready),
+        });
+        assert!(
+            d.desktop.pending.is_empty(),
+            "pre-Hello event must not replay historical Ready"
+        );
+        deliver(&mut d, snapshot(4, "new", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+    }
+    #[test]
+    fn desktop_host_completion_wakes_dashboard_for_remaining_candidates() {
+        let mut d = dashboard();
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        let (mut receiver, sender) = std::os::unix::net::UnixStream::pair().unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        sender.set_nonblocking(true).unwrap();
+        let host = DesktopHost::start(Some(sender)).unwrap();
+        assert!(host.send(Delivery {
+            notification: d.desktop.pending.pop_front().unwrap(),
+            state: Arc::new(AtomicU8::new(DELIVERY_CANCELLED))
+        }));
+        let wake = super::super::event_loop::wait_for_dashboard_activity(
+            -1,
+            Some(&receiver),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert!(
+            wake.server_ready,
+            "completed host operation did not wake dashboard"
+        );
+        assert!(!wake.timed_out);
+        let mut byte = [0];
+        std::io::Read::read_exact(&mut receiver, &mut byte).unwrap();
+        assert_eq!(
+            byte,
+            [1],
+            "descriptor closure alone is not a completion wake"
+        );
     }
     #[test]
     fn desktop_provider_session_event_reaches_notification_observer() {

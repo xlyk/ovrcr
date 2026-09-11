@@ -2848,7 +2848,7 @@ impl Dashboard {
                     }
                 }
                 ServerEvent::SessionChanged(summary) => {
-                    self.observe_desktop_session(&summary, false);
+                    self.observe_desktop_update(&summary);
                     for session in self
                         .hierarchy
                         .projects

@@ -10046,13 +10046,21 @@ fn codex_session(
     fixture: &ControlFixture,
     socket: &Path,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
     fixture.create_hook_child("setup", "codex-setup");
+    codex_session_named(fixture, socket, "codex-hooks")
+}
+
+fn codex_session_named(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
     let native = fixture._root.path().join("codex");
     std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join("codex-channel");
-    let summary = fixture.create_session_summary("codex-hooks", vec![
+    let probe = fixture._root.path().join(format!("{name}-channel"));
+    let summary = fixture.create_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
         "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
@@ -10300,9 +10308,9 @@ impl DesktopAlertDashboard {
         command.env("OVRCR_CONFIG", fixture._root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
-        let mut paths = vec![directory];
-        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
-        command.env("PATH", std::env::join_paths(paths).unwrap());
+        // Never fall back to the user's real desktop tool if this fixture's
+        // executable is deliberately removed for the unavailable-host test.
+        command.env("PATH", directory);
         command.env("TERM", "xterm-256color");
         let child = pair.slave.spawn_command(command).unwrap();
         let process_group = child.process_id().unwrap() as libc::pid_t;
@@ -10697,4 +10705,109 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
     dashboard.detach();
     assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
+}
+
+#[test]
+fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (first, _) = codex_session(&fixture, &fixture.socket);
+    let (queued, _) = codex_session_named(&fixture, &fixture.socket, "codex-queued");
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    dashboard.select("setup", "HOOK_READY");
+    let mode = dashboard.record.with_extension("mode");
+    let host_pid = dashboard.record.with_extension("pid");
+    std::fs::write(&mode, "block\n").unwrap();
+    let mut first_index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, first.id, &mut first_index, command);
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let blocked_pid = loop {
+        if let Ok(text) = std::fs::read_to_string(&host_pid)
+            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "first host did not enter blocker"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    dashboard.host_process_groups.push(blocked_pid);
+    assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
+    // Only the first host invocation blocks. The second completion must queue
+    // behind it before we make that session visible through real mouse input.
+    std::fs::remove_file(mode).unwrap();
+    let mut queued_index = 0;
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("✓ codex-queued"));
+    assert!(
+        group_exists(blocked_pid),
+        "first host no longer blocks the queue"
+    );
+    dashboard.select("codex-queued", "CODEX_CALLBACK=1");
+    assert!(
+        group_exists(blocked_pid),
+        "queue released before the view changed"
+    );
+    assert_eq!(unsafe { libc::kill(-blocked_pid, libc::SIGTERM) }, 0);
+    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+
+    // A later eligible completion on the other session is the FIFO delivery
+    // barrier. Any obsolete queued invocation has a different identity and
+    // fails the host payload assertion, even if it precedes this fresh one.
+    for command in ["UserPromptSubmit:root:c", "Stop:root:c"] {
+        desktop_codex_callback(&fixture, first.id, &mut first_index, command);
+    }
+    dashboard.wait_calls(1, first.id);
+    dashboard.detach();
+}
+
+#[test]
+fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_controls() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    dashboard.select("setup", "HOOK_READY");
+    std::fs::remove_file(
+        dashboard
+            .record
+            .parent()
+            .unwrap()
+            .join(if cfg!(target_os = "macos") {
+                "osascript"
+            } else {
+                "notify-send"
+            }),
+    )
+    .unwrap();
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    assert!(
+        !dashboard.record.exists(),
+        "missing host cannot record delivery"
+    );
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .activity
+            .unwrap()
+            .state,
+        ovrcr::protocol::AgentActivity::ResponseReady
+    );
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    dashboard.detach();
 }

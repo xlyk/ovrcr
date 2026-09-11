@@ -99,6 +99,7 @@ pub fn run_dashboard(
     let reader_stream = stream.try_clone().context("clone dashboard socket")?;
     let input = dashboard_input()?.context("dashboard input terminal is unavailable")?;
     let (wake, reader_wake) = DashboardWake::new()?;
+    dashboard.desktop.wake = reader_wake.try_clone().ok();
     let (received, messages) = dashboard_message_channel();
     thread::Builder::new()
         .name("ovrcr-dashboard-reader".into())
@@ -634,7 +635,7 @@ impl Drop for DashboardWake {
     }
 }
 
-fn notify_dashboard_wake(wake: &mut UnixStream) {
+pub(super) fn notify_dashboard_wake(wake: &mut UnixStream) {
     match wake.write(&[1]) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
