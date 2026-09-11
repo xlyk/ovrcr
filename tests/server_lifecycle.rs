@@ -8770,6 +8770,8 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
 }
 
 fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>) {
+    // Lifecycle gate; concurrent fresh-executable startup can exhaust the fixed probe budget.
+    let _guard = env_lock();
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "admission-setup");
