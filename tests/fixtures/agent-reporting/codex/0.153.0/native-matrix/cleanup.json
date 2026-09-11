@@ -42,5 +42,7 @@
   ],
   "remaining_group_members": [],
   "isolated_provider_home_workspace_removed": true,
-  "host_fixture_removed": true
+  "host_fixture_removed": true,
+  "remaining_matrix_scratch_removed": true,
+  "small_recovery_evidence_retained": ".superpowers/sdd/2026-09-10-codex-cli-reporting/native-matrix-recovery"
 }

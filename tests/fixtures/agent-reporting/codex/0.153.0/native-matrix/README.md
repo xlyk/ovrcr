@@ -9,3 +9,5 @@ Python files are the actual disposable source prototype, not production code or 
 Failures preserved: first foreign-first assertion raced after root admission; separate empty-binding synthetic rejection passed. Receiver restart initially hit sandbox bind PermissionError and succeeded after scoped permission. Earlier login/ENOSPC/CUA failures remain in historical reports. Native /context was unrecognized. No additional native attempt was made to hide these failures.
 
 Actual native CUA outcomes and reference values were independently captured by the coordinator in the task's screenshot/accessibility tool trace. Account/limit parts of /status are intentionally not copied. This folder contains source evidence, not screenshots or product test results.
+
+Independent review correction: ongoing source selection is BLOCKED on detectable current-lineage invalidation. Ordinary-turn evidence remains valid. Hard-coded arithmetic/turn assertions do not test replay, ownership, freshness or ordering behavior. The separate foreign-first fixture does exercise the actual prototype rejection path. Cleanup records contain 17 PIDs and 16 groups.
