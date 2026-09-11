@@ -1,7 +1,6 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, history_page_covers};
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
-use crate::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot, format_context};
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
 use ovrcr_protocol::{
@@ -875,36 +874,18 @@ pub(super) fn sidebar_area(area: Rect) -> Rect {
 
 pub(super) fn tree_row_height(row: &TreeRow) -> usize {
     match row {
-        TreeRow::Session { .. } => 3,
+        TreeRow::Session { .. } => 2,
         TreeRow::Project { .. } | TreeRow::Workspace { .. } => 1,
     }
 }
 
 pub(super) fn tree_line_count(rows: &[TreeRow]) -> usize {
-    rows.iter()
-        .enumerate()
-        .map(|(index, row)| tree_row_gap(rows, index) + tree_row_height(row))
-        .sum()
-}
-
-pub(super) fn tree_row_gap(rows: &[TreeRow], index: usize) -> usize {
-    usize::from(
-        index > 0
-            && match &rows[index] {
-                TreeRow::Project { .. } => true,
-                TreeRow::Workspace { .. } => !matches!(rows[index - 1], TreeRow::Project { .. }),
-                TreeRow::Session { .. } => false,
-            },
-    )
+    rows.iter().map(tree_row_height).sum()
 }
 
 pub(super) fn tree_line_at(rows: &[TreeRow], line: usize) -> Option<(&TreeRow, usize)> {
     let mut start: usize = 0;
-    for (index, row) in rows.iter().enumerate() {
-        start += tree_row_gap(rows, index);
-        if line < start {
-            return None;
-        }
+    for row in rows {
         let height = tree_row_height(row);
         if line < start.saturating_add(height) {
             return Some((row, line - start));
@@ -982,12 +963,7 @@ fn tree_line_text(
             };
             let text = match line {
                 0 => format!("  {status} {}", session.name),
-                1 => format!("     ├ {label}{}", provider_activity(session)),
-                _ => format!(
-                    "     └ run {}  ctx {}",
-                    format_elapsed_at(session.started_unix_ms, now_unix_ms),
-                    session_context(session, now_unix_ms)
-                ),
+                _ => format!("     └ {label}{}", provider_activity(session)),
             };
             let mut style = if selected {
                 Style::default().fg(CRUST).bg(MAUVE)
@@ -997,14 +973,6 @@ fn tree_line_text(
                         faded(label_color(label), 65)
                     } else {
                         label_color(label)
-                    })
-                    .bg(BASE)
-            } else if line == 2 {
-                Style::default()
-                    .fg(if matches!(session.phase, SessionPhase::Exited { .. }) {
-                        faded(MUTED, 80)
-                    } else {
-                        SUBTEXT
                     })
                     .bg(BASE)
             } else {
@@ -1019,36 +987,6 @@ fn tree_line_text(
             (clip_text(&text, width), style)
         }
     }
-}
-
-// Bound snapshots are authoritative even when a component is unknown after clear.
-fn session_context(session: &SessionSummary, now: u64) -> String {
-    let exited = matches!(session.phase, SessionPhase::Exited { .. });
-    let Some(agent) = &session.agent else {
-        return format_context(session.context_usage.as_ref(), now, exited);
-    };
-    let Some(metrics) = &agent.metrics else {
-        return "—".into();
-    };
-    let context = &metrics.sample.context;
-    let sample = ContextUsageSnapshot {
-        report: ContextUsageReport {
-            source: ContextSource::Generic,
-            model: None,
-            conversation: None,
-            used_tokens: context.value.used_tokens,
-            capacity_tokens: context.value.capacity_tokens,
-        },
-        received_unix_ms: metrics.context_received_unix_ms,
-    };
-    let mut text = format_context(Some(&sample), now, exited);
-    if context.freshness == MeasurementFreshness::Uncertain {
-        text.push_str(" uncertain");
-    }
-    if context.value.quality == SampleQuality::Estimated {
-        text.push_str(" estimate");
-    }
-    text
 }
 
 fn provider_activity(session: &SessionSummary) -> String {

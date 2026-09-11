@@ -28,6 +28,53 @@ use std::thread;
 use std::time::Duration;
 
 #[test]
+fn compact_sidebar_maps_each_line_to_its_visible_tree_row() {
+    use super::TreeRow;
+    use super::render::{tree_line_at, tree_line_count};
+
+    let rows = vec![
+        TreeRow::Project { name: "one".into() },
+        TreeRow::Workspace {
+            project: "one".into(),
+            name: "first".into(),
+        },
+        TreeRow::Session { id: SessionId(1) },
+        TreeRow::Workspace {
+            project: "one".into(),
+            name: "empty".into(),
+        },
+        TreeRow::Workspace {
+            project: "one".into(),
+            name: "last".into(),
+        },
+        TreeRow::Session { id: SessionId(2) },
+        TreeRow::Project { name: "two".into() },
+    ];
+    let expected = [
+        (0, 0),
+        (1, 0),
+        (2, 0),
+        (2, 1),
+        (3, 0),
+        (4, 0),
+        (5, 0),
+        (5, 1),
+        (6, 0),
+    ];
+    assert_eq!(tree_line_count(&rows), 9);
+    for (line, (row, detail)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            tree_line_at(&rows, line),
+            Some((&rows[row], detail)),
+            "line {line}"
+        );
+    }
+    assert_eq!(tree_line_at(&rows, 9), None);
+    assert_eq!(tree_line_count(&[]), 0);
+    assert_eq!(tree_line_at(&[], 0), None);
+}
+
+#[test]
 fn hints_name_targets_and_explain_disabled_session_actions() {
     use crate::protocol::{
         AgentActivity, ProjectSummary, SessionPhase, SessionSummary, WorkspaceSummary,
@@ -1286,14 +1333,10 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             .collect()
     }
     let text = drawn(&dashboard, now, 180);
-    for expected in [
-        "agent idle observed",
-        "ctx —",
-        "tokens conv partial 25",
-        "cost —",
-    ] {
+    for expected in ["agent idle observed", "tokens conv partial 25", "cost —"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
+    assert!(!text.contains("ctx "));
     assert!(!text.contains("99%"));
     assert!(!text.contains("private-"));
     let agent = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
@@ -1312,7 +1355,6 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     let text = drawn(&dashboard, now, 180);
     for expected in [
         "agent idle confirmed",
-        "ctx 50%",
         "tokens conv partial 25 stale",
         "cost inv $0.00",
     ] {
@@ -1327,7 +1369,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     metrics.sample.cost.value.as_mut().unwrap().kind = CostKind::Estimated;
     metrics.sample.context.freshness = MeasurementFreshness::Uncertain;
     let text = drawn(&dashboard, now, 180);
-    for expected in ["agent unavailable", "estimate $0.00", "50% uncertain"] {
+    for expected in ["agent unavailable", "estimate $0.00"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
     for width in [1, 2, 10, 40, 80] {

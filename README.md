@@ -163,8 +163,8 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | `Space` `?` | Contextual key groups; `?` also supports arrows and Enter |
 | `q` | Detach; the server and every session keep running |
 
-The sidebar gives each session three lines — name, label, and elapsed runtime with
-context usage — and marks its reported activity: blank when idle, a braille
+The sidebar gives each session two lines — its name and label — with no blank
+lines between projects or workspaces. It marks reported activity: blank when idle, a braille
 spinner when busy, `?` when waiting for input, `!` on a reported error, and `-`
 until a hook report arrives. Exited rows are dimmed.
 
