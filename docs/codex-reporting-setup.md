@@ -25,6 +25,8 @@ Omit `--settings` to print a standalone example. Setup prints TOML to stdout and
 
 Run setup and doctor from the exact OVRCR binary whose absolute path the hooks will execute. Setup embeds its own executable path; output from a temporary build points to that temporary build. Doctor checks for reporters using its own path too. Moving the binary requires reviewing a new composition and any native trust prompt. Keep full compositions and backups private because they contain the supplied configuration.
 
+Inventory and preserve any existing `hooks.json`, including files referenced by `hooks.state`, alongside the intended TOML configuration. Setup composes only the supplied TOML. Doctor does not inspect other hook sources or establish their effective coexistence and order. Verify those through native acceptance without assuming precedence. The [installed-binary check](codex-ready-installation.md#verify-the-installed-path-natively) uses a temporary OVRCR registry, socket and workspace while retaining the intended authorized Codex configuration; it can run without stopping the normal server or its sessions.
+
 The schema matches the [native Task 2 configuration](../research/codex-response-ready-acceptance/native-task-2/isolated-config.toml), without generating its trust state. Setup substitutes the current absolute OVRCR executable path and shell-quotes paths with spaces or apostrophes:
 
 ```toml

@@ -48,9 +48,16 @@ values are not committed here.
   value. Existing handler arrays retained their order; existing trust values
   stayed identical. Repeated composition was semantically identical. The live
   file's bytes and SHA-256 remained unchanged.
+- A later scoped inventory found [seven existing native handlers](additional-native-hooks.json)
+  in `/Users/xlyk/.codex/hooks.json`, one each for the five reporting events plus
+  SubagentStart and SubagentStop. None names OVRCR. The TOML trust state references
+  that file. It remains unchanged; no command or trust value is included in the
+  inventory. Preserving this file and its effective handlers/order across native
+  configuration sources requires a separate native check. The TOML comparison
+  alone does not establish that coexistence.
 - [Candidate doctor](doctor-candidate.json) accepts the exact installed Codex
   version and supplied candidate file. [Live read-only doctor](doctor-live-read-only.json)
-  reports the five reporters missing. Both leave effective configuration, trust
+  reports the five OVRCR reporters missing from the supplied TOML. Both leave effective configuration, trust
   and delivery unverified. Neither command created the isolated server socket.
 - [Candidate hook additions](candidate-hook-additions.toml) name the built
   executable. [Proposed permanent additions](proposed-installed-hooks.toml)
@@ -114,7 +121,8 @@ not establish a normal installation on this host.
    the compatible old executable and do not force a shutdown.
 3. Install the approved binary at the agreed path, verify its hash/version and
    actual server executable, compose from that permanent path, and apply only the
-   reviewed configuration change. Preserve any intervening unrelated edits.
+   reviewed configuration change. Preserve any intervening unrelated edits and
+   verify the existing `hooks.json` handlers still execute in their original order.
 4. Complete hook review through native Codex, then capture actual assistant
    output, Ready, next Busy, interruption and exit health through the installed
    managed launch. Keep isolated fixture config, socket and workspace and retain
