@@ -1,6 +1,7 @@
 pub mod admission;
 pub mod claude;
 pub mod claude_metrics;
+pub mod codex;
 pub mod collector;
 
 use crate::protocol::{
@@ -538,12 +539,20 @@ impl InvocationLease {
 }
 
 pub fn send_claude_hook(input: &[u8], deadline: Instant) -> Result<()> {
-    send_claude_payload(input, "claude-hook", deadline)
+    send_payload(input, "claude", "claude-hook", deadline)
 }
 pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
-    send_claude_payload(input, "claude-statusline", deadline)
+    send_payload(input, "claude", "claude-statusline", deadline)
 }
-fn send_claude_payload(input: &[u8], origin: &str, deadline: Instant) -> Result<()> {
+pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
+    send_payload(input, "codex", "codex-hook", deadline)
+}
+fn send_payload(
+    input: &[u8],
+    provider: &'static str,
+    origin: &str,
+    deadline: Instant,
+) -> Result<()> {
     let path = std::env::var_os("OVRCR_AGENT_SOCKET").context("no private invocation channel")?;
     let token = std::env::var("OVRCR_AGENT_TOKEN")
         .ok()
@@ -557,7 +566,7 @@ fn send_claude_payload(input: &[u8], origin: &str, deadline: Instant) -> Result<
     }
     let payload = serde_json::from_slice(input)?;
     let request = serde_json::to_vec(&Envelope {
-        provider: "claude",
+        provider,
         origin,
         payload,
     })?;
@@ -601,9 +610,12 @@ impl Drop for InvocationLease {
 }
 
 pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
-    use ovrcr_protocol::{
-        AgentOperationResult, AgentProvider, AgentSecret, ReserveAgent, SupervisorAuth,
-    };
+    reserve_invocation_for(ovrcr_protocol::AgentProvider::Claude)
+}
+pub fn reserve_invocation_for(
+    provider: ovrcr_protocol::AgentProvider,
+) -> Result<Option<InvocationLease>> {
+    use ovrcr_protocol::{AgentOperationResult, AgentSecret, ReserveAgent, SupervisorAuth};
     let Ok(identity) = HookIdentity::from_environment() else {
         return Ok(None);
     };
@@ -634,7 +646,7 @@ pub fn reserve_invocation() -> Result<Option<InvocationLease>> {
                 operation: ovrcr_runtime::agent_runner::private_identifier()?,
                 expected_epoch: session.agent_epoch,
                 invocation: ovrcr_runtime::agent_runner::private_identifier()?,
-                provider: AgentProvider::Claude,
+                provider,
             }),
             deadline,
         )?;

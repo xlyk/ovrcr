@@ -9802,3 +9802,451 @@ fn native_exit_stalled_reporting_helper() {
     release.send(()).unwrap();
     finish.recv_timeout(Duration::from_secs(1)).unwrap();
 }
+
+#[test]
+#[ignore = "Codex synchronous native child fixture"]
+fn codex_hook_native_helper() {
+    use std::io::{BufRead, Write};
+    if let Some(probe) = std::env::var_os("OVRCR_TEST_PROBE") {
+        std::fs::write(
+            probe,
+            format!(
+                "{}\n{}\n{}\n",
+                std::env::var("OVRCR_AGENT_SOCKET").unwrap(),
+                std::env::var("OVRCR_AGENT_TOKEN").unwrap(),
+                std::process::id()
+            ),
+        )
+        .unwrap();
+    }
+    println!("CODEX_NATIVE_READY");
+    for (index, line) in std::io::stdin().lock().lines().enumerate() {
+        let line = line.unwrap();
+        if line == "exit" {
+            std::process::exit(17);
+        }
+        let parts: Vec<_> = line.split(':').collect();
+        let mut payload = serde_json::json!({"hook_event_name":parts[0],"session_id":parts[1],"turn_id":parts[2],"transcript_path":"/ignored/root.jsonl"});
+        if parts.get(3) == Some(&"child") {
+            payload["agent_id"] = "child".into();
+        }
+        if parts.get(3) == Some(&"missing") {
+            payload.as_object_mut().unwrap().remove("turn_id");
+        }
+        let bytes = if parts.get(3) == Some(&"malformed") {
+            b"not-json".to_vec()
+        } else if parts.get(3) == Some(&"oversize") {
+            vec![b'x'; 65_537]
+        } else {
+            payload.to_string().into_bytes()
+        };
+        let mut command = if parts.get(3) == Some(&"grandchild") {
+            let mut command = Command::new("/bin/sh");
+            command.args([
+                "-c",
+                "\"$1\" report codex --stdin; exit 0",
+                "nested",
+                env!("CARGO_BIN_EXE_ovrcr"),
+            ]);
+            command
+        } else {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+            command.args(["report", "codex", "--stdin"]);
+            command
+        };
+        let mut child = command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&bytes).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        println!("CODEX_CALLBACK={index}");
+    }
+}
+
+#[test]
+fn codex_managed_hooks_ready_interrupt_duplicates_and_rebind() {
+    // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
+    let _guard = env_lock();
+    use ovrcr::protocol::AgentActivity;
+    let fixture = ControlFixture::new_bounded();
+    let (summary, probe) = codex_session(&fixture, &fixture.socket);
+    let channel = std::fs::read_to_string(&probe).unwrap();
+    let channel: Vec<_> = channel.lines().collect();
+    // A reporter with the correct private token but a foreign OS parent cannot bind first.
+    {
+        use std::io::Write;
+        let mut foreign = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["report", "codex", "--stdin"])
+            .env("OVRCR_AGENT_SOCKET", channel[0])
+            .env("OVRCR_AGENT_TOKEN", channel[1])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        foreign.stdin.take().unwrap().write_all(br#"{"hook_event_name":"UserPromptSubmit","session_id":"foreign","turn_id":"first"}"#).unwrap();
+        let output = foreign.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(fixture.session_summary(summary.id).agent.is_none());
+    }
+    let mut before_duplicate = None;
+    for (index, (command, expected)) in [
+        ("SessionStart:root:a", None),
+        ("Stop:root:a:child", None),
+        ("Stop:root:a", None),
+        ("UserPromptSubmit:root:a", Some(AgentActivity::Busy)),
+        ("Stop:root:a", Some(AgentActivity::ResponseReady)),
+        (
+            "UserPromptSubmit:root:a",
+            Some(AgentActivity::ResponseReady),
+        ),
+        ("Stop:root:a", Some(AgentActivity::ResponseReady)),
+        ("UserPromptSubmit:root:b", Some(AgentActivity::Busy)),
+        ("Stop:root:a", Some(AgentActivity::Busy)),
+        ("Interrupt:root:b", Some(AgentActivity::Idle)),
+        ("Stop:root:b", Some(AgentActivity::Idle)),
+        ("UserPromptSubmit:other:c", Some(AgentActivity::Busy)),
+        ("Stop:root:b", Some(AgentActivity::Busy)),
+        ("Stop:other:c", Some(AgentActivity::ResponseReady)),
+        (
+            "UserPromptSubmit:other:d:grandchild",
+            Some(AgentActivity::ResponseReady),
+        ),
+        (
+            "UserPromptSubmit:other:d:missing",
+            Some(AgentActivity::ResponseReady),
+        ),
+        (
+            "UserPromptSubmit:other:d:malformed",
+            Some(AgentActivity::ResponseReady),
+        ),
+        (
+            "UserPromptSubmit:other:d:oversize",
+            Some(AgentActivity::ResponseReady),
+        ),
+        ("Unknown:other:d", Some(AgentActivity::ResponseReady)),
+        ("UserPromptSubmit:root:e", Some(AgentActivity::Busy)),
+        ("Stop:root:e", Some(AgentActivity::ResponseReady)),
+        ("SessionEnd:root:e", Some(AgentActivity::ResponseReady)),
+        (
+            "UserPromptSubmit:root:f",
+            Some(AgentActivity::ResponseReady),
+        ),
+        ("Stop:root:f", Some(AgentActivity::ResponseReady)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("CODEX_CALLBACK={index}"));
+        let current = fixture.session_summary(summary.id).agent;
+        if let Some(expected) = expected {
+            let current = current.unwrap();
+            assert_eq!(
+                current.activity.as_ref().unwrap().state,
+                expected,
+                "{command}"
+            );
+            if index == 4 {
+                before_duplicate = Some(current.clone());
+                let token = std::fs::read_to_string(probe.with_extension("capability")).unwrap();
+                let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+                    .args([
+                        "agent",
+                        "run",
+                        "codex",
+                        "--",
+                        "/bin/sh",
+                        "-c",
+                        "printf CODEX_CONFLICT_NATIVE; exit 23",
+                    ])
+                    .env("OVRCR_HOOK_SOCKET", &fixture.socket)
+                    .env("OVRCR_SESSION_ID", summary.id.0.to_string())
+                    .env("OVRCR_HOOK_TOKEN", token.trim())
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.code(),
+                    Some(23),
+                    "reporting startup conflict prevented native launch"
+                );
+                assert_eq!(output.stdout, b"CODEX_CONFLICT_NATIVE");
+            }
+            if index == 5 || index == 6 {
+                assert_eq!(
+                    Some(current.clone()),
+                    before_duplicate,
+                    "duplicate refreshed sample"
+                );
+            }
+            if (11..19).contains(&index) {
+                assert_eq!(current.binding.conversation, "other");
+                assert_eq!(current.binding.generation, 2);
+            }
+            if index >= 19 {
+                assert_eq!(current.binding.conversation, "root");
+                assert_eq!(current.binding.generation, 3);
+            }
+            if index == 11 {
+                let token = std::fs::read_to_string(probe.with_extension("capability")).unwrap();
+                let capability = parse_hook_capability(token.trim()).unwrap();
+                let stale = before_duplicate.as_ref().unwrap();
+                assert!(matches!(
+                    fixture.request(Request::AgentReport(ovrcr::protocol::AgentReport {
+                        session: summary.id,
+                        capability,
+                        sequence: None,
+                        update: ovrcr::protocol::AgentUpdate::Provider(
+                            ovrcr::protocol::ProviderReport {
+                                binding: stale.binding.clone(),
+                                revision: 1000,
+                                observation: ovrcr::protocol::AgentObservation::Activity(
+                                    ovrcr::protocol::ActivitySample {
+                                        state: AgentActivity::ResponseReady,
+                                        quality: ovrcr::protocol::SampleQuality::Observed,
+                                        turn: Some("a".into()),
+                                    }
+                                ),
+                            }
+                        ),
+                    })),
+                    Response::Error { .. }
+                ));
+                assert_eq!(fixture.session_summary(summary.id).agent.unwrap(), current);
+            }
+        } else {
+            assert!(current.is_none(), "non-prompt established binding");
+        }
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+fn codex_session(
+    fixture: &ControlFixture,
+    socket: &Path,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    fixture.create_hook_child("setup", "codex-setup");
+    let native = fixture._root.path().join("codex");
+    std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join("codex-channel");
+    let summary = fixture.create_session_summary("codex-hooks", vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
+        "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "CODEX_NATIVE_READY",
+        Instant::now() + Duration::from_secs(5),
+    );
+    let terminal = fixture.request(Request::ReadTerminal {
+        session: summary.id,
+        max_lines: None,
+    });
+    assert!(
+        !matches!(&terminal, Response::TerminalText {text,..} if text.contains("reporting unavailable")),
+        "unexpected initial admission gate: {terminal:?}"
+    );
+    (summary, probe)
+}
+
+#[test]
+fn codex_managed_lost_bind_receipt_recovers_before_busy() {
+    // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    let proxy = AdmissionProxy::new(
+        fixture._root.path().join("codex-proxy.sock"),
+        fixture.socket.clone(),
+        AdmissionFault::LostBind,
+    );
+    let (summary, probe) = codex_session(&fixture, &proxy.path);
+    for (index, command) in [
+        "UserPromptSubmit:root:a",
+        "Stop:root:a",
+        "UserPromptSubmit:other:b",
+        "Stop:other:b",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("CODEX_CALLBACK={index}"));
+        let snapshot = fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap_or_else(|| {
+                panic!(
+                    "no Codex snapshot after {index}: {:?}",
+                    fixture.request(Request::ReadTerminal {
+                        session: summary.id,
+                        max_lines: None
+                    })
+                )
+            });
+        assert_eq!(
+            snapshot.activity.unwrap().state,
+            if index % 2 == 0 {
+                AgentActivity::Busy
+            } else {
+                AgentActivity::ResponseReady
+            }
+        );
+        assert_eq!(snapshot.binding.generation, if index < 2 { 1 } else { 2 });
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    let channel = std::fs::read_to_string(probe).unwrap();
+    let channel: Vec<_> = channel.lines().collect();
+    assert!(
+        UnixStream::connect(channel[0]).is_err(),
+        "native exit retained endpoint"
+    );
+    wait_pid_absent(channel[2].parse().unwrap(), Duration::from_secs(2));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .health
+            .state
+            != ReporterHealth::Connected
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "dead native reporter stayed connected"
+        );
+        thread::yield_now();
+    }
+}
+
+#[test]
+fn codex_managed_missing_end_disables_overlap_without_native_failure() {
+    // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    for (index, command) in [
+        "UserPromptSubmit:root:a",
+        "UserPromptSubmit:root:b",
+        "Stop:root:a",
+        "Stop:root:b",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            fixture.request(Request::SendTerminal {
+                session: summary.id,
+                text: command.into(),
+                submit: true
+            }),
+            Response::Ok
+        );
+        fixture.wait_terminal_contains(summary.id, &format!("CODEX_CALLBACK={index}"));
+        let snapshot = fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap_or_else(|| panic!("no Codex snapshot after callback {index}: {command}"));
+        assert_eq!(snapshot.activity.unwrap().state, AgentActivity::Busy);
+        if index > 0 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while fixture
+                .session_summary(summary.id)
+                .agent
+                .unwrap()
+                .health
+                .state
+                == ReporterHealth::Connected
+            {
+                assert!(Instant::now() < deadline);
+                thread::yield_now();
+            }
+        }
+    }
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+}
+
+#[test]
+fn codex_managed_native_death_never_synthesizes_ready_and_removes_socket() {
+    // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    let (summary, probe) = codex_session(&fixture, &fixture.socket);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "UserPromptSubmit:root:a".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_CALLBACK=0");
+    let channel = std::fs::read_to_string(probe).unwrap();
+    let channel: Vec<_> = channel.lines().collect();
+    let native = channel[2].parse::<libc::pid_t>().unwrap();
+    assert_eq!(unsafe { libc::kill(native, libc::SIGKILL) }, 0);
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=137");
+    wait_pid_absent(native, Duration::from_secs(2));
+    assert!(UnixStream::connect(channel[0]).is_err());
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let snapshot = fixture.session_summary(summary.id).agent.unwrap();
+        assert_eq!(snapshot.activity.unwrap().state, AgentActivity::Busy);
+        if snapshot.health.state != ReporterHealth::Connected {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::yield_now();
+    }
+}

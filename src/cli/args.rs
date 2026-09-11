@@ -115,6 +115,10 @@ pub(super) enum ReportCommand {
         #[arg(long)]
         verbose: bool,
     },
+    Codex {
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
     ClaudeContext {
         #[arg(long)]
         stdin_json: bool,
@@ -299,11 +303,13 @@ pub(super) enum AgentCommand {
         executable: OsString,
     },
     #[command(
-        long_about = "Run a native command with invocation supervision. Initial conversation admission supports exact interactive Claude Code 2.1.267 and 2.1.268 with a fresh startup or separate-token --resume UUID. Exact 2.1.268 also accepts -r UUID. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged."
+        long_about = "Run a native command with invocation supervision. Codex reporting supports exact interactive Codex CLI 0.153.0 fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Native argv is unchanged. Resume, fork, exec, remote, unknown versions/options and failed probes run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports exact interactive Claude Code 2.1.267 and 2.1.268 with a fresh startup or separate-token --resume UUID. Exact 2.1.268 also accepts -r UUID. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged."
     )]
     Run {
-        #[arg(long, value_parser = ["claude"])]
-        provider: String,
+        #[arg(value_parser = ["claude", "codex"], required_unless_present = "legacy_provider")]
+        provider: Option<String>,
+        #[arg(long = "provider", value_parser = ["claude", "codex"], conflicts_with = "provider")]
+        legacy_provider: Option<String>,
         #[arg(last = true, required = true)]
         argv: Vec<OsString>,
     },

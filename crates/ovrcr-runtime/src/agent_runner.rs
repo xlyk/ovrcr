@@ -12,6 +12,7 @@ use std::{
 pub enum HookEvent<'a> {
     Request {
         input: &'a [u8],
+        native_root: bool,
         deadline: std::time::Instant,
     },
     Poll {
@@ -42,9 +43,6 @@ pub fn run_native(
     let mut argv = argv.to_vec();
     // The caller releases reporting ownership before an untracked native spawn.
     let handler = channel_ready(channel.is_some(), &mut argv);
-    if let Some(channel) = &mut channel {
-        channel.start(handler);
-    }
     let executable = argv.first().context("native command is required")?;
     let mut command = Command::new(executable);
     command
@@ -77,6 +75,10 @@ pub fn run_native(
     }
     let mut child = command.spawn().context("start native agent")?;
     let group = child.id() as libc::pid_t;
+    if let Some(channel) = &mut channel {
+        *channel.native.lock().unwrap() = Some(group);
+        channel.start(handler);
+    }
     let mut completion_deadline = None;
     let result = (|| -> Result<ExitStatus> {
         loop {
@@ -167,6 +169,9 @@ pub fn run_native(
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        if let Some(channel) = &channel {
+            *channel.native.lock().unwrap() = None;
+        }
         // The zombie leader prevents PGID reuse while remaining group members are killed.
         unsafe {
             libc::kill(-group, libc::SIGKILL);
@@ -174,6 +179,9 @@ pub fn run_native(
         child.wait().context("wait for native agent")
     })();
     if result.is_err() {
+        if let Some(channel) = &channel {
+            *channel.native.lock().unwrap() = None;
+        }
         unsafe {
             libc::kill(-group, libc::SIGKILL);
         }
@@ -260,6 +268,7 @@ struct InvocationChannel {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     initialize: Option<std::sync::mpsc::SyncSender<Option<HookHandler>>>,
+    native: std::sync::Arc<std::sync::Mutex<Option<libc::pid_t>>>,
     completion: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 impl InvocationChannel {
@@ -277,6 +286,8 @@ impl InvocationChannel {
         let thread_stop = stop.clone();
         let completion = std::sync::Arc::new(std::sync::Mutex::new(None));
         let thread_completion = completion.clone();
+        let native = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let thread_native = native.clone();
         let (initialize, ready) = std::sync::mpsc::sync_channel::<Option<HookHandler>>(1);
         // Start the receiver before reporting setup can authorize argv changes.
         let thread = std::thread::Builder::new().spawn(move || {
@@ -338,6 +349,7 @@ impl InvocationChannel {
                             if let Some(handler) = &mut handler {
                                 handler(HookEvent::Request {
                                     input: &request,
+                                    native_root: trusted_native_root(&stream, &thread_native),
                                     deadline: started + Duration::from_millis(800),
                                 })
                             } else {
@@ -367,6 +379,7 @@ impl InvocationChannel {
             thread: Some(thread),
             initialize: Some(initialize),
             completion,
+            native,
         })
     }
     fn complete(&mut self, deadline: std::time::Instant) {
@@ -395,6 +408,102 @@ impl InvocationChannel {
         }
     }
 }
+// The caller holds the native anchor only while checking OS evidence, never over
+// provider callbacks or transport. The supervisor clears it before reaping.
+fn trusted_native_root(
+    stream: &std::os::unix::net::UnixStream,
+    native: &std::sync::Mutex<Option<libc::pid_t>>,
+) -> bool {
+    let anchor = native.lock().unwrap();
+    let Some(pid) = *anchor else {
+        return false;
+    };
+    let Some(peer) = peer_pid(stream) else {
+        return false;
+    };
+    if process_parent(peer) != Some(pid) {
+        return false;
+    }
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // A waitable exit is already dead even when the supervisor has not observed it.
+    unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as _,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        ) == 0
+            && info.si_pid() == 0
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn peer_pid(stream: &std::os::unix::net::UnixStream) -> Option<libc::pid_t> {
+    use std::os::fd::AsRawFd;
+    let mut uid = 0;
+    let mut gid = 0;
+    let mut pid = 0;
+    let mut len = std::mem::size_of_val(&pid) as libc::socklen_t;
+    unsafe {
+        if libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) != 0
+            || uid != libc::geteuid()
+            || libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&mut pid as *mut libc::pid_t).cast(),
+                &mut len,
+            ) != 0
+            || len as usize != std::mem::size_of_val(&pid)
+        {
+            return None;
+        }
+    }
+    (pid > 0).then_some(pid)
+}
+#[cfg(target_os = "linux")]
+fn peer_pid(stream: &std::os::unix::net::UnixStream) -> Option<libc::pid_t> {
+    use std::os::fd::AsRawFd;
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of_val(&cred) as libc::socklen_t;
+    unsafe {
+        if libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        ) != 0
+            || len as usize != std::mem::size_of_val(&cred)
+            || cred.uid != libc::geteuid()
+        {
+            return None;
+        }
+    }
+    (cred.pid > 0).then_some(cred.pid)
+}
+#[cfg(target_os = "macos")]
+fn process_parent(pid: libc::pid_t) -> Option<libc::pid_t> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    (read == size && info.pbi_pid == pid as u32).then_some(info.pbi_ppid as libc::pid_t)
+}
+#[cfg(target_os = "linux")]
+fn process_parent(pid: libc::pid_t) -> Option<libc::pid_t> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let (_, fields) = stat.rsplit_once(") ")?;
+    fields.split_whitespace().nth(1)?.parse().ok()
+}
+
 fn read_private_bytes(
     stream: &mut std::os::unix::net::UnixStream,
     bytes: &mut [u8],

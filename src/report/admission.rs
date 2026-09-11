@@ -67,7 +67,9 @@ pub fn receiver(
     Box::new(move |event| {
         use ovrcr_runtime::agent_runner::HookEvent;
         match event {
-            HookEvent::Request { input, deadline } => receiver.handle(input, deadline),
+            HookEvent::Request {
+                input, deadline, ..
+            } => receiver.handle(input, deadline),
             HookEvent::Poll { deadline } => {
                 receiver.poll(deadline);
                 Vec::new()
@@ -262,9 +264,19 @@ fn classify_version(bytes: &[u8]) -> ClaudeVersionProbe {
 }
 
 pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
+    probe_version(executable)
+        .as_deref()
+        .map_or(ClaudeVersionProbe::Unavailable, classify_version)
+}
+
+pub(super) fn probe_version(executable: &OsStr) -> Option<Vec<u8>> {
     let mut command = Command::new(executable);
+    command.arg("--version");
+    probe_command(command)
+}
+
+fn probe_command(mut command: Command) -> Option<Vec<u8>> {
     command
-        .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -279,7 +291,7 @@ pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
         command.env_remove(name);
     }
     let Ok(mut child) = command.spawn() else {
-        return ClaudeVersionProbe::Unavailable;
+        return None;
     };
     let mut stdout = child.stdout.take().expect("piped version stdout");
     let fd = stdout.as_raw_fd();
@@ -326,9 +338,9 @@ pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
                     .take(129 - bytes.len() as u64)
                     .read_to_end(&mut bytes);
                 return if status.is_ok_and(|status| status.success()) {
-                    classify_version(&bytes)
+                    Some(bytes)
                 } else {
-                    ClaudeVersionProbe::Unavailable
+                    None
                 };
             }
             if Instant::now() >= deadline {
@@ -342,7 +354,7 @@ pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
         libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
     }
     let _ = child.wait();
-    ClaudeVersionProbe::Unavailable
+    None
 }
 fn fresh_uuid() -> std::io::Result<String> {
     let identifier = ovrcr_runtime::agent_runner::private_identifier()?;
@@ -1490,6 +1502,40 @@ mod tests {
         assert_eq!(
             final_metrics.usage.value.coverage,
             ovrcr_protocol::UsageCoverage::Partial
+        );
+    }
+
+    #[test]
+    fn blocked_version_probe_reaps_the_exact_group_within_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("blocked");
+        let identity = root.path().join("pid");
+        let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "printf '%s' \"$$\" > \"$1\"; IFS= read -r line < \"$2\"",
+                "probe",
+            ])
+            .arg(&identity)
+            .arg(&fifo);
+        let started = Instant::now();
+        assert!(probe_command(command).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let pid = std::fs::read_to_string(identity)
+            .unwrap()
+            .parse::<libc::pid_t>()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(-pid, 0) },
+            -1,
+            "blocked probe group leaked"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
         );
     }
 
