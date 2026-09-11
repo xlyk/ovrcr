@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized] target(s) in 0.15s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-420e8eba399db077)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfon4T3/repo/.git/
+[main (root-commit) 76a271a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 83 filtered out; finished in 2.69s

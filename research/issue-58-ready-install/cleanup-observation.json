@@ -1,0 +1,12 @@
+{
+  "task_checkout_binary_processes_remaining": [],
+  "original_binary_processes": [
+    "43232 43226 43232 /Users/xlyk/Code/ovrcr/target/debug/ovrcr"
+  ],
+  "original_socket_exists": true,
+  "failed_fixture_directories_exist": {
+    ".tmpeopnP5": false,
+    ".tmpPUgtui": false
+  },
+  "scope": "Read-only process/path snapshot; not a complete per-PGID cleanup manifest."
+}

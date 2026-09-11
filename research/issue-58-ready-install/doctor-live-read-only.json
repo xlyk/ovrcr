@@ -1,0 +1,39 @@
+{
+  "capabilities": {
+    "activity": "last_observed_root_turn",
+    "completion_quality": "observed",
+    "initial_invocation": {
+      "fork": false,
+      "fresh": true,
+      "picker": false,
+      "resume": false
+    },
+    "metrics": "unavailable",
+    "task_success": false
+  },
+  "configuration": {
+    "delivery": "unverified",
+    "effective_configuration": "unverified",
+    "hook_trust": "unverified",
+    "issues": [
+      "SessionStart:synchronous_reporter_missing",
+      "UserPromptSubmit:synchronous_reporter_missing",
+      "Stop:synchronous_reporter_missing",
+      "Interrupt:synchronous_reporter_missing",
+      "SessionEnd:synchronous_reporter_missing"
+    ],
+    "status": "supplied_file_unsupported_or_unverified"
+  },
+  "executable": "/opt/homebrew/bin/codex",
+  "launch_forms": "Fresh interactive codex only (executable basename codex): optional --no-alt-screen, --full-auto; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Resume, fork, picker, exec, remote, unknown options and other versions run natively with reporting unavailable.",
+  "probe_status": "supported",
+  "provider": "codex",
+  "release_status": "accepted_exact_0.153.0_hooks_only",
+  "remediation": "Run agent setup codex --print --settings PATH, review the composition and trust hooks through native Codex. Select exact codex-cli 0.153.0. Doctor only invokes --version; no server or provider conversation is required.",
+  "requirements": "Requires exact Codex CLI 0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Inside an OVRCR terminal run: ovrcr agent run codex -- codex. Exact Codex CLI 0.153.0 hooks-only support passed acceptance.",
+  "session_status": "not_requested",
+  "supported_versions": [
+    "0.153.0"
+  ],
+  "version": "0.153.0"
+}

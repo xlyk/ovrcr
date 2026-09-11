@@ -1,0 +1,38 @@
+{
+  "path": "/Users/xlyk/.codex/hooks.json",
+  "sha256": "d1ec33f2de8acf7b69a941e6877057c47fbf343a9f49ec26990a21c8a6664a77",
+  "events": {
+    "SessionStart": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "UserPromptSubmit": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "Stop": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "SessionEnd": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "Interrupt": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "SubagentStart": {
+      "groups": 1,
+      "handlers": 1
+    },
+    "SubagentStop": {
+      "groups": 1,
+      "handlers": 1
+    }
+  },
+  "existing_handlers_contain_ovrcr": false,
+  "file_unchanged": true,
+  "effective_coexistence_and_order_with_toml_reporters": "unverified_requires_native_acceptance",
+  "commands_or_native_trust_values_included": false
+}

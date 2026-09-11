@@ -1,0 +1,32 @@
+# Proposed additions only; not applied or natively trusted.
+# Regenerate from the installed binary before applying.
+[[hooks.Interrupt]]
+
+[[hooks.Interrupt.hooks]]
+command = "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"
+type = "command"
+
+[[hooks.SessionEnd]]
+
+[[hooks.SessionEnd.hooks]]
+command = "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"
+type = "command"
+
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+command = "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"
+type = "command"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+command = "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"
+type = "command"
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+command = "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin"
+type = "command"

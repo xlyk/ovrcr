@@ -1,0 +1,28 @@
+{
+  "revision": "86ef46b8eff3128566f76022c2cfef49714031ac",
+  "candidate_binary": "/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/target/release/ovrcr",
+  "candidate_version": "ovrcr 0.1.0 (protocol 6)",
+  "candidate_sha256": "663ca41654b694acc7cfb232c4fd8a0bb18d3169c07e4eeff4b649739d5585ae",
+  "codex_executable": "/opt/homebrew/bin/codex",
+  "codex_resolved": "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex",
+  "codex_sha256": "a29d9e86eef88cbbd69f97ce8c590b1d0a287c8f77424f5eef226b883d7eaa22",
+  "live_config": "/Users/xlyk/.codex/config.toml",
+  "live_config_sha256": "0a1073654eb72ad6153e80dfdecae734e50f5b52c7c78e077a5a7252baed9df6",
+  "live_config_unchanged": true,
+  "preserved_all_existing_values_and_handler_order": true,
+  "composition_idempotent": true,
+  "added_reporter_groups": {
+    "SessionStart": 1,
+    "UserPromptSubmit": 1,
+    "Stop": 1,
+    "Interrupt": 1,
+    "SessionEnd": 1
+  },
+  "private_candidate_draft": "/private/tmp/ovrcr-issue-58-private-4zbug95y/candidate-config.toml",
+  "proposed_install_path": "/Users/xlyk/.local/bin/ovrcr",
+  "must_regenerate_from_installed_binary": true,
+  "installed": false,
+  "native_hook_trust": "unverified",
+  "installed_managed_native_acceptance": "not_run_authorization_required",
+  "isolated_socket_exists_after_setup_doctor": false
+}

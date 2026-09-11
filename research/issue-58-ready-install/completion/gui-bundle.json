@@ -1,0 +1,7 @@
+{
+  "bundle": "/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/target/OVRCR GUI.app",
+  "gui_sha256": "490f9cbac11316d47e7e3805f9fe3f4bf9c1c77172d54b075ca6d7f50fe081ac",
+  "sibling_ovrcr_symlink": "/Users/xlyk/.local/bin/ovrcr",
+  "installed_ovrcr_sha256": "663ca41654b694acc7cfb232c4fd8a0bb18d3169c07e4eeff4b649739d5585ae",
+  "customization": "Existing GUI helper canonicalizes its sibling executable. Symlink selects installed binary for isolated server and dashboard; no GUI source changed."
+}

@@ -1,0 +1,19 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "--locked",
+    "--offline"
+  ],
+  "revision": "b2fc7d8aa3198881340457b40f773df85dcb8d3f",
+  "source_change": "reuse existing env_lock in assert_initial_admission; temporary diagnostics removed; see matching patch",
+  "test_threads": "default",
+  "start_utc": "2026-09-11T20:06:01.218166+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-09-11T20:06:44.238709+00:00"
+}

@@ -1,0 +1,1157 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install)
+    Finished `test` profile [unoptimized] target(s) in 3.06s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-7ba2192bdaa24acf)
+
+running 39 tests
+test gui::input::tests::alt_letter_encodes_meta ... ok
+test gui::input::tests::unmodified_letter_keeps_its_text ... ok
+test gui::input::tests::press_encoding_matches_encode_mouse ... ok
+test gui::input::tests::release_with_nothing_held_reports_nothing ... ok
+test gui::input::tests::drag_is_forwarded_in_button_motion_mode ... ok
+test gui::input::tests::special_keys_carry_modifiers ... ok
+test gui::input::tests::drag_released_outside_ends_at_the_last_reported_cell ... ok
+test gui::input::tests::wheel_ignores_off_axis_drift ... ok
+test gui::input::tests::wheel_points_accumulate_into_lines ... ok
+test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+test report::codex::tests::codex_closed_turn_duplicate_is_checked_before_capacity ... ok
+test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+test report::tests::agent_hook_claude_maps_supported_events ... ok
+test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+test report::codex::tests::codex_identity_count_exhaustion_disables_instead_of_evicting ... ok
+test report::codex::tests::codex_identity_byte_exhaustion_disables_instead_of_evicting ... ok
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+test report::admission::tests::blocked_version_probe_reaps_the_exact_group_within_budget ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+
+     Running unittests src/main.rs (target/debug/deps/ovrcr-74417678f10d2337)
+
+running 1 test
+test cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-99514312e9d76361)
+
+running 7 tests
+test terminal_fonts_render_mockup_glyphs_or_default_symbols ... ok
+test native_glyph_cache_evicts_entries_unused_last_frame ... ok
+test terminal_paints_reserved_icon_cell_before_foreground_glyph ... ok
+test native_glyph::native_raster_retains_style_scale_and_opacity ... ok
+test terminal_paints_missing_unicode_as_native_images ... ok
+test native_glyph_cache_keeps_a_screen_of_distinct_glyphs ... ok
+test command_palette_opens_when_another_control_has_focus ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.37s
+
+     Running tests/agent_setup.rs (target/debug/deps/agent_setup-7a2294dadacc2325)
+
+running 10 tests
+test codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets ... ok
+test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+test setup_quotes_actual_executable_path ... ok
+test codex_setup_preserves_handlers_trust_and_quotes_noop_helper ... ok
+test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+test codex_doctor_checks_supplied_hooks_without_certifying_trust ... ok
+test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.26s
+
+     Running tests/claude_reporting.rs (target/debug/deps/claude_reporting-ce1c8305a1b737bb)
+
+running 17 tests
+test collector_expired_deadline_transfers_reaping_ownership ... ok
+test collector_differing_duplicate_freezes_before_replacement ... ok
+test collector_rejects_oversized_configuration_before_spawn ... ok
+test collector_diagnostics_track_one_bounded_exchange_and_drain ... ok
+test collector_drop_is_bounded_for_a_stalled_helper ... ok
+test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+test collector_reads_only_one_chunk_and_excludes_sidechains ... ok
+test collector_missing_file_retries_same_path_and_truncation_preserves_watermark ... ok
+test collector_cancel_reaps_an_exited_group_before_confirming_absence ... ok
+test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+test collector_stalled_helper_is_nonblocking_and_owned_group_cleanup_is_bounded ... ok
+test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+test collector_raw_record_limit_preserves_prefix ... ok
+test collector_launch_clears_inherited_environment ... ok
+test collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound ... ok
+test collector_production_byte_cap_freezes_before_identity_cap ... ok
+test collector_production_identity_cap_freezes_later_unique_usage ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+     Running tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-1b87df2f02592c5d)
+
+running 2 tests
+test fifty_collector_raw_index_and_sequential_json_high_water ... ignored, isolated Linux runner only: 50 collectors at raw/index limits
+test fifty_session_reporting_capacity ... ignored, 50 real PTYs/helpers, production indices, 60 seconds; run explicitly alone
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-47d8fa040fd5b246)
+
+running 32 tests
+test agent_hook_cli_requires_identity_without_starting_server ... ok
+test claude_statusline_renders_default_without_reporting_server ... ok
+test codex_setup_and_doctor_help_expose_provider_dispatch ... ok
+test context_inspect_missing_session_fails ... ok
+test malformed_offline_registry_is_reported_without_replacing_it ... ok
+test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+test new_and_existing_branch_flags_are_exclusive ... ok
+test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+test mutations_do_not_start_a_server ... ok
+test pause_resume_cli_requires_id ... ok
+test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+test response_ready_cli_parses_before_requiring_hook_identity ... ok
+test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+test resource_aliases_are_visible_and_parse_as_commands ... ok
+test runtime_errors_include_the_cause_chain ... ok
+test terminal_workspace_filter_requires_project ... ok
+test version_flag_prints_package_version ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpuZGrxk/repo/.git/
+test claude_doctor_reports_exact_version_and_version_specific_resume_forms ... ok
+[main (root-commit) a398461] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+test context_helper_invalid_input_has_no_effect ... ok
+test agent_hook_cli_reaches_managed_session ... ok
+test context_helper_reports_from_managed_pty ... ok
+test context_helper_missing_server_does_not_start_one ... ok
+test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+test session_command_keeps_arguments_after_separator ... ok
+test context_inspect_reports_unknown_and_sample ... ok
+test response_ready_cli_reaches_managed_session ... ok
+test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+test agent_hook_cli_timeout_is_bounded ... ok
+test requests_time_out_against_a_wedged_server ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.08s
+
+     Running tests/codex_reporting.rs (target/debug/deps/codex_reporting-f197f2b8b27b19c3)
+
+running 4 tests
+test codex_fresh_grammar_rejects_resume_remote_and_unknown_forms ... ok
+test codex_hook_outside_managed_invocation_is_silent_without_reading_stdin ... ok
+test codex_native_argv_stdout_and_exit_survive_missing_reporting ... ok
+test codex_version_probe_accepts_only_exact_successful_pinned_output ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/git_lifecycle.rs (target/debug/deps/git_lifecycle-cac7c3f9066d395c)
+
+running 17 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBh6Ltw/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVQCevH/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTsvHSh/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNd9GnB/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpyJZ748/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpX7LV15/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpr2wELC/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp13oqqy/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQ0XZpV/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa6O1kn/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKJCmgY/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpHx47E6/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8vbUaO/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpe6iooC/repo/.git/
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Preparing worktree (new branch 'feature/outside')
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Preparing worktree (new branch 'feature/shared')
+HEAD is now at cd5d8ca initial
+test rejects_existing_worktree_destination ... ok
+HEAD is now at cd5d8ca initial
+test refuses_to_remove_worktree_outside_registered_root ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpg001Cp/repo/.git/
+test refuses_registry_and_git_path_disagreement ... ok
+test add_project_leaves_no_workspace_root_when_the_repository_is_invalid ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphuJFRI/repo/.git/
+test add_project_refuses_relative_paths_without_creating_anything ... ok
+test refuses_to_remove_unregistered_matching_worktree ... ok
+test refuses_to_remove_worktree_with_untracked_files ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGCkqj8/repo/.git/
+test rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation ... ok
+test add_project_creates_a_missing_workspace_root ... ok
+test inspects_clean_and_dirty_worktrees ... ok
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test refuses_to_remove_worktree_with_tracked_changes ... ok
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test rejects_workspace_path_traversal_before_git ... ok
+test refuses_to_remove_branch_checked_out_elsewhere ... ok
+test creates_new_and_existing_branch_worktrees ... ok
+[main (root-commit) cd5d8ca] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test refuses_symlink_substitution_without_touching_either_worktree ... ok
+test removes_clean_registered_worktree_and_preserves_branch ... ok
+test removes_workspace_whose_directory_is_gone ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/gui.rs (target/debug/deps/gui-576d2bb29e21736b)
+
+running 6 tests
+test command_k_is_not_forwarded_to_terminal ... ok
+test input_preserves_control_keys_terminal_modes_and_mouse_cells ... ok
+test outer_pty_parses_attributes_and_resize_reaches_the_tty ... ok
+test real_dashboard_accepts_input_reattaches_and_cleans_up_demo ... ok
+test demo_shells_inherit_paths_and_cli_reaches_fixture ... ok
+test palette_creates_switches_and_closes_a_real_terminal ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.56s
+
+     Running tests/resource_cli.rs (target/debug/deps/resource_cli-549627627e4d368a)
+
+running 6 tests
+test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... ok
+test remove_project_reports_workspaces_remain ... ok
+test agent_hook_resource_inventory_reports_activity ... ok
+test pause_resume_resource_cli_preserves_input_and_close_contract ... ok
+test context_resource_inventory_matches_inspection ... ok
+test terminal_cli_drives_real_session_and_preserves_workspace_removal_guards ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-420e8eba399db077)
+
+running 84 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpm1uE8B/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGpLNZ4/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXpkCmD/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1beutX/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmps6vWam/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptKOK6P/repo/.git/
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e233451] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOGcW1D/repo/.git/
+[main (root-commit) 460ebc5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqiAlCM/repo/.git/
+[main (root-commit) 460ebc5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpx9lWmx/repo/.git/
+[main (root-commit) 460ebc5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp60amRY/repo/.git/
+[main (root-commit) bc3c2ab] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkHQR4e/repo/.git/
+[main (root-commit) bc3c2ab] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_failed_bind_status_disconnects_watch ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpT8l49X/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6iUi39/repo/.git/
+[main (root-commit) e13fd13] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e13fd13] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXqF1MM/repo/.git/
+test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpCf2tzY/repo/.git/
+[main (root-commit) e13fd13] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) e13fd13] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfjvRR5/repo/.git/
+[main (root-commit) e13fd13] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+test client_with_wrong_protocol_version_is_refused ... ok
+test codex_hook_native_helper ... ignored, Codex synchronous native child fixture
+test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp50ZA8s/repo/.git/
+[main (root-commit) c8a888a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_sequence_does_not_regress_state ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRwpgVX/repo/.git/
+[main (root-commit) c8a888a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpO1zZxS/repo/.git/
+[main (root-commit) 6b8c0a8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptl9cIZ/repo/.git/
+[main (root-commit) cab6bda] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpeA8IO7/repo/.git/
+[main (root-commit) cab6bda] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_capability_and_exit_are_enforced ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXRUZXN/repo/.git/
+[main (root-commit) 037e3ad] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_startup_registration_is_visible ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkXGzr7/repo/.git/
+[main (root-commit) 037e3ad] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFXcA3b/repo/.git/
+[main (root-commit) f025331] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test dashboard_receives_concrete_ordinary_request_errors ... ok
+test dashboard_request_id_zero_does_not_block_followup_response ... ok
+test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcunnEF/repo/.git/
+[main (root-commit) fd60a24] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpprgpO2/repo/.git/
+[main (root-commit) b2cc86f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMvNGJg/repo/.git/
+[main (root-commit) d48cc3d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwy4iB1/repo/.git/
+[main (root-commit) 50fd26f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+test hook_child_report_helper ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppmBUfW/repo/.git/
+[main (root-commit) fcb12cc] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpIrpFCW/repo/.git/
+[main (root-commit) 7bde384] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8oMFkh/repo/.git/
+[main (root-commit) abb92d1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_report_rejects_old_and_invalid_samples ... ok
+test pause_resume_child_fixture ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkqnMsU/repo/.git/
+[main (root-commit) abb92d1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_report_replaces_snapshot_and_preserves_activity ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxXXPUp/repo/.git/
+[main (root-commit) 0e34f49] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+test context_snapshot_survives_dashboard_reattach ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdhXfG3/repo/.git/
+[main (root-commit) 0e34f49] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFzWWsZ/repo/.git/
+[main (root-commit) 38e0f9f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_lifecycle_enforces_every_removal_gate ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpoKuVIh/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3t8Urw/repo/.git/
+[main (root-commit) 2142b55] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 2142b55] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfTXVv9/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpAlwo8n/repo/.git/
+[main (root-commit) 1386e23] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 1386e23] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+test fast_exit_session_is_retained_as_exited ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkwRmQD/repo/.git/
+[main (root-commit) 1386e23] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+test shutdown_disconnected_requester_still_wakes_accept ... ok
+test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxnEhn8/repo/.git/
+[main (root-commit) fcfb889] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_frozen_page_survives_eviction_and_exit ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2P92pJ/repo/.git/
+[main (root-commit) fcfb889] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_reattach_reads_retained_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTTycaY/repo/.git/
+[main (root-commit) ce5dbaf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_slow_dashboard_recovers_after_finite_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVq0fVv/repo/.git/
+[main (root-commit) 42119a6] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test kill_does_not_block_dashboard_geometry ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprmx6wy/repo/.git/
+[main (root-commit) fb734a7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_backpressured_input_keeps_controls_available ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3dUtV0/repo/.git/
+[main (root-commit) 699973c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+test startup_read_only_commands_do_not_start_a_missing_server ... ok
+test startup_refuses_symlinked_socket_directory ... ok
+test startup_socket_directory_is_private ... ok
+test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+test pause_resume_control_races_converge ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqOsilE/repo/.git/
+[main (root-commit) 699973c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_stale_socket_is_recovered ... ok
+test pause_resume_kill_runs_group_handlers ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpML3TkD/repo/.git/
+[main (root-commit) 699973c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_server_refuses_removal_and_late_mutation ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp2adGJK/repo/.git/
+[main (root-commit) 83777cf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_shutdown_cleans_stopped_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp029TAb/repo/.git/
+[main (root-commit) 83777cf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_stops_group_and_rejects_input ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdxodwr/repo/.git/
+[main (root-commit) 83777cf] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzlm4xE/repo/.git/
+[main (root-commit) 8faa640] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test selection_snapshot_precedes_later_quiet_tail_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpgcmRps/repo/.git/
+[main (root-commit) 0e3ba26] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_kill_terminates_sessions_concurrently ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1gzgOZ/repo/.git/
+[main (root-commit) a0ec267] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_without_kill_rejects_exited_record ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTrRoaO/repo/.git/
+[main (root-commit) a0ec267] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test slow_dashboard_recovers_after_output_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNRGGLM/repo/.git/
+[main (root-commit) 28e1c24] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test split_server_two_streams_resize_resync_and_detach ... ok
+test startup_concurrent_attempts_leave_one_server ... ok
+test startup_failure_reports_server_log ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1KxoHL/repo/.git/
+[main (root-commit) 4ea478c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_remove_succeeds_after_directory_deleted ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpg1Dgq4/repo/.git/
+[main (root-commit) 4ea478c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_shell_failure_retains_worktree_and_registry ... ok
+
+test result: ok. 75 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 38.59s
+
+     Running tests/service.rs (target/debug/deps/service-e59f5d9391437e5c)
+
+running 14 tests
+test service_args_parse_install_environment_file ... ok
+test environment_file_is_parsed_literally_in_the_application ... ok
+test service_definitions_reject_relative_runtime_paths ... ok
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpgql0xR/LaunchAgents/com.ovrcr.server.plist: OK
+test launchd_install_writes_login_job_that_restarts_only_after_failure ... ok
+test failed_graceful_shutdown_does_not_stop_the_manager ... ok
+test status_queries_but_never_starts_the_service ... ok
+test install_refuses_to_take_over_an_unmanaged_server ... ok
+test service_install_refuses_when_sessions_exist ... ok
+test start_if_installed_only_uses_an_existing_service_definition ... ok
+test systemd_install_writes_user_unit_and_enables_login_startup ... ok
+test uninstall_removes_only_service_files_and_preserves_task_data ... ok
+test stop_requests_graceful_server_shutdown_before_stopping_the_manager ... ok
+test changed_socket_cannot_control_the_installed_job_even_without_a_listener ... ok
+test loaded_service_does_not_send_shutdown_to_a_foreign_listener ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.89s
+
+     Running tests/task_cli.rs (target/debug/deps/task_cli-bbcd2183fc763154)
+
+running 3 tests
+test unicode_duration_returns_validation_error_without_starting_server ... ok
+test offline_task_and_run_reads_do_not_start_a_server ... ok
+test task_crud_persists_and_manual_failure_retains_a_run_record ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/task_execution.rs (target/debug/deps/task_execution-d3a433b156235b42)
+
+running 12 tests
+test signal_shutdown_cleans_up_despite_final_state_write_failure ... ok
+test server_crash_interrupts_pi_and_recovery_does_not_replay_the_run ... ok
+test cancel_marks_run_cancelling_immediately ... ok
+test shutdown_finishes_even_when_final_state_persistence_fails ... ok
+test scratch_output_survives_completion_and_requires_confirmed_cleanup ... ok
+test three_runs_stream_independently_and_cancel_admits_the_fourth ... ok
+test git_workspace_removal_refuses_a_running_task_in_a_clean_worktree ... ok
+test git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup ... ok
+test git_run_cleanup_rejects_a_workspace_that_preexisted_preparation ... ok
+test timeout_is_distinct_from_failure_and_same_task_pending_is_coalesced ... ok
+test git_run_cleanup_rejects_a_replacement_workspace_after_cleanup ... ok
+test forced_cancel_kills_pi_process_group ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.06s
+
+     Running tests/task_paging.rs (target/debug/deps/task_paging-c94547ed8acefd09)
+
+running 5 tests
+test oversized_legacy_row_returns_an_error_instead_of_a_stuck_empty_page ... ok
+test new_runs_between_pages_do_not_duplicate_or_omit_original_runs ... ok
+test deleting_an_earlier_task_between_pages_keeps_original_tasks_once ... ok
+test serialized_pages_are_bounded_and_keep_task_order_and_filtered_run_order ... ok
+test cli_lists_all_large_tasks_and_runs_online_and_offline ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+     Running tests/task_runner.rs (target/debug/deps/task_runner-8c8c5db1bb0ee4d7)
+
+running 9 tests
+test installed_pi_background_work_survives_between_tools_but_not_the_run ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+test installed_pi_task_shell_preserves_output_and_cleans_abort_timeout_and_parent_loss ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+test logs_are_bounded_and_cursor_is_in_bytes ... ok
+test acknowledgement_and_agent_end_are_not_success ... ok
+test completion_retains_stream_logs_and_explicit_configuration ... ok
+test transient_ps_failure_does_not_fail_run ... ok
+test blocked_prompt_write_still_obeys_timeout ... ok
+test error_length_abort_and_preflight_rejection_fail ... ok
+test timeout_cancel_and_parent_loss_remove_detached_descendants ... ok
+
+test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.67s
+
+     Running tests/task_schedule.rs (target/debug/deps/task_schedule-87611da40fa5a246)
+
+running 12 tests
+test run_status_classification_matches_queue_and_capacity_semantics ... ok
+test helper_paths_have_the_documented_shape ... ok
+test pause_cancels_only_scheduled_pending_work ... ok
+test delete_refuses_active_then_cancels_pending_and_preserves_history ... ok
+test create_and_update_reject_past_one_time_schedules_but_resume_expires_them ... ok
+test create_update_pause_and_resume_use_the_injected_clock ... ok
+test manual_enqueue_coalesces_without_changing_the_schedule ... ok
+test advancing_a_late_interval_enqueues_once_and_preserves_its_anchor ... ok
+test task_specs_reject_missing_execution_inputs ... ok
+test admission_respects_capacity_fifo_and_one_active_run_per_task ... ok
+test schedules_validate_and_find_the_next_zoned_occurrence ... ok
+test store_and_run_metadata_round_trip_through_real_files ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/task_tui.rs (target/debug/deps/task_tui-e474da4465dc2e86)
+
+running 28 tests
+test pause_resume_manual_run_and_concurrency ... ok
+test destructive_actions_require_confirmation_and_escape_cancels ... ok
+test rejected_save_retains_every_field_and_prompt_for_correction ... ok
+test new_task_defaults_match_cli_off_thinking_and_one_hour_timeout ... ok
+test multiline_cursor_edits_unicode_without_corruption ... ok
+test dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open ... ok
+test browse_opens_tasks_and_terminal_ctrl_t_is_literal ... ok
+test create_and_edit_every_field_and_multiline_prompt_in_terminal ... ok
+test task_project_picker_uses_dashboard_projects_and_filters_before_save ... ok
+test history_status_live_transcript_cancel_and_confirmed_cleanup ... ok
+test dense_task_list_and_editor_render_with_square_borders ... ok
+test unicode_duration_keeps_editor_fields_available_for_correction ... ok
+test long_editor_fields_keep_the_cursor_text_visible ... ok
+test transcript_wrap_is_cached_between_frames ... ok
+test unicode_prompt_render_is_safe_while_another_field_has_focus ... ok
+test invalid_concurrency_shows_error_with_edit_controls_and_recovers ... ok
+test ux_empty_history_preserves_status_without_stale_working ... ok
+test confirmations_show_only_answer_controls_at_narrow_widths ... ok
+test task_project_picker_preserves_edit_target_and_rejects_unmatched_save ... ok
+test empty_task_views_only_hint_actions_with_available_targets ... ok
+test task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows ... ok
+test ux_narrow_task_footer_keeps_escape_and_save_complete ... ok
+test task_confirmations_honor_default_no_and_case_insensitive_answers ... ok
+test transcript_preserves_split_unicode_json_and_bounds_memory ... ok
+test task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation ... ok
+test task_mouse_run_rows_cancel_and_cleanup_use_selected_run ... ok
+test task_mouse_project_picker_and_transcript_wheel_use_visible_rows ... ok
+test task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-509db6f79b14dc8e)
+
+running 10 tests
+test mouse_fixture_child ... ignored
+2
+3
+2
+3
+test empty_dashboard_start_screen_reports_isolated_paths ... ok
+2
+2
+3
+3
+4
+2
+2
+2
+2
+3
+3
+3
+3
+4
+4
+test pause_resume_dashboard_round_trip ... ok
+test mouse_forwarding_outer_pty_round_trip ... ok
+test copy_mode_acceptance_emits_selected_text_and_reattaches ... ok
+test split_terminal_acceptance_preserves_input_and_geometry ... ok
+test history_keyboard_reads_old_output_during_live_session ... ok
+test workspace_shortcut_creates_and_attaches_through_real_dashboard ... ok
+test default_dashboard_acceptance_wrapper_exercises_pty_controls ... ok
+test copy_history_acceptance_emits_across_page_and_tile_boundaries ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.54s
+
+     Running tests/tui/main.rs (target/debug/deps/tui-c029afb99b191175)
+
+running 180 tests
+test control_punctuation_and_modified_keys_encode ... ok
+test copy_history::copy_render_highlights_unicode_and_preserves_layout ... ok
+test copy_history::history_begin_is_cancelled_and_captured_by_active_overlays ... ok
+test copy_history::copy_mode_waits_for_matching_screen ... ok
+test copy_history::history_cancelled_begin_releases_late_snapshot ... ok
+test copy_history::copy_mode_keeps_alternate_and_resync_snapshots ... ok
+test copy_history::browse_and_terminal_modes_keep_input_ownership_clear ... ok
+test copy_history::history_cursor_stays_visible_while_predecessor_tile_loads ... ok
+test copy_history::history_cursor_resolution_reveals_anchored_viewport ... ok
+test copy_history::history_cursor_async_continuation_resolution_reveals_predecessor_tile ... ok
+test copy_history::history_key_kinds_gate_actions ... ok
+test copy_history::history_empty_rows_only_anchor_after_explicit_anchor ... ok
+test copy_history::history_live_output_preserves_anchor ... ok
+test copy_history::copy_mode_routes_keys_and_freezes_output ... ok
+test copy_history::history_navigation_never_writes_to_pty ... ok
+test copy_history::copy_mouse_release_position_and_focus_loss_bound_the_gesture ... ok
+test copy_history::copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input ... ok
+test copy_history::copy_mode_cancels_at_identity_boundaries ... ok
+test copy_history::history_release_precedes_hierarchy_fallback_selection ... ok
+test copy_history::history_stale_response_is_ignored ... ok
+test copy_history::history_unanchored_retry_keys_reissue_failed_cursor_request ... ok
+test copy_history::history_resize_preserves_capture ... ok
+test copy_history::history_waits_for_coalesced_focus_view_before_capture ... ok
+test copy_history::matching_history_open_clears_resize_notice_but_stale_response_does_not ... ok
+test copy_history::pause_resume_browse_keys_send_explicit_requests ... ok
+test copy_history::resize_matching_screen_restores_snapshot_and_ignores_stale_screen ... ok
+test copy_history::pause_resume_input_and_paste_stay_guarded ... ok
+test copy_history::history_pending_keys_coalesce ... ok
+test ctrl_g_is_reserved_and_other_control_keys_reach_the_pty ... ok
+test inverse_colors_keep_explicit_colors_and_set_reverse_modifier ... ok
+test dashboard_reader_channel_applies_bounded_backpressure ... ok
+test copy_history::history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture ... ok
+test mouse::dragging_tracked_mouse_into_sidebar_releases_application_button ... ok
+test mouse::ctrl_g_releases_held_buttons_before_switching ... ok
+test mouse::focus_lost_finishes_gestures_and_focus_gained_resumes ... ok
+test mouse::browse_click_in_pane_focuses_without_bytes ... ok
+test mouse::mouse_encode_tracking_filters ... ok
+test mouse::mouse_encode_legacy_boundaries ... ok
+test mouse::mouse_encode_sgr_events ... ok
+test mouse::browse_click_focuses_other_running_pane_and_types_after_view_ack ... ok
+test mouse::leaving_the_rectangle_releases_at_last_valid_cell ... ok
+test mouse::terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session ... ok
+test mouse::protocol_change_clears_held_state ... ok
+test mouse::pause_cancels_a_held_mouse_gesture ... ok
+test mouse::press_outside_rectangle_is_not_clamped ... ok
+test copy_history::pause_resume_dense_status_has_priority ... ok
+test mouse::wheel_down_at_newest_row_returns_to_live ... ok
+test mouse::terminal_click_focuses_other_pane_without_forwarding ... ok
+test ordinary_response_errors_remain_visible_to_dashboard ... ok
+test mouse::wheel_over_a_pane_without_tracking_opens_history_at_the_tail ... ok
+test output_for_newly_selected_session_waits_for_screen ... ok
+test mouse::wheel_up_over_the_unfocused_pane_opens_its_history ... ok
+test mouse::wheel_is_forwarded_when_tracking_is_enabled ... ok
+test palette::created_session_enters_terminal_mode ... ok
+test copy_history::history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion ... ok
+test palette::empty_hierarchy_shows_start_screen ... ok
+test copy_history::copy_render_tiny_pane_and_footer ... ok
+test palette::double_enter_refreshes_the_derived_workspace_root_listing ... ok
+test palette::keyboard_overlays_cancel_divider_gesture_before_consuming_release ... ok
+test copy_history::whichkey_acquisition_cancels_copy_and_history_drags ... ok
+test copy_history::copy_history_invalid_snapshot_never_emits_partial_text ... ok
+test palette::leader_workspace_uses_inspection_and_name_first_picker_defaults ... ok
+test copy_history::ux_history_footer_names_the_actual_escape_action ... ok
+test palette::narrow_popup_moves_description_to_detail_line ... ok
+test palette::n_opens_terminal_form_prefilled_for_selected_workspace ... ok
+test palette::a_opens_project_form_with_roots_and_derives_name_and_root ... ok
+test palette::n_is_listed_in_the_hint_table ... ok
+test copy_history::history_render_preserves_cells_and_clips ... ok
+test palette::n_is_listed_in_the_browse_footer ... ok
+test palette::palette_close_updates_selection_and_clears_removed_screen ... ok
+test copy_history::copy_history_extraction_joins_wrap_and_skips_continuations ... ok
+test palette::palette_active_field_remains_visible_in_a_small_window ... ok
+test palette::nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys ... ok
+test palette::palette_hint_action_ignores_late_inspection_error ... ok
+test palette::palette_entries_show_keys_and_descriptions ... ok
+test palette::palette_switch_drops_late_inventory_without_clearing_current_error ... ok
+test palette::nested_whichkey_terminal_group_waits_for_action_and_backspace_returns ... ok
+test palette::palette_switches_by_search_and_confirms_exact_close_target ... ok
+test palette::paste_into_repository_field_refreshes_the_listing ... ok
+test palette::palette_escape_cancels_pending_request ... ok
+test palette::palette_requires_fields_and_keeps_terminal_keys_outside_palette ... ok
+test palette::nested_whichkey_empty_hierarchy_can_register_and_open_global_view ... ok
+test palette::search_selection_clamps_when_entries_shrink ... ok
+test copy_history::copy_history_range_survives_live_eviction ... ok
+test palette::question_mark_popup_is_browsable ... ok
+test palette::removal_picker_rejects_no_match_and_excludes_root ... ok
+test palette::tasks_hotkey_cancels_pending_history_like_control_t ... ok
+test palette::nested_whichkey_container_selection_limits_groups_and_removal_target ... ok
+test palette::space_w_n_opens_the_terminal_form ... ok
+test palette::removal_pickers_with_empty_hierarchy_never_confirm ... ok
+test palette::removal_pickers_filter_and_confirm_a_different_target ... ok
+test palette::nested_whichkey_mouse_and_enter_open_groups_before_running_actions ... ok
+test palette::tab_on_a_leaf_path_advances_to_the_next_field ... ok
+test palette::uppercase_x_confirms_session_close_without_closing_pane ... ok
+test palette::palette_filters_and_captures_input_without_sending_it_to_terminal ... ok
+test palette::w_opens_workspace_form_with_project_and_derived_branch ... ok
+test palette::whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture ... ok
+test palette::ux_forms_put_task_name_in_border_and_keep_active_field_visible ... ok
+test palette::ux_browse_footer_names_actions_and_respects_availability ... ok
+test palette::whichkey_copy_leader_preserves_capture_and_v_anchors ... ok
+test palette::ux_search_keeps_session_identity_and_filters_complete_context ... ok
+test palette::whichkey_compact_corner_preserves_the_surrounding_dashboard ... ok
+test palette::whichkey_empty_workspace_click_sets_terminal_form_target ... ok
+test palette::workspace_creation_attaches_to_its_local_shell ... ok
+test palette::nested_whichkey_removal_confirms_the_selected_target_and_can_cancel ... ok
+test paste_honors_bracketed_paste_mode ... ok
+test palette::whichkey_preserves_readiness_and_never_forwards_overlay_input ... ok
+test render_terminal_copies_text_style_wide_cells_and_cursor ... ok
+test render_terminal_crossterm_roundtrip_clears_replaced_text ... ok
+test runtime_paste_event_becomes_selected_session_input ... ok
+test sidebar::agent_hook_sidebar_states_are_literal ... ok
+test palette::workspace_creation_cancel_and_failure_do_not_attach_late ... ok
+test palette::workspace_created_with_exited_local_shell_closes_palette ... ok
+test palette::whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable ... ok
+test palette::picker_validation_keeps_recovery_hints_and_cancels_without_removal ... ok
+test sidebar::agent_hook_summary_updates_drive_animation ... ok
+test palette::whichkey_scrolled_last_row_remains_clickable_after_resize ... ok
+test sidebar::collapse_and_mouse_hits_use_current_visible_tree ... ok
+test palette::whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks ... ok
+test sidebar::dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible ... ok
+test sidebar::context_sidebar_updates_and_expires ... ok
+test sidebar::empty_pane_click_preserves_the_assigned_wire_focus ... ok
+test sidebar::agent_hook_selected_metadata_reports_activity_and_lifecycle ... ok
+test sidebar::context_sidebar_unknown_and_over_capacity ... ok
+test sidebar::dashboard_layout ... ok
+test sidebar::long_sidebar_names_clip_to_one_screen_line ... ok
+test sidebar::empty_workspace_selection_does_not_cover_a_retained_terminal ... ok
+test sidebar::selected_session_uses_three_full_width_sidebar_lines ... ok
+test sidebar::shrinking_dashboard_keeps_selected_tree_row_visible ... ok
+test sidebar::dashboard_geometry_remains_drawable_at_target_and_tiny_sizes ... ok
+test sidebar::fifty_session_selection_scrolls_tree_and_mouse_hits_viewport ... ok
+test sidebar::sidebar_labels_select_without_toggling_and_work_in_terminal_mode ... ok
+test sidebar::sidebar_glyphs_and_columns_match_the_reference_tree ... ok
+test split::incomplete_final_ok_marks_panes_failed_and_refreshes ... ok
+test split::pane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane ... ok
+test split::settings_error_survives_the_geometry_ack ... ok
+test sidebar::sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names ... ok
+test split::split_error_is_cleared_by_the_view_the_next_selection_requests ... ok
+test split::divider_gesture_releases_all_application_buttons_without_resizing ... ok
+test split::split_layout_geometry_and_narrow_fallback ... ok
+test sidebar::sidebar_container_click_keeps_focus_on_another_assigned_pane ... ok
+test split::split_preserves_history_copy_and_paused_input ... ok
+test split::split_review_absent_a_screen_cannot_authorize_reassigned_parser ... ok
+test split::split_error_survives_mouse_cleanup_ack ... ok
+test split::split_review_cancels_inflight_history_copy_before_focus_change ... ok
+test split::split_review_discarded_pending_view_refreshes_before_late_receipts ... ok
+test split::divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged ... ok
+test split::split_review_close_reopen_does_not_authorize_recreated_parser ... ok
+test split::split_review_focus_select_and_close_revoke_public_input_until_setview_ok ... ok
+test sidebar::sidebar_animates_only_explicitly_busy_sessions ... ok
+test split::divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins ... ok
+test split::split_review_keeps_history_a_while_b_changes_and_cancels_late_work ... ok
+test split::split_review_pending_a_b_a_preserves_received_parser_before_ok ... ok
+test split::split_review_preserves_nonfirst_survivor_on_hierarchy_removal ... ok
+test split::split_review_pending_view_completes_after_focus_and_geometry_return ... ok
+test sidebar::ux_live_metadata_is_readable_and_preserves_selection ... ok
+test split::split_review_replaces_a_b_a_and_rejects_old_completions ... ok
+test split::split_review_terminal_modes_use_each_panes_parser ... ok
+test split::split_review_readiness_requires_matching_targets_and_cancels_resize_copy ... ok
+test split::split_state_focus_and_close_preserve_sessions ... ok
+test split::split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion ... ok
+test split::split_state_ignores_stale_revisions_and_removed_sessions ... ok
+test split::split_state_modes_and_input_are_local ... ok
+test split::split_review_unfocused_removal_preserves_focused_history_capture ... ok
+test terminal_guard_restores_before_prior_hook_callback ... ok
+test terminal_guard_restores_each_enabled_mode_once_on_normal_return_and_unwind ... ok
+test split::view_request_ids_are_released_on_final_response ... ok
+test terminal_guard_rolls_back_modes_when_a_later_enter_write_fails ... ok
+test split::ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes ... ok
+test palette::palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes ... ok
+test split::split_layout_renders_independent_cells_and_cursor ... ok
+test palette::typed_branch_missing_from_hints_is_refused_not_replaced ... ok
+test palette::case_only_branch_mismatch_is_refused_not_submitted ... ok
+test palette::fuzzy_matched_branch_is_not_submitted_without_confirmation ... ok
+test palette::typed_existing_branch_survives_hint_arrival ... ok
+test palette::workspace_branch_mode_uses_local_branches_and_preserves_edits ... ok
+test split::view_error_on_changed_view_does_not_spin ... ok
+test split::split_error_survives_a_screen_dirty_refresh ... ok
+test split::split_review_matching_view_error_disables_input_until_a_new_view_is_ready ... ok
+test split::view_error_on_unchanged_view_retries_once_after_backoff ... ok
+
+test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-e18671610bdec531)
+
+running 23 tests
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test codec::tests::preamble_round_trip ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test context::tests::context_semantics ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test context::tests::context_json_validation ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test context::tests::context_claude_projection ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test session::tests::response_ready_and_existing_activity_wire_spellings_round_trip ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-41d257bced8e2093)
+
+running 100 tests
+test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... ok
+test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+test server::reporting_queue::tests::sender_drop_cannot_be_lost_between_empty_and_wait ... ok
+test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+test config::tests::present_empty_registry_is_reported_and_not_replaced ... ok
+test config::tests::corrupt_registry_is_reported_and_not_replaced ... ok
+test agent_runner::tests::invocation_channel_accepts_exact_payload_limit ... ok
+test agent_runner::tests::invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching ... ok
+test server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order ... ok
+test config::tests::registry_round_trip_preserves_projects_and_workspaces ... ok
+test server::tests::control_and_refresh_failures_preserve_both_causes ... ok
+test server::tests::dashboard_overflow_closes_affected_connection ... ok
+test server::tests::dashboard_overflow_does_not_clear_replacement_slot ... ok
+test server::tests::dashboard_shutdown_completes_when_response_sink_is_closed ... ok
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+test server::tests::dashboard_slot_is_released_when_registration_panics ... ok
+test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+test server::tests::dashboard_snapshot_counts_messages_terminal_and_dirty_separately ... ok
+test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+test server::tests::hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink ... ok
+test server::tests::lifecycle_response_preserves_error_chain_and_code ... ok
+test server::tests::late_response_does_not_reach_a_replacement_dashboard ... ok
+test server::tests::accept_loop_survives_thread_spawn_failure ... ok
+test server::tests::kill_failure_cleanup_retains_original_group_after_leader_exit ... ok
+test server::tests::kill_and_close_refresh_failures_keep_exited_records ... ok
+test server::tests::pending_output_does_not_evict_dashboard_on_lifecycle_event ... ok
+test server::tests::raw_event_and_dispatch_queues_reject_the_65th_item ... ok
+test server::tests::registration_publishes_the_session_before_its_events_can_arrive ... ok
+test server::tests::relative_bound_socket_validates_spawn_and_child_cwd_is_distinct ... ok
+test server::tests::close_failure_retains_record_until_cleanup_can_finish ... ok
+test server::tests::session_output_flows_while_another_session_spawns ... ok
+test server::tests::history_capture_orders_with_output ... ok
+test server::tests::oversized_set_view_returns_invalid_request_without_resizing ... ok
+test server::tests::set_view_drops_a_session_removed_before_publication ... ok
+test server::tests::kill_session_termination_failure_revokes_and_retains_session ... ok
+test server::tests::shutdown_refresh_failure_keeps_exited_record_and_server_available ... ok
+test server::tests::shutdown_termination_failure_is_partial_and_server_remains_available ... ok
+test server::tests::shutdown_without_kill_rejects_paused_session ... ok
+test server::tests::split_delivery_dirty_revisions_are_isolated ... ok
+test server::tests::accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked ... ok
+test server::tests::split_delivery_snapshots_precede_increments ... ok
+test server::tests::stale_geometry_does_not_overwrite_replacement_size ... ok
+test server::tests::terminal_delivery_is_final_entry_and_closing_stays_sticky ... ok
+test server::tests::dashboard_shutdown_waits_for_stalled_writer_completion ... ok
+test server::tests::uncommitted_partial_failure_does_not_publish_hierarchy ... ok
+test server::tests::current_owner_rejects_hidden_input_and_unknown_view_session ... ok
+test server::tests::invalid_view_preserves_populated_geometry_and_pty_sizes ... ok
+test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+test server::tests::history_owner_and_token_isolation ... ok
+test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+test server::tests::history_page_overflow_disconnects_without_parser_wait ... ok
+test server::tests::partial_resize_connection_delivers_error_before_owner_close ... ok
+test session::shell_prompt::tests::compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone ... ok
+test server::tests::set_view_publishes_without_an_unfocused_pane_removed_before_publication ... ok
+test session::tests::group_leader_timeout_override_keeps_the_default_bound ... ok
+test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+test session::tests::final_output_is_parsed_before_session_becomes_removable ... ok
+test session::tests::pause_resume_rejects_unsafe_group ... ok
+test server::tests::partial_resize_failure_does_not_restore_revision_after_owner_replacement ... ok
+test session::tests::pause_resume_exit_event_cannot_be_overwritten ... ok
+test session::tests::pause_resume_terminate_runs_term_handler ... ok
+test session::tests::pause_resume_terminate_serializes_competing_controls ... ok
+test session::tests::resize_reaches_the_child_tty ... ok
+test session::tests::pause_resume_phase_and_input_admission ... ok
+test session::tests::terminate_reaps_group_after_transient_sigcont_permission ... ok
+test session::tests::shell_round_trip_updates_the_current_screen ... ok
+test session::tests::terminate_removes_the_whole_process_group ... ok
+test session::tests::group_leader_timeout_kills_the_child ... ok
+test server::tests::resize_is_rejected_for_a_split_view ... ok
+test session::tests::terminate_retains_sigcont_permission_error_when_group_remains ... ok
+test task_manager::tests::cleanup_reports_retained_directory_without_registry_ownership ... ok
+test task_manager::tests::corrupt_run_file_does_not_block_open ... ok
+test task_manager::tests::cancellation_waits_for_admission_to_publish_its_worker ... ok
+test task_runner::tests::reused_pid_cannot_claim_process_group_or_children ... ok
+test task_runner::tests::surviving_member_preserves_owned_group_after_leader_exits ... ok
+test tasks::tests::prune_keeps_recent_runs_and_the_newest_per_task ... ok
+test session::tests::compact_zsh_prompt_preserves_config_and_reports_failure ... ok
+test task_manager::tests::graceful_shutdown_refuses_a_run_crossing_admission ... ok
+test session::tests::terminate_retains_sigcont_permission_error_for_live_group ... ok
+test task_manager::tests::tick_does_not_reread_terminal_runs ... ok
+test session::tests::terminate_removes_job_control_subgroups ... ok
+test task_manager::tests::workspace_removal_protects_admitted_tasks_before_run_metadata_is_written ... ok
+test server::tests::view_publication_aborts_when_owner_disconnects_during_resize ... ok
+test server::tests::view_revision_floor_survives_exit_and_removal ... ok
+test server::tests::set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames ... ok
+test server::tests::session_refresh_dispatch_failures_disconnect_without_blocking ... ok
+test server::tests::split_delivery_rejects_stale_owner_and_input ... ok
+test server::tests::partial_resize_blocked_writer_times_out_and_closes_owner ... ok
+test server::tests::terminal_frame_survives_a_concurrent_lifecycle_event ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.02s
+
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_terminal-f62d27e02b26cede)
+
+running 6 tests
+test history::tests::history_partial_escape_survives_capture ... ok
+test history::tests::history_bounds_reject_bad_ranges ... ok
+test history::tests::history_alternate_screen_has_no_transcript ... ok
+test history::tests::history_tiles_preserve_wide_combining_and_wrap ... ok
+test history::tests::history_resize_keeps_old_width ... ok
+test history::tests::history_retention_is_frozen_and_evicts_oldest ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-eb9faeb2ee74f953)
+
+running 50 tests
+test dashboard::copy::tests::history_copy_append_rejects_malformed_cells_and_byte_overflow ... ok
+test dashboard::copy::tests::history_copy_append_normalizes_wide_cells_and_preserves_spaces ... ok
+test dashboard::copy::tests::copy_clipboard_emits_osc52 ... ok
+test dashboard::copy::tests::copy_clipboard_rejects_invalid_payload_and_io_failure ... ok
+test dashboard::agents::tests::custom_override_replaces_the_custom_entry ... ok
+test dashboard::copy::tests::history_copy_job_streams_overlapping_tiles_and_soft_wraps ... ok
+test dashboard::agents::tests::detects_executables_then_shell_then_custom ... ok
+test dashboard::palette::mouse_tests::mouse_narrow_form_scroll_reaches_hidden_fields ... ok
+test dashboard::palette::mouse_tests::mouse_pick_value_edits_at_visible_cursor ... ok
+test dashboard::palette::mouse_tests::mouse_cursor_uses_rendered_emoji_grapheme_width ... ok
+test dashboard::palette::mouse_tests::mouse_scrolled_picker_accepts_visible_option ... ok
+test dashboard::picker::tests::expand_path_resolves_tilde_and_keeps_absolute ... ok
+test dashboard::picker::tests::git_dirs_sort_first_and_hidden_needs_dot_segment ... ok
+test dashboard::palette::mouse_tests::mouse_tiny_overlay_controls_remain_visible ... ok
+test dashboard::picker::tests::listing_is_cached_until_input_changes ... ok
+test dashboard::palette::mouse_tests::mouse_submit_from_first_field_and_outside_overlay_guard ... ok
+test dashboard::palette::mouse_tests::mouse_text_search_and_narrow_unicode_cursor ... ok
+test dashboard::palette::mouse_tests::mouse_form_focus_unicode_edit_and_cancel ... ok
+test dashboard::tests::completed_history_copy_emits_once_through_the_writer_adapter ... ok
+test dashboard::tests::copy_selection_joins_soft_wraps_and_preserves_unicode ... ok
+test dashboard::tests::copy_selection_moves_over_wide_cells_and_clamps ... ok
+test dashboard::tests::dashboard_input_boundary_defers_after_a_bounded_ready_batch ... ok
+test dashboard::tests::dashboard_input_boundary_reports_detach_from_a_processed_event ... ok
+test dashboard::tests::dashboard_input_boundary_separates_deferred_input_from_idle_emission ... ok
+test dashboard::tests::dashboard_output_wake_interrupts_idle_wait ... ok
+test dashboard::tests::dashboard_reader_reconciles_two_pane_burst_at_ack_boundary ... ok
+test dashboard::tests::dashboard_surfaces_hello_refusal_and_reader_disconnect ... ok
+test dashboard::tests::dashboard_wait_reports_input_and_output_together ... ok
+test dashboard::tests::failed_history_copy_writer_preserves_selection_for_retry ... ok
+test dashboard::tests::hierarchy_removal_clears_a_parked_wheel_deferral ... ok
+test dashboard::tests::hints_name_targets_and_explain_disabled_session_actions ... ok
+test dashboard::tests::initial_selection_completes_zero_target_view_on_ok ... ok
+test dashboard::tests::initial_selection_does_not_complete_after_wrong_screen_and_ok ... ok
+test dashboard::tests::initial_selection_ignores_wrong_screen_before_matching_ok ... ok
+test dashboard::tests::mouse_release_precedes_the_replacement_view_request ... ok
+test dashboard::tests::panic_hook_ignores_non_main_threads ... ok
+test dashboard::palette::mouse_tests::mouse_submit_from_project_survives_waiting_for_git_suggestions_once ... ok
+test dashboard::palette::mouse_tests::mouse_toggle_and_scrolled_path_row ... ok
+test dashboard::palette::mouse_tests::mouse_actions_search_and_confirmation_pending_guard ... ok
+test dashboard::palette::mouse_tests::mouse_menu_back_and_close_without_clickthrough ... ok
+test dashboard::picker::tests::slash_prefix_lists_filesystem_root ... ok
+test dashboard::picker::tests::tilde_prefix_lists_code_and_tab_completes ... ok
+test dashboard::settings::tests::invalid_file_yields_defaults_and_error ... ok
+test dashboard::settings::tests::loads_overrides_and_expands_picker_roots ... ok
+test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... ok
+test dashboard::git_hints::tests::timeout_reaps_owned_child_and_output_is_bounded ... ok
+test dashboard::git_hints::tests::detached_head_yields_no_base_suggestion ... ok
+test dashboard::git_hints::tests::missing_origin_uses_master_then_current_head ... ok
+test dashboard::git_hints::tests::sole_non_origin_remote_provides_the_base ... ok
+test dashboard::git_hints::tests::branches_and_remote_default_from_real_repository ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s

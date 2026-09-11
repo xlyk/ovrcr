@@ -1,0 +1,19 @@
+{
+  "revision": "86ef46b8eff3128566f76022c2cfef49714031ac",
+  "command": [
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "environment": {
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0"
+  },
+  "start_utc": "2026-09-11T18:31:43.042703+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-09-11T18:31:43.584704+00:00"
+}

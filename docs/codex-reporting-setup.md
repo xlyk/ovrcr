@@ -2,13 +2,15 @@
 
 **Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using exact Codex CLI **0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
-Inside an OVRCR terminal, launch a fresh interactive session:
+That acceptance used a disposable fixture. It does not establish that your installed OVRCR binary, running server, Codex configuration or native hook trust is ready. Follow [How to install Codex readiness reporting](codex-ready-installation.md) to prepare an exact-revision build, review the configuration change, protect existing sessions during a server transition, and verify the installed result.
+
+After installation and native hook review, launch a fresh interactive session inside an OVRCR terminal:
 
 ```sh
 ovrcr agent run codex -- codex
 ```
 
-A direct `codex` launch is untracked; the managed wrapper is required.
+A direct `codex` launch is untracked; the managed wrapper is required even when the hooks are configured and doctor reports a supported version. Running the wrapper in a terminal outside OVRCR also leaves reporting unavailable. The wrapper preserves ordinary native behavior when reporting cannot be admitted.
 
 The legacy `agent run --provider codex -- codex` form also works. Native argv remains unchanged. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
 
@@ -20,6 +22,14 @@ ovrcr agent doctor codex --json --settings /path/to/codex/config.toml
 ```
 
 Omit `--settings` to print a standalone example. Setup prints TOML to stdout and instructions to stderr; it never writes configuration or trust. Review the output, then explicitly merge it into the intended Codex `config.toml`. Do not redirect output onto the input file. Composition preserves existing values, unrelated handlers and their order, including approval handlers and trust entries. It appends missing reporters and recognizes an already configured exact reporter; comments and formatting are not preserved. If a previous installation points at a different OVRCR binary, remove only its exact reporter handlers yourself before composing the replacement. Never copy trust hashes from retained evidence.
+
+Run setup and doctor from the exact OVRCR binary whose absolute path the hooks will execute. Setup embeds its own executable path; output from a temporary build points to that temporary build. Doctor checks for reporters using its own path too. Moving the binary requires reviewing a new composition and any native trust prompt. Keep full compositions and backups private because they contain the supplied configuration.
+
+Inventory and preserve any existing `hooks.json` alongside the intended TOML configuration. Codex discovers that file from each configuration layer's hook directory. `hooks.state` stores per-handler trust and enablement; it does not include or load files. Setup composes only the supplied TOML, and doctor does not inspect other hook sources.
+
+Exact Codex 0.153.0 loads both JSON and TOML handlers, appending JSON declarations before TOML declarations within each layer. It warns when both contain handlers but disables neither source for that reason. Keep existing JSON bytes, handler indices and trust state unchanged when adding the generated TOML reporters. Synchronous handlers execute concurrently; displayed and collected-result order follow configured declaration order, not guaranteed execution or completion order. Preserve this native behavior. See the [pinned source rules](../research/issue-58-ready-install/completion/native-hook-source.md).
+
+The [installed-binary check](codex-ready-installation.md#verify-the-installed-path-natively) uses a temporary OVRCR registry, socket and workspace while retaining the intended authorized Codex configuration; it can run without stopping the normal server or its sessions. Verify the effective native hook list and each handler's trust status separately from delivery. A listed handler still needing review is not evidence of dispatch.
 
 The schema matches the [native Task 2 configuration](../research/codex-response-ready-acceptance/native-task-2/isolated-config.toml), without generating its trust state. Setup substitutes the current absolute OVRCR executable path and shell-quotes paths with spaces or apostrophes:
 
@@ -51,9 +61,9 @@ type = "command"
 command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 ```
 
-Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and trust the hooks through Codex's native UI; setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their order.
+Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and individually trust the five OVRCR reporters through Codex's native UI. Preserve the existing trust and enablement of unrelated JSON and plugin hooks, including any that still need review; trusting the OVRCR reporters does not establish that those other hooks ran. Setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their declaration order.
 
-Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. Supplied TOML can establish that expected commands are present; effective configuration, native trust and hook delivery remain unverified. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot. Doctor names the accepted version contract; it does not verify effective hook trust or delivery in a user configuration.
+Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. `probe_status: supported` establishes exact-version compatibility. `configuration.status: supplied_file_supported` establishes the presence of expected synchronous commands in that supplied file. The `effective_configuration`, `hook_trust` and `delivery` fields remain `unverified`, including when those checks pass. Its `release_status` names the accepted implementation contract; it is not an installed-session result. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot and complete the [native installation check](codex-ready-installation.md#verify-the-installed-path-natively).
 
 ## What the indicator means
 

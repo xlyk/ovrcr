@@ -1,0 +1,26 @@
+{
+  "revision": "86ef46b8eff3128566f76022c2cfef49714031ac",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "codex_reporting",
+    "--locked",
+    "--offline"
+  ],
+  "environment": {
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0"
+  },
+  "start_utc": "2026-09-11T18:27:10.956488+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-09-11T18:27:12.360437+00:00",
+  "raw_log_sha256": "f36b878ad157c565c8a46496390cd09bd29cb25df4f48689f6e5c5a7ea3fae9d",
+  "raw_log_path": "/private/tmp/ovrcr-issue-58-raw-logs-f_06pazc/03-codex.log",
+  "stored_log_sha256": "89a4f9b546a5858cb3dd39dceaded58b1a40b5283adc07f97486ef82de773e3e",
+  "log_normalization": "Only redundant final blank lines removed for git whitespace check; raw bytes retained at raw_log_path."
+}

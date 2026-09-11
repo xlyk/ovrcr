@@ -1,0 +1,592 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libc v0.2.189
+   Compiling bitflags v2.13.1
+   Compiling cfg-if v1.0.4
+   Compiling autocfg v1.5.1
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+   Compiling equivalent v1.0.2
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling objc2-encode v4.1.0
+   Compiling thiserror v2.0.20
+   Compiling smallvec v1.16.0
+   Compiling unicode-segmentation v1.13.3
+   Compiling heck v0.5.0
+   Compiling core-foundation-sys v0.8.7
+   Compiling arrayvec v0.7.8
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling either v1.18.0
+   Compiling objc2 v0.6.4
+   Compiling cfg_aliases v0.2.2
+   Compiling parking_lot_core v0.9.12
+   Compiling hashbrown v0.17.1
+   Compiling hashbrown v0.16.1
+   Compiling objc-sys v0.3.5
+   Compiling num-traits v0.2.19
+   Compiling zerocopy v0.8.56
+   Compiling serde_core v1.0.229
+   Compiling itoa v1.0.18
+   Compiling fnv v1.0.7
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling rustversion v1.0.23
+   Compiling unicode-width v0.2.2
+   Compiling simd-adler32 v0.3.10
+   Compiling polycool v0.4.0
+   Compiling crc32fast v1.5.1
+   Compiling thiserror v1.0.69
+   Compiling adler2 v2.0.1
+   Compiling kurbo v0.13.1
+   Compiling syn v3.0.5
+   Compiling syn v2.0.119
+   Compiling version_check v0.9.5
+   Compiling errno v0.3.14
+   Compiling signal-hook v0.3.18
+   Compiling rustix v1.1.4
+   Compiling linebender_resource_handle v0.1.1
+   Compiling parking_lot v0.12.5
+   Compiling uuid v1.26.0
+   Compiling static_assertions v1.1.0
+   Compiling objc2 v0.5.2
+   Compiling dispatch v0.2.0
+   Compiling accesskit v0.24.1
+   Compiling objc2-core-foundation v0.3.2
+   Compiling block2 v0.6.2
+   Compiling signal-hook-registry v1.4.8
+   Compiling block2 v0.5.1
+   Compiling ahash v0.8.12
+   Compiling euclid v0.22.14
+   Compiling core-foundation v0.9.4
+   Compiling objc2-foundation v0.2.2
+   Compiling miniz_oxide v0.9.1
+   Compiling itertools v0.14.0
+   Compiling iana-time-zone v0.1.65
+   Compiling guillotiere v0.7.0
+   Compiling zmij v1.0.23
+   Compiling darling_core v0.20.11
+   Compiling darling_core v0.24.1
+   Compiling castaway v0.2.4
+   Compiling ryu v1.0.23
+   Compiling instability v0.3.13
+   Compiling siphasher v1.0.3
+   Compiling fearless_simd v0.4.1
+   Compiling memchr v2.8.3
+   Compiling bitflags v1.3.2
+   Compiling foreign-types-shared v0.3.1
+   Compiling anyhow v1.0.104
+   Compiling unicode-general-category v1.1.0
+   Compiling serde v1.0.229
+   Compiling unicode-truncate v2.0.1
+   Compiling core-graphics-types v0.1.3
+   Compiling phf_shared v0.12.1
+   Compiling objc2-foundation v0.3.2
+   Compiling compact_str v0.9.1
+   Compiling objc2-core-graphics v0.3.2
+   Compiling zerocopy-derive v0.8.56
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling thiserror-impl v1.0.69
+   Compiling foreign-types-macros v0.2.4
+   Compiling strum_macros v0.28.0
+   Compiling objc2-app-kit v0.2.2
+   Compiling darling_macro v0.20.11
+   Compiling serde_derive v1.0.229
+   Compiling foreign-types v0.5.0
+   Compiling strum_macros v0.27.2
+   Compiling flate2 v1.1.10
+   Compiling darling v0.20.11
+   Compiling bytemuck v1.25.2
+   Compiling darling_macro v0.24.1
+   Compiling chrono v0.4.45
+   Compiling darling v0.24.1
+   Compiling derive_builder_core v0.20.2
+   Compiling font-types v0.12.4
+   Compiling color v0.3.3
+   Compiling filedescriptor v0.8.3
+   Compiling read-fonts v0.41.0
+   Compiling peniko v0.6.1
+   Compiling strum v0.28.0
+   Compiling kasuari v0.4.12
+   Compiling derive_builder_macro v0.20.2
+   Compiling vello_common v0.1.0
+   Compiling emath v0.36.1
+   Compiling lru v0.18.4
+   Compiling convert_case v0.10.0
+   Compiling winit v0.30.13
+   Compiling tracing-core v0.1.36
+   Compiling litrs v1.0.0
+   Compiling chrono-tz v0.10.4
+   Compiling virtue v0.0.18
+   Compiling zune-core v0.5.3
+   Compiling raw-window-handle v0.6.2
+   Compiling indoc v2.0.7
+   Compiling critical-section v1.2.0
+   Compiling pin-project-lite v0.2.17
+   Compiling serde_json v1.0.151
+   Compiling ratatui-core v0.1.2
+   Compiling zune-jpeg v0.5.15
+   Compiling tracing v0.1.44
+   Compiling document-features v0.2.12
+   Compiling vello_cpu v0.1.0
+   Compiling bincode_derive v2.0.1
+   Compiling derive_more-impl v2.1.1
+   Compiling ecolor v0.36.1
+   Compiling strum v0.27.2
+   Compiling derive_builder v0.20.2
+   Compiling objc2-app-kit v0.3.2
+   Compiling core-graphics v0.23.2
+   Compiling phf v0.12.1
+   Compiling num_threads v0.1.7
+   Compiling mio v1.2.3
+   Compiling miniz_oxide v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling num-conv v0.2.2
+   Compiling weezl v0.1.12
+   Compiling deranged v0.5.8
+   Compiling nohash-hasher v0.2.0
+   Compiling fax v0.2.7
+   Compiling cfg_aliases v0.1.1
+   Compiling powerfmt v0.2.0
+   Compiling cursor-icon v1.2.0
+   Compiling dpi v0.1.2
+   Compiling smol_str v0.2.2
+   Compiling pxfm v0.1.30
+   Compiling profiling v1.0.18
+   Compiling epaint_default_fonts v0.36.1
+   Compiling self_cell v1.3.0
+   Compiling quick-error v2.0.1
+   Compiling unty v0.0.4
+   Compiling time-core v0.1.9
+   Compiling bincode v2.0.1
+   Compiling png v0.18.1
+   Compiling signal-hook-mio v0.2.5
+   Compiling nix v0.28.0
+   Compiling croner v3.0.1
+   Compiling derive_more v2.1.1
+   Compiling half v2.7.1
+   Compiling vte v0.15.0
+   Compiling tiff v0.11.3
+   Compiling accesskit_consumer v0.38.0
+   Compiling itertools v0.15.0
+   Compiling time v0.3.55
+   Compiling glutin v0.32.3
+   Compiling line-clipping v0.3.8
+   Compiling byteorder-lite v0.1.0
+   Compiling winnow v1.0.4
+   Compiling base64 v0.22.1
+   Compiling getrandom v0.4.3
+   Compiling utf8parse v0.2.2
+   Compiling crossterm v0.29.0
+   Compiling anstyle-parse v1.0.0
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling ratatui-widgets v0.3.2
+   Compiling accesskit_macos v0.26.3
+   Compiling vt100 v0.16.2
+   Compiling moxcms v0.8.1
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling dispatch2 v0.3.1
+   Compiling cgl v0.3.2
+   Compiling glutin-winit v0.5.0
+   Compiling libloading v0.8.9
+   Compiling colorchoice v1.0.5
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling winnow v0.7.15
+   Compiling option-ext v0.2.0
+   Compiling dirs-sys v0.5.0
+   Compiling anstream v1.0.0
+   Compiling ratatui-crossterm v0.1.2
+   Compiling accesskit_winit v0.32.2
+   Compiling serial2 v0.2.38
+   Compiling fastrand v2.5.0
+   Compiling web-time v1.1.0
+   Compiling shell-words v1.1.1
+   Compiling clap_lex v1.1.0
+   Compiling glow v0.17.0
+   Compiling downcast-rs v1.2.1
+   Compiling clap_builder v4.6.6
+   Compiling tempfile v3.27.0
+   Compiling directories v6.0.0
+   Compiling clap_derive v4.6.4
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling harfrust v0.12.0
+   Compiling skrifa v0.44.0
+   Compiling portable-pty v0.9.0
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-protocol)
+   Compiling clap v4.6.6
+   Compiling image v0.25.10
+   Compiling epaint v0.36.1
+   Compiling arboard v3.6.1
+   Compiling egui v0.36.1
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/crates/ovrcr-tui)
+   Compiling egui_glow v0.36.1
+   Compiling egui-winit v0.36.1
+   Compiling eframe v0.36.1
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.55s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-d94f0a974003d1a6)
+
+running 84 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4MvpmD/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGaTtoB/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4PGWPB/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBcEOMR/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJmA2u7/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKo5KGP/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8lf1P7/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTT03Au/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpm51XgM/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpkrHIfU/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpftDd1W/repo/.git/
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9abed30] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_capability_and_exit_are_enforced ... ok
+test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpC2BD39/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7mfJ1F/repo/.git/
+[main (root-commit) 8e4205d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8e4205d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpYADug1/repo/.git/
+test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGkID1a/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0KClYj/repo/.git/
+[main (root-commit) 8e4205d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8e4205d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8e4205d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpoi42SP/repo/.git/
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp78PN1S/repo/.git/
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKVEsiw/repo/.git/
+test agent_hook_sequence_does_not_regress_state ... ok
+test agent_admission_failed_bind_status_disconnects_watch ... FAILED
+test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpAO8z8U/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWMcp1A/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpgiHcLi/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzhuJDL/repo/.git/
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_failed_unavailable_publication_disconnects_watch ... FAILED
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 144e233] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test client_with_wrong_protocol_version_is_refused ... ok
+test codex_hook_native_helper ... ignored, Codex synchronous native child fixture
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+test agent_hook_startup_registration_is_visible ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7d3B4n/repo/.git/
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+[main (root-commit) 993417c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+test dashboard_receives_concrete_ordinary_request_errors ... ok
+test dashboard_request_id_zero_does_not_block_followup_response ... ok
+test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6paCVP/repo/.git/
+test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+[main (root-commit) f6fbf7d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4B27t6/repo/.git/
+[main (root-commit) f6fbf7d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXvEvus/repo/.git/
+[main (root-commit) 02bd820] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0rqSvz/repo/.git/
+[main (root-commit) 567fa22] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+test hook_child_report_helper ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5LcU9B/repo/.git/
+[main (root-commit) 3e32e2b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXhBXcF/repo/.git/
+[main (root-commit) c9ae3fe] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdBrO0u/repo/.git/
+[main (root-commit) 812c8b1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_report_rejects_old_and_invalid_samples ... ok
+test pause_resume_child_fixture ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpk238X8/repo/.git/
+[main (root-commit) fdcd85b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+test context_report_replaces_snapshot_and_preserves_activity ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmparxXVN/repo/.git/
+[main (root-commit) fdcd85b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_snapshot_survives_dashboard_reattach ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpq6CY5t/repo/.git/
+[main (root-commit) 7f863fb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpeiYVzu/repo/.git/
+[main (root-commit) c975830] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_lifecycle_enforces_every_removal_gate ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmoXcHt/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZ8BU2J/repo/.git/
+[main (root-commit) c975830] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) c975830] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp8kadYE/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpzVOSaK/repo/.git/
+[main (root-commit) 0a295b5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 0a295b5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+test fast_exit_session_is_retained_as_exited ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMvuoYb/repo/.git/
+[main (root-commit) a0c8a5a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+test shutdown_disconnected_requester_still_wakes_accept ... ok
+test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4OqO9P/repo/.git/
+[main (root-commit) 4bcd44a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_frozen_page_survives_eviction_and_exit ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9rBIlw/repo/.git/
+[main (root-commit) 4bcd44a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_reattach_reads_retained_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4pLKi4/repo/.git/
+[main (root-commit) 6f02f2f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_slow_dashboard_recovers_after_finite_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpiLTSYM/repo/.git/
+[main (root-commit) dc5cf61] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test kill_does_not_block_dashboard_geometry ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFIHDRd/repo/.git/
+[main (root-commit) 9488a6e] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_backpressured_input_keeps_controls_available ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLPVfVj/repo/.git/
+[main (root-commit) 925f647] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+test startup_read_only_commands_do_not_start_a_missing_server ... ok
+test startup_refuses_symlinked_socket_directory ... ok
+test startup_socket_directory_is_private ... ok
+test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+test pause_resume_control_races_converge ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcztFFK/repo/.git/
+[main (root-commit) 925f647] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_stale_socket_is_recovered ... ok
+test pause_resume_kill_runs_group_handlers ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVr19x7/repo/.git/
+[main (root-commit) cc8ebfa] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_server_refuses_removal_and_late_mutation ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9nXqRC/repo/.git/
+[main (root-commit) 1d11196] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_shutdown_cleans_stopped_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpx3EvWb/repo/.git/
+[main (root-commit) 0f023fe] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_stops_group_and_rejects_input ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpqT9Gfl/repo/.git/
+[main (root-commit) 0f023fe] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpesexMe/repo/.git/
+[main (root-commit) 3f5e809] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test selection_snapshot_precedes_later_quiet_tail_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphb4662/repo/.git/
+[main (root-commit) 31dc5f4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_kill_terminates_sessions_concurrently ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvyF5iQ/repo/.git/
+[main (root-commit) 1b2bea0] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_without_kill_rejects_exited_record ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWs2DOU/repo/.git/
+[main (root-commit) 1b2bea0] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test slow_dashboard_recovers_after_output_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxZCFId/repo/.git/
+[main (root-commit) d096c46] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test split_server_two_streams_resize_resync_and_detach ... ok
+test startup_concurrent_attempts_leave_one_server ... ok
+test startup_failure_reports_server_log ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5ONJJz/repo/.git/
+[main (root-commit) 5dc68a2] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_remove_succeeds_after_directory_deleted ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGcmnrG/repo/.git/
+[main (root-commit) 5dc68a2] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_shell_failure_retains_worktree_and_registry ... ok
+
+failures:
+
+---- agent_admission_failed_bind_status_disconnects_watch stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKo5KGP/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKo5KGP/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'agent_admission_failed_bind_status_disconnects_watch' (46701138) panicked at tests/server_lifecycle.rs:8825:5:
+assertion `left == right` failed: supervisor must select a fresh UUID; agent admission unavailable; running native command; fixture argv="--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+  left: 12
+ right: 36
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+
+---- agent_admission_failed_unavailable_publication_disconnects_watch stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJmA2u7/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJmA2u7/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'agent_admission_failed_unavailable_publication_disconnects_watch' (46701139) panicked at tests/server_lifecycle.rs:8825:5:
+assertion `left == right` failed: supervisor must select a fresh UUID; agent admission unavailable; running native command; fixture argv="--agent\nfixture-root\n--setting-sources\n\n--settings\npath with spaces\n--strict-mcp-config\n"
+  left: 12
+ right: 36
+ovrcr server stopped
+
+
+failures:
+    agent_admission_failed_bind_status_disconnects_watch
+    agent_admission_failed_unavailable_publication_disconnects_watch
+
+test result: FAILED. 73 passed; 2 failed; 9 ignored; 0 measured; 0 filtered out; finished in 32.55s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
