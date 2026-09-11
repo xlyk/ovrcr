@@ -1,0 +1,53 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle codex_managed -- --nocapture
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.43s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 4 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKXHfzM/repo/.git/
+[main (root-commit) 2f5b8c3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKXHfzM/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKXHfzM/server.sock
+ovrcr server stopped
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwKO3ZZ/repo/.git/
+[main (root-commit) 85d5b28] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwKO3ZZ/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpwKO3ZZ/server.sock
+ovrcr server stopped
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphqFAIh/repo/.git/
+[main (root-commit) dbdd6bc] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphqFAIh/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphqFAIh/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=other
+ovrcr server stopped
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRAZAKd/repo/.git/
+[main (root-commit) 4ff576c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRAZAKd/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRAZAKd/server.sock
+ovrcr server stopped
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 5.97s
+
+
+Exit: 0

@@ -1,0 +1,27 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		70 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209 response ready · observed  elapsed: 4m                                                                             
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ✓ local
+~		72 text (settable) ▼ 󰉋 consigint                          │pid: 42209 response ready · observed  elapsed: 4m                                                                             
+~		74 text (settable)   ✓ local                              │╭─────────────────────────────────────────────────╮                                                                           
+~		75 text (settable)      ├ terminal response ready · obser…││ ✨ Update available! 0.153.0 -> 0.154.0         │                                                                           
+~		107 text (settable)      └ run 4m  ctx —                   │• I’ll spawn the child agent, wait for its reply, then run the 20-second sleep.                                               
+~		109 text (settable)      ├ codex / gpt-5.4                 │• Started `/root/acceptance_child`                                                                                            
+~		110 text (settable)      └ run 4m  ctx —                   │                                                                                                                              
+~		111 text (settable)                                        │• Waiting for agents                                                                                                          
+~		112 text (settable)                                        │                                                                                                                              
+~		113 text (settable)                                        │• Completed `/root/acceptance_child`                                                                                          
+~		115 text (settable)                                        │• Finished waiting                                                                                                            
+~		116 text (settable)                                        │  └ No agents completed yet                                                                                                   
+~		118 text (settable)                                        │• Ran /bin/sleep 20                                                                                                           
+~		119 text (settable)                                        │  └ (no output)                                                                                                               
+~		121 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~		123 text (settable)                                        │• FINAL_READY_TWO                                                                                                             
+~		125 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~		128 text (settable)                                        │› Ask Codex to do anything                                                                                                    
+~		130 text (settable)                                        │  gpt-6-astra default · /private/tmp/ovrcr-codex-final-attc4w4m/workspace · Main [default]                                    
+The focused UI element is 70 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209 response ready · observed  elapsed: 4m                                                                             
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ✓ local

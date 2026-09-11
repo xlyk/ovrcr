@@ -1,0 +1,19 @@
+Spec compliance: Issues found — split metadata does not reliably preserve Ready and independent process/health status at intermediate pane widths.
+Task quality: Needs fixes.
+
+Strengths
+- `crates/ovrcr-protocol/src/session.rs:30`, `crates/ovrcr-protocol/src/codec.rs:18`, and `crates/ovrcr-protocol/src/wire.rs:832`: appends the variant without changing prior enum indices, bumps the shared protocol version, and records every activity wire encoding.
+- `crates/ovrcr-runtime/src/server/tests.rs:5865`: real socket dispatcher test checks exact observed sample, revision, turn, stale/duplicate rejection, dashboard disconnect/reconnect, replacement by Busy, and unknown metrics. Production runtime state and concurrency mechanisms are unchanged.
+- `src/cli/output.rs:91`, `src/cli/args.rs:272`, and `tests/cli.rs:223`: CLI accepts and projects Ready through a real managed-session fixture without inventing provider metrics.
+
+Important — P2
+- `crates/ovrcr-tui/src/dashboard/render.rs:797`: adding the full readiness/health field before process metadata consumes space previously used for `pid: closed`; the all-or-nothing `append_metadata_field` also drops Ready entirely when its unavailable-health suffix does not fit. For a 40-column metadata row with prefix `> a 40x20`, observed Ready fits at 36 columns, but appending `pid: closed` requires 49, so an exited Ready session loses its process-exit indicator. Changing health to unavailable makes the readiness field require 50 columns, so both Ready and reporter health disappear while later PID/elapsed fields can still fit. This conflicts with the brief's narrow/split visibility and independent status requirements. Reserve space for process status and render/clamp readiness and health deliberately rather than treating their combined text as an optional field. Add assertions on the actual split metadata row at intermediate widths for connected/unavailable and running/exited combinations. The current whole-screen `contains` assertion at `crates/ovrcr-tui/src/dashboard/tests.rs:1352` can be satisfied by the sidebar and never tests exited split metadata.
+
+Checks and scope
+- Reviewed supplied `review-b35dd71..bfbf38d.diff` once; initial identity check confirmed HEAD `bfbf38d7a5fd242988a3b2f60a59aa3b8ec7640b` and clean tracked working tree, base `b35dd71`.
+- Named risk: split status layout could drop fields. Read the remainder of `render_split_metadata` and `append_metadata_field` because the diff cuts off the function before its fitting/rendering behavior. Verified column arithmetic directly; no test suite rerun was necessary to establish the defect.
+- Named risk: shared variant compatibility. Checked the existing codec version guard and preamble rejection tests at `crates/ovrcr-protocol/src/codec.rs:73,153,165`; the existing mismatch test uses a different version and the bumped constant feeds the guard.
+- Named risk: unchanged CLI resource caller might omit the new state. Checked `src/cli/resources.rs:128,210,263`: terminal projections delegate to the changed `terminal_value`, and agent inspection serializes the snapshot directly. No resources.rs edit is needed.
+- Named risk: GUI-specific activity matches might silently omit Ready. Focused search of `src/gui.rs`, `src/gui/`, and `src/bin/ovrcr-gui.rs` found no direct activity-state matches. Actual GUI/all-features acceptance remains a later coordinator gate.
+- Inspected reported final protocol/runtime/TUI/CLI/format logs. They record 23/1/1/2 passing tests respectively and exit 0, with no warning lines. Runtime log includes owned PGID 92839 cleanup. These are worker execution records, not an independent committed-head rerun.
+- Native CUA, complete workspace acceptance, and provider wiring are explicitly outside this state-only review and are not claimed passed. No tests, source edits, staging, commits, or subagent dispatch were performed; only this requested review artifact was written.

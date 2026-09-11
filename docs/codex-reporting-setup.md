@@ -1,6 +1,6 @@
 # Codex response readiness setup
 
-Release support is **planned pending Task 4 acceptance**. The implemented milestone reports the terminal's **last observed root turn** using exact Codex CLI **0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
+**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using exact Codex CLI **0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
 Inside an OVRCR terminal, launch a fresh interactive session:
 
@@ -63,7 +63,13 @@ The last Ready observation survives dashboard reconnect while the server remains
 
 Missing or unknown callbacks cannot synthesize Ready. An API error without a matching ending hook can leave Busy; a subsequent prompt while the previous turn remains open disables reporting. No timeout, transcript, screen text or metrics infer completion. Restart a fresh managed invocation after correcting hook configuration if reporting becomes unavailable.
 
-Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, sound, unread acknowledgement and transcript collection. Linux and full product/capacity gates remain unverified until their required acceptance passes. Existing Claude acceptance does not cover Codex.
+Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, sound, unread acknowledgement and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+
+## Acceptance evidence
+
+The [macOS native acceptance](../research/codex-response-ready-acceptance/native-final/README.md) used actual setup output and verified background Ready, reconnect with the same provider PID, a second Busy→Ready turn, child completion while the root remained Busy, next-prompt rebinding after backtracking, and retained Ready with Unavailable health at 50 columns after exit. Interruption evidence from Task 2 is retained for the unchanged hook code. Metrics remained null.
+
+The [final verification record](../research/codex-response-ready-acceptance/final/README.md) records four passing hosted CI jobs in run `34570470022`: 663 macOS and 637 Linux tests, with 14 intentional ignores on each platform and separate passing capacity and memory gates. Linux evidence is automated. Local full-suite attempts failed and remain retained; no local full-suite pass is claimed. Failed native input attempts are also retained separately from the accepted retry. All 21 recorded processes and 16 process groups were verified absent, and task-owned socket, temporary root and private credential copy were removed.
 
 ## Earlier broader investigation
 

@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209 unavailable response ready · observed  │  review auth handoff 75x57  pid: 42353  elapsed: 10m                      
+  ▼ auth-handoff                       │tokens —  cost —                                  │───────────────────────────────────────────────────────────────────────────
+  ✓ local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 42209 unavailable response ready · observed  │  review auth handoff 75x57  pid: 42353  elapsed: 10m                      
+		5 text (settable)   ▼ auth-handoff                       │tokens —  cost —                                  │───────────────────────────────────────────────────────────────────────────
+		6 text (settable)   ✓ local                              │• The child replied CHILD_GATE_DONE. The gate     │╭─ grok / grok-4.6 ────────────────────────────────────────╮               
+		7 text (settable)      ├ unavailable response ready · ob…│  command is still waiting for child-release.     ││ fixture: authentication handoff review                                   
+		8 text (settable)      └ run 10m  ctx —                  │                                                  │╰──────────────────────────────────────────────────╯                       
+		9 text (settable)   - review auth handoff                │• Waited for background terminal · /bin/sh -c     │                                                                           
+		10 text (settable)      ├ grok / grok-4.6                 │'while [ ! -f child-release ]; do /bin/sleep 1;   │✓ deterministic local transcript ready                                     
+		11 text (settable)      └ run 10m  ctx —                  │done'                                             │sh-3.2$                                                                    
+		12 text (settable)                                        │                                                  │                                                                           
+		13 text (settable)   ▼ worktree-lifecycle                 │• Ran /bin/sh -c 'while [ ! -f child-release ];   │                                                                           
+		14 text (settable)   - local                              │  │ do /bin/sleep 1; done'                        │                                                                           
+		15 text (settable)      ├ terminal                        │  └ (no output)                                   │                                                                           
+		16 text (settable)      └ run 10m  ctx —                  │                                                  │                                                                           
+		17 text (settable)   - implement lifecycle cleanup        │──────────────────────────────────────────────────│                                                                           
+		18 text (settable)      ├ claude / sonnet-4               │                                                  │                                                                           
+		19 text (settable)      └ run 10m  ctx —                  │• FINAL_CHILD_GATE_READY                          │                                                                           
+		20 text (settable)   - review websocket shutdown          │                                                  │                                                                           
+		21 text (settable)      ├ codex / gpt-5.4                 │─ Worked for 1m 44s ──────────────────────────────│                                                                           
+		22 text (settable)      └ run 10m  ctx —                  │                                                  │                                                                           
+		23 text (settable)   - plan snapshot restore              │╭───────────────────────────────────────────╮     │                                                                           
+		24 text (settable)      ├ pi / grok-4.6                   ││ >_ OpenAI Codex (v0.153.0)                │     │                                                                           
+		25 text (settable)      └ run 10m  ctx —                  ││                                           │     │                                                                           
+		26 text (settable)                                        ││ model:     gpt-6-astra   /model to change │     │                                                                           
+		27 text (settable) ▼ 󰉋 spacelift-agent                    ││ directory: /private/tmp/…/workspace       │     │                                                                           
+		28 text (settable)   ▼ pipeline-progress-v2               │╰───────────────────────────────────────────╯     │                                                                           
+		29 text (settable)   - local                              │                                                  │                                                                           
+		30 text (settable)      ├ terminal                        │  Tip: New Use /fast to enable our fastest        │                                                                           
+		31 text (settable)      └ run 10m  ctx —                  │  inference with increased plan usage.            │                                                                           
+		32 text (settable)   - build pipeline progress            │                                                  │                                                                           
+		33 text (settable)      ├ claude / opus-4                 │                                                  │                                                                           
+		34 text (settable)      └ run 10m  ctx —                  │› Reply exactly FINAL_READY_ONE.                  │                                                                           
+		35 text (settable)                                        │                                                  │                                                                           
+		36 text (settable)   ▼ scope-quality                      │                                                  │                                                                           
+		37 text (settable)   - local                              │• FINAL_READY_ONE                                 │                                                                           
+		38 text (settable)      ├ terminal                        │                                                  │                                                                           
+		39 text (settable)      └ run 10m  ctx —                  │• You’re continuing from this point in a new      │                                                                           
+		40 text (settable)   - review scope quality               │conversation                                      │                                                                           
+		41 text (settable)      ├ codex / gpt-5.4                 │                                                  │                                                                           
+		42 text (settable)      └ run 10m  ctx —                  │                                                  │                                                                           
+		43 text (settable)                                        │› Reply exactly FINAL_BACKTRACK_READY.            │                                                                           
+		44 text (settable)                                        │                                                  │                                                                           
+		45 text (settable)                                        │                                                  │                                                                           
+		46 text (settable)                                        │• FINAL_BACKTRACK_READY.                          │                                                                           
+		47 text (settable)                                        │Token usage: total=192 input=183 (+ 15,360 cached)│                                                                           
+		48 text (settable)                                        │ output=9                                         │                                                                           
+		49 text (settable)                                        │To continue this session, run:                    │                                                                           
+		50 text (settable)                                        │  codex resume 01a08f33-c3fc-7500-8c83-39aaf73b47b│                                                                           
+		51 text (settable)                                        │b                                                 │                                                                           
+		52 text (settable)                                        │Or run codex resume and select Reply exactly FINAL│                                                                           
+		53 text (settable)                                        │_READY_ONE.                                       │                                                                           
+		54 text (settable)                                        │FINAL_NATIVE_EXIT=0                               │                                                                           
+		55 text (settable)                                        │auth-handoff › stty size                          │                                                                           
+		56 text (settable)                                        │57 50                                             │                                                                           
+		57 text (settable)                                        │auth-handoff ›                                    │                                                                           
+		58 text (settable)                                        │                                                  │                                                                           
+		59 text (settable)                                        │                                                  │                                                                           
+		60 text (settable)                                        │                                                  │                                                                           
+		61 text (settable)                                        │                                                  │                                                                           
+		62 text (settable)                                        │                                                  │                                                                           
+		63 text (settable) Terminal mode  Ctrl-g browse                                                                                                                                          
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 42209 unavailable response ready · observed  │  review auth handoff 75x57  pid: 42353  elapsed: 10m                      
+  ▼ auth-handoff                       │tokens —  cost —                                  │───────────────────────────────────────────────────────────────────────────
+  ✓ local

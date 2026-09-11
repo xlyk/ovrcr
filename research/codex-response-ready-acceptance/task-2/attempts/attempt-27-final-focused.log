@@ -1,0 +1,15 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test codex_reporting -- --nocapture
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.45s
+     Running tests/codex_reporting.rs (target/debug/deps/codex_reporting-8fb6182269d31481)
+
+running 4 tests
+test codex_fresh_grammar_rejects_resume_remote_and_unknown_forms ... ok
+test codex_version_probe_accepts_only_exact_successful_pinned_output ... ok
+test codex_hook_outside_managed_invocation_is_silent_without_reading_stdin ... ok
+test codex_native_argv_stdout_and_exit_survive_missing_reporting ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+
+Exit: 0

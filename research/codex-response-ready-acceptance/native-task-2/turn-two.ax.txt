@@ -1,0 +1,23 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31071  elapsed: 2m  agent response ready · observed                                                                      
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ✓ local
+~		4 text (settable) ▼ 󰉋 consigint                          │pid: 31071  elapsed: 2m  agent response ready · observed                                                                      
+~		6 text (settable)   ✓ local                              │• You have 1 usage limit reset available. Run /usage to use one.                                                              
+~		7 text (settable)      ├ terminal response ready · obser…│                                                                                                                              
+~		8 text (settable)      └ run 2m  ctx —                   │╭───────────────────────────────────────────╮                                                                                 
+~		11 text (settable)      └ run 2m  ctx —                   ││ model:     gpt-6-astra   /model to change │                                                                                 
+~		16 text (settable)      └ run 2m  ctx —                   │  professional work. Give it a hard problem, a half-formed idea, or anything you've been meaning to build. See where it takes 
+~		19 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+~		22 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+~		25 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+~		29 text (settable)   - local                              │• OVRCR_CODEX_READY_TWO.                                                                                                      
+~		31 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+~		34 text (settable)      └ run 2m  ctx —                   │  gpt-6-astra default · /private/tmp/ovrcr-codex-ready-pjuu5fpa/workspace                                                     
+~		39 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+~		42 text (settable)      └ run 2m  ctx —                   │                                                                                                                              
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 31071  elapsed: 2m  agent response ready · observed                                                                      
+  ▼ auth-handoff                       │tokens —  cost —                                                                                                              
+  ✓ local

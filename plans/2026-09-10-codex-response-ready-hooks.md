@@ -1,6 +1,6 @@
 # Codex response-ready hooks implementation plan
 
-> Planning only. No adapter or readiness feature is implemented by this document. Use one implementation worker and a separate reviewer for each unit; the coordinator alone stages files. Implement units in order and review their committed revisions.
+> Implementation and native acceptance completed through independently reviewed `56b84f9`; hosted run `34570470022` passed all four jobs. Final documentation review, delivery revision CI and diary closeout are in progress. Unit reports, corrections and failed attempts are retained in the acceptance record.
 
 **Goal:** Let the user see when a managed native Codex terminal has finished a root response and is ready for review.
 
@@ -22,7 +22,7 @@ Read `AGENTS.md`, `docs/development/{architecture,runtime,testing,tui,delivery}.
 - `response ready · observed`: a matching root `Stop` arrived for that prompt. This says a native response ended; it does not certify the answer, task success, or complete accounting.
 - `idle · observed`: an authenticated interruption ended the current turn. It never produces Ready.
 - Unknown or unavailable stays explicit when reporting cannot establish a state. Silence, process exit and terminal text never produce Ready.
-- The ready label remains until the next accepted root prompt, interruption or reporting invalidation. It survives dashboard reconnects through the server's existing snapshot. Selecting a session does not clear it.
+- The last Ready observation remains until the next accepted activity and survives dashboard reconnects through the server's existing snapshot. Reporting invalidation marks it unavailable; the retained observation is no longer a live reporting claim. Selecting a session does not clear it.
 - This is the **last observed root turn in the managed terminal**, not a claim about which historical conversation is currently displayed. Browsing/backtracking without submitting a prompt may leave the label unchanged. The next authenticated prompt can establish a new conversation binding.
 - First release uses a visible dashboard label and the existing CLI inspection path. It has no sound, OS notification, unread count, “mark reviewed” action or notification preferences. Those can follow separately if needed; the native GUI currently has no proven audible-bell path.
 
@@ -72,49 +72,49 @@ This scope permits event-time rebinding after in-process backtracking. Initial p
 
 **Files:** `crates/ovrcr-protocol/src/session.rs`, relevant serialization tests, `crates/ovrcr-runtime/src/server/tests.rs`, `crates/ovrcr-tui/src/dashboard/{render,tests}.rs`, `src/cli/{args,resources}.rs`, `tests/cli.rs`.
 
-- [ ] Add `AgentActivity::ResponseReady`; retain existing wire spellings and update exhaustive matches. Use the normal enum serialization convention for the new value.
-- [ ] Use existing `ActivitySample { state, quality: Observed, turn }` and `AgentSnapshot.activity_revision`. Do not add a separate readiness queue or acknowledgement watermark.
-- [ ] Render `response ready · observed` distinctly using the existing row layout, including narrow/split layouts. Keep reporter health and process exit visible independently. Never relabel generic Idle as ready.
-- [ ] Include the state in existing CLI inspection/manual activity parsing consistently. Metrics remain unknown rather than zero; no Codex metrics adapter.
-- [ ] Add meaningful serialization and real runtime-socket tests: Ready snapshot round-trip, stale revisions rejected, reconnect retains Ready, next Busy replaces it. Dashboard assertions cover label and clipping.
-- [ ] Run focused protocol/runtime/TUI/CLI tests and formatting. Reviewer checks the committed state-only unit before provider wiring.
+- [x] Add `AgentActivity::ResponseReady`; retain existing wire spellings and update exhaustive matches. Use the normal enum serialization convention for the new value.
+- [x] Use existing `ActivitySample { state, quality: Observed, turn }` and `AgentSnapshot.activity_revision`. Do not add a separate readiness queue or acknowledgement watermark.
+- [x] Render `response ready · observed` distinctly using the existing row layout, including narrow/split layouts. Keep reporter health and process exit visible independently. Never relabel generic Idle as ready.
+- [x] Include the state in existing CLI inspection/manual activity parsing consistently. Metrics remain unknown rather than zero; no Codex metrics adapter.
+- [x] Add meaningful serialization and real runtime-socket tests: Ready snapshot round-trip, stale revisions rejected, reconnect retains Ready, next Busy replaces it. Dashboard assertions cover label and clipping.
+- [x] Run focused protocol/runtime/TUI/CLI tests and formatting. Reviewer checks the committed state-only unit before provider wiring.
 
 ### Task 2 — Connect authenticated Codex hooks through the supervised launcher
 
 **Files:** `crates/ovrcr-runtime/src/agent_runner.rs`, `src/report.rs`, new `src/report/codex.rs`, `src/cli/{agent,report,args}.rs`, `tests/server_lifecycle.rs`, new `tests/codex_reporting.rs`.
 
-- [ ] Add provider-neutral trusted request metadata to `HookEvent::Request`: a runtime-computed native-root relationship, anchored to the supervised child's lifetime. Keep Codex parsing out of runtime; update Claude callers without changing their behavior. Implement macOS/Linux credential checks with existing platform dependencies where possible.
-- [ ] Add `reserve_invocation_for(AgentProvider)` while retaining the Claude compatibility wrapper; generalize private payload dispatch by provider. Reuse any equivalent helper already merged by Pi.
-- [ ] Implement `codex::receiver` returning the existing HookHandler and the hook table/state machine above. Do not create a collector. Deduplicate before generating report revisions so repeats never refresh the sample.
-- [ ] Add `ovrcr agent run codex -- ...` and `ovrcr report codex --stdin` dispatch. Outside a managed invocation the hook command safely no-ops. Do not fall back to an unauthenticated legacy route.
-- [ ] Preserve native argv, PTY, signals, exit code and approvals. Preserve the 65,536-byte envelope limit, 800 ms request deadline, one-second reporter budget and absolute two-second completion budget including receipts. Reporting startup failures must not prevent native launch.
-- [ ] Write RED tests through the actual managed CLI/PTY/private socket using deterministic hook-producing child processes: prompt→Stop gives Ready; prompt→Interrupt→Stop never does; duplicate prompt/Stop cannot reopen or refresh; old-turn Stop cannot finish a new turn; child Stop with root path and foreign-first callbacks cannot claim ownership.
-- [ ] Test cross-conversation next-prompt rebinding, late old-generation reports, lost Bind receipts, malformed/oversize payloads, missing hooks, identity-capacity exhaustion and native death. Verify output/exit and cleanup, not just returned errors.
-- [ ] Verify the pinned native synchronous hook ordering/direct-exec relationship with a focused two-turn and interruption exercise. If the necessary ordering or parent proof fails, retain that failure and stop this unit; do not silently relax it or restart broad research. Automated synthetic tests alone do not prove the native contract.
-- [ ] Reviewer checks exact committed changes and meaningful test execution, including unchanged Claude behavior. Fix findings before the next unit.
+- [x] Add provider-neutral trusted request metadata to `HookEvent::Request`: a runtime-computed native-root relationship, anchored to the supervised child's lifetime. Keep Codex parsing out of runtime; update Claude callers without changing their behavior. Implement macOS/Linux credential checks with existing platform dependencies where possible.
+- [x] Add `reserve_invocation_for(AgentProvider)` while retaining the Claude compatibility wrapper; generalize private payload dispatch by provider. Reuse any equivalent helper already merged by Pi.
+- [x] Implement `codex::receiver` returning the existing HookHandler and the hook table/state machine above. Do not create a collector. Deduplicate before generating report revisions so repeats never refresh the sample.
+- [x] Add `ovrcr agent run codex -- ...` and `ovrcr report codex --stdin` dispatch. Outside a managed invocation the hook command safely no-ops. Do not fall back to an unauthenticated legacy route.
+- [x] Preserve native argv, PTY, signals, exit code and approvals. Preserve the 65,536-byte envelope limit, 800 ms request deadline, one-second reporter budget and absolute two-second completion budget including receipts. Reporting startup failures must not prevent native launch.
+- [x] Write RED tests through the actual managed CLI/PTY/private socket using deterministic hook-producing child processes: prompt→Stop gives Ready; prompt→Interrupt→Stop never does; duplicate prompt/Stop cannot reopen or refresh; old-turn Stop cannot finish a new turn; child Stop with root path and foreign-first callbacks cannot claim ownership.
+- [x] Test cross-conversation next-prompt rebinding, late old-generation reports, lost Bind receipts, malformed/oversize payloads, missing hooks, identity-capacity exhaustion and native death. Verify output/exit and cleanup, not just returned errors.
+- [x] Verify the pinned native synchronous hook ordering/direct-exec relationship with a focused two-turn and interruption exercise. If the necessary ordering or parent proof fails, retain that failure and stop this unit; do not silently relax it or restart broad research. Automated synthetic tests alone do not prove the native contract.
+- [x] Reviewer checks exact committed changes and meaningful test execution, including unchanged Claude behavior. Fix findings before the next unit.
 
 ### Task 3 — Make setup and diagnostics usable without altering live configuration
 
 **Files:** new `src/cli/codex_setup.rs`, `src/cli/{mod,agent,args}.rs`, `tests/{agent_setup,cli}.rs`, new `docs/codex-reporting-setup.md`, `docs/agent-reporting-support.md`, affected CLI reference/help.
 
-- [ ] Dispatch setup/doctor explicitly by provider; resolve doctor executable defaults from the selected provider instead of always using Claude.
-- [ ] Print the supported 0.153.0 configuration using the TOML hook form retained in the native evidence, for SessionStart, UserPromptSubmit, Stop, Interrupt and SessionEnd. Show the absolute hook helper/direct-exec command and version requirement. Do not blindly port Superset's hooks.json format.
-- [ ] Preserve unrelated hook handlers and ordering in documented composition; installing the example is an explicit user step. Do not write live trust/config, inject trust bypasses, replace approval handlers or inspect credentials. Hooks must return the native no-op response, never an approval decision.
-- [ ] Doctor reports executable/version, hook setup requirements and managed-launch instructions without requiring a running server or invoking a provider conversation. State that presence of configuration does not prove hook trust or delivery.
-- [ ] Add CLI/setup regressions for paths with spaces, mixed provider dispatch, unrelated handlers, unsupported versions and no-op outside managed launch. Verify all tests actually execute.
-- [ ] Document exact semantics: terminal's last observed root turn, next-prompt clearing/rebinding, interruption, missing-hook/API-error limitations, reconnect behavior and first-release exclusions. Mark support planned until Task 4 passes.
-- [ ] Reviewer checks setup and docs against actual command output and the supported native schema.
+- [x] Dispatch setup/doctor explicitly by provider; resolve doctor executable defaults from the selected provider instead of always using Claude.
+- [x] Print the supported 0.153.0 configuration using the TOML hook form retained in the native evidence, for SessionStart, UserPromptSubmit, Stop, Interrupt and SessionEnd. Show the absolute hook helper/direct-exec command and version requirement. Do not blindly port Superset's hooks.json format.
+- [x] Preserve unrelated hook handlers and ordering in documented composition; installing the example is an explicit user step. Do not write live trust/config, inject trust bypasses, replace approval handlers or inspect credentials. Hooks must return the native no-op response, never an approval decision.
+- [x] Doctor reports executable/version, hook setup requirements and managed-launch instructions without requiring a running server or invoking a provider conversation. State that presence of configuration does not prove hook trust or delivery.
+- [x] Add CLI/setup regressions for paths with spaces, mixed provider dispatch, unrelated handlers, unsupported versions and no-op outside managed launch. Verify all tests actually execute.
+- [x] Document exact semantics: terminal's last observed root turn, next-prompt clearing/rebinding, interruption, missing-hook/API-error limitations, reconnect behavior and first-release exclusions. Mark support planned until Task 4 passes.
+- [x] Reviewer checks setup and docs against actual command output and the supported native schema.
 
 ### Task 4 — Accept and deliver the narrow feature
 
 **Files:** retained evidence under `research/codex-response-ready-acceptance/`, support/setup docs, this plan's checkboxes, existing work diary entry.
 
-- [ ] Refresh main and reconcile shared changes without touching Pi's checkout. Have an independent reviewer inspect the complete committed diff against this plan before native GUI acceptance.
-- [ ] Run relevant full workspace checks once the reviewed implementation is assembled; preserve failures and any justified retries. Use `CARGO_INCREMENTAL=0` while disk is constrained. Follow the development guides for exact commands and hosted capacity/memory gates; no local 50-session stress on the busy host.
-- [ ] From the reviewed checkout, use actual OVRCR native GUI with isolated config/socket/workspace and version-pinned native Codex. Reuse credentials only within the user's authorization; never retain them in fixtures. Obtain only applicable isolated trust approval; do not reuse Claude approval or alter live configuration.
-- [ ] Observe a distinct assistant output marker, then background-session Ready; submit another prompt and observe Busy then a second Ready. Disconnect/reconnect the dashboard and verify the retained label without acknowledgement or replay effects. Capture screenshots and relevant accessibility evidence.
-- [ ] Exercise interruption and a real child event without parent Ready; backtrack and submit a new root prompt to verify readiness for the new conversation. Do not claim that the label follows callback-free history browsing. Retain all failed attempts separately from successful acceptance.
-- [ ] Record macOS native results separately from Linux automated/platform results. Confirm real PTY/socket ownership, version, source revision and task-owned PID/group cleanup. Preserve resources with uncertain ownership and historical failed evidence.
+- [x] Refresh main and reconcile shared changes without touching Pi's checkout. Have an independent reviewer inspect the complete committed diff against this plan before native GUI acceptance.
+- [x] Run relevant full workspace checks once the reviewed implementation is assembled; preserve failures and any justified retries. Use `CARGO_INCREMENTAL=0` while disk is constrained. Follow the development guides for exact commands and hosted capacity/memory gates; no local 50-session stress on the busy host.
+- [x] From the reviewed checkout, use actual OVRCR native GUI with isolated config/socket/workspace and version-pinned native Codex. Reuse credentials only within the user's authorization; never retain them in fixtures. Obtain only applicable isolated trust approval; do not reuse Claude approval or alter live configuration.
+- [x] Observe a distinct assistant output marker, then background-session Ready; submit another prompt and observe Busy then a second Ready. Disconnect/reconnect the dashboard and verify the retained label without acknowledgement or replay effects. Capture screenshots and relevant accessibility evidence.
+- [x] Exercise interruption and a real child event without parent Ready; backtrack and submit a new root prompt to verify readiness for the new conversation. Do not claim that the label follows callback-free history browsing. Retain all failed attempts separately from successful acceptance.
+- [x] Record macOS native results separately from Linux automated/platform results. Confirm real PTY/socket ownership, version, source revision and task-owned PID/group cleanup. Preserve resources with uncertain ownership and historical failed evidence.
 - [ ] Update support/setup docs to only capabilities actually accepted. Final independent review must cover any acceptance-driven changes. Push the final revision to the separate Codex PR; require all current-head CI checks to pass. Do not merge or release.
 - [ ] Extend the existing work diary entry, then report PR, exact revision, implemented readiness behavior, test/native/platform results and remaining gaps. No original metrics or continuous-source checkbox is completed by this feature.
 
@@ -122,4 +122,8 @@ This scope permits event-time rebinding after in-process backtracking. Initial p
 
 The first useful delivery is the dashboard's response-ready label. A sound or durable unread workflow would need separate UX and host support; neither is hidden in these tasks. Code exploration confirmed that existing runtime snapshots already retain activity across reconnects, so no acknowledgement protocol is required for the selected semantics.
 
-Before staging implementation, verify branch/base/working-tree state and preserve the existing investigation. Each worker gets the current unit and relevant contracts; the reviewer checks the exact committed unit independently. The coordinator owns all staging. This planning artifact is not native acceptance, an implemented hook adapter or a resolution of the broader reporting blocker.
+Before staging implementation, verify branch/base/working-tree state and preserve the existing investigation. Each worker gets the current unit and relevant contracts; the reviewer checks the exact committed unit independently. The coordinator owns all staging. The completed state unit is not native Codex acceptance, an implemented hook adapter or a resolution of the broader reporting blocker.
+
+## Acceptance checkpoint
+
+See [final verification](../research/codex-response-ready-acceptance/final/README.md) and [native GUI evidence](../research/codex-response-ready-acceptance/native-final/README.md). Local full attempts remain failed; hosted macOS/Linux full suites passed on reviewed source. Interrupt native proof is retained from26be5eb on unchanged hook code; final assembled56b84f9 covers generated setup, child, reconnect, backtrack and narrow invalidation. Final PR revision checks and diary provide the delivery record; no merge or release.

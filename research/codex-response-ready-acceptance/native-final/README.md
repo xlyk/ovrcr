@@ -1,0 +1,26 @@
+# Final native acceptance — 56b84f9
+
+Actual OVRCR GUI from independently reviewed `56b84f9`, macOS, native Codex CLI **0.153.0**, default gpt-6-astra. Tracked checkout matched that revision during acceptance. GUI build and `just gui` both exited0. Binary hashes, generated configuration, screenshots/AX, socket snapshots, ownership and cleanup are retained here. Native offered an update to0.154.0; Skip kept the accepted pin.
+
+## Accepted observations
+
+- Used the actual `agent setup codex --print` output in a private disposable Codex home. Reviewed/trusted only its five synchronous command hooks and empty workspace through native UI, before the accepted prompt. An explicitly authorized0600 credential copy was removed afterward. No live trust/configuration changed.
+- Directly typed and verified `Reply exactly FINAL_READY_ONE.` before Return. Actual assistant `FINAL_READY_ONE` and Ready/Observed appeared. This fast first turn's Busy frame was not captured; later turns visibly showed Busy. Selecting another terminal retained background Ready. `first-ready.png` and `background-ready.png` retain the visible result; the latter AX is a no-change observation rather than a full tree.
+- Detached with q and clicked Restart dashboard. The same shell PID42209 and Ready label reappeared without a prompt. `detached-terminals.json` retains generation2/activity revision2/Connected during detach; `reconnected.ax.txt` records the subsequent unchanged UI observation. Computer-use action output showed the full reconnected tree. No acknowledgement or replay was needed.
+- Second root prompt visibly cleared Ready to Busy, spawned/completed a real native child, ran a20-second sleep and produced actual `FINAL_READY_TWO`. The intermediate child-completed/parent-Busy capture was missed; `child-progress.*` is a completed-turn observation, not proof of child isolation.
+- The bounded retry used a task-owned `child-release` file gate. Native `/root/gate_child` completed while the root waited in its actual shell command. `child-gated.png` and full AX show the completed child beside parent Busy. Two socket samples retain the same Busy revision5. Only after the coordinator released the gate did the root produce actual `FINAL_CHILD_GATE_READY` and Ready revision6. No premature parent Ready was observed.
+- Native backtracking displayed “continuing ... in a new conversation” while the old last-observed Ready binding remained. Replacing the recalled prompt and submitting `FINAL_BACKTRACK_READY` visibly produced Busy then actual assistant `FINAL_BACKTRACK_READY.` and Ready. Socket evidence changes conversation `01a08f2f-9fe7-76a0-847f-d60a6056bd86` → `01a08f33-c3fc-7500-8c83-39aaf73b47bb`, generation2→3 in the same invocation; new generation Ready revision2. This proves next-prompt rebinding, not callback-free foreground tracking.
+- Opened a split, then dragged its divider from62 to50 left columns. PID and Ready remained visible. `/exit` returned `FINAL_NATIVE_EXIT=0`; health became Unavailable with the prior Ready revision unchanged. Both narrow pane metadata and background/sidebar warning remained visible. Actual shell `stty size` output57×50 matches the resized PTY. See `exit-narrow.*`.
+- Native interruption is independently retained at reviewed hook implementation26be5eb in [Task2](../native-task-2/README.md): Ctrl-C produced Idle, never Ready. Final changes since that check affected setup, test fixtures and rendering; this case was not repeated in the assembled GUI. No Linux native-provider acceptance is claimed.
+
+## Failed attempts and limits
+
+[Failed clipboard input](failed-paste.md) is retained separately. The helper pasted unrelated pre-existing clipboard text instead of the requested marker; the native agent read an unrelated local document before Ctrl-C exited0. No edit was shown. The unrelated content and raw transcript are excluded from repository evidence. Direct typing with a visible pre-submit check avoided further clipboard use. This failed invocation is not marker acceptance.
+
+Two later typeText calls were refused by the UI-state-change guard before typing. Fresh AX then retry succeeded without duplicate input. A first sandbox process-inventory call was denied by macOS; the permitted read-only retry supplied ownership evidence. No product contract was relaxed.
+
+The kernel peer/native-parent checks ran on the production path for all accepted samples. Process evidence records supervisor55894, its native child55896 and the own GUI/server tree; no raw hook payload/peer trace or transcript observer was added. This is bounded native exercise, not a universal hook-order or simultaneous cold-launch guarantee. Other Stop hooks can affect native behavior after an observed Stop. Metrics remain null.
+
+## Cleanup
+
+GUI launcher exited0. `cleanup.json` verifies all21 recorded PIDs and16 process groups absent, including the first failed invocation's supervisor group; GUI root/socket and private provider home removed. The successful native child was independently recorded before exit. The failed invocation's native-child PID was not separately inventoried, so no exhaustive all-descendant claim is made for that attempt beyond supervisor-group disappearance and owned fixture removal. Resources of uncertain ownership from older investigations were preserved.

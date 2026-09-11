@@ -1,0 +1,31 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle codex_managed_hooks_ready_interrupt_duplicates_and_rebind -- --exact --nocapture
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.54s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxPfsqy/repo/.git/
+[main (root-commit) 160f4ec] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxPfsqy/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxPfsqy/server.sock
+
+thread 'codex_managed_hooks_ready_interrupt_duplicates_and_rebind' (41970164) panicked at tests/server_lifecycle.rs:9953:13:
+assertion `left == right` failed: UserPromptSubmit:root:f
+  left: Busy
+ right: ResponseReady
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... FAILED
+
+failures:
+
+failures:
+    codex_managed_hooks_ready_interrupt_duplicates_and_rebind
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 83 filtered out; finished in 2.24s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+
+Exit: 101

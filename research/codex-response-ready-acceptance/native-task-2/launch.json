@@ -1,0 +1,21 @@
+{
+  "supervisor_pid": 36652,
+  "supervisor_pgid": 36652,
+  "native": "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex",
+  "helper": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr",
+  "environment_keys": [
+    "CODEX_HOME",
+    "HOME",
+    "LANG",
+    "OVRCR_CONFIG",
+    "OVRCR_HOOK_SOCKET",
+    "OVRCR_HOOK_TOKEN",
+    "OVRCR_SESSION_ID",
+    "OVRCR_SOCKET",
+    "PATH",
+    "TERM"
+  ],
+  "ovrcr_config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LCuIcx/config.toml",
+  "ovrcr_socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-LCuIcx/server.sock",
+  "session_id": "2"
+}

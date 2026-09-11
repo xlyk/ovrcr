@@ -1,0 +1,30 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle private_claude_activity -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 2 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpphJR6U/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOgWAg0/repo/.git/
+[main (root-commit) dc35e59] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) dc35e59] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOgWAg0/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOgWAg0/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpphJR6U/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpphJR6U/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ovrcr server stopped
+test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+ovrcr server stopped
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 82 filtered out; finished in 2.02s
+
+
+Exit: 0
