@@ -1,5 +1,5 @@
 use super::copy::{CopyPoint, CopySelection};
-use super::state::{find_session, history_page_covers};
+use super::state::{find_session, find_workspace, history_page_covers};
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
@@ -76,6 +76,10 @@ pub(super) const GREEN: Color = Color::Rgb(166, 227, 161);
 pub(super) const TEAL: Color = Color::Rgb(148, 226, 213);
 pub(super) const BLUE: Color = Color::Rgb(137, 180, 250);
 pub(super) const SKY: Color = Color::Rgb(137, 220, 235);
+pub(super) const YELLOW: Color = Color::Rgb(249, 226, 175);
+pub(super) const RED: Color = Color::Rgb(243, 139, 168);
+pub(super) const SURFACE0: Color = Color::Rgb(49, 50, 68);
+pub(super) const SURFACE2: Color = Color::Rgb(88, 91, 112);
 pub(super) const SPINNER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -440,58 +444,18 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     let viewport_height = usize::from(layout.sidebar_content.height);
     let start = dashboard.tree_offset.min(tree_line_count(&rows));
     for screen_line in 0..viewport_height {
-        let Some((row, row_line)) = tree_line_at(&rows, start.saturating_add(screen_line)) else {
+        let Some(row) = tree_line_at(&rows, start.saturating_add(screen_line)) else {
             continue;
         };
         let y = layout.sidebar_content.y.saturating_add(screen_line as u16);
-        let (text, style) = tree_line_text(
+        let (line, style) = tree_line_text(
             dashboard,
             row,
-            row_line,
             usize::from(layout.sidebar_content.width),
             now_unix_ms,
         );
         let line_area = Rect::new(layout.sidebar_content.x, y, layout.sidebar_content.width, 1);
-        frame.render_widget(Block::default().style(style), line_area);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::raw(text))).style(style),
-            line_area,
-        );
-        let accents: &[(u16, Color)] = match row {
-            TreeRow::Project { name } => &[(
-                2,
-                if dashboard
-                    .hierarchy
-                    .projects
-                    .iter()
-                    .filter(|project| project.name < *name)
-                    .count()
-                    % 2
-                    == 0
-                {
-                    MAUVE
-                } else {
-                    SKY
-                },
-            )],
-            TreeRow::Workspace { .. } => &[(2, MAUVE)],
-            TreeRow::Session { id } if row_line == 0 && dashboard.action_session() != Some(*id) => {
-                &[(
-                    2,
-                    if dashboard.session_is_busy(*id) {
-                        GREEN
-                    } else {
-                        MUTED
-                    },
-                )]
-            }
-            _ => &[],
-        };
-        for &(column, color) in accents {
-            if column < line_area.width {
-                frame.buffer_mut()[(line_area.x + column, y)].set_fg(color);
-            }
-        }
+        frame.render_widget(Paragraph::new(line).style(style), line_area);
     }
 
     let rects = dashboard.pane_rects(frame.area());
@@ -765,13 +729,7 @@ impl Dashboard {
             lines.push(Line::from(format!("Config: {config}")));
             lines.push(Line::from(format!("Socket: {socket}")));
         } else if let Some(super::TreeRow::Workspace { project, name }) = &self.selected_container {
-            let empty = self
-                .hierarchy
-                .projects
-                .iter()
-                .find(|p| p.name == *project)
-                .and_then(|p| p.workspaces.iter().find(|w| w.name == *name))
-                .is_some_and(|w| w.sessions.is_empty());
+            let empty = find_workspace(self, project, name).is_some_and(|w| w.sessions.is_empty());
             if empty && let Some(hint) = hints.iter().find(|h| h.key == "n") {
                 lines.push(Line::from(format!(
                     "{project} / {name}: press {} to start a terminal here",
@@ -924,132 +882,246 @@ pub(super) fn sidebar_area(area: Rect) -> Rect {
     dashboard_layout(area).sidebar_content
 }
 
-pub(super) fn tree_row_height(row: &TreeRow) -> usize {
-    match row {
-        TreeRow::Session { .. } => 2,
-        TreeRow::Project { .. } | TreeRow::Workspace { .. } => 1,
-    }
+/// Blank lines drawn before a row: one before every project except the first.
+pub(super) fn tree_row_gap(rows: &[TreeRow], index: usize) -> usize {
+    usize::from(index > 0 && matches!(rows[index], TreeRow::Project { .. }))
+}
+
+/// Sidebar line occupied by `rows[index]`; every row is one line tall.
+pub(super) fn tree_row_start(rows: &[TreeRow], index: usize) -> usize {
+    index
+        + (0..=index)
+            .map(|earlier| tree_row_gap(rows, earlier))
+            .sum::<usize>()
 }
 
 pub(super) fn tree_line_count(rows: &[TreeRow]) -> usize {
-    rows.iter().map(tree_row_height).sum()
+    rows.len()
+        + (0..rows.len())
+            .map(|index| tree_row_gap(rows, index))
+            .sum::<usize>()
 }
 
-pub(super) fn tree_line_at(rows: &[TreeRow], line: usize) -> Option<(&TreeRow, usize)> {
+pub(super) fn tree_line_at(rows: &[TreeRow], line: usize) -> Option<&TreeRow> {
     let mut start: usize = 0;
-    for row in rows {
-        let height = tree_row_height(row);
-        if line < start.saturating_add(height) {
-            return Some((row, line - start));
+    for (index, row) in rows.iter().enumerate() {
+        start += tree_row_gap(rows, index);
+        if line < start {
+            return None;
         }
-        start += height;
+        if line == start {
+            return Some(row);
+        }
+        start += 1;
     }
     None
 }
 
+const WORKSPACE_INDENT: &str = "  ";
+const SESSION_INDENT: &str = "     ";
+/// Indent, status glyph and separating space before a session name.
+const SESSION_NAME_COLUMN: usize = SESSION_INDENT.len() + 2;
+/// Minimum cells kept for a session name before its model is dropped.
+const SESSION_NAME_MIN_WIDTH: usize = 12;
+
 fn tree_line_text(
     dashboard: &Dashboard,
     row: &TreeRow,
-    line: usize,
     width: usize,
     now_unix_ms: u64,
-) -> (String, Style) {
-    let base_style =
-        Style::default()
-            .fg(TEXT)
-            .bg(if dashboard.selected_container.as_ref() == Some(row) {
-                CRUST
-            } else {
-                BASE
-            });
-    match row {
+) -> (Line<'static>, Style) {
+    let selected = match row {
+        TreeRow::Session { id } => dashboard.action_session() == Some(*id),
+        TreeRow::Project { .. } | TreeRow::Workspace { .. } => {
+            dashboard.selected_container.as_ref() == Some(row)
+        }
+    };
+    let style = Style::default()
+        .fg(TEXT)
+        .bg(if selected { SURFACE0 } else { BASE });
+    let muted = Style::default().fg(MUTED);
+    let (left, fill, right) = match row {
         TreeRow::Project { name } => {
-            let disclosure = if dashboard.collapsed_projects.contains(name) {
-                '▶'
+            let full_title = format!(" {} ", name.to_uppercase());
+            let title = clip_text(&full_title, width);
+            // A clipped title has no room for a rule; a wide glyph can leave one stray cell.
+            let rule = if title == full_title { "─" } else { " " };
+            let right = if dashboard.collapsed_projects.contains(name) {
+                let count = dashboard
+                    .hierarchy
+                    .projects
+                    .iter()
+                    .find(|project| project.name == *name)
+                    .map_or(0, |project| project.workspaces.len());
+                vec![Span::styled(format!(" ▸ {count} ws "), muted)]
             } else {
-                '▼'
+                Vec::new()
             };
             (
-                clip_text(&format!("{disclosure} 󰉋 {name}"), width),
-                base_style.fg(BLUE).add_modifier(Modifier::BOLD),
+                vec![Span::styled(
+                    title,
+                    Style::default().fg(BLUE).add_modifier(Modifier::BOLD),
+                )],
+                Span::styled(rule, Style::default().fg(SURFACE2)),
+                right,
             )
         }
         TreeRow::Workspace { project, name } => {
-            let disclosure = if dashboard.collapsed_workspaces.iter().any(
+            let collapsed = dashboard.collapsed_workspaces.iter().any(
                 |(collapsed_project, collapsed_workspace)| {
                     collapsed_project == project && collapsed_workspace == name
                 },
-            ) {
-                '▶'
+            );
+            let right = if collapsed {
+                let count = find_workspace(dashboard, project, name)
+                    .map_or(0, |workspace| workspace.sessions.len());
+                vec![Span::styled(format!("▸ {count} "), muted)]
             } else {
-                '▼'
+                Vec::new()
             };
             (
-                clip_text(&format!("  {disclosure} {name}"), width),
-                base_style.fg(TEXT).add_modifier(Modifier::BOLD),
+                vec![
+                    Span::raw(WORKSPACE_INDENT),
+                    Span::styled("󰘬", muted),
+                    Span::styled(
+                        clip_text(
+                            &format!(" {name}"),
+                            width.saturating_sub(WORKSPACE_INDENT.len() + 1),
+                        ),
+                        Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                    ),
+                ],
+                Span::raw(" "),
+                right,
             )
         }
         TreeRow::Session { id } => {
             let Some(session) = find_session(dashboard, *id) else {
                 return (
-                    clip_text(&format!("    session {}", id.0), width),
-                    base_style,
+                    Line::from(clip_text(&format!("     session {}", id.0), width)),
+                    style,
                 );
             };
-            let selected = dashboard.action_session() == Some(*id);
-            let label = if session.name == "local" {
-                "terminal"
+            if session.name == "local" {
+                // A shell is quiet unless a hook reports real activity inside it.
+                let (glyph, glyph_color) = match session_status_glyph(session, now_unix_ms) {
+                    ('-' | ' ', _) => ('$', SUBTEXT),
+                    status => status,
+                };
+                let subtext = Style::default().fg(SUBTEXT);
+                (
+                    vec![
+                        Span::raw(SESSION_INDENT),
+                        Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
+                        Span::styled(
+                            clip_text(" local", width.saturating_sub(SESSION_INDENT.len() + 1)),
+                            subtext,
+                        ),
+                    ],
+                    Span::raw(" "),
+                    Vec::new(),
+                )
             } else {
-                session.label.as_str()
-            };
-            let status = match (&session.phase, session.activity) {
-                (SessionPhase::Exited { .. }, _) => ' ',
-                (SessionPhase::Paused, _) => 'P',
-                (_, AgentActivity::Unknown) => '-',
-                (_, AgentActivity::Idle) => ' ',
-                (_, AgentActivity::WaitingInput) => '?',
-                (_, AgentActivity::Error) => '!',
-                (_, AgentActivity::ResponseReady) => '✓',
-                (SessionPhase::Running, AgentActivity::Busy) => {
-                    SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
+                let exited = matches!(session.phase, SessionPhase::Exited { .. });
+                let (glyph, glyph_color) = session_status_glyph(session, now_unix_ms);
+                let mut name_style = Style::default().fg(TEXT);
+                if exited {
+                    name_style = name_style.add_modifier(Modifier::DIM);
                 }
-            };
-            let text = match line {
-                0 => format!("  {status} {}", session.name),
-                1 if session.agent.as_ref().is_some_and(|agent| {
-                    agent.health.state == ReporterHealth::Unavailable
-                        && agent
-                            .activity
-                            .as_ref()
-                            .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
-                }) =>
-                {
-                    format!("     └{} {label}", provider_activity(session))
-                }
-                _ => format!("     └ {label}{}", provider_activity(session)),
-            };
-            let mut style = if selected {
-                Style::default().fg(CRUST).bg(MAUVE)
-            } else if line == 1 {
-                Style::default()
-                    .fg(if matches!(session.phase, SessionPhase::Exited { .. }) {
-                        faded(label_color(label), 65)
-                    } else {
-                        label_color(label)
-                    })
-                    .bg(BASE)
-            } else {
-                base_style
-            };
-            if line == 0 {
-                style = style.add_modifier(Modifier::BOLD);
-                if !selected && matches!(session.phase, SessionPhase::Exited { .. }) {
-                    style = style.add_modifier(Modifier::DIM);
-                }
+                let model = session
+                    .label
+                    .split_once('/')
+                    .map_or(session.label.as_str(), |(_, model)| model)
+                    .trim();
+                let model_cells = Line::raw(model).width();
+                // Name width when the model is shown: two cells of gap and one trailing cell.
+                let name_width_with_model =
+                    width.saturating_sub(SESSION_NAME_COLUMN + model_cells + 3);
+                let show_model =
+                    !model.is_empty() && name_width_with_model >= SESSION_NAME_MIN_WIDTH;
+                let name_width = if show_model {
+                    name_width_with_model
+                } else {
+                    width.saturating_sub(SESSION_NAME_COLUMN)
+                };
+                let right = if show_model {
+                    let color = label_color(&session.label);
+                    vec![
+                        Span::styled(
+                            model.to_string(),
+                            Style::default().fg(if exited { faded(color, 65) } else { color }),
+                        ),
+                        Span::raw(" "),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                (
+                    vec![
+                        Span::raw(SESSION_INDENT),
+                        Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
+                        Span::raw(" "),
+                        Span::styled(clip_text(&session.name, name_width), name_style),
+                    ],
+                    Span::raw(" "),
+                    right,
+                )
             }
-            (clip_text(&text, width), style)
         }
+    };
+    (compose_row(left, fill, right, width, selected), style)
+}
+
+/// Status glyph and colour for a session row. An unavailable reporter mutes the glyph.
+fn session_status_glyph(session: &SessionSummary, now_unix_ms: u64) -> (char, Color) {
+    let (glyph, color) = match (&session.phase, session.activity) {
+        (SessionPhase::Exited { .. }, _) => ('·', MUTED),
+        (SessionPhase::Paused, _) => ('P', SUBTEXT),
+        (_, AgentActivity::Unknown) => ('-', MUTED),
+        (_, AgentActivity::Idle) => (' ', MUTED),
+        (_, AgentActivity::WaitingInput) => ('?', YELLOW),
+        (_, AgentActivity::Error) => ('!', RED),
+        (_, AgentActivity::ResponseReady) => ('✓', TEAL),
+        (SessionPhase::Running, AgentActivity::Busy) => (
+            SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize],
+            GREEN,
+        ),
+    };
+    let unavailable = session
+        .agent
+        .as_ref()
+        .is_some_and(|agent| agent.health.state == ReporterHealth::Unavailable);
+    (glyph, if unavailable { MUTED } else { color })
+}
+
+/// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,
+/// then `right`. A selected row replaces its first cell with a mauve bar.
+fn compose_row(
+    mut left: Vec<Span<'static>>,
+    fill: Span<'static>,
+    right: Vec<Span<'static>>,
+    width: usize,
+    selected: bool,
+) -> Line<'static> {
+    let cells = |spans: &[Span<'static>]| spans.iter().map(Span::width).sum::<usize>();
+    let right = if cells(&left) + cells(&right) > width {
+        Vec::new()
+    } else {
+        right
+    };
+    let gap = width.saturating_sub(cells(&left) + cells(&right));
+    if selected && let Some(first) = left.first_mut() {
+        let mut rest = first.content.to_string();
+        if !rest.is_empty() {
+            rest.remove(0);
+        }
+        first.content = rest.into();
+        left.insert(0, Span::styled("▌", Style::default().fg(MAUVE)));
     }
+    let mut spans = left;
+    spans.push(Span::styled(fill.content.repeat(gap), fill.style));
+    spans.extend(right);
+    Line::from(spans)
 }
 
 fn provider_activity(session: &SessionSummary) -> String {

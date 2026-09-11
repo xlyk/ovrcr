@@ -5,7 +5,7 @@ use super::copy::{
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
 use super::render::{
-    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_height,
+    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_start,
 };
 use super::settings::DashboardSettings;
 use super::{
@@ -1059,8 +1059,8 @@ impl Dashboard {
             return;
         };
         let height = self.tree_viewport_height();
-        let selected_start = rows.iter().take(index).map(tree_row_height).sum::<usize>();
-        let selected_end = selected_start.saturating_add(tree_row_height(&rows[index]));
+        let selected_start = tree_row_start(rows, index);
+        let selected_end = selected_start.saturating_add(1);
         if selected_start < self.tree_offset {
             self.tree_offset = selected_start;
         } else if selected_end > self.tree_offset.saturating_add(height) {
@@ -1952,7 +1952,7 @@ impl Dashboard {
             MouseEventKind::Down(MouseButton::Left) => {
                 let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
                 let rows = self.visible_rows();
-                let (row, _) = tree_line_at(&rows, row_index)?;
+                let row = tree_line_at(&rows, row_index)?;
                 let row = row.clone();
                 let column = mouse.column.saturating_sub(sidebar.x);
                 match row {
@@ -3146,6 +3146,24 @@ impl Dashboard {
         (was_view_request, owns_error)
     }
 }
+pub(super) fn find_workspace<'a>(
+    dashboard: &'a Dashboard,
+    project: &str,
+    name: &str,
+) -> Option<&'a ovrcr_protocol::WorkspaceSummary> {
+    dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .find(|candidate| candidate.name == project)
+        .and_then(|candidate| {
+            candidate
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == name)
+        })
+}
+
 pub(super) fn find_session(
     dashboard: &Dashboard,
     id: SessionId,

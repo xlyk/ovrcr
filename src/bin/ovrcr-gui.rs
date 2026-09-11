@@ -165,7 +165,7 @@ fn terminal_fonts_render_mockup_glyphs_or_default_symbols() {
                 FontFamily::Name(name) if name.as_ref() == JETBRAINS_REGULAR
             );
             let symbols = if nerd_font {
-                "▼▶󰉋⠋├└"
+                "󰘬⠋▌▸✓·─"
             } else {
                 "⠋"
             };

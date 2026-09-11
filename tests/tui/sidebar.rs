@@ -60,8 +60,9 @@ fn dashboard_layout() {
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     assert!(rendered[1].contains("pid: 111  elapsed: 0m"));
     assert!(rendered[2].contains("─"));
-    assert!(buffer[(8, 10)].modifier.contains(Modifier::DIM));
-    assert_eq!(buffer[(1, 5)].bg, Color::Rgb(203, 166, 247));
+    assert!(buffer[(8, 7)].modifier.contains(Modifier::DIM));
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
+    assert_eq!(buffer[(1, 4)].bg, Color::Rgb(49, 50, 68));
 
     dashboard.select_session(SessionId(2));
     terminal
@@ -83,36 +84,131 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
         .unwrap();
     let buffer = terminal.backend().buffer();
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(1).trim_end(), "▼ 󰉋 consigint");
-    assert_eq!(row(2).trim_end(), "  ▼ auth");
-    assert_eq!(row(3).trim_end(), "  - local");
-    assert_eq!(row(4).trim_end(), "     └ terminal");
-    assert_eq!(row(5).trim_end(), "  - review");
-    assert_eq!(row(6).trim_end(), "     └ claude");
-    assert_eq!(buffer[(2, 1)].fg, Color::Rgb(203, 166, 247));
-    assert_eq!(buffer[(2, 2)].fg, Color::Rgb(203, 166, 247));
+    let rule = |used: usize| "─".repeat(39 - used);
+    // The title band is unchanged; mauve there is the one place it is not selection.
+    assert_eq!(row(0).trim_end(), "󰚩 OVRCR  agent runtime");
+    assert_eq!(buffer[(1, 0)].bg, Color::Rgb(203, 166, 247));
+    // Project section header: upper case, blue bold, rule to the edge, no chevron.
+    assert_eq!(row(1), format!(" CONSIGINT {}", rule(11)));
+    assert_eq!(buffer[(1, 1)].fg, Color::Rgb(137, 180, 250));
+    assert!(buffer[(1, 1)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(20, 1)].fg, Color::Rgb(88, 91, 112));
+    // Workspace: branch glyph, bold name.
+    assert_eq!(row(2).trim_end(), "  󰘬 auth");
+    assert_eq!(buffer[(2, 2)].fg, Color::Rgb(108, 112, 134));
     assert_eq!(buffer[(4, 2)].fg, Color::Rgb(205, 214, 244));
-    assert_eq!(buffer[(2, 5)].fg, Color::Rgb(108, 112, 134));
-    assert_eq!(row(7).trim_end(), "  ▼ lifecycle");
-    assert_eq!(row(8).trim_end(), "  - local");
-    assert_eq!(row(9).trim_end(), "     └ terminal");
-    assert_eq!(row(10).trim_end(), "    implement");
-    assert_eq!(row(11).trim_end(), "     └ claude");
-    assert_eq!(row(12).trim_end(), "▼ 󰉋 spacelift-agent");
-    assert_eq!(row(13).trim_end(), "  ▼ progress");
-    assert_eq!(row(14).trim_end(), "  - local");
-    assert_eq!(row(15).trim_end(), "     └ terminal");
-    assert_eq!(row(16).trim_end(), "");
-    assert_eq!(buffer[(2, 12)].fg, Color::Rgb(137, 220, 235));
-    assert_eq!(buffer[(7, 9)].fg, Color::Rgb(166, 173, 200));
+    assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
+    // Selected local shell: mauve bar, surface background, subtext glyph and name.
+    assert_eq!(row(3).trim_end(), "▌    $ local");
+    assert_eq!(buffer[(0, 3)].fg, Color::Rgb(203, 166, 247));
+    for x in 0..39 {
+        assert_eq!(buffer[(x, 3)].bg, Color::Rgb(49, 50, 68), "column {x}");
+    }
+    assert_eq!(buffer[(5, 3)].fg, Color::Rgb(166, 173, 200));
+    assert_eq!(buffer[(7, 3)].fg, Color::Rgb(166, 173, 200));
+    // Session: status glyph at column 5, regular-weight name, model right-aligned in
+    // the provider colour, one trailing cell.
+    assert_eq!(row(4), format!("     - review{}claude ", " ".repeat(19)));
+    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
+    assert_eq!(buffer[(7, 4)].fg, Color::Rgb(205, 214, 244));
+    assert!(!buffer[(7, 4)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(buffer[(4, 4)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(row(5).trim_end(), "  󰘬 lifecycle");
+    assert_eq!(row(6).trim_end(), "     $ local");
+    assert_eq!(row(7), format!("     · implement{}claude ", " ".repeat(16)));
+    assert!(buffer[(7, 7)].modifier.contains(Modifier::DIM));
+    assert_eq!(buffer[(33, 7)].fg, Color::Rgb(173, 127, 104));
+    // Blank gap line before the next project, then its header.
+    assert_eq!(row(8).trim_end(), "");
+    assert_eq!(row(9), format!(" SPACELIFT-AGENT {}", rule(17)));
+    assert_eq!(buffer[(1, 9)].fg, Color::Rgb(137, 180, 250));
+    assert_eq!(row(10).trim_end(), "  󰘬 progress");
+    assert_eq!(row(11).trim_end(), "     $ local");
+    assert_eq!(row(12).trim_end(), "");
+    assert_eq!(buffer[(39, 3)].symbol(), "│");
+
+    // Selecting another session moves the bar and background with it.
     dashboard.select_session(SessionId(1));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(
-        terminal.backend().buffer()[(2, 5)].fg,
-        Color::Rgb(17, 17, 27)
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
+    assert_eq!(buffer[(20, 4)].bg, Color::Rgb(49, 50, 68));
+    assert_eq!(buffer[(0, 3)].symbol(), " ");
+    assert_eq!(buffer[(20, 3)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+
+    // Selecting a workspace container by its name uses the same bar and background.
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 6,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
     );
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, 2)].symbol(), "▌");
+    assert_eq!(buffer[(0, 2)].fg, Color::Rgb(203, 166, 247));
+    assert_eq!(buffer[(20, 2)].bg, Color::Rgb(49, 50, 68));
+    assert_eq!(buffer[(4, 2)].fg, Color::Rgb(205, 214, 244));
+    assert_eq!(buffer[(0, 4)].symbol(), " ");
+}
+
+#[test]
+fn unavailable_reporter_mutes_the_status_glyph() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, ReporterHealth,
+        SampleQuality,
+    };
+    let mut dashboard = dashboard_fixture();
+    let review = &mut dashboard.hierarchy.projects[1].workspaces[1].sessions[0];
+    review.activity = AgentActivity::ResponseReady;
+    review.agent = Some(AgentSnapshot {
+        binding: AgentBinding {
+            provider: AgentProvider::Claude,
+            invocation: "invocation".into(),
+            conversation: "conversation".into(),
+            generation: 1,
+        },
+        activity: Some(ActivitySample {
+            state: AgentActivity::ResponseReady,
+            quality: SampleQuality::Observed,
+            turn: None,
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Unavailable,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 1,
+        health_revision: 1,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    for (health, color) in [
+        (ReporterHealth::Unavailable, Color::Rgb(108, 112, 134)),
+        (ReporterHealth::Connected, Color::Rgb(148, 226, 213)),
+    ] {
+        dashboard.hierarchy.projects[1].workspaces[1].sessions[0]
+            .agent
+            .as_mut()
+            .unwrap()
+            .health
+            .state = health;
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        let cell = &terminal.backend().buffer()[(5, 4)];
+        assert_eq!(cell.symbol(), "✓", "{health:?}");
+        assert_eq!(cell.fg, color, "{health:?}");
+    }
 }
 
 #[test]
@@ -125,24 +221,24 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
             .unwrap();
-        assert_eq!(terminal.backend().buffer()[(2, 5)].symbol(), marker);
+        assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), marker);
         assert_eq!(
-            terminal.backend().buffer()[(2, 5)].fg,
+            terminal.backend().buffer()[(5, 4)].fg,
             Color::Rgb(166, 227, 161)
         );
-        assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "-");
+        assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
     }
     dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::Idle;
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1100))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(2, 5)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), " ");
     // An exited process cannot remain busy, even if an old signal is retained.
     dashboard.hierarchy.projects[1].workspaces[0].sessions[0].activity = AgentActivity::Busy;
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(2, 10)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
 }
 
 #[test]
@@ -202,21 +298,60 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
 #[test]
 fn agent_hook_sidebar_states_are_literal() {
     let mut dashboard = dashboard_fixture();
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity = AgentActivity::Unknown;
-    dashboard.hierarchy.projects[1].workspaces[0].sessions[1].activity = AgentActivity::Idle;
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity =
-        AgentActivity::WaitingInput;
-    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].activity = AgentActivity::Error;
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let muted = Color::Rgb(108, 112, 134);
+    for (activity, phase, glyph, color) in [
+        (AgentActivity::Unknown, SessionPhase::Running, "-", muted),
+        (AgentActivity::Idle, SessionPhase::Running, " ", muted),
+        (
+            AgentActivity::WaitingInput,
+            SessionPhase::Running,
+            "?",
+            Color::Rgb(249, 226, 175),
+        ),
+        (
+            AgentActivity::Error,
+            SessionPhase::Running,
+            "!",
+            Color::Rgb(243, 139, 168),
+        ),
+        (
+            AgentActivity::ResponseReady,
+            SessionPhase::Running,
+            "✓",
+            Color::Rgb(148, 226, 213),
+        ),
+        (
+            AgentActivity::Busy,
+            SessionPhase::Paused,
+            "P",
+            Color::Rgb(166, 173, 200),
+        ),
+    ] {
+        let review = &mut dashboard.hierarchy.projects[1].workspaces[1].sessions[0];
+        review.activity = activity;
+        review.phase = phase;
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+            .unwrap();
+        let cell = &terminal.backend().buffer()[(5, 4)];
+        assert_eq!(cell.symbol(), glyph, "{activity:?}");
+        assert_eq!(cell.fg, color, "{activity:?}");
+    }
+    // Exited sessions show a muted dot whatever their last activity was.
+    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].activity = AgentActivity::Error;
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(2, 3)].symbol(), "-");
-    assert_eq!(buffer[(2, 8)].symbol(), " ");
-    assert_eq!(buffer[(2, 5)].symbol(), "?");
-    assert_eq!(buffer[(2, 14)].symbol(), "!");
-    assert_eq!(buffer[(2, 10)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
+    assert_eq!(terminal.backend().buffer()[(5, 7)].fg, muted);
+    // A local shell stays quiet until a hook reports real activity inside it.
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].activity = AgentActivity::Error;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(terminal.backend().buffer()[(5, 11)].symbol(), "!");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 }
 
 #[test]
@@ -229,7 +364,7 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "-");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
@@ -269,7 +404,7 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 100))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), "⠙");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "⠙");
 
     summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Idle;
@@ -288,11 +423,11 @@ fn agent_hook_summary_updates_drive_animation() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 200))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(2, 3)].symbol(), " ");
+    assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
 }
 
 #[test]
-fn selected_session_uses_two_full_width_sidebar_lines() {
+fn selected_session_uses_a_soft_bar_on_one_line() {
     let dashboard = dashboard_fixture();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -300,15 +435,13 @@ fn selected_session_uses_two_full_width_sidebar_lines() {
         .unwrap();
     let buffer = terminal.backend().buffer();
 
-    for row in 5..=6 {
-        for col in 0..39 {
-            assert_eq!(buffer[(col, row)].bg, Color::Rgb(203, 166, 247));
-        }
+    for col in 0..39 {
+        assert_eq!(buffer[(col, 4)].bg, Color::Rgb(49, 50, 68), "column {col}");
     }
-    for row in [4, 7] {
-        assert_ne!(buffer[(0, row)].bg, Color::Rgb(203, 166, 247));
+    for row in [3, 5] {
+        assert_eq!(buffer[(0, row)].bg, Color::Rgb(30, 30, 46));
     }
-    let rendered = (5..=7)
+    let rendered = (3..=5)
         .map(|row| {
             (0..39)
                 .map(|col| buffer[(col, row)].symbol())
@@ -317,7 +450,19 @@ fn selected_session_uses_two_full_width_sidebar_lines() {
                 .to_owned()
         })
         .collect::<Vec<_>>();
-    assert_eq!(rendered, ["  - review", "     └ claude", "  ▼ lifecycle"]);
+    assert_eq!(
+        rendered,
+        [
+            "     $ local",
+            &format!("▌    - review{}claude", " ".repeat(19)),
+            "  󰘬 lifecycle"
+        ]
+    );
+    // The selected row keeps its own status and provider colours.
+    assert_eq!(buffer[(0, 4)].fg, Color::Rgb(203, 166, 247));
+    assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
+    assert_eq!(buffer[(7, 4)].fg, Color::Rgb(205, 214, 244));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
 }
 
 #[test]
@@ -378,7 +523,7 @@ fn context_updates_leave_the_compact_sidebar_unchanged() {
 }
 
 #[test]
-fn compact_sidebar_clicks_use_both_session_lines_and_adjacent_containers() {
+fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
     let area = Rect::new(0, 0, 120, 40);
     let click = |column, row| MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -386,18 +531,7 @@ fn compact_sidebar_clicks_use_both_session_lines_and_adjacent_containers() {
         row,
         modifiers: KeyModifiers::NONE,
     };
-    for (row, id) in [
-        (3, 5),
-        (4, 5),
-        (5, 1),
-        (6, 1),
-        (8, 4),
-        (9, 4),
-        (10, 2),
-        (11, 2),
-        (14, 3),
-        (15, 3),
-    ] {
+    for (row, id) in [(3, 5), (4, 1), (6, 4), (7, 2), (11, 3)] {
         let mut dashboard = dashboard_fixture();
         dashboard.mouse_action(click(7, row), area);
         assert_eq!(
@@ -405,10 +539,14 @@ fn compact_sidebar_clicks_use_both_session_lines_and_adjacent_containers() {
             Some(SessionId(id)),
             "row {row}"
         );
+        // Anywhere on the row selects, including the right-aligned model.
+        let mut dashboard = dashboard_fixture();
+        dashboard.mouse_action(click(36, row), area);
+        assert_eq!(dashboard.focused_session(), Some(SessionId(id)));
     }
     let mut workspace = dashboard_fixture();
     assert_eq!(
-        workspace.mouse_action(click(2, 7), area),
+        workspace.mouse_action(click(2, 5), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(
@@ -418,16 +556,19 @@ fn compact_sidebar_clicks_use_both_session_lines_and_adjacent_containers() {
     );
     let mut project = dashboard_fixture();
     assert_eq!(
-        project.mouse_action(click(0, 12), area),
+        project.mouse_action(click(0, 9), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(project.collapsed_projects.contains("spacelift-agent"));
-    let mut blank = dashboard_fixture();
-    assert_eq!(
-        blank.mouse_action(click(7, 16), area),
-        ovrcr::tui::DashboardAction::None
-    );
-    assert_eq!(blank.focused_session(), Some(SessionId(1)));
+    for row in [8, 13] {
+        let mut blank = dashboard_fixture();
+        assert_eq!(
+            blank.mouse_action(click(7, row), area),
+            ovrcr::tui::DashboardAction::None,
+            "row {row}"
+        );
+        assert_eq!(blank.focused_session(), Some(SessionId(1)));
+    }
 }
 
 #[test]
@@ -444,8 +585,11 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
 
     assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     assert!(buffer[(4, 5)].modifier.contains(Modifier::BOLD));
-    assert_eq!(buffer[(7, 6)].fg, Color::Rgb(250, 179, 135));
-    assert_eq!(buffer[(7, 11)].fg, Color::Rgb(144, 150, 175));
+    let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+    assert_eq!(row(4), format!("     - review{}sonnet-4 ", " ".repeat(17)));
+    assert_eq!(buffer[(30, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(row(7), format!("     · implement{}model ", " ".repeat(17)));
+    assert_eq!(buffer[(33, 7)].fg, Color::Rgb(144, 150, 175));
 }
 
 #[test]
@@ -464,6 +608,22 @@ fn long_sidebar_names_clip_to_one_screen_line() {
         .collect::<String>();
     assert!(project.trim_end().ends_with('…'));
     assert_eq!(buffer[(39, 1)].symbol(), "│");
+    let review = (0..39)
+        .map(|column| buffer[(column, 4)].symbol())
+        .collect::<String>();
+    assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
+
+    // Too narrow for a twelve-cell name beside the model: the model goes first.
+    let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let review = (0..24)
+        .map(|column| buffer[(column, 4)].symbol())
+        .collect::<String>();
+    assert_eq!(review, "▌    - review-a-very-lo…");
+    assert_eq!(buffer[(24, 4)].symbol(), "│");
 }
 
 #[test]
@@ -517,18 +677,34 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let collapsed_workspace = (0..39)
-        .map(|column| terminal.backend().buffer()[(column, 2)].symbol())
-        .collect::<String>();
-    assert!(collapsed_workspace.contains('▶'));
+    let row = |terminal: &Terminal<TestBackend>, y| {
+        (0..39)
+            .map(|column| terminal.backend().buffer()[(column, y)].symbol())
+            .collect::<String>()
+    };
+    // A folded workspace shows how many sessions it hides.
+    assert_eq!(row(&terminal, 2), format!("  󰘬 auth{}▸ 2 ", " ".repeat(27)));
     let action = dashboard.mouse_action(mouse(2, 2), Rect::new(0, 0, 120, 40));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    let action = dashboard.mouse_action(mouse(4, 6), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(4, 4), Rect::new(0, 0, 120, 40));
     assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     let action = dashboard.mouse_action(mouse(0, 1), Rect::new(0, 0, 120, 40));
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     assert!(dashboard.collapsed_projects.contains("consigint"));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    // A folded project shows its workspace count and keeps its rule.
+    assert_eq!(
+        row(&terminal, 1),
+        format!(" CONSIGINT {} ▸ 2 ws ", "─".repeat(20))
+    );
+    assert_eq!(row(&terminal, 2).trim_end(), "");
+    assert_eq!(
+        row(&terminal, 3),
+        format!(" SPACELIFT-AGENT {}", "─".repeat(22))
+    );
     let action = dashboard.mouse_action(
         MouseEvent {
             column: 60,
@@ -542,6 +718,7 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
         dashboard.mouse_action(mouse(4, 5), Rect::new(0, 0, 120, 40)),
         ovrcr::tui::DashboardAction::Redraw
     );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
 }
 
 #[test]
@@ -884,9 +1061,12 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-    assert_eq!(rendered[35].trim_end(), "  - session-50");
-    assert_eq!(rendered[36].trim_end(), "     └ sh");
-    for (index, row) in (35..=36).enumerate() {
+    assert_eq!(
+        rendered[36],
+        format!("▌    - session-50{}sh ", " ".repeat(19))
+    );
+    assert_eq!(rendered[37].trim_end(), "");
+    for (index, row) in (36..=37).enumerate() {
         let action = dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -929,11 +1109,11 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    for (row, expected) in [(1, "     └ sh"), (2, "  - session-3"), (3, "     └ sh")] {
+    for (row, expected) in [(1, "session-4"), (2, "session-5"), (3, "session-6")] {
         let text = (0..39)
             .map(|col| terminal.backend().buffer()[(col, row)].symbol())
             .collect::<String>();
-        assert_eq!(text.trim_end(), expected);
+        assert_eq!(text[..17].trim_end(), format!("     - {expected}"));
     }
     let action = dashboard.mouse_action(
         MouseEvent {
@@ -948,7 +1128,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         action,
         ovrcr::tui::DashboardAction::Request(_) | ovrcr::tui::DashboardAction::Redraw
     ));
-    assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(6)));
 }
 
 #[test]
@@ -1033,8 +1213,8 @@ fn ux_live_metadata_is_readable_and_preserves_selection() {
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    // The first local shell is unselected; its label row is row 4.
-    let color = buffer[(8, 4)].fg;
+    // The first local shell is unselected on row 3; its name must stay readable.
+    let color = buffer[(8, 3)].fg;
     let Color::Rgb(r, g, b) = color else {
         panic!("expected RGB metadata: {color:?}")
     };
@@ -1042,6 +1222,6 @@ fn ux_live_metadata_is_readable_and_preserves_selection() {
         r >= 160 && g >= 160 && b >= 160,
         "faint metadata: {color:?}"
     );
-    // The selected review still uses the original selected-row background.
-    assert_eq!(buffer[(8, 5)].bg, Color::Rgb(203, 166, 247));
+    // The selected review uses the soft selection background.
+    assert_eq!(buffer[(8, 4)].bg, Color::Rgb(49, 50, 68));
 }

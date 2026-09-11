@@ -1,0 +1,34 @@
+<!doctype html><meta charset="utf-8"><title>05 · focus</title>
+<link rel="stylesheet" href="base.css">
+<div class="window"><div class="titlebar"><span class="pill">▣</span> OVRCR GUI</div><div class="sidebar" id="sb"></div></div>
+<p class="note"><b>05 · Accordion with a filter.</b> Only the workspace holding the selection is open; the others collapse to one line with a session count and roll-up. With fifty sessions this is the difference between a list you scroll and a list you read. A filter row at the top (type in it) narrows by name and opens every workspace with a hit. Sessions show status and name only. A key hint footer replaces the need to remember the bindings. Click a folded workspace to open it and select its first session.</p>
+<script src="data.js"></script>
+<script>
+let filter='';
+function render(){
+  const f=filter.trim().toLowerCase(), sel=selectedSession(), open='w:'+sel.project+'/'+sel.workspace;
+  const rc=rollup(counts(ALL)), rtext=rc.map(x=>x[0]).join('');
+  let h = `<div class="row hdr-line"><span class="muted"> 󰍉 </span><input id="flt" style="width:${W-4-len(rtext)-1}ch" placeholder="filter sessions" value="${esc(filter)}"> ${rc.map(([t,c])=>`<span class="${c}">${esc(t)}</span>`).join('')}</div>`;
+  for(const p of DATA){
+    h += line([[' ▾ '+p.name,'blue b']]);
+    for(const w of p.workspaces){
+      const hits = f? w.sessions.filter(s=>s.name.toLowerCase().includes(f)) : w.sessions;
+      if(f && !hits.length) continue;
+      const isOpen = f? true : ('w:'+p.name+'/'+w.name)===open;
+      h += line([['   '+(isOpen?'▾':'▸')+' '+trunc(w.name,22),'text b']], [[String(w.sessions.length),'muted'],['  ',''],...rollup(counts(w.sessions)),[' ','']], '', isOpen?'':`data-ws="${p.name}/${w.name}"`);
+      if(!isOpen) continue;
+      for(const s of hits){
+        const isSel=s.id===state.selected, dim=(s.phase==='exited'&&!isSel)?' dim':'';
+        if(s.name==='local'){ h += line([['       $ local','subtext']],[],isSel?'sel':'',`data-sid="${s.id}"`); continue; }
+        const [g,gc,sp]=status(s);
+        h += line([['       ',''],[g,gc+(sp?' spin':'')],[' ',''],[s.name,'text'+dim]],[],isSel?'sel':'',`data-sid="${s.id}"`);
+      }
+    }
+  }
+  h += '<div class="grow"></div>' + rule();
+  h += line([[' j/k','subtext'],[' move  ','muted'],['⏎','subtext'],[' attach  ','muted'],['/','subtext'],[' filter  ','muted'],['␣','subtext'],[' fold','muted']]);
+  sb.innerHTML=h;
+}
+sb.addEventListener('input', e=>{ if(e.target.id!=='flt') return; filter=e.target.value; render(); const i=document.getElementById('flt'); i.focus(); i.setSelectionRange(filter.length,filter.length); });
+bind(sb,render); render();
+</script>

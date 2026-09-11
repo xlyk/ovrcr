@@ -163,10 +163,12 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 | `Space` `?` | Contextual key groups; `?` also supports arrows and Enter |
 | `q` | Detach; the server and every session keep running |
 
-The sidebar gives each session two lines — its name and label — with no blank
-lines between projects or workspaces. It marks reported activity: blank when idle, a braille
-spinner when busy, `?` when waiting for input, `!` on a reported error, and `-`
-until a hook report arrives. Exited rows are dimmed.
+The sidebar gives each session one line: a status glyph, its name, and its
+model right-aligned in the provider colour. Projects are upper-case section
+headers with a rule; workspaces carry a branch glyph. The glyph is blank when
+idle, a green braille spinner when busy, `?` when waiting for input, `!` on a
+reported error, `✓` when a response is ready, `·` after exit, and `-` until a
+hook report arrives. Local shells show `$`.
 
 `Space` and `?` open a compact popup in the bottom-right corner. In Browse,
 choose a group, then an action. The available groups follow the selected row:

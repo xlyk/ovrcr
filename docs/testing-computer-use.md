@@ -144,9 +144,10 @@ the form and menu checks in a short window to exercise scrolling and clipping.
    too narrow for both panes, widen it again, and confirm assignments and the
    chosen split survive. Release the drag outside the terminal and confirm the
    next click works normally.
-3. Click a project or workspace label to select it without collapsing it. Click
-   its disclosure arrow to collapse and expand it. Scroll the sidebar and select
-   a row that was initially offscreen. Confirm the selected target by its name.
+3. Click a project or workspace name to select it without collapsing it. Click
+   the first cell of a project header, or the branch glyph of a workspace, to
+   collapse and expand it. Scroll the sidebar and select a row that was
+   initially offscreen. Confirm the selected target by its name.
 4. Open a creation form from the visible action menu. Click a nonactive field,
    edit in the middle of its value, choose a pick-list option, and operate any
    toggle. Browse a directory through the path picker. Use Cancel, reopen, and

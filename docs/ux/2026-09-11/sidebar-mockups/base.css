@@ -1,0 +1,36 @@
+/* Catppuccin Mocha — same constants as crates/ovrcr-tui/src/dashboard/render.rs */
+:root{
+  --base:#1e1e2e;--mantle:#181825;--crust:#11111b;
+  --surface0:#313244;--surface1:#45475a;--surface2:#585b70;
+  --muted:#6c7086;--subtext:#a6adc8;--text:#cdd6f4;
+  --mauve:#cba6f7;--peach:#fab387;--green:#a6e3a1;--teal:#94e2d5;
+  --blue:#89b4fa;--sky:#89dceb;--yellow:#f9e2af;--red:#f38ba8;--lavender:#b4befe;
+}
+html,body{margin:0;background:#0a0a10;color:var(--text);
+  font-family:"JetBrainsMonoNL Nerd Font Mono","JetBrainsMono Nerd Font Mono","JetBrainsMonoNL Nerd Font","JetBrainsMono Nerd Font","JetBrains Mono",ui-monospace,Menlo,monospace;
+  font-size:14px;line-height:1.5}
+.window{width:max-content;margin:20px auto;background:var(--base);border-radius:10px;overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.7);border:1px solid #2a2a3c}
+.titlebar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#15151f;color:#8f95a8;
+  font-weight:700;font-size:13px;border-bottom:1px solid #2a2a3c}
+.titlebar .pill{background:#7c6cff;color:#fff;border-radius:14px;padding:2px 16px;font-size:12px}
+.sidebar{width:40ch;min-height:calc(1.5em * 34);background:var(--base);display:flex;flex-direction:column}
+.sidebar .grow{flex:1}
+.row{white-space:pre;line-height:1.5em;height:1.5em;cursor:default}
+.row.sel{background:var(--mauve)}
+.row.sel span{color:var(--crust)!important;opacity:1!important}
+.row.soft-sel{background:var(--surface0);box-shadow:inset 3px 0 0 var(--mauve)}
+.row input{background:transparent;border:0;outline:0;color:var(--text);font:inherit;padding:0;margin:0;vertical-align:top;caret-color:var(--mauve)}
+.row input::placeholder{color:var(--muted)}
+.sel-cell{background:var(--mauve);color:var(--crust)!important;border-radius:2px}
+.b{font-weight:700}
+.dim{opacity:.45}
+.text{color:var(--text)}.subtext{color:var(--subtext)}.muted{color:var(--muted)}.surface{color:var(--surface2)}
+.mauve{color:var(--mauve)}.peach{color:var(--peach)}.green{color:var(--green)}.teal{color:var(--teal)}
+.blue{color:var(--blue)}.sky{color:var(--sky)}.yellow{color:var(--yellow)}.red{color:var(--red)}.lavender{color:var(--lavender)}
+.band{background:var(--mauve)}
+.band span{color:var(--crust)!important}
+.hdr-line{box-shadow:inset 0 -1px 0 var(--surface0)}
+.note{max-width:360px;margin:0 auto 28px;color:#8f95a8;font-size:12.5px;line-height:1.55;font-family:ui-sans-serif,system-ui,sans-serif}
+.note b{color:#d5d9e8}
+.note code{font-family:inherit;color:#b8bdd0;background:#1b1b28;padding:0 4px;border-radius:3px}
