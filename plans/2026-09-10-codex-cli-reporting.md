@@ -1,5 +1,7 @@
 # Codex CLI Reporting Implementation Plan
 
+> **2026-09-10 scope follow-up:** Kyle approved a smaller [hooks-first response-ready milestone](2026-09-10-codex-response-ready-hooks.md). That plan replaces the metrics/continuous-source prerequisites only for response readiness. This document and its blocked source/accounting tasks remain historical and unfinished; no adapter is implemented by the follow-up plan.
+
 > **For agentic workers:** Use `subagent-driven-development` or `executing-plans` task by task. One worker implements each unit; an independent reviewer checks its committed revision. One coordinator stages files. Checkboxes record completed acceptance, not effort spent.
 
 **Goal:** Add useful live Codex status, context and conversation-token reporting to OVRCR while preserving the native CLI and its approval handling.
