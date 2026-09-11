@@ -14,7 +14,7 @@ Options:
           Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
           Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
           as TOML. If it fails to parse as TOML, the raw string is used as a literal.
-          
+
           Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
           shell_environment_policy.inherit=all`
 
@@ -34,7 +34,7 @@ Options:
       --listen <URL>
           Transport endpoint URL. Supported values: `stdio://` (default), `unix://`, `unix://PATH`,
           `ws://IP:PORT`, `off`
-          
+
           [default: stdio://]
 
       --stdio
@@ -42,21 +42,21 @@ Options:
 
       --analytics-default-enabled
           Controls whether analytics are enabled by default.
-          
+
           Analytics are disabled by default for app-server. Users have to explicitly opt in via the
           `analytics` section in the config.toml file.
-          
+
           However, for first-party use cases like the VSCode IDE extension, we default analytics to
           be enabled by default by setting this flag. Users can still opt out by setting this in
           their config.toml:
-          
+
           ```toml [analytics] enabled = false ```
-          
+
           See https://developers.openai.com/codex/config-advanced/#metrics for more details.
 
       --ws-auth <MODE>
           Websocket auth mode for non-loopback listeners
-          
+
           [possible values: capability-token, signed-bearer-token]
 
       --ws-token-file <PATH>

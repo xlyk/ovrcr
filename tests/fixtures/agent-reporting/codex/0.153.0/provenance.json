@@ -11,8 +11,8 @@
     "ThreadReadParams.json": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
     "ThreadStatusChangedNotification.json": "26f3c60c1b73f7fa2d31c74429cdc36f8746c76c33e3d314b3fb61d3661f05f6",
     "ThreadTokenUsageUpdatedNotification.json": "aba4f6c7e4a19b2b842c08ee793b57000c07dafd57b922ad0d8e7c76609108c2",
-    "app-server-help.txt": "95d290035d274e91e6f85b9af63e9a3fd2cf70a2295d9eedbfc23a2ee82d4383",
-    "help.txt": "e8ecd554e6e3e870a55e540f1a21598c085cfee237f9c735ff9b5ba4ac4cf08a",
+    "app-server-help.txt": "7245b054e172b0f82484057dc72b8b58419ca234e1b47c056135a419eae7dc29",
+    "help.txt": "12a667db26f4812c6e029332b4ae099f35d346faec105764a93d3db5638eea37",
     "request-methods.json": "3666b1875344bccbaa27b2471a4e53ad34f6b69ff8317c54f84e490a5b84c261",
     "resume-contract.json": "1fba53fd01b6f7aece1bdd4f24fe7dc34b61e1763251939288af47236ef38fde",
     "thread-identity-fields.json": "b55bc32a30b8d7cc020a1fa1a4f96518da3871a75c0e8e99788dad220ad38e29"
@@ -27,5 +27,16 @@
     "thread_processor.rs": "b7257eb4e93317d6162bba17462abb4607b9083621d11ddfe7bbc04777cc930c",
     "thread_rollout_resolver.rs": "407eee8378bcc4abd34b5c56b56c5145d542c797fed41cd92100be2c99763452",
     "thread_state.rs": "d6af02611b001c06cd33f4e4c7ed964518b4361a7e5c94bc1f27e4e6102cf40c"
-  }
+  },
+  "originalRawHelp": {
+    "help.txt": {
+      "sha256": "e8ecd554e6e3e870a55e540f1a21598c085cfee237f9c735ff9b5ba4ac4cf08a",
+      "sourceScratchPath": "/private/tmp/ovrcr-codex-source-FUk2if/help.txt"
+    },
+    "app-server-help.txt": {
+      "sha256": "95d290035d274e91e6f85b9af63e9a3fd2cf70a2295d9eedbfc23a2ee82d4383",
+      "sourceScratchPath": "/private/tmp/ovrcr-codex-source-FUk2if/app-server-help.txt"
+    }
+  },
+  "helpNormalization": "Trailing whitespace removed from each help line; original raw hashes retained."
 }
