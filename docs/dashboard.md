@@ -185,6 +185,9 @@ In Browse and Terminal modes:
 - Dragging the divider between two panes changes their widths. Each visible pane
   keeps at least 20 columns. The split proportion survives window resizing and
   the temporary single-pane layout used in narrow windows.
+- Dragging the sidebar's right border changes the sidebar width, between 20
+  columns and half the window; the panes take the remaining width and are
+  resized. The chosen width lasts for the attachment and is not saved.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
   move one row; wheel-down at the newest row returns to the live pane.
 

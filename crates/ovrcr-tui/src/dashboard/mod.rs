@@ -115,7 +115,18 @@ pub struct PaneRects {
 }
 
 pub fn pane_rects(area: Rect, pane_count: usize, focused: usize) -> Vec<PaneRects> {
-    pane_rects_with_preference(area, pane_count, focused, None)
+    pane_rects_with_preference(area, pane_count, focused, None, None)
+}
+
+pub(super) const DEFAULT_SIDEBAR_WIDTH: u16 = 40;
+pub(super) const MIN_SIDEBAR_WIDTH: u16 = 20;
+
+/// Sidebar width for `area`: the dragged preference or the default, never more
+/// than half the window.
+pub(super) fn sidebar_width_for(area: Rect, preferred: Option<u16>) -> u16 {
+    area.width
+        .min(preferred.unwrap_or(DEFAULT_SIDEBAR_WIDTH))
+        .min(area.width / 2)
 }
 
 #[derive(Clone, Copy)]
@@ -131,12 +142,13 @@ fn pane_rects_with_preference(
     pane_count: usize,
     focused: usize,
     preference: Option<SplitPreference>,
+    sidebar_width: Option<u16>,
 ) -> Vec<PaneRects> {
     let pane_count = pane_count.min(2);
     if pane_count == 0 {
         return Vec::new();
     }
-    let sidebar = area.width.min(40).min(area.width / 2);
+    let sidebar = sidebar_width_for(area, sidebar_width);
     let right = Rect::new(
         area.x.saturating_add(sidebar),
         area.y,
@@ -205,6 +217,7 @@ pub(super) struct MouseForwarding {
     pub(super) last_motion: Option<MouseEvent>,
     pub(super) pending_cleanup: Option<ClientMessage>,
     pub(super) split_dragging: bool,
+    pub(super) sidebar_dragging: bool,
 }
 
 pub struct Dashboard {
@@ -227,6 +240,8 @@ pub struct Dashboard {
     pub history_begin_request: Option<PendingHistoryBegin>,
     pub(super) mouse: MouseForwarding,
     pub(super) split_preference: Option<SplitPreference>,
+    /// Sidebar width chosen by dragging its border; `None` means the default.
+    pub(super) sidebar_width: Option<u16>,
     pub(super) mouse_focused: bool,
     /// Pane index whose history a wheel tick asked for while that pane was still loading.
     pub(super) deferred_history_at_tail: Option<usize>,

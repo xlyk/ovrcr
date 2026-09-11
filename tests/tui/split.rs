@@ -58,6 +58,130 @@ fn split_layout_geometry_and_narrow_fallback() {
 }
 
 #[test]
+fn sidebar_border_drag_resizes_the_sidebar_and_the_pane() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    let initial = dashboard
+        .view_request(area, 10)
+        .unwrap()
+        .expect("attach should request the pane");
+    acknowledge_all_view_targets(&mut dashboard, initial);
+    let border = |dashboard: &Dashboard| {
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, dashboard, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..120)
+            .find(|x| buffer[(*x, 10)].symbol() == "│")
+            .expect("sidebar border")
+    };
+    assert_eq!(border(&dashboard), 39);
+
+    // Press on the border, drag right: the sidebar widens and the pane narrows.
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                39,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                49,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(border(&dashboard), 49);
+    assert_eq!(dashboard.panes[0].desired_size.cols, 70);
+    assert!(!dashboard.panes[0].ready);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let review = (0..49)
+        .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+        .collect::<String>();
+    assert_eq!(review, format!("▌    - review{}claude ", " ".repeat(29)));
+
+    // The width clamps between twenty columns and half the window.
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                3,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(border(&dashboard), 19);
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                100,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(border(&dashboard), 59);
+    assert_eq!(dashboard.panes[0].desired_size.cols, 60);
+
+    // Release ends the drag; the next view request carries the new pane size.
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                100,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let resized = dashboard
+        .view_request(area, 11)
+        .unwrap()
+        .expect("sidebar drag should request a resized pane");
+    let Request::SetView { ref view } = resized.request else {
+        panic!("expected SetView");
+    };
+    assert_eq!(view.panes[0].size.cols, 60);
+    // Further motion without a button held does nothing.
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Drag(MouseButton::Left),
+                30,
+                10,
+                KeyModifiers::NONE
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert_eq!(border(&dashboard), 59);
+}
+
+#[test]
 fn divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);

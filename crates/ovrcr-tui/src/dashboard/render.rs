@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) fn action_controls(area: Rect) -> (Rect, Rect) {
-    let title = dashboard_layout(area).title;
+    let title = dashboard_layout(area, None).title;
     let x = title.right().saturating_sub(16).max(title.x);
     let actions = Rect::new(
         x,
@@ -35,7 +35,7 @@ pub(super) fn action_controls(area: Rect) -> (Rect, Rect) {
 }
 
 pub(super) fn capture_controls(area: Rect) -> (Rect, Rect) {
-    let title = dashboard_layout(area).title;
+    let title = dashboard_layout(area, None).title;
     let x = title.right().saturating_sub(16).max(title.x);
     let copy = if title.width >= 14 {
         Rect::new(x, title.y, 6, title.height)
@@ -64,7 +64,6 @@ struct DashboardLayout {
 }
 
 pub(super) const METADATA_HEIGHT: u16 = 2;
-const DEFAULT_SIDEBAR_WIDTH: u16 = 40;
 pub(super) const BASE: Color = Color::Rgb(30, 30, 46);
 pub(super) const CRUST: Color = Color::Rgb(17, 17, 27);
 pub(super) const TEXT: Color = Color::Rgb(205, 214, 244);
@@ -412,7 +411,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
         draw_tasks(frame, tasks);
         return;
     }
-    let layout = dashboard_layout(frame.area());
+    let layout = dashboard_layout(frame.area(), dashboard.sidebar_width);
     frame.render_widget(
         Block::default().style(Style::default().bg(BASE)),
         frame.area(),
@@ -845,7 +844,7 @@ fn append_metadata_field(text: &mut String, field: &str, width: u16) {
     }
 }
 
-fn dashboard_layout(area: Rect) -> DashboardLayout {
+fn dashboard_layout(area: Rect, sidebar_width: Option<u16>) -> DashboardLayout {
     let [title, body, footer] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -854,7 +853,7 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
             Constraint::Length(1),
         ])
         .areas(area);
-    let sidebar_width = body.width.min(DEFAULT_SIDEBAR_WIDTH).min(body.width / 2);
+    let sidebar_width = super::sidebar_width_for(body, sidebar_width);
     let [sidebar, right] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
@@ -878,8 +877,8 @@ fn dashboard_layout(area: Rect) -> DashboardLayout {
     }
 }
 
-pub(super) fn sidebar_area(area: Rect) -> Rect {
-    dashboard_layout(area).sidebar_content
+pub(super) fn sidebar_area(area: Rect, sidebar_width: Option<u16>) -> Rect {
+    dashboard_layout(area, sidebar_width).sidebar_content
 }
 
 /// Blank lines drawn before a row: one before every project except the first.
@@ -1307,7 +1306,7 @@ fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
 }
 
 pub fn actual_drawn_inner_rect(area: Rect) -> Rect {
-    dashboard_layout(area).terminal
+    dashboard_layout(area, None).terminal
 }
 
 pub(super) fn pane_size(size: TerminalSize) -> TerminalSize {

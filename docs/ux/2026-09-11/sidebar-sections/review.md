@@ -60,6 +60,16 @@ removed by the helper. An earlier run in this session that was stopped with
 SIGTERM instead left its server running and its fixture behind; both were
 cleaned by hand. Only the window-close path performs cleanup.
 
+## Sidebar resizing
+
+A second commit on the branch makes the sidebar's right border draggable
+(20 columns to half the window; panes resize with it). It is covered by a
+rendered-buffer test in the `tui` binary that presses the border, drags,
+checks the drawn border column, the row layout at the new width, the pane's
+desired size, the clamps, the release, and the resulting view request. No
+native capture: the background computer-use tool resolves clicks to
+accessibility actions and cannot deliver a mouse drag.
+
 ## Gaps
 
 - Fold and clipped-selection states have automated coverage only.

@@ -561,6 +561,7 @@ impl Dashboard {
             history_begin_request: None,
             mouse: super::MouseForwarding::default(),
             split_preference: None,
+            sidebar_width: None,
             mouse_focused: true,
             deferred_history_at_tail: None,
             tree_offset: 0,
@@ -1904,6 +1905,7 @@ impl Dashboard {
     pub fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
         self.mouse.split_dragging = false;
+        self.mouse.sidebar_dragging = false;
         if let Some(copy) = &mut self.copy {
             copy.dragging = false;
         }
@@ -1922,6 +1924,7 @@ impl Dashboard {
             self.panes.len(),
             self.focused_pane,
             self.split_preference,
+            self.sidebar_width,
         )
     }
 
@@ -1929,7 +1932,7 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
             return None;
         }
-        let sidebar = sidebar_area(area);
+        let sidebar = sidebar_area(area, self.sidebar_width);
         if !point_in_rect(mouse, sidebar) {
             return None;
         }
@@ -2010,14 +2013,36 @@ impl Dashboard {
                 _ => Some(DashboardAction::None),
             };
         }
+        if self.mouse.sidebar_dragging {
+            return match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    Some(if self.resize_sidebar(area, mouse.column) {
+                        DashboardAction::Redraw
+                    } else {
+                        DashboardAction::None
+                    })
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.mouse.sidebar_dragging = false;
+                    Some(DashboardAction::Redraw)
+                }
+                _ => Some(DashboardAction::None),
+            };
+        }
 
+        let sidebar = sidebar_area(area, self.sidebar_width);
         let rects = self.pane_rects(area);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && rects.len() == 2
-            && mouse.column == rects[0].terminal.right()
+            && mouse.row >= sidebar.y
+            && mouse.row < sidebar.bottom()
         {
-            let sidebar = sidebar_area(area);
-            if mouse.row >= sidebar.y && mouse.row < sidebar.bottom() {
+            // The sidebar's border column sits just past its content.
+            if mouse.column == sidebar.right() {
+                self.queue_held_releases();
+                self.mouse.sidebar_dragging = true;
+                return Some(DashboardAction::Redraw);
+            }
+            if rects.len() == 2 && mouse.column == rects[0].terminal.right() {
                 self.queue_held_releases();
                 self.mouse.split_dragging = true;
                 return Some(DashboardAction::Redraw);
@@ -2052,6 +2077,36 @@ impl Dashboard {
         None
     }
 
+    /// Drag the sidebar border to `column`; the panes take the remaining width.
+    fn resize_sidebar(&mut self, area: Rect, column: u16) -> bool {
+        let body_width = area.width;
+        let width = column
+            .saturating_add(1)
+            .saturating_sub(area.x)
+            .clamp(super::MIN_SIDEBAR_WIDTH, body_width / 2);
+        if width == super::sidebar_width_for(area, self.sidebar_width) {
+            return false;
+        }
+        self.sidebar_width = Some(width);
+        self.apply_pane_sizes(area);
+        true
+    }
+
+    /// Copy the drawn pane sizes into each pane's desired size and revoke readiness.
+    fn apply_pane_sizes(&mut self, area: Rect) {
+        for rect in self.pane_rects(area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+            }
+        }
+        self.queue_held_releases();
+        self.pending_user_view_change = true;
+        self.invalidate_view_readiness();
+    }
+
     fn resize_split(&mut self, area: Rect, column: u16) -> bool {
         let rects = self.pane_rects(area);
         if rects.len() != 2 {
@@ -2070,17 +2125,7 @@ impl Dashboard {
             return false;
         }
         self.split_preference = Some(super::SplitPreference { left, available });
-        for rect in self.pane_rects(area) {
-            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
-                pane.desired_size = TerminalSize {
-                    rows: rect.terminal.height,
-                    cols: rect.terminal.width,
-                };
-            }
-        }
-        self.queue_held_releases();
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
+        self.apply_pane_sizes(area);
         true
     }
 

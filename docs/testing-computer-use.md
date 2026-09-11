@@ -139,7 +139,8 @@ the form and menu checks in a short window to exercise scrolling and clipping.
    Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
    `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.
-2. Drag the divider left and right. In each pane run `rtk proxy stty size` and
+2. Drag the sidebar border and confirm the pane narrows and widens with it.
+   Drag the divider left and right. In each pane run `rtk proxy stty size` and
    compare the reported columns with the drawn terminal width. Make the window
    too narrow for both panes, widen it again, and confirm assignments and the
    chosen split survive. Release the drag outside the terminal and confirm the
