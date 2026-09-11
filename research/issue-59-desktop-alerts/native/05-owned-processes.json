@@ -1,0 +1,320 @@
+{
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1",
+  "config": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/config.toml",
+  "socket": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/server.sock",
+  "sessions": [
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 1,
+      "label": "zsh",
+      "measurement_age_ms": null,
+      "name": "local",
+      "phase": "running",
+      "pid": 84873,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169464916,
+      "workspace": "worktree-lifecycle"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 2,
+      "label": "zsh",
+      "measurement_age_ms": null,
+      "name": "local",
+      "phase": "running",
+      "pid": 84907,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465060,
+      "workspace": "auth-handoff"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 3,
+      "label": "zsh",
+      "measurement_age_ms": null,
+      "name": "local",
+      "phase": "running",
+      "pid": 84971,
+      "project": "spacelift-agent",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465151,
+      "workspace": "pipeline-progress-v2"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 4,
+      "label": "zsh",
+      "measurement_age_ms": null,
+      "name": "local",
+      "phase": "running",
+      "pid": 85036,
+      "project": "spacelift-agent",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465250,
+      "workspace": "scope-quality"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 5,
+      "label": "claude / sonnet-4",
+      "measurement_age_ms": null,
+      "name": "implement lifecycle cleanup",
+      "phase": "running",
+      "pid": 85047,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465267,
+      "workspace": "worktree-lifecycle"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 6,
+      "label": "codex / gpt-5.4",
+      "measurement_age_ms": null,
+      "name": "review websocket shutdown",
+      "phase": "running",
+      "pid": 85054,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465279,
+      "workspace": "worktree-lifecycle"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 7,
+      "label": "pi / grok-4.6",
+      "measurement_age_ms": null,
+      "name": "plan snapshot restore",
+      "phase": "running",
+      "pid": 85065,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465292,
+      "workspace": "worktree-lifecycle"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 8,
+      "label": "grok / grok-4.6",
+      "measurement_age_ms": null,
+      "name": "review auth handoff",
+      "phase": "running",
+      "pid": 85076,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465304,
+      "workspace": "auth-handoff"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 9,
+      "label": "claude / opus-4",
+      "measurement_age_ms": null,
+      "name": "build pipeline progress",
+      "phase": "running",
+      "pid": 85088,
+      "project": "spacelift-agent",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465314,
+      "workspace": "pipeline-progress-v2"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 0,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 10,
+      "label": "codex / gpt-5.4",
+      "measurement_age_ms": null,
+      "name": "review scope quality",
+      "phase": "running",
+      "pid": 85096,
+      "project": "spacelift-agent",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169465327,
+      "workspace": "scope-quality"
+    },
+    {
+      "activity": "unknown",
+      "agent": null,
+      "agent_epoch": 1,
+      "context_stale": null,
+      "context_usage": null,
+      "exit_code": null,
+      "exit_signal": null,
+      "id": 11,
+      "label": "env",
+      "measurement_age_ms": null,
+      "name": "issue59-ready",
+      "phase": "running",
+      "pid": 1886,
+      "project": "consigint",
+      "reporting_unavailable": null,
+      "started_unix_ms": 1789169539337,
+      "workspace": "auth-handoff"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 84873,
+      "ppid": 84806,
+      "pgid": 84873,
+      "args": "/bin/zsh"
+    },
+    {
+      "pid": 84907,
+      "ppid": 84806,
+      "pgid": 84907,
+      "args": "/bin/zsh"
+    },
+    {
+      "pid": 84971,
+      "ppid": 84806,
+      "pgid": 84971,
+      "args": "/bin/zsh"
+    },
+    {
+      "pid": 85036,
+      "ppid": 84806,
+      "pgid": 85036,
+      "args": "/bin/zsh"
+    },
+    {
+      "pid": 84009,
+      "ppid": 84008,
+      "pgid": 83997,
+      "args": "rtk proxy ./ovrcr-gui"
+    },
+    {
+      "pid": 84707,
+      "ppid": 84009,
+      "pgid": 83997,
+      "args": "/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+    },
+    {
+      "pid": 84806,
+      "ppid": 84707,
+      "pgid": 83997,
+      "args": "/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+    },
+    {
+      "pid": 85047,
+      "ppid": 84806,
+      "pgid": 85047,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85054,
+      "ppid": 84806,
+      "pgid": 85054,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85065,
+      "ppid": 84806,
+      "pgid": 85065,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85076,
+      "ppid": 84806,
+      "pgid": 85076,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85088,
+      "ppid": 84806,
+      "pgid": 85088,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85096,
+      "ppid": 84806,
+      "pgid": 85096,
+      "args": "/bin/sh -i"
+    },
+    {
+      "pid": 85100,
+      "ppid": 84707,
+      "pgid": 85100,
+      "args": "/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    },
+    {
+      "pid": 1886,
+      "ppid": 84806,
+      "pgid": 1886,
+      "args": "/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run codex -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/codex"
+    },
+    {
+      "pid": 1908,
+      "ppid": 1886,
+      "pgid": 1908,
+      "args": "/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/codex"
+    },
+    {
+      "pid": 20455,
+      "ppid": 84707,
+      "pgid": 20455,
+      "args": "/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+    }
+  ]
+}

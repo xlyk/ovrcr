@@ -1,0 +1,28 @@
+command: ['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_notification_action_is_opt_in_and_discoverable']
+revision: 3574e92 + test only
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.99s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable ... FAILED
+
+failures:
+
+---- dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable stdout ----
+
+thread 'dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable' (48114688) panicked at crates/ovrcr-tui/src/dashboard/tests.rs:1612:5:
+assertion `left == right` failed
+  left: None
+ right: Redraw
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

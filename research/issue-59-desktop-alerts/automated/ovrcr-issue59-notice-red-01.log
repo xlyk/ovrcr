@@ -1,0 +1,25 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_notice_yields']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.57s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action ... FAILED
+
+failures:
+
+---- dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action stdout ----
+
+thread 'dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action' (48287263) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:696:9:
+assertion failed: d.desktop.notice.is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

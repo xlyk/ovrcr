@@ -1,0 +1,9 @@
+{
+  "date": "2026-09-11",
+  "source_base": "3574e9272e6464edfb484a973b33fd4c3f05384d",
+  "adapter_probe": {"command": "osascript with constant on-run script and identity-only argv", "exit_code": 0, "scope": "host command submission only"},
+  "notification_center_cua": {"error": "Computer Use server error -10005: timeoutReached", "tool_wall_seconds": 294.9373},
+  "finder_cua": {"requested_timeout_ms": 20000, "tool_wall_seconds": 3278.5085, "result": "Desktop accessibility tree returned; no notification observation"},
+  "visible_desktop_delivery": "unverified",
+  "live_settings_changed": false
+}

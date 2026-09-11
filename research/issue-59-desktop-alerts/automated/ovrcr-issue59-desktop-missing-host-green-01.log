@@ -1,0 +1,16 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.86s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa61T1o/repo/.git/
+[main (root-commit) 4c11c4a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa61T1o/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpa61T1o/server.sock
+ovrcr server stopped
+test desktop_notifications_missing_host_tool_preserves_response_and_dashboard_controls ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 88 filtered out; finished in 1.69s
+

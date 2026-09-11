@@ -1,0 +1,5 @@
+['rtk', 'proxy', 'cargo', 'clippy', '-p', 'ovrcr-tui', '--all-targets', '--', '-D', 'warnings']
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.61s
+
+exit: 0

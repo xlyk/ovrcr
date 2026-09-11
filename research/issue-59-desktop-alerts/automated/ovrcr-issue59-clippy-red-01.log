@@ -1,0 +1,34 @@
+['rtk', 'proxy', 'cargo', 'clippy', '-p', 'ovrcr-tui', '--all-targets', '--', '-D', 'warnings']
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+error: this `if` statement can be collapsed
+   --> crates/ovrcr-tui/src/dashboard/desktop.rs:105:9
+    |
+105 | /         if let Some(previous) = previous {
+106 | |             if session.agent_epoch < previous.epoch
+107 | |                 || (session.agent_epoch == previous.epoch
+108 | |                     && (!same_binding
+...   |
+115 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+    = note: `-D clippy::collapsible-if` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+    |
+105 ~         if let Some(previous) = previous
+106 ~             && (session.agent_epoch < previous.epoch
+107 |                 || (session.agent_epoch == previous.epoch
+...
+110 |                             || agent.binding.generation <= previous.binding.generation)))
+111 ~                 || (same_binding && agent.activity_revision <= previous.revision))
+112 |             {
+113 |                 return;
+114 ~             }
+    |
+
+error: could not compile `ovrcr-tui` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `ovrcr-tui` (lib test) due to 1 previous error
+
+exit: 101

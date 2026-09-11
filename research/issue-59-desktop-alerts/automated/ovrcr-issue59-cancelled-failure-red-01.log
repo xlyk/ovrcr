@@ -1,0 +1,25 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_cancelled_host_failure']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.00s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice ... FAILED
+
+failures:
+
+---- dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice stdout ----
+
+thread 'dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice' (48295129) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:700:9:
+assertion failed: !d.emit_desktop_notifications()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

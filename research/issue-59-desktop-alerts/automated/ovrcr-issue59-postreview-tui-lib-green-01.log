@@ -1,0 +1,78 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.75s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 67 tests
+test dashboard::copy::tests::history_copy_append_normalizes_wide_cells_and_preserves_spaces ... ok
+test dashboard::copy::tests::history_copy_append_rejects_malformed_cells_and_byte_overflow ... ok
+test dashboard::copy::tests::copy_clipboard_emits_osc52 ... ok
+test dashboard::copy::tests::copy_clipboard_rejects_invalid_payload_and_io_failure ... ok
+test dashboard::copy::tests::history_copy_job_streams_overlapping_tiles_and_soft_wraps ... ok
+test dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action ... ok
+test dashboard::desktop::tests::desktop_notification_toggle_does_not_intercept_native_input ... ok
+test dashboard::desktop::tests::desktop_health_loss_before_dispatch_cancels_pending_ready ... ok
+test dashboard::desktop::tests::desktop_ready_requires_new_accepted_root_identity_and_only_exports_identity ... ok
+test dashboard::agents::tests::custom_override_replaces_the_custom_entry ... ok
+test dashboard::desktop::tests::desktop_tasks_view_has_no_visible_terminal_panes ... ok
+test dashboard::desktop::tests::desktop_session_event_before_hello_is_part_of_attach_baseline ... ok
+test dashboard::desktop::tests::desktop_attach_disabled_and_reenable_baselines_never_replay ... ok
+test dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice ... ok
+test dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery ... ok
+test dashboard::desktop::tests::desktop_provider_session_event_reaches_notification_observer ... ok
+test dashboard::desktop::tests::desktop_rebind_and_supervisor_restart_reject_prior_identity ... ok
+test dashboard::desktop::tests::desktop_visibility_uses_drawn_geometry_including_hidden_split_and_empty_view ... ok
+test dashboard::desktop::tests::desktop_pending_candidates_are_bounded_and_identity_text_is_not_code ... ok
+test dashboard::agents::tests::detects_executables_then_shell_then_custom ... ok
+test dashboard::palette::mouse_tests::mouse_narrow_form_scroll_reaches_hidden_fields ... ok
+test dashboard::palette::mouse_tests::mouse_pick_value_edits_at_visible_cursor ... ok
+test dashboard::palette::mouse_tests::mouse_scrolled_picker_accepts_visible_option ... ok
+test dashboard::desktop::tests::desktop_host_completion_wakes_dashboard_for_remaining_candidates ... ok
+test dashboard::palette::mouse_tests::mouse_cursor_uses_rendered_emoji_grapheme_width ... ok
+test dashboard::picker::tests::expand_path_resolves_tilde_and_keeps_absolute ... ok
+test dashboard::palette::mouse_tests::mouse_tiny_overlay_controls_remain_visible ... ok
+test dashboard::palette::mouse_tests::mouse_submit_from_first_field_and_outside_overlay_guard ... ok
+test dashboard::picker::tests::git_dirs_sort_first_and_hidden_needs_dot_segment ... ok
+test dashboard::palette::mouse_tests::mouse_text_search_and_narrow_unicode_cursor ... ok
+test dashboard::picker::tests::listing_is_cached_until_input_changes ... ok
+test dashboard::settings::tests::desktop_notifications_default_off_and_explicit_config_opt_in ... ok
+test dashboard::palette::mouse_tests::mouse_form_focus_unicode_edit_and_cancel ... ok
+test dashboard::tests::compact_sidebar_maps_each_line_to_its_visible_tree_row ... ok
+test dashboard::tests::completed_history_copy_emits_once_through_the_writer_adapter ... ok
+test dashboard::tests::copy_selection_joins_soft_wraps_and_preserves_unicode ... ok
+test dashboard::tests::copy_selection_moves_over_wide_cells_and_clamps ... ok
+test dashboard::tests::dashboard_input_boundary_defers_after_a_bounded_ready_batch ... ok
+test dashboard::tests::dashboard_input_boundary_reports_detach_from_a_processed_event ... ok
+test dashboard::tests::dashboard_input_boundary_separates_deferred_input_from_idle_emission ... ok
+test dashboard::tests::dashboard_output_wake_interrupts_idle_wait ... ok
+test dashboard::tests::dashboard_reader_reconciles_two_pane_burst_at_ack_boundary ... ok
+test dashboard::tests::dashboard_surfaces_hello_refusal_and_reader_disconnect ... ok
+test dashboard::tests::dashboard_wait_reports_input_and_output_together ... ok
+test dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable ... ok
+test dashboard::tests::failed_history_copy_writer_preserves_selection_for_retry ... ok
+test dashboard::tests::hierarchy_removal_clears_a_parked_wheel_deferral ... ok
+test dashboard::tests::hints_name_targets_and_explain_disabled_session_actions ... ok
+test dashboard::palette::mouse_tests::mouse_toggle_and_scrolled_path_row ... ok
+test dashboard::tests::initial_selection_completes_zero_target_view_on_ok ... ok
+test dashboard::tests::initial_selection_does_not_complete_after_wrong_screen_and_ok ... ok
+test dashboard::tests::initial_selection_ignores_wrong_screen_before_matching_ok ... ok
+test dashboard::tests::panic_hook_ignores_non_main_threads ... ok
+test dashboard::tests::mouse_release_precedes_the_replacement_view_request ... ok
+test dashboard::palette::mouse_tests::mouse_submit_from_project_survives_waiting_for_git_suggestions_once ... ok
+test dashboard::picker::tests::slash_prefix_lists_filesystem_root ... ok
+test dashboard::picker::tests::tilde_prefix_lists_code_and_tab_completes ... ok
+test dashboard::settings::tests::invalid_file_yields_defaults_and_error ... ok
+test dashboard::settings::tests::loads_overrides_and_expands_picker_roots ... ok
+test dashboard::palette::mouse_tests::mouse_actions_search_and_confirmation_pending_guard ... ok
+test dashboard::palette::mouse_tests::mouse_menu_back_and_close_without_clickthrough ... ok
+test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... ok
+test dashboard::git_hints::tests::timeout_reaps_owned_child_and_output_is_bounded ... ok
+test dashboard::git_hints::tests::detached_head_yields_no_base_suggestion ... ok
+test dashboard::git_hints::tests::missing_origin_uses_master_then_current_head ... ok
+test dashboard::git_hints::tests::sole_non_origin_remote_provides_the_base ... ok
+test dashboard::git_hints::tests::branches_and_remote_default_from_real_repository ... ok
+
+test result: ok. 67 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+
+exit: 0

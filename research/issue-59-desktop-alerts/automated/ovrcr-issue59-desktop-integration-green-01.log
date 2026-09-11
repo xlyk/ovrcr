@@ -1,0 +1,53 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+warning: type `DesktopNotifications` is more private than the item `dashboard::Dashboard::desktop`
+   --> crates/ovrcr-tui/src/dashboard/mod.rs:212:5
+    |
+212 |     pub(super) desktop: desktop::DesktopNotifications,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `dashboard::Dashboard::desktop` is reachable at visibility `pub(crate)`
+    |
+note: but type `DesktopNotifications` is only usable at visibility `pub(in crate::dashboard)`
+   --> crates/ovrcr-tui/src/dashboard/desktop.rs:39:1
+    |
+ 39 | pub(super) struct DesktopNotifications {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(private_interfaces)]` on by default
+
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+warning: `ovrcr-tui` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.97s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 2 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprWaIta/repo/.git/
+[main (root-commit) f1b51ac] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprWaIta/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprWaIta/server.sock
+
+thread 'desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable' (48184619) panicked at tests/server_lifecycle.rs:10401:13:
+expected 1 desktop host calls, received 0: 
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable ... FAILED
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKxnhMR/repo/.git/
+[main (root-commit) 962fa57] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKxnhMR/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKxnhMR/server.sock
+
+thread 'desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility' (48184620) panicked at tests/server_lifecycle.rs:10401:13:
+expected 1 desktop host calls, received 0: 
+ovrcr server stopped
+test desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility ... FAILED
+
+failures:
+
+failures:
+    desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable
+    desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 84 filtered out; finished in 12.94s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

@@ -1,0 +1,12 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_session_event_before_hello']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.22s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::desktop::tests::desktop_session_event_before_hello_is_part_of_attach_baseline ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+
+exit: 0

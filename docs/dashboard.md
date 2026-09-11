@@ -389,6 +389,8 @@ sound. Neither a successful host command nor an unchanged footer proves that the
 desktop displayed the alert: OS permission, Focus/Do Not Disturb and desktop
 policy can suppress it. OVRCR does not change those settings. Native acceptance
 and platform limits are recorded in the [issue 59 evidence](../research/issue-59-desktop-alerts/README.md).
+Actual desktop delivery is verified on macOS. Linux has automated coverage; native
+Linux desktop delivery remains unverified.
 
 ## Output delivery
 

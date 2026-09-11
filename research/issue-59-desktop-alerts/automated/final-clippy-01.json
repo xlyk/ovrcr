@@ -1,0 +1,17 @@
+{
+  "name": "final-clippy-01",
+  "revision": "1475f0ade7854773ab78db82418caa085fd57895",
+  "command": [
+    "cargo",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "exit_code": 0,
+  "seconds": 15.265,
+  "test_results": []
+}
