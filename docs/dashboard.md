@@ -136,9 +136,9 @@ resize.
 
 ## Sidebar and status
 
-Each sidebar session uses three lines: the session name, its label, and elapsed
-runtime with context usage. The selected session is highlighted across all three
-lines, and clicking any of them selects it.
+Each sidebar session uses two lines: the session name and its label. The selected
+session is highlighted across both lines, and clicking either selects it.
+Projects and workspaces follow one another without blank separator lines.
 
 | Slot | Meaning |
 | --- | --- |
@@ -153,8 +153,8 @@ Live metadata labels the same observation as `agent unknown`, `agent idle`,
 `agent busy`, `agent waiting input`, or `agent error`. Paused sessions keep their
 last label and add `paused`; exited sessions omit the live activity label.
 Terminal output, elapsed silence, keyboard input, and process liveness do not
-imply that an agent is busy or idle. Context usage shows `-` until a provider
-reports it; see [agent reporting](agent-reporting.md).
+imply that an agent is busy or idle. See [agent reporting](agent-reporting.md)
+for provider reporting behavior.
 
 ## Mouse
 

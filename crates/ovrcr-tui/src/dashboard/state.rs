@@ -5,8 +5,7 @@ use super::copy::{
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
 use super::render::{
-    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_gap,
-    tree_row_height,
+    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_height,
 };
 use super::settings::DashboardSettings;
 use super::{
@@ -1060,13 +1059,7 @@ impl Dashboard {
             return;
         };
         let height = self.tree_viewport_height();
-        let selected_start = rows
-            .iter()
-            .enumerate()
-            .take(index)
-            .map(|(index, row)| tree_row_gap(rows, index) + tree_row_height(row))
-            .sum::<usize>()
-            + tree_row_gap(rows, index);
+        let selected_start = rows.iter().take(index).map(tree_row_height).sum::<usize>();
         let selected_end = selected_start.saturating_add(tree_row_height(&rows[index]));
         if selected_start < self.tree_offset {
             self.tree_offset = selected_start;

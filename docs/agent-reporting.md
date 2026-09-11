@@ -1,7 +1,8 @@
 # Agent reporting
 
 OVRCR does not guess what an agent is doing. A provider hook reports activity and
-context occupancy explicitly, and the dashboard shows the last accepted report.
+context occupancy explicitly. The dashboard shows the last accepted activity;
+context occupancy is available through session inspection.
 Terminal output, elapsed silence, keyboard input, and process liveness never imply
 that an agent is busy or idle.
 
@@ -155,10 +156,9 @@ switch between receipt and sequenced modes or restart its counter between turns.
 unsequenced adapter, including the Claude status-line adapter, can prove only
 receipt order.
 
-Before any report is accepted, the session's context is unknown: the dashboard
-shows `ctx —` and inspection returns `context_usage: null` with `stale: null`. An
-accepted report whose usage or capacity is unknown is still a stored sample, but
-the dashboard keeps showing `ctx —`; a later complete report replaces it.
+Before any report is accepted, the session's context is unknown: inspection
+returns `context_usage: null` with `stale: null`. An accepted report whose usage or
+capacity is unknown is still a stored sample; a later complete report replaces it.
 
 ### Freshness
 
@@ -166,9 +166,8 @@ Samples are kept in memory with their receipt time. Freshness is advisory and us
 the wall clock: a clock earlier than the receipt marks the sample stale, and
 wall-clock changes may shorten or extend its apparent freshness. A sample is fresh
 while its receipt age is under five minutes. At five minutes or more, or as soon as
-its session exits, the dashboard appends `~` to the value (for example, `25%~`).
-The same state appears as `stale: true` in inspection and `context_stale: true` in
-terminal inventory. A server restart loses the live sample.
+its session exits, inspection returns `stale: true` and terminal inventory returns
+`context_stale: true`. A server restart loses the live sample.
 
 ### Inspect one session
 
