@@ -1,0 +1,21 @@
+{
+  "case": "synthetic foreign B before root A callback",
+  "expected_native_pid": 53509,
+  "callback": {
+    "sequence": 1,
+    "received_at": 1789094938.342398,
+    "peer_pid": 71421,
+    "os_parent_pid": 71420,
+    "expected_native_pid": 53509,
+    "native_lifetime_matches": true,
+    "event": {
+      "hook_event_name": "SessionStart",
+      "source": "startup",
+      "session_id": "synthetic-foreign-B",
+      "claimed_parent_pid": 53509,
+      "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/foreign-first-probe/provider/not-a-source.jsonl"
+    },
+    "decision": "reject_foreign_parent"
+  },
+  "binding_absent": true
+}

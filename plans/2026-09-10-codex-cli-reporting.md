@@ -221,3 +221,7 @@ These named new tests are created in Tasks 2–3; verify filters execute them. Z
 - [ ] Extend the existing work diary with supported scope, precise gaps and evidence. Keep only required evidence/recovery files; remove proven task-owned disposable resources. Merge/release need explicit user authorization for this PR.
 
 **Completion:** The first-release capabilities above are implemented, independently reviewed and verified, or a named source dependency blocks completion. Deferred capabilities have separate entries and cannot silently expand this plan into repeated open-ended iterations.
+
+### Task 1 resumed source checkpoint, 2026-09-11 UTC
+
+The interrupted bounded matrix now establishes the fresh-root 0.153.0 exact-file route on macOS: receiver OS peer/parent attribution, matching paginated header, two turns, approval observation/allow, child isolation, cancellation/error, and numeric native references. See the current source contract and versioned native fixtures. This supersedes earlier no-route checkpoints, while preserving their failures. Task 1 independent review remains pending; source-only evidence does not check off product implementation/acceptance. Generic WaitingInput and native remaining percentage are unavailable; absolute occupied tokens/capacity and Partial root-thread usage are supported source components. Resume, compaction recovery, Linux native, current-checkout GUI and capacity remain unrun/deferred. No runtime code changed.

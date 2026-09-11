@@ -1,0 +1,15 @@
+{
+  "native_two_turns_checked": true,
+  "distinct_turns": 2,
+  "distinct_response_ids": 2,
+  "request_totals": [
+    15564,
+    15588
+  ],
+  "cumulative_total": 31152,
+  "last_request_total": 15588,
+  "input_cache_subset_observed": true,
+  "reasoning_output_subset_observed_zero_only": true,
+  "synthetic_replay_replacement_check": true,
+  "runtime_parser_test": false
+}

@@ -1,0 +1,12 @@
+{
+  "native_summary_total": 13897,
+  "native_summary_uncached_input": 13581,
+  "native_summary_cached_input": 145152,
+  "native_summary_output": 316,
+  "source_total": 159049,
+  "source_input": 158733,
+  "source_cached_input": 145152,
+  "source_output": 316,
+  "native_group_absent": true,
+  "scope": "root thread, excludes child; summary total excludes cache"
+}

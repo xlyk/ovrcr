@@ -205,11 +205,8 @@ Partial conversation usage, Observed activity, or the absence of a provider
 final-accounting boundary.
 
 
-## Codex source gate, 2026-09-10
+## Codex source gate, 2026-09-11
 
-Codex CLI 0.153.0 reporting is not implemented or certified. The bounded [source investigation](../research/codex-reporting-acceptance/source-contract.md) found no supported passive subscription method, and the real hook-to-rollout candidate still lacks invocation/root routing and current paginated-history certification. This does not establish that native rollout observation is impossible.
+Codex CLI 0.153.0 has a selected fresh-root source contract, but no implemented managed reporting adapter/setup yet. The [contract](../research/codex-reporting-acceptance/source-contract.md) records receiver-side OS peer/parent attribution, exact paginated header, native two-turn/permission/child/cancellation/error evidence and metric references. Authentication was explicitly authorized and temporary credentials removed. Earlier blocked checkpoints remain historical evidence.
 
-The isolated Codex native attempt reached its authentication selector and stopped without login. Numeric comparison and conversation matrix cases remain blocked; see the [native attempt](../research/codex-reporting-acceptance/native-attempt/results.md). Existing Claude acceptance does not cover Codex. There is no supported managed Codex setup; ordinary native Codex remains usable. See [Codex setup status](codex-reporting-setup.md) for the exact prerequisites and deferred scope.
-
-
-Codex authenticated continuation: authorized credential reuse and native CUA trust succeeded in disposable configuration. One root callback matched the pre-exec native PID, and its exact paginated file header and first-turn token records were observed. The [checkpoint](../research/codex-reporting-acceptance/authenticated-attempt/checkpoint.md) records ENOSPC, incomplete matrix coverage and the required receiver-side OS peer/process identity guard. Authentication is resolved; Codex reporting remains unimplemented and uncertified. All 14 recorded GUI/native/demo processes were absent after cleanup; this does not resolve the older unauthenticated attempt's missing cleanup evidence.
+Implementation and independent review remain required. Linux, current-checkout OVRCR GUI acceptance and capacity gates are unrun. Usage is Partial and scoped to the admitted root thread; WaitingInput, native remaining percentage and cost are Unknown. Resume and broad transitions remain disabled. Ordinary native Codex behavior is preserved; see [setup status](codex-reporting-setup.md). Existing Claude acceptance does not cover Codex.
