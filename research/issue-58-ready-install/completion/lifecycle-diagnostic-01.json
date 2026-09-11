@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "--locked",
+    "--offline"
+  ],
+  "revision": "b2fc7d8aa3198881340457b40f773df85dcb8d3f",
+  "source_change": "diagnostic-only UUID assertion; see matching patch",
+  "test_threads": "default",
+  "start_utc": "2026-09-11T20:01:26.817372+00:00",
+  "environment": {},
+  "exit_code": 101,
+  "end_utc": "2026-09-11T20:02:28.328464+00:00"
+}

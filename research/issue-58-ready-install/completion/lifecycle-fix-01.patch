@@ -1,0 +1,7 @@
+diff --git a/tests/server_lifecycle.rs b/tests/server_lifecycle.rs
+index 78190d1..0133f25 100644
+--- a/tests/server_lifecycle.rs
++++ b/tests/server_lifecycle.rs
+@@ -8772,0 +8773,2 @@ fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>
++    // Lifecycle gate; concurrent fresh-executable startup can exhaust the fixed probe budget.
++    let _guard = env_lock();

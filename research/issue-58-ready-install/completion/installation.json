@@ -1,0 +1,35 @@
+{
+  "installed_utc": "2026-09-11T19:57:24.954349+00:00",
+  "user_authorization": "56 is merged. complete the entire list of required work",
+  "merge_revision": "cadb7a3174701e1666fa0562ebb714593f9d84f3",
+  "reviewed_source": "86ef46b8eff3128566f76022c2cfef49714031ac",
+  "checkout_revision": "b2fc7d8aa3198881340457b40f773df85dcb8d3f",
+  "merged_source_tree_equals_reviewed_source": true,
+  "path": "/Users/xlyk/.local/bin/ovrcr",
+  "previous_install": "absent",
+  "sha256": "663ca41654b694acc7cfb232c4fd8a0bb18d3169c07e4eeff4b649739d5585ae",
+  "version": "ovrcr 0.1.0 (protocol 6)",
+  "rollback_directory": "/Users/xlyk/.local/share/ovrcr/rollback/issue-58-20260911",
+  "backups": [
+    {
+      "original": "/Users/xlyk/.codex/config.toml",
+      "backup": "/Users/xlyk/.local/share/ovrcr/rollback/issue-58-20260911/config.before.toml",
+      "sha256": "0a1073654eb72ad6153e80dfdecae734e50f5b52c7c78e077a5a7252baed9df6",
+      "original_mode": "0o600"
+    },
+    {
+      "original": "/Users/xlyk/.codex/hooks.json",
+      "backup": "/Users/xlyk/.local/share/ovrcr/rollback/issue-58-20260911/hooks.before.json",
+      "sha256": "d1ec33f2de8acf7b69a941e6877057c47fbf343a9f49ec26990a21c8a6664a77",
+      "original_mode": "0o644"
+    },
+    {
+      "original": "/Users/xlyk/Code/ovrcr/target/debug/ovrcr",
+      "backup": "/Users/xlyk/.local/share/ovrcr/rollback/issue-58-20260911/ovrcr-protocol4",
+      "sha256": "3cfd506428656ff8a5fe58ebc1c0e1c71cc5c9a25d9b13b1e947c00fd38aa38c",
+      "original_mode": "0o755"
+    }
+  ],
+  "live_configuration_applied": false,
+  "live_server_transitioned": false
+}

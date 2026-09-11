@@ -1,0 +1,14 @@
+Window: "OVRCR GUI", App: OVRCR Issue58.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text (settable) Dashboard exited: Success
+		3 button Restart dashboard
+		4 text entry area (settable) OVRCR terminal
+	5 close button
+	6 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	7 minimize button
+	8 text OVRCR GUI
+9 menu bar
+	10 OVRCR GUI
+
+The focused UI element is 4 text entry area (settable) OVRCR terminal

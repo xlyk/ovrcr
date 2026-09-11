@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--locked",
+    "--offline"
+  ],
+  "revision": "b2fc7d8aa3198881340457b40f773df85dcb8d3f",
+  "start_utc": "2026-09-11T19:58:39.641868+00:00",
+  "test_threads": "default",
+  "other_task_builds_or_native_acceptance": "none running",
+  "exit_code": 101,
+  "end_utc": "2026-09-11T19:59:31.487890+00:00"
+}

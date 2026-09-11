@@ -1,9 +1,13 @@
-# Issue #58 installation preparation
+# Issue #58 installation record
 
-Status: **prepared, not installed or accepted for normal use**. The user requested
-work to begin in an isolated worktree. Merge, permanent installation, live config
-and trust changes, and a transition of the existing server await authorization.
-No product code changed; this work reuses PR #56.
+Current status (2026-09-11): the approved binary is installed, reporting hooks are
+composed and individually trusted through native Codex, and the installed managed
+launch passed the required native checks. The normal protocol-4 server transition
+still awaits a decision for its five live terminals. Full verification and PR
+delivery are tracked in [the completion record](completion/README.md).
+
+The preparation sections below retain their original checkpoint, including failed
+attempts and gates that were pending then. They are historical, not current status.
 
 ## Revision and review preflight
 
@@ -122,7 +126,7 @@ not establish a normal installation on this host.
 3. Install the approved binary at the agreed path, verify its hash/version and
    actual server executable, compose from that permanent path, and apply only the
    reviewed configuration change. Preserve any intervening unrelated edits and
-   verify the existing `hooks.json` handlers still execute in their original order.
+   verify existing native declarations and trust status are preserved. Native sync hooks execute concurrently; configured ordering does not promise serial execution.
 4. Complete hook review through native Codex, then capture actual assistant
    output, Ready, next Busy, interruption and exit health through the installed
    managed launch. Keep isolated fixture config, socket and workspace and retain

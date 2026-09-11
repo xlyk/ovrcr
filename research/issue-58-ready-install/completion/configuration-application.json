@@ -1,0 +1,23 @@
+{
+  "applied_utc": "2026-09-11T20:00:16.922266+00:00",
+  "configuration": "/Users/xlyk/.codex/config.toml",
+  "before_sha256": "0a1073654eb72ad6153e80dfdecae734e50f5b52c7c78e077a5a7252baed9df6",
+  "applied_sha256": "19e6301f1dbf2e94a8a642389c7055c8445b6f254ac9563d9000add173c66af5",
+  "mode": "0o600",
+  "reporter_command": "exec '/Users/xlyk/.local/bin/ovrcr' report codex --stdin",
+  "added_events": [
+    "SessionStart",
+    "UserPromptSubmit",
+    "Stop",
+    "Interrupt",
+    "SessionEnd"
+  ],
+  "all_previous_toml_values_preserved": true,
+  "all_previous_handler_array_order_preserved": true,
+  "all_previous_trust_values_preserved": true,
+  "idempotent_composition": true,
+  "json_hooks_byte_identical": true,
+  "json_hooks_sha256": "d1ec33f2de8acf7b69a941e6877057c47fbf343a9f49ec26990a21c8a6664a77",
+  "native_trust_changed_programmatically": false,
+  "native_acceptance": "pending"
+}

@@ -1,0 +1,128 @@
+[
+  {
+    "pid": 20202,
+    "ppid": 20200,
+    "pgid": 20200,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/issue-58-ready-install/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 20874,
+    "ppid": 20202,
+    "pgid": 20200,
+    "command": "/Users/xlyk/.local/bin/ovrcr"
+  },
+  {
+    "pid": 92047,
+    "ppid": 20202,
+    "pgid": 92047,
+    "command": "/Users/xlyk/.local/bin/ovrcr"
+  },
+  {
+    "pid": 20932,
+    "ppid": 20874,
+    "pgid": 20932,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 20973,
+    "ppid": 20874,
+    "pgid": 20973,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 32968,
+    "ppid": 20973,
+    "pgid": 32968,
+    "command": "/Users/xlyk/.local/bin/ovrcr"
+  },
+  {
+    "pid": 32970,
+    "ppid": 32968,
+    "pgid": 32970,
+    "command": "/opt/homebrew/bin/codex"
+  },
+  {
+    "pid": 35764,
+    "ppid": 32970,
+    "pgid": 35764,
+    "command": "node"
+  },
+  {
+    "pid": 35765,
+    "ppid": 32970,
+    "pgid": 35765,
+    "command": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+  },
+  {
+    "pid": 35766,
+    "ppid": 32970,
+    "pgid": 35766,
+    "command": "/Applications/1Password.app/Contents/MacOS/onepassword-mcp"
+  },
+  {
+    "pid": 35767,
+    "ppid": 32970,
+    "pgid": 35767,
+    "command": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node"
+  },
+  {
+    "pid": 35823,
+    "ppid": 35767,
+    "pgid": 35767,
+    "command": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl"
+  },
+  {
+    "pid": 54421,
+    "ppid": 32970,
+    "pgid": 54421,
+    "command": "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex-code-mode-host"
+  },
+  {
+    "pid": 21022,
+    "ppid": 20874,
+    "pgid": 21022,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 21093,
+    "ppid": 20874,
+    "pgid": 21093,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 21114,
+    "ppid": 20874,
+    "pgid": 21114,
+    "command": "/bin/sh"
+  },
+  {
+    "pid": 21121,
+    "ppid": 20874,
+    "pgid": 21121,
+    "command": "/bin/sh"
+  },
+  {
+    "pid": 21124,
+    "ppid": 20874,
+    "pgid": 21124,
+    "command": "/bin/sh"
+  },
+  {
+    "pid": 21147,
+    "ppid": 20874,
+    "pgid": 21147,
+    "command": "/bin/sh"
+  },
+  {
+    "pid": 21154,
+    "ppid": 20874,
+    "pgid": 21154,
+    "command": "/bin/sh"
+  },
+  {
+    "pid": 21163,
+    "ppid": 20874,
+    "pgid": 21163,
+    "command": "/bin/sh"
+  }
+]

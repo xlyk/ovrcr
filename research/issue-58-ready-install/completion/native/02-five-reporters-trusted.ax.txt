@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR Issue58.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 20973  elapsed: 42m  agent unknown
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 20973  elapsed: 42m  agent unknown
+		5 text (settable)   ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │╭─────────────────────────────────────────────────╮
+		7 text (settable)      ├ terminal                        ││ ✨ Update available! 0.153.0 -> 0.154.0         │
+		8 text (settable)      └ run 42m  ctx —                  ││ Run brew upgrade --cask codex to update.        │
+		9 text (settable)   - review auth handoff                ││                                                 │
+		10 text (settable)      ├ grok / grok-4.6                 ││ See full release notes:                         │
+		11 text (settable)      └ run 42m  ctx —                  ││ https://github.com/openai/codex/releases/latest │
+		12 text (settable)                                        │╰─────────────────────────────────────────────────╯
+		13 text (settable)   ▼ worktree-lifecycle                 │
+		14 text (settable)   - local                              │╭──────────────────────────────────────────────────────────╮
+		15 text (settable)      ├ terminal                        ││ >_ OpenAI Codex (v0.153.0)                               │
+		16 text (settable)      └ run 42m  ctx —                  ││                                                          │
+		17 text (settable)   - implement lifecycle cleanup        ││ model:     gpt-6-astra ultra   /model to change          │
+		18 text (settable)      ├ claude / sonnet-4               ││ directory: /private/var/folders/…/consigint/auth-handoff │
+		19 text (settable)      └ run 42m  ctx —                  │╰──────────────────────────────────────────────────────────╯
+		20 text (settable)   - review websocket shutdown          │
+		21 text (settable)      ├ codex / gpt-5.4                 │  Tip: You can run any shell command from Codex using ! (e.g. !ls)
+		22 text (settable)      └ run 42m  ctx —                  │
+		23 text (settable)   - plan snapshot restore              │⚠ loading hooks from both /Users/xlyk/.codex/hooks.json and /Users/xlyk/.codex/config.toml; prefer a single representation for
+		24 text (settable)      ├ pi / grok-4.6                   │  this layer
+		25 text (settable)      └ run 42m  ctx —                  │
+		26 text (settable)                                        │• You have 1 usage limit reset available. Run /usage to use one.
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │
+		28 text (settable)   ▼ pipeline-progress-v2               │
+		29 text (settable)   - local                              │  Hooks
+		30 text (settable)      ├ terminal                        │  Lifecycle hooks from config and enabled plugins.
+		31 text (settable)      └ run 42m  ctx —                  │
+		32 text (settable)   - build pipeline progress            │  ⚠ 10 hooks need review before they can run.
+		33 text (settable)      ├ claude / opus-4                 │
+		34 text (settable)      └ run 42m  ctx —                  │  Issues
+		35 text (settable)                                        │  ⚠ loading hooks from both /Users/xlyk/.codex/hooks.json and /Users/xlyk/.codex/config.toml; prefer a single representation
+		36 text (settable)   ▼ scope-quality                      │
+		37 text (settable)   - local                              │  Event                 Installed   Active      Review      Description
+		38 text (settable)      ├ terminal                        │  PreToolUse            0           0           0           Before a tool executes
+		39 text (settable)      └ run 42m  ctx —                  │  PermissionRequest     0           0           0           When permission is requested
+		40 text (settable)   - review scope quality               │  PostToolUse           0           0           0           After a tool executes
+		41 text (settable)      ├ codex / gpt-5.4                 │  PreCompact            0           0           0           Before context compaction
+		42 text (settable)      └ run 42m  ctx —                  │  PostCompact           0           0           0           After context compaction
+		43 text (settable)                                        │  SessionStart          3           1           2           When a new session starts
+		44 text (settable)                                        │  SessionEnd            2           1           1           Right before a session ends
+		45 text (settable)                                        │  UserPromptSubmit      3           1           2           When the user submits a prompt
+		46 text (settable)                                        │  SubagentStart         2           0           2           When a subagent is created
+		47 text (settable)                                        │  SubagentStop          1           0           1           Right before a subagent ends its turn
+		48 text (settable)                                        │  Stop                  2           1           1           Right before Codex ends its turn
+		49 text (settable)                                        │  Interrupt             2           1           1           Right before an interrupted turn is aborted
+		50 text (settable)                                        │
+		51 text (settable)                                        │  Press t to trust all; enter to review hooks; esc to close
+		52 text (settable)                                        │
+		53 text (settable)                                        │
+		54 text (settable)                                        │
+		55 text (settable)                                        │
+		56 text (settable)                                        │
+		57 text (settable)                                        │
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │
+		61 text (settable)                                        │
+		62 text (settable)                                        │
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 20973  elapsed: 42m  agent unknown
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local

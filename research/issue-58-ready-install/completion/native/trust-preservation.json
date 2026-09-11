@@ -1,0 +1,14 @@
+{
+  "original_trust_entries_unchanged": true,
+  "new_trust_entry_keys": [
+    "/Users/xlyk/.codex/config.toml:session_start:0:0",
+    "/Users/xlyk/.codex/config.toml:session_end:0:0",
+    "/Users/xlyk/.codex/config.toml:user_prompt_submit:0:0",
+    "/Users/xlyk/.codex/config.toml:stop:0:0",
+    "/Users/xlyk/.codex/config.toml:interrupt:0:0"
+  ],
+  "hooks_json_unchanged": true,
+  "native_existing_json_hook_status": "modified_since_last_trusted; review_required; preserved",
+  "native_additional_plugin_hooks": "three new hooks; left untrusted",
+  "new_reporters_active": 5
+}

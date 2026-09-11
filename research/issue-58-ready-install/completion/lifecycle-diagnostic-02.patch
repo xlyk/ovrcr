@@ -1,0 +1,60 @@
+diff --git a/tests/server_lifecycle.rs b/tests/server_lifecycle.rs
+index 78190d1..f3505e6 100644
+--- a/tests/server_lifecycle.rs
++++ b/tests/server_lifecycle.rs
+@@ -8785,8 +8785,11 @@ fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>
+     let native = fixture._root.path().join("claude");
+     std::fs::write(&native,r#"#!/bin/sh
+ if [ "$1" = --version ]; then
+-  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
+-  printf '2.1.267 (Claude Code)\n'; exit 0
++  printf 'entered\n' > "$OVRCR_TEST_PROBE.version"
++  test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || { printf 'environment-rejected\n' >> "$OVRCR_TEST_PROBE.version"; exit 99; }
++  printf '2.1.267 (Claude Code)\n'
++  printf 'version-emitted\n' >> "$OVRCR_TEST_PROBE.version"
++  exit 0
+ fi
+ printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
+ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
+@@ -8796,7 +8799,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
+     let make_session = |name: &str, probe: &std::path::Path| {
+         fixture.create_session_summary(name,vec![
+         "sh".into(),"-c".into(),
+-        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
++        r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$4.identity"; export OVRCR_TEST_PROBE="$4" OVRCR_TEST_EXECUTABLE="$3"; if [ -t 0 ] && [ -t 1 ]; then printf tty=true > "$4.tty"; else printf tty=false > "$4.tty"; fi; "$1" agent run --provider claude -- "$2" --agent fixture-root --setting-sources "" --settings "path with spaces" --strict-mcp-config; printf ADMISSION_FINISHED; IFS= read -r done"#.into(),
+         "admission-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),native.clone().into_os_string(),std::env::current_exe().unwrap().into_os_string(),probe.to_path_buf().into_os_string(),reporting_socket.clone().into_os_string(),
+     ])
+     };
+@@ -8804,8 +8807,31 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
+     fixture.record_process_group(&summary);
+     fixture.wait_terminal_contains(summary.id, "ADMISSION_READY");
+     let expected = std::fs::read_to_string(&probe).unwrap();
+-    assert_eq!(expected.len(), 36, "supervisor must select a fresh UUID");
+     let argv = std::fs::read_to_string(probe.with_extension("argv")).unwrap();
++    let admission_diagnostic = if expected.len() != 36 {
++        let terminal = fixture.request(Request::ReadTerminal {
++            session: summary.id,
++            max_lines: None,
++        });
++        [
++            "agent admission unavailable; running native command",
++            "agent reporting unavailable; running native command",
++            "agent awaiting certified startup",
++            "agent awaiting certified resume",
++        ]
++        .into_iter()
++        .find(|message| matches!(&terminal, Response::TerminalText { text, .. } if text.contains(message)))
++        .unwrap_or("no admission diagnostic in terminal")
++    } else {
++        "UUID accepted"
++    };
++    assert_eq!(
++        expected.len(),
++        36,
++        "supervisor must select a fresh UUID; {admission_diagnostic}; fixture argv={argv:?}; tty={:?}; version stages={:?}",
++        std::fs::read_to_string(probe.with_extension("tty")),
++        std::fs::read_to_string(probe.with_extension("version")),
++    );
+     assert_eq!(
+         argv,
+         format!(

@@ -1,0 +1,121 @@
+[
+  {
+    "file": "doctests.log",
+    "raw_gzip": "doctests.log.gz",
+    "raw_sha256": "19a6e5b2d0d7d56b4cdcd2abfd79fe6343fd364cf7cace9b086f7648636583eb",
+    "normalized_sha256": "c95a2c9c160245643188d67c4e13676200a618a8b53b57218ecf00213be4daa6",
+    "normalization": "redundant EOF newlines only"
+  },
+  {
+    "file": "full-attempt-02.log",
+    "raw_gzip": "full-attempt-02.log.gz",
+    "raw_sha256": "d957c18447887288a1785838955b625786794047dc36d14fff776c8762dedcab",
+    "normalized_sha256": "cad3f86ffcf51c143021ee67d1895667f72e87f74586850cd8c7c00bc1103133",
+    "normalization": "redundant EOF newlines only"
+  },
+  {
+    "file": "lifecycle-fix-01.log",
+    "raw_gzip": "lifecycle-fix-01.log.gz",
+    "raw_sha256": "da1dd6d3ed6e78b7390494c3d95e387db72d7db3c3e2527b09475525702354e5",
+    "normalized_sha256": "fc76de9b8ee94f24aedb1813fd3e41583232857cd3f400cbdd538d4a744acf24",
+    "normalization": "redundant EOF newlines only"
+  },
+  {
+    "file": "native/01-session-start-review.ax.txt",
+    "raw_gzip": "native/01-session-start-review.ax.txt.gz",
+    "raw_sha256": "93626895f5454c290a8d6f405d76c79ef5b9dc58a97d4b819ba5e386a7ec56c7",
+    "normalized_sha256": "874b4c73813f428a9a1657ade948a3e64b66c770633dd598af7f157ab78f23c3",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/02-five-reporters-trusted.ax.txt",
+    "raw_gzip": "native/02-five-reporters-trusted.ax.txt.gz",
+    "raw_sha256": "a1bd2a2c62bdc2d0f4d7232ce9c6ed2e25522fd54eeb7e749002c49fa0ee1e5f",
+    "normalized_sha256": "281eeab2966618af312702d8bad171ebc38ce0f377f0ea59c72738f9e52597dc",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/03-first-prompt.ax.txt",
+    "raw_gzip": "native/03-first-prompt.ax.txt.gz",
+    "raw_sha256": "25162ab6e38f5b2812ab709b5770a6086238fe04f63f54feba0584506abf2ed6",
+    "normalized_sha256": "a82601993d443f14808fdc295a29cfd724f7b77b4a3dd1851a7a36b986c30065",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/04-first-ready.ax.txt",
+    "raw_gzip": "native/04-first-ready.ax.txt.gz",
+    "raw_sha256": "5e62278bc1fcbdca2e1214f5b5862796fca1226ac24fec8219102e69c41e5cc7",
+    "normalized_sha256": "aaef4ada05fc99704bb5e46df41981feb5c5b6650a63240104a19a789726ce6e",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/05-next-busy.ax.txt",
+    "raw_gzip": "native/05-next-busy.ax.txt.gz",
+    "raw_sha256": "3061c37b33f0829154ab2c628f000aaf47ef945f9784e04965ce532164be5b67",
+    "normalized_sha256": "f7e89fe0bc7d6232bb00657eabfe15615940c36e8c404788f8944d096cc1b3b5",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/06-second-ready.ax.txt",
+    "raw_gzip": "native/06-second-ready.ax.txt.gz",
+    "raw_sha256": "cbd4ef1f93468dae78f31cf7c4fcc35401e2ba382cee613629649409e309cd89",
+    "normalized_sha256": "194eb795c1640d0dbe0dc779af4fb90cb22536ab26ac1c5d14ce8e7878dd883c",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/07-interrupt-busy.ax.txt",
+    "raw_gzip": "native/07-interrupt-busy.ax.txt.gz",
+    "raw_sha256": "0034bd6355717e267e981f81849ba4a34d40b42c4140aa048de2d0e7b286008b",
+    "normalized_sha256": "99d91379f5d2278353c0437515fb0b15318f98d28111e35d02285ba9a334e515",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/08-interrupted-idle.ax.txt",
+    "raw_gzip": "native/08-interrupted-idle.ax.txt.gz",
+    "raw_sha256": "4f66d0868f4f3eab6b08acac97cec3e218148438d75665e50cb53f005471e92e",
+    "normalized_sha256": "8c2a71d52ac4cd7b3d8f7707ac4307f8add24ee3a2149bcfdd3d8c1c070eb8c8",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/09-final-ready.ax.txt",
+    "raw_gzip": "native/09-final-ready.ax.txt.gz",
+    "raw_sha256": "1f72e8a0eef85efae7d5c49906238ac1a419c95b32fbadc7d7a2556a2f3ef2f7",
+    "normalized_sha256": "604a4416da29ab570e630767726c8c93d721ecfb7eed8bf38c5d2063124f8c99",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/10-detached.ax.txt",
+    "raw_gzip": "native/10-detached.ax.txt.gz",
+    "raw_sha256": "40d7e1365ac120fbb410adeaeb27c6a46b891abf9d53085b2ac6b2aab76d3d07",
+    "normalized_sha256": "cd0cfd0088529110f277506ffd508fa85d56b7e6b24204097a155f01f12c4d56",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/11-reconnected-ready.ax.txt",
+    "raw_gzip": "native/11-reconnected-ready.ax.txt.gz",
+    "raw_sha256": "acd71190cc7a34626c801fc3b1698fb53ea26f82e21bd3ffe3e46e9b9f70258d",
+    "normalized_sha256": "ed35abc9ae98d5af5fcfbc7cc91295055a2c69fd28abc2871bcc665f4bc456b8",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/12-native-exit.ax.txt",
+    "raw_gzip": "native/12-native-exit.ax.txt.gz",
+    "raw_sha256": "596cfb6f56a88fdbbb571f1e6569aab864e34666ce8cda192e53a17c33756798",
+    "normalized_sha256": "22b386e889d9677cbcdf68d25c3084498a8f82105a3d71c65cdf4ab4818d5764",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "native/13-pty-geometry.ax.txt",
+    "raw_gzip": "native/13-pty-geometry.ax.txt.gz",
+    "raw_sha256": "c1ea29886b748d0e599feaf1703684308a56b6776cb260ffafce70d48f2df1dc",
+    "normalized_sha256": "cc09bf7fb0a20d554af2c39cd57a17b73efe1477b0fa6e4b0cfb1853c6d70227",
+    "normalization": "AX trailing line whitespace only"
+  },
+  {
+    "file": "lifecycle-fix-01.patch",
+    "raw_gzip": "lifecycle-fix-01.patch.gz",
+    "raw_sha256": "afbf3e0290554b28bdc010da04c00b114fcf8cf7f5c92af8e9b29d09cb21a4aa",
+    "normalized_sha256": "e36277e225f4f817a39d2c2af684e9a64cb45f832a2d94fb8374ae991e1a4835",
+    "normalization": "same correction with zero context; exact original patch retained"
+  }
+]

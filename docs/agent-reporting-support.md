@@ -215,6 +215,17 @@ That acceptance used a disposable fixture. Operational preparation and host inst
 
 Doctor reports exact executable compatibility and, when supplied, the presence of expected commands in one TOML file. Its accepted release status does not certify the installed binary, running server or user setup. Effective configuration, native trust and delivery remain unverified until the installed path receives native acceptance. A prepared binary or hook draft must not be recorded as installed or trusted.
 
+The authorized [issue #58 installed-native check](../research/issue-58-ready-install/completion/README.md)
+used `/Users/xlyk/.local/bin/ovrcr` from the reviewed PR #56 source, whose tree
+matches merge `cadb7a3174701e1666fa0562ebb714593f9d84f3`. Exact native Codex 0.153.0
+produced distinct assistant output, Ready/Observed, next-prompt Busy, interrupted
+Idle, same-process dashboard reconnect and exit 0 with retained activity plus
+Unavailable health. Only the five new reporters were trusted through native
+Codex. Existing JSON handlers and plugin hooks retained their needs-review status;
+this is preservation evidence, not a claim that those unrelated hooks dispatched.
+All recorded fixture processes/groups and disposable runtime paths were removed.
+The normal server transition and current delivery gates are separate in that record.
+
 The [broader source contract](../research/codex-reporting-acceptance/source-contract.md) remains blocked: retained evidence cannot reliably invalidate continuous foreground identity when native backtracking changes lineage before its next prompt. That earlier Task 1 stop gate and prohibition on Tasks 2–3 concerned the broader metrics/continuous-identity plan; it does not block the separately approved hooks-only scope. No rollout collector or safe ongoing metrics route is claimed. Historical probes and failures remain retained.
 
 Initial resume/picker/fork and broad transitions remain disabled for reporting. Missing ending hooks or API errors cannot imply Ready and may leave Busy; a new prompt while an old turn remains open disables reporting. WaitingInput, context, usage and cost are unavailable in this milestone. No Linux native GUI acceptance or concurrent provider-launch throughput is claimed. Ordinary native Codex behavior is preserved. Existing Claude acceptance does not cover Codex.

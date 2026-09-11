@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR Issue58.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 20973  elapsed: 49m  agent idle observed
+  ▼ auth-handoff                       │tokens —  cost —
+    local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 20973  elapsed: 49m  agent idle observed
+		5 text (settable)   ▼ auth-handoff                       │tokens —  cost —
+		6 text (settable)     local                              ││                                                 │
+		7 text (settable)      ├ terminal idle observed          ││ See full release notes:                         │
+		8 text (settable)      └ run 49m  ctx —                  ││ https://github.com/openai/codex/releases/latest │
+		9 text (settable)   - review auth handoff                │╰─────────────────────────────────────────────────╯
+		10 text (settable)      ├ grok / grok-4.6                 │
+		11 text (settable)      └ run 48m  ctx —                  │╭──────────────────────────────────────────────────────────╮
+		12 text (settable)                                        ││ >_ OpenAI Codex (v0.153.0)                               │
+		13 text (settable)   ▼ worktree-lifecycle                 ││                                                          │
+		14 text (settable)   - local                              ││ model:     gpt-6-astra ultra   /model to change          │
+		15 text (settable)      ├ terminal                        ││ directory: /private/var/folders/…/consigint/auth-handoff │
+		16 text (settable)      └ run 49m  ctx —                  │╰──────────────────────────────────────────────────────────╯
+		17 text (settable)   - implement lifecycle cleanup        │
+		18 text (settable)      ├ claude / sonnet-4               │  Tip: You can run any shell command from Codex using ! (e.g. !ls)
+		19 text (settable)      └ run 48m  ctx —                  │
+		20 text (settable)   - review websocket shutdown          │⚠ loading hooks from both /Users/xlyk/.codex/hooks.json and /Users/xlyk/.codex/config.toml; prefer a single representation for
+		21 text (settable)      ├ codex / gpt-5.4                 │  this layer
+		22 text (settable)      └ run 48m  ctx —                  │
+		23 text (settable)   - plan snapshot restore              │• You have 1 usage limit reset available. Run /usage to use one.
+		24 text (settable)      ├ pi / grok-4.6                   │
+		25 text (settable)      └ run 48m  ctx —                  │
+		26 text (settable)                                        │› Reply exactly ISSUE58_READY_ONE. Do not use tools.
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │
+		28 text (settable)   ▼ pipeline-progress-v2               │
+		29 text (settable)   - local                              │• Session renamed to Reply exactly ISSUE58_READY_ONE. Do. To resume this session run codex resume, then select Reply exactly
+		30 text (settable)      ├ terminal                        │ISSUE58_READY_ONE. Do (01a09234-9a01-77d1-9916-c2ed5bfb035d)
+		31 text (settable)      └ run 48m  ctx —                  │
+		32 text (settable)   - build pipeline progress            │• ISSUE58_READY_ONE
+		33 text (settable)      ├ claude / opus-4                 │
+		34 text (settable)      └ run 48m  ctx —                  │
+		35 text (settable)                                        │› Run /bin/sleep 15, then reply exactly ISSUE58_READY_TWO. Do not read or modify any files.
+		36 text (settable)   ▼ scope-quality                      │
+		37 text (settable)   - local                              │
+		38 text (settable)      ├ terminal                        │• I’ll run /bin/sleep 15 without reading or modifying any files.
+		39 text (settable)      └ run 48m  ctx —                  │
+		40 text (settable)   - review scope quality               │• Ran /bin/sleep 15
+		41 text (settable)      ├ codex / gpt-5.4                 │  └ (no output)
+		42 text (settable)      └ run 48m  ctx —                  │
+		43 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		44 text (settable)                                        │
+		45 text (settable)                                        │• ISSUE58_READY_TWO
+		46 text (settable)                                        │
+		47 text (settable)                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		48 text (settable)                                        │
+		49 text (settable)                                        │
+		50 text (settable)                                        │› Run /bin/sleep 45, then reply exactly ISSUE58_SHOULD_NOT_FINISH. Do not read or modify any files.
+		51 text (settable)                                        │
+		52 text (settable)                                        │
+		53 text (settable)                                        │• I’ll run /bin/sleep 45 without reading or modifying any files.
+		54 text (settable)                                        │
+		55 text (settable)                                        │■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the issue.
+		56 text (settable)                                        │
+		57 text (settable)                                        │  1 background terminal running · /ps to view · /stop to close
+		58 text (settable)                                        │
+		59 text (settable)                                        │
+		60 text (settable)                                        │» Ask Codex to do anything
+		61 text (settable)                                        │
+		62 text (settable)                                        │  gpt-6-astra ultra · /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JfWqxG/workspaces/consigint/auth-han…
+		63 text (settable) Terminal mode  Ctrl-g browse
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 20973  elapsed: 49m  agent idle observed
+  ▼ auth-handoff                       │tokens —  cost —
+    local
