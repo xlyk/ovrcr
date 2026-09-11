@@ -3,6 +3,19 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 
+// These setup/doctor fixtures launch temporary executables under bounded native
+// probe deadlines. Coordinate their cold starts; this suite checks reporting and
+// cleanup contracts, not concurrent provider-launch throughput. Use the same
+// poison-tolerant env_lock pattern as server_lifecycle so every assertion still
+// runs after an unrelated fixture failure.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn command(root: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
@@ -44,6 +57,7 @@ fn setup(root: &tempfile::TempDir, value: &Value) -> (Value, String) {
 }
 #[test]
 fn setup_preserves_settings_and_external_renderer_bytes_once() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let output_path = root.path().join("received");
     let calls = root.path().join("calls");
@@ -89,6 +103,7 @@ fn setup_preserves_settings_and_external_renderer_bytes_once() {
 }
 #[test]
 fn setup_migrates_only_exact_legacy_statusline_and_marks_hooks() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     for prefix in ["ovrcr".to_string(), env!("CARGO_BIN_EXE_ovrcr").to_string()] {
         let (value, _) = setup(
@@ -124,6 +139,7 @@ fn setup_migrates_only_exact_legacy_statusline_and_marks_hooks() {
 }
 #[test]
 fn setup_quotes_actual_executable_path() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("ovrcr ' quoted");
     std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &binary).unwrap();
@@ -150,6 +166,7 @@ fn setup_quotes_actual_executable_path() {
 }
 #[test]
 fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("claude");
     for (version, expected_status, expected_version) in [
@@ -232,6 +249,7 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
 
 #[test]
 fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
+    let _env_lock = env_lock();
     use ovrcr::protocol::*;
     use std::os::unix::net::UnixListener;
     for bound in [false, true] {
@@ -311,6 +329,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
 
 #[test]
 fn doctor_interrupt_cleans_its_owned_version_probe_before_exit() {
+    let _env_lock = env_lock();
     use std::os::unix::process::ExitStatusExt;
     use std::time::{Duration, Instant};
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
@@ -379,6 +398,7 @@ fn doctor_interrupt_cleans_its_owned_version_probe_before_exit() {
 
 #[test]
 fn doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let (base, _) = setup(&root, &json!({}));
     for (case, expected) in [
@@ -437,6 +457,7 @@ fn doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes() {
 
 #[test]
 fn codex_setup_preserves_handlers_trust_and_quotes_noop_helper() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("ovrcr ' quoted");
     std::fs::copy(env!("CARGO_BIN_EXE_ovrcr"), &binary).unwrap();
@@ -526,6 +547,7 @@ command = "my-approval-handler"
 
 #[test]
 fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     for (provider, response) in [
         ("codex", "codex-cli 0.153.0"),
@@ -570,6 +592,7 @@ fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets
 
 #[test]
 fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
+    let _env_lock = env_lock();
     let root = tempfile::tempdir().unwrap();
     let setup = command(&root)
         .args(["agent", "setup", "codex", "--print"])
