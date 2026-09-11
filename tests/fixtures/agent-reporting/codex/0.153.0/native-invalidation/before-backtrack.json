@@ -1,0 +1,12 @@
+{
+  "binding": {
+    "thread_id": "01a08e93-306b-7830-9544-0e8b46d77db0",
+    "path": "/private/tmp/ovrcr-codex-invalidation-m_fkuyay/provider/sessions/2026/09/10/rollout-2026-09-10T20-46-45-01a08e93-306b-7830-9544-0e8b46d77db0.jsonl",
+    "native_pid": 61635
+  },
+  "sha256": "5f9865d2ddc7dad87110bf7f0e56c10ce603442b9ccfab1f707044fb8ed1aec0",
+  "size": 66492,
+  "inode": 162316157,
+  "device": 16777234,
+  "callbacks": 5
+}

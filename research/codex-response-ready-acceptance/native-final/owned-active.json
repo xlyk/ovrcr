@@ -1,0 +1,122 @@
+[
+  {
+    "pid": 41525,
+    "ppid": 25168,
+    "pgid": 41525,
+    "command": "rtk proxy env CARGO_INCREMENTAL=0 just gui"
+  },
+  {
+    "pid": 41527,
+    "ppid": 41525,
+    "pgid": 41525,
+    "command": "just gui"
+  },
+  {
+    "pid": 41532,
+    "ppid": 41527,
+    "pgid": 41525,
+    "command": "rtk proxy sh scripts/gui.sh"
+  },
+  {
+    "pid": 41533,
+    "ppid": 41532,
+    "pgid": 41525,
+    "command": "rtk proxy ./ovrcr-gui"
+  },
+  {
+    "pid": 41552,
+    "ppid": 41533,
+    "pgid": 41525,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 41584,
+    "ppid": 41552,
+    "pgid": 41525,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 42013,
+    "ppid": 41584,
+    "pgid": 42013,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 42209,
+    "ppid": 41584,
+    "pgid": 42209,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 55894,
+    "ppid": 42209,
+    "pgid": 55894,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr agent run codex -- /opt/homebrew/Caskroom/codex/0.153.0/bin/codex --no-alt-screen -C /private/tmp/ovrcr-codex-final-attc4w4m/workspace"
+  },
+  {
+    "pid": 55896,
+    "ppid": 55894,
+    "pgid": 55896,
+    "command": "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex --no-alt-screen -C /private/tmp/ovrcr-codex-final-attc4w4m/workspace"
+  },
+  {
+    "pid": 66451,
+    "ppid": 55896,
+    "pgid": 66451,
+    "command": "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex-code-mode-host"
+  },
+  {
+    "pid": 42260,
+    "ppid": 41584,
+    "pgid": 42260,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 42329,
+    "ppid": 41584,
+    "pgid": 42329,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 42332,
+    "ppid": 41584,
+    "pgid": 42332,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 42340,
+    "ppid": 41584,
+    "pgid": 42340,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 42347,
+    "ppid": 41584,
+    "pgid": 42347,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 42353,
+    "ppid": 41584,
+    "pgid": 42353,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 42360,
+    "ppid": 41584,
+    "pgid": 42360,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 42366,
+    "ppid": 41584,
+    "pgid": 42366,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 63345,
+    "ppid": 41552,
+    "pgid": 63345,
+    "command": "/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  }
+]

@@ -1,0 +1,46 @@
+COMMAND: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr-runtime --lib response_ready -- --nocapture
+   Compiling libc v0.2.189
+   Compiling cfg_aliases v0.1.1
+   Compiling rustix v1.1.4
+   Compiling option-ext v0.2.0
+   Compiling downcast-rs v1.2.1
+   Compiling shell-words v1.1.1
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-protocol)
+   Compiling nix v0.28.0
+   Compiling errno v0.3.14
+   Compiling dirs-sys v0.5.0
+   Compiling filedescriptor v0.8.3
+   Compiling getrandom v0.4.3
+   Compiling serial2 v0.2.38
+   Compiling directories v6.0.0
+   Compiling signal-hook-registry v1.4.8
+   Compiling signal-hook v0.3.18
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-terminal)
+   Compiling portable-pty v0.9.0
+   Compiling tempfile v3.27.0
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.06s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-18e7945831b72a42)
+
+running 1 test
+agent reporting fixture owned pid/pgid=84504
+
+thread 'server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order' (41611420) panicked at crates/ovrcr-runtime/src/server/tests.rs:5885:76:
+called `Result::unwrap()` on an `Err` value: write protocol frame length
+
+Caused by:
+    Broken pipe (os error 32)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+agent reporting fixture cleaned pgid=84504
+test server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order ... FAILED
+
+failures:
+
+failures:
+    server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 99 filtered out; finished in 0.12s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`
+
+EXIT: 101

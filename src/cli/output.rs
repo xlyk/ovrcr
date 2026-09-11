@@ -88,6 +88,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
             AgentActivity::Busy => "busy",
             AgentActivity::WaitingInput => "waiting_input",
             AgentActivity::Error => "error",
+            AgentActivity::ResponseReady => "response_ready",
         },
         "exit_code": exit_code,
         "exit_signal": exit_signal,

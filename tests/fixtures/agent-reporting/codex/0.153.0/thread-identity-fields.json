@@ -1,0 +1,45 @@
+{
+  "cliVersion": {
+    "description": "Version of the CLI that created the thread.",
+    "type": "string"
+  },
+  "historyMode": {
+    "allOf": [
+      {
+        "$ref": "#/definitions/ThreadHistoryMode"
+      }
+    ],
+    "default": "legacy",
+    "description": "Persisted thread history contract selected when this thread was created."
+  },
+  "id": {
+    "description": "Identifier for this thread. Codex-generated thread IDs are UUIDv7.",
+    "type": "string"
+  },
+  "parentThreadId": {
+    "description": "The ID of the parent thread. This will only be set if this thread is a subagent.",
+    "type": [
+      "string",
+      "null"
+    ]
+  },
+  "path": {
+    "description": "[UNSTABLE] Path to the thread on disk.",
+    "type": [
+      "string",
+      "null"
+    ]
+  },
+  "sessionId": {
+    "description": "Session id shared by threads that belong to the same session tree.",
+    "type": "string"
+  },
+  "source": {
+    "allOf": [
+      {
+        "$ref": "#/definitions/SessionSource"
+      }
+    ],
+    "description": "Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.)."
+  }
+}

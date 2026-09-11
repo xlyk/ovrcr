@@ -66,10 +66,15 @@ ovrcr report activity --state waiting-input --sequence 2
 ovrcr report activity --state idle --sequence 3
 ```
 
-Accepted states are `unknown`, `idle`, `busy`, `waiting-input`, and `error`. The
+Accepted states are `unknown`, `idle`, `busy`, `waiting-input`, `response-ready`, and `error`. The
 command has a one-second total deadline, and successful reports are silent,
 including with `--json`. OVRCR retains the last accepted report in memory and
 exposes that observation across dashboard detach and reconnect.
+
+`response-ready` means the last observed root turn has finished responding. Managed
+reporters display `response ready · observed` and retain it until the next activity
+report, including across reconnects. Reporter health and process exit remain
+separate; Ready does not acknowledge unread output or imply known usage or cost.
 
 Reports without `--sequence` are accepted in arrival order; the first such report
 selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects

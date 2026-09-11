@@ -1,0 +1,70 @@
+{
+  "marker": "OVRCR_PERMISSION_OK",
+  "callbacks": [
+    {
+      "sequence": 8,
+      "received_at": 1789094941.566761,
+      "peer_pid": 71530,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "PreToolUse",
+        "turn_id": "01a08e5e-3d44-72e2-991f-5758c1f63ecb",
+        "tool_name": "Bash",
+        "tool_use_id": "exec-d88d3759-d66a-44bd-8e6d-99b2207959da"
+      },
+      "decision": "accept_root_event"
+    },
+    {
+      "sequence": 9,
+      "received_at": 1789094941.623738,
+      "peer_pid": 71533,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "PermissionRequest",
+        "turn_id": "01a08e5e-3d44-72e2-991f-5758c1f63ecb",
+        "tool_name": "Bash"
+      },
+      "decision": "accept_root_event"
+    },
+    {
+      "sequence": 10,
+      "received_at": 1789095010.09895,
+      "peer_pid": 78946,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "PostToolUse",
+        "turn_id": "01a08e5e-3d44-72e2-991f-5758c1f63ecb",
+        "tool_name": "Bash",
+        "tool_use_id": "exec-d88d3759-d66a-44bd-8e6d-99b2207959da"
+      },
+      "decision": "accept_root_event"
+    },
+    {
+      "sequence": 11,
+      "received_at": 1789095015.329491,
+      "peer_pid": 79395,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "Stop",
+        "turn_id": "01a08e5e-3d44-72e2-991f-5758c1f63ecb"
+      },
+      "decision": "accept_root_event"
+    }
+  ]
+}

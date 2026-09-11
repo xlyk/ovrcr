@@ -18,7 +18,7 @@ const HOOKS: &[&str] = &[
     "SessionEnd",
 ];
 
-fn quote(value: &str) -> String {
+pub(super) fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
@@ -36,7 +36,7 @@ fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
     Ok(value)
 }
 
-fn binary() -> anyhow::Result<String> {
+pub(super) fn binary() -> anyhow::Result<String> {
     std::env::current_exe()?
         .into_os_string()
         .into_string()
@@ -170,32 +170,8 @@ pub(super) fn doctor(
     session: Option<u64>,
     executable: &OsStr,
 ) -> AppResult<()> {
-    // This CLI path has not started worker threads and has no launcher's signal
-    // iterator. Defer termination only while
-    // the bounded probe owns its child group; restore pending signals after reap.
-    let mut signals: libc::sigset_t = unsafe { std::mem::zeroed() };
-    let mut previous: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe {
-        libc::sigemptyset(&mut signals);
-        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
-            libc::sigaddset(&mut signals, signal);
-        }
-    }
-    let blocked = unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &signals, &mut previous) };
-    if blocked != 0 {
-        return Err(RuntimeError::internal(std::io::Error::from_raw_os_error(
-            blocked,
-        )));
-    }
-    let probe = ovrcr::report::admission::pinned_version(executable);
+    let probe = with_version_probe(|| ovrcr::report::admission::pinned_version(executable))?;
     let supported = probe.supported();
-    let restored =
-        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut()) };
-    if restored != 0 {
-        return Err(RuntimeError::internal(std::io::Error::from_raw_os_error(
-            restored,
-        )));
-    }
     let mut remediation = Vec::<String>::new();
     if supported.is_none() {
         remediation.push(match probe.observed() {
@@ -336,4 +312,33 @@ pub(super) fn doctor(
         "remediation":remediation
     })).map_err(RuntimeError::internal)?);
     Ok(())
+}
+
+pub(super) fn with_version_probe<T>(probe: impl FnOnce() -> T) -> AppResult<T> {
+    // This CLI path has not started worker threads and has no launcher's signal
+    // iterator. Defer termination only while
+    // the bounded probe owns its child group; restore pending signals after reap.
+    let mut signals: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let mut previous: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut signals);
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+            libc::sigaddset(&mut signals, signal);
+        }
+    }
+    let blocked = unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &signals, &mut previous) };
+    if blocked != 0 {
+        return Err(RuntimeError::internal(std::io::Error::from_raw_os_error(
+            blocked,
+        )));
+    }
+    let result = probe();
+    let restored =
+        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut()) };
+    if restored != 0 {
+        return Err(RuntimeError::internal(std::io::Error::from_raw_os_error(
+            restored,
+        )));
+    }
+    Ok(result)
 }

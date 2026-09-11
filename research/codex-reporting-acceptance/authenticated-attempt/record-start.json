@@ -1,0 +1,23 @@
+{
+  "directory": "/private/tmp/ovrcr-codex-auth-hbxxyxjr",
+  "argv": [
+    "/opt/homebrew/Caskroom/codex/0.153.0/bin/codex",
+    "--no-alt-screen",
+    "-C",
+    "/private/tmp/ovrcr-codex-auth-hbxxyxjr/workspace",
+    "Reply exactly OVRCR_CODEX_AUTH_ROOT_OK."
+  ],
+  "environment_keys": [
+    "CODEX_HOME",
+    "HOME",
+    "LANG",
+    "PATH",
+    "TERM"
+  ],
+  "started_at": 1789092578.5986502,
+  "credentials_supplied": true,
+  "credential_reuse_authorized": true,
+  "credential_values_recorded": false,
+  "input_sent": false,
+  "pid": 4322
+}

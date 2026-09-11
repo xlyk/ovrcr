@@ -1,0 +1,47 @@
+Retained verbatim excerpts from tool outputs; complete output remains in task tool trace.
+
+Attempt 1 (sandbox)
+thread '<unnamed>' (41744125) panicked at tests/server_lifecycle.rs:5303:72:
+called `Result::unwrap()` on an `Err` value: bind server socket /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0WXSXc/server.sock
+
+Caused by:
+    Operation not permitted (os error 1)
+control fixture cleanup incomplete; preserved /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0WXSXc
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 2.13s
+
+Attempt 2 (behavioral RED)
+error: unexpected argument 'codex' found
+Usage: ovrcr agent run [OPTIONS] --provider <PROVIDER> -- <ARGV>...
+CODEX_NATIVE_EXIT=2
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 5.89s
+
+Attempt 4 (compile)
+error[E0425]: cannot find function `wait_process_absent` in this scope
+error: could not compile `ovrcr` (test "server_lifecycle") due to 1 previous error
+
+Attempt 8
+thread 'codex_managed_hooks_ready_interrupt_duplicates_and_rebind' (41820514) panicked at tests/server_lifecycle.rs:9895:17:
+assertion `left == right` failed: reporting startup conflict prevented native launch
+  left: Some(1)
+ right: Some(23)
+thread 'codex_managed_missing_end_disables_overlap_without_native_failure' (41820516) panicked at tests/server_lifecycle.rs:9975:66:
+called `Option::unwrap()` on a `None` value
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 80 filtered out; finished in 4.04s
+
+Attempt 9
+thread 'codex_managed_lost_bind_receipt_recovers_before_busy' (41829092) panicked at tests/server_lifecycle.rs:9949:66:
+called `Option::unwrap()` on a `None` value
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 4.26s
+
+Attempt 12
+thread 'codex_managed_lost_bind_receipt_recovers_before_busy' (41843970) panicked at tests/server_lifecycle.rs:9949:84:
+no Codex snapshot after 0: TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "Codex reporting unavailable; running native command\n\nrunning 1 test\nCODEX_NATIVE_READY\nCODEX_CALLBACK=0" }
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 4.23s
+
+Attempt 14
+thread 'codex_managed_native_death_never_synthesizes_ready_and_removes_socket' (41860723) panicked at tests/server_lifecycle.rs:10005:66:
+called `Option::unwrap()` on a `None` value
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 80 filtered out; finished in 3.79s
+
+Attempt 15 (no bug fix; not considered resolution)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 3.10s

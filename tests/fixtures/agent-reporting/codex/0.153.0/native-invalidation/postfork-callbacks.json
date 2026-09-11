@@ -1,0 +1,47 @@
+[
+  {
+    "sequence": 6,
+    "received_at": 1789098507.042441,
+    "peer_pid": 77442,
+    "os_parent_pid": 61635,
+    "expected_native_pid": 61635,
+    "native_lifetime_matches": true,
+    "event": {
+      "session_id": "01a08e94-0deb-76c3-a2b5-540c4874a53f",
+      "transcript_path": "/private/tmp/ovrcr-codex-invalidation-m_fkuyay/provider/sessions/2026/09/10/rollout-2026-09-10T20-47-42-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl",
+      "hook_event_name": "SessionStart",
+      "source": "startup"
+    },
+    "decision": "reject_conflicting_root"
+  },
+  {
+    "sequence": 7,
+    "received_at": 1789098507.083693,
+    "peer_pid": 77445,
+    "os_parent_pid": 61635,
+    "expected_native_pid": 61635,
+    "native_lifetime_matches": true,
+    "event": {
+      "session_id": "01a08e94-0deb-76c3-a2b5-540c4874a53f",
+      "transcript_path": "/private/tmp/ovrcr-codex-invalidation-m_fkuyay/provider/sessions/2026/09/10/rollout-2026-09-10T20-47-42-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl",
+      "hook_event_name": "UserPromptSubmit",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    "decision": "ignore_unbound"
+  },
+  {
+    "sequence": 8,
+    "received_at": 1789098508.902308,
+    "peer_pid": 77897,
+    "os_parent_pid": 61635,
+    "expected_native_pid": 61635,
+    "native_lifetime_matches": true,
+    "event": {
+      "session_id": "01a08e94-0deb-76c3-a2b5-540c4874a53f",
+      "transcript_path": "/private/tmp/ovrcr-codex-invalidation-m_fkuyay/provider/sessions/2026/09/10/rollout-2026-09-10T20-47-42-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl",
+      "hook_event_name": "Stop",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    "decision": "ignore_unbound"
+  }
+]

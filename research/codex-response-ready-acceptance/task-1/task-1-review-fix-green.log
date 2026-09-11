@@ -1,0 +1,26 @@
+BASE: bfbf38d
+COMMAND: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr-tui --lib provider_dashboard_preserves_quality_unknowns_and_component_age
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.21s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-f26f5780f90218fd)
+
+running 1 test
+test dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age ... FAILED
+
+failures:
+
+---- dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age stdout ----
+
+thread 'dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age' (41700459) panicked at crates/ovrcr-tui/src/dashboard/tests.rs:1392:21:
+width=122, pane_width=40, exited=true, unavailable=true: pid: closed  unavailable  response read…
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::tests::provider_dashboard_preserves_quality_unknowns_and_component_age
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+EXIT: 101

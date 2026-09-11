@@ -1,0 +1,9 @@
+{
+  "expected_native_pid": 48614,
+  "observed_callback_immediate_parent_matches": true,
+  "header_id_matches": true,
+  "history_mode": "paginated",
+  "reporter_trusted_in_fixture": true,
+  "production_peer_pid_check_implemented": false,
+  "post_ENOSPC_integrity_not_certified": true
+}

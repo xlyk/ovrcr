@@ -552,7 +552,38 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         .pid
                         .map_or_else(|| "—".to_string(), |pid| pid.to_string())
                 };
-                let activity = if matches!(session.phase, SessionPhase::Exited { .. }) {
+                if session
+                    .agent
+                    .as_ref()
+                    .and_then(|agent| agent.activity.as_ref())
+                    .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+                {
+                    let paused = if matches!(session.phase, SessionPhase::Paused) {
+                        " paused"
+                    } else {
+                        ""
+                    };
+                    let mut text = clip_text(
+                        &format!("pid: {pid}{paused}{}", provider_activity(session)),
+                        usize::from(rect.metadata.width),
+                    );
+                    append_metadata_field(
+                        &mut text,
+                        &format!(
+                            "elapsed: {}",
+                            format_elapsed_at(session.started_unix_ms, now_unix_ms)
+                        ),
+                        rect.metadata.width,
+                    );
+                    return Line::from(Span::styled(text, Style::default().fg(TEAL)));
+                }
+                let activity = if matches!(session.phase, SessionPhase::Exited { .. })
+                    && !session
+                        .agent
+                        .as_ref()
+                        .and_then(|agent| agent.activity.as_ref())
+                        .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+                {
                     Span::raw("")
                 } else {
                     let label = if session.agent.is_some() {
@@ -564,6 +595,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                             AgentActivity::Busy => "agent busy",
                             AgentActivity::WaitingInput => "agent waiting input",
                             AgentActivity::Error => "agent error",
+                            AgentActivity::ResponseReady => "agent response ready",
                         }
                         .to_owned()
                     };
@@ -780,8 +812,16 @@ fn render_split_metadata(
     } else {
         format!("{prefix}loading {name}")
     };
-    if pane.ready
-        && let Some(session) = session
+    let ready_agent = session.and_then(|session| {
+        session.agent.as_ref().filter(|agent| {
+            agent
+                .activity
+                .as_ref()
+                .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+        })
+    });
+    if let Some(session) = session
+        && (pane.ready || ready_agent.is_some())
     {
         let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
             "closed".to_string()
@@ -790,7 +830,19 @@ fn render_split_metadata(
                 .pid
                 .map_or_else(|| "—".to_string(), |pid| pid.to_string())
         };
-        append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+        if ready_agent.is_some() {
+            // Reserve process and health status before clipping activity quality.
+            // At intermediate widths, identity/geometry yields to these statuses.
+            let status = format!("pid: {pid}{}", provider_activity(session));
+            let with_identity = format!("{text}  {status}");
+            text = if Line::raw(&with_identity).width() <= usize::from(rect.metadata.width) {
+                with_identity
+            } else {
+                clip_text(&status, usize::from(rect.metadata.width))
+            };
+        } else {
+            append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+        }
         append_metadata_field(
             &mut text,
             &format!(
@@ -976,12 +1028,23 @@ fn tree_line_text(
                 (_, AgentActivity::Idle) => ' ',
                 (_, AgentActivity::WaitingInput) => '?',
                 (_, AgentActivity::Error) => '!',
+                (_, AgentActivity::ResponseReady) => '✓',
                 (SessionPhase::Running, AgentActivity::Busy) => {
                     SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize]
                 }
             };
             let text = match line {
                 0 => format!("  {status} {}", session.name),
+                1 if session.agent.as_ref().is_some_and(|agent| {
+                    agent.health.state == ReporterHealth::Unavailable
+                        && agent
+                            .activity
+                            .as_ref()
+                            .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+                }) =>
+                {
+                    format!("     ├{} {label}", provider_activity(session))
+                }
                 1 => format!("     ├ {label}{}", provider_activity(session)),
                 _ => format!(
                     "     └ run {}  ctx {}",
@@ -1055,6 +1118,21 @@ fn provider_activity(session: &SessionSummary) -> String {
     let Some(agent) = &session.agent else {
         return String::new();
     };
+    if let Some(activity) = &agent.activity
+        && activity.state == AgentActivity::ResponseReady
+    {
+        let quality = match activity.quality {
+            SampleQuality::Confirmed => "confirmed",
+            SampleQuality::Observed => "observed",
+            SampleQuality::Estimated => "estimated",
+        };
+        let health = if agent.health.state == ReporterHealth::Unavailable {
+            " unavailable"
+        } else {
+            ""
+        };
+        return format!("{health} response ready · {quality}");
+    }
     if agent.health.state == ReporterHealth::Unavailable {
         return " unavailable".into();
     }
@@ -1067,6 +1145,7 @@ fn provider_activity(session: &SessionSummary) -> String {
         AgentActivity::Busy => "busy",
         AgentActivity::WaitingInput => "waiting",
         AgentActivity::Error => "error",
+        AgentActivity::ResponseReady => "response ready",
     };
     let quality = match activity.quality {
         SampleQuality::Confirmed => "confirmed",

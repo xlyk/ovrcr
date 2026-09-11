@@ -1,0 +1,98 @@
+{
+  "header": {
+    "id": "01a08e62-535f-7f91-ae9c-9c91ba9fbfe6",
+    "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+    "cli_version": "0.153.0",
+    "source": {
+      "subagent": {
+        "thread_spawn": {
+          "parent_thread_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+          "depth": 1,
+          "agent_path": "/root/child",
+          "agent_nickname": "Zeno",
+          "agent_role": null
+        }
+      }
+    },
+    "history_mode": "paginated"
+  },
+  "usage_records": [
+    {
+      "timestamp": "2026-09-11T02:53:27.179Z",
+      "ordinal": 12,
+      "type": "token_usage_record",
+      "payload": {
+        "thread_id": "01a08e62-535f-7f91-ae9c-9c91ba9fbfe6",
+        "turn_id": "01a08e62-537c-79b0-9cd7-762f1029feae",
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "root_turn_id": "01a08e62-4758-7763-91db-e57de69e644a",
+        "response_id": "resp_06639fb740427f6e016aa36d25acdc87d18d48f1ed646e42f2",
+        "usage": {
+          "input_tokens": 16948,
+          "cached_input_tokens": 11904,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 9,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 16957
+        },
+        "turn_token_usage": {
+          "input_tokens": 16948,
+          "cached_input_tokens": 11904,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 9,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 16957
+        },
+        "thread_token_usage": {
+          "input_tokens": 16948,
+          "cached_input_tokens": 11904,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 9,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 16957
+        }
+      }
+    }
+  ],
+  "binding": {
+    "thread_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+    "path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+    "native_pid": 53509
+  },
+  "child_hooks_ignored": [
+    {
+      "sequence": 15,
+      "received_at": 1789095205.401071,
+      "peer_pid": 1906,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-53-23-01a08e62-535f-7f91-ae9c-9c91ba9fbfe6.jsonl",
+        "hook_event_name": "SubagentStart",
+        "turn_id": "01a08e62-537c-79b0-9cd7-762f1029feae",
+        "agent_id": "01a08e62-535f-7f91-ae9c-9c91ba9fbfe6",
+        "agent_type": "default"
+      },
+      "decision": "ignore_child"
+    },
+    {
+      "sequence": 17,
+      "received_at": 1789095207.214568,
+      "peer_pid": 2380,
+      "os_parent_pid": 53509,
+      "expected_native_pid": 53509,
+      "native_lifetime_matches": true,
+      "event": {
+        "session_id": "01a08e5c-7480-7052-9964-9224aadebef0",
+        "transcript_path": "/private/tmp/ovrcr-codex-source-matrix-judd8k5f/provider/sessions/2026/09/10/rollout-2026-09-10T19-46-58-01a08e5c-7480-7052-9964-9224aadebef0.jsonl",
+        "hook_event_name": "SubagentStop",
+        "turn_id": "01a08e62-537c-79b0-9cd7-762f1029feae",
+        "agent_id": "01a08e62-535f-7f91-ae9c-9c91ba9fbfe6",
+        "agent_type": "default"
+      },
+      "decision": "ignore_child"
+    }
+  ]
+}

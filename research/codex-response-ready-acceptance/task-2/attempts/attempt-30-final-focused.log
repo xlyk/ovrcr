@@ -1,0 +1,12 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --lib probe -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr-a24d3eaf6784f9c6)
+
+running 2 tests
+test report::admission::tests::blocked_version_probe_reaps_the_exact_group_within_budget ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 1.11s
+
+
+Exit: 0

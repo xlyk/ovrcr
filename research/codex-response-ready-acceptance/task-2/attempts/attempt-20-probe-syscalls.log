@@ -1,0 +1,52 @@
+Command: rtk proxy env CARGO_INCREMENTAL=0 cargo test -p ovrcr --test server_lifecycle codex_managed -- --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-8960ce1b5e692608)
+
+running 4 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRHgka6/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsHwBye/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcIh0Pa/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWhwlNC/repo/.git/
+[main (root-commit) 672a0d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 672a0d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 672a0d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 672a0d8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsHwBye/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRHgka6/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWhwlNC/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpsHwBye/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRHgka6/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpWhwlNC/server.sock
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcIh0Pa/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcIh0Pa/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=hello
+ADMISSION_PROXY request=status
+ADMISSION_PROXY request=other
+ovrcr server stopped
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+ovrcr server stopped
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+ADMISSION_PROXY request=other
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=other
+ovrcr server stopped
+ADMISSION_PROXY request=other
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+ovrcr server stopped
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 2.90s
+
+
+Exit: 0

@@ -2,21 +2,51 @@ use super::{AppResult, RuntimeError, args::AgentCommand};
 use std::os::unix::process::ExitStatusExt;
 
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {
-    let argv = match command {
+    let (provider, argv) = match command {
         AgentCommand::Setup {
-            provider: _,
+            provider,
             print: _,
             settings,
-        } => return super::agent_setup::setup(settings.as_deref()),
+        } => {
+            return match provider.as_str() {
+                "codex" => super::codex_setup::setup(settings.as_deref()),
+                _ => super::agent_setup::setup(settings.as_deref()),
+            };
+        }
         AgentCommand::Doctor {
-            provider: _,
+            provider,
             settings,
             session,
             executable,
-        } => return super::agent_setup::doctor(settings.as_deref(), session, &executable),
-        AgentCommand::Run { provider: _, argv } => argv,
+        } => {
+            let executable = executable.unwrap_or_else(|| provider.clone().into());
+            return match provider.as_str() {
+                "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
+                _ => super::agent_setup::doctor(settings.as_deref(), session, &executable),
+            };
+        }
+        AgentCommand::Run {
+            provider,
+            legacy_provider,
+            argv,
+        } => (
+            provider.or(legacy_provider).expect("required provider"),
+            argv,
+        ),
     };
-    let mut lease = ovrcr::report::reserve_invocation().map_err(|error| {
+    let mut lease = ovrcr::report::reserve_invocation_for(if provider == "codex" {
+        ovrcr::protocol::AgentProvider::Codex
+    } else {
+        ovrcr::protocol::AgentProvider::Claude
+    })
+    .or_else(|error| {
+        if provider == "codex" {
+            Ok(None)
+        } else {
+            Err(error)
+        }
+    })
+    .map_err(|error| {
         if let Some(report) = error.downcast_ref::<ovrcr::report::ReportError>() {
             RuntimeError::new(report.code(), report.to_string())
         } else {
@@ -29,7 +59,11 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             eprintln!("agent reporting unavailable; running native command");
             return None;
         }
-        Some(ovrcr::report::admission::receiver(lease, native_argv))
+        Some(if provider == "codex" {
+            ovrcr::report::codex::receiver(lease, native_argv)
+        } else {
+            ovrcr::report::admission::receiver(lease, native_argv)
+        })
     })
     .map_err(RuntimeError::internal)?;
     if let Some(signal) = status.signal() {

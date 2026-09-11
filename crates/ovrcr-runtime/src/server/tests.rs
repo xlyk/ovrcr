@@ -5869,6 +5869,125 @@ mod agent_reporting {
     }
 
     #[test]
+    fn response_ready_socket_snapshot_reconnect_and_revision_order() {
+        let f = Fixture::new();
+        let auth = f.acquire();
+        let binding = f.bind(&auth, None, "A", "bind");
+        fn connect(f: &Fixture) -> (UnixStream, thread::JoinHandle<()>) {
+            let (server, mut client) = UnixStream::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let state = f.state.clone();
+            let handle = thread::spawn(move || connections::handle_connection(state, server));
+            exchange_preamble(&mut client).unwrap();
+            assert!(matches!(
+                request(&mut client, Request::DashboardHello),
+                Response::Hierarchy(_)
+            ));
+            (client, handle)
+        }
+        fn request(client: &mut UnixStream, request: Request) -> Response {
+            write_frame(
+                client,
+                &ClientMessage {
+                    request_id: 7,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                match read_frame(client).unwrap() {
+                    ServerMessage::Response {
+                        request_id: 7,
+                        response,
+                    } => return response,
+                    ServerMessage::Event(_) => {}
+                    other => panic!("unexpected socket message: {other:?}"),
+                }
+            }
+        }
+        fn snapshot(client: &mut UnixStream) -> AgentSnapshot {
+            let Response::Inventory { sessions, .. } = request(client, Request::Inspect) else {
+                panic!("expected inventory");
+            };
+            sessions
+                .into_iter()
+                .find(|s| s.id == SessionId(900))
+                .unwrap()
+                .agent
+                .unwrap()
+        }
+        let report = |revision, state, turn: &str| {
+            Request::AgentReport(AgentReport {
+                session: SessionId(900),
+                capability: [7; 32],
+                sequence: None,
+                update: AgentUpdate::Provider(ProviderReport {
+                    binding: binding.clone(),
+                    revision,
+                    observation: AgentObservation::Activity(ActivitySample {
+                        state,
+                        quality: SampleQuality::Observed,
+                        turn: Some(turn.into()),
+                    }),
+                }),
+            })
+        };
+        let ready: AgentActivity = serde_json::from_str("\"ResponseReady\"").unwrap();
+        let (mut client, handler) = connect(&f);
+        assert_eq!(
+            request(&mut client, report(2, ready, "turn-1")),
+            Response::Ok
+        );
+        let expected = snapshot(&mut client);
+        assert_eq!(
+            expected.activity.as_ref().unwrap(),
+            &ActivitySample {
+                state: ready,
+                quality: SampleQuality::Observed,
+                turn: Some("turn-1".into()),
+            }
+        );
+        assert_eq!(expected.activity_revision, 2);
+        assert!(expected.metrics.is_none());
+        rejected(request(
+            &mut client,
+            report(1, AgentActivity::Busy, "stale"),
+        ));
+        rejected(request(
+            &mut client,
+            report(2, AgentActivity::Idle, "duplicate"),
+        ));
+        assert_eq!(snapshot(&mut client), expected);
+        drop(client);
+        handler.join().unwrap();
+        let (mut client, handler) = connect(&f);
+        assert_eq!(
+            snapshot(&mut client),
+            expected,
+            "reconnect retains the last observed turn"
+        );
+        assert_eq!(
+            request(&mut client, report(3, AgentActivity::Busy, "turn-2")),
+            Response::Ok
+        );
+        let next = snapshot(&mut client);
+        assert_eq!(next.activity_revision, 3);
+        assert_eq!(
+            next.activity.unwrap(),
+            ActivitySample {
+                state: AgentActivity::Busy,
+                quality: SampleQuality::Observed,
+                turn: Some("turn-2".into()),
+            }
+        );
+        assert!(next.metrics.is_none());
+        drop(client);
+        handler.join().unwrap();
+    }
+
+    #[test]
     fn agent_report_supervisor_connection_loss_and_late_cleanup() {
         let f = Fixture::new();
         let auth = f.acquire();

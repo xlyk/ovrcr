@@ -1,0 +1,8 @@
+Spec compliance: Original finding addressed.
+Task quality: Approved for this scoped correction.
+
+- `crates/ovrcr-tui/src/dashboard/render.rs:812`: Ready metadata now places process and unavailable-health status before activity, preserving the original identity/geometry only when all status text fits. Otherwise it deliberately clips status text using the existing helper. This fixes the prior optional-field disappearance and process-status displacement. Non-Ready metadata retains its prior path.
+- `crates/ovrcr-tui/src/dashboard/tests.rs:1352`: replacement coverage extracts each actual split metadata row using pane rectangles, so sidebar text cannot satisfy the assertions. The matrix checks both panes at five window widths for connected/unavailable and running/exited states, including the original 40-column failure; larger panes assert observed quality and 40-column unavailable panes assert visible clipping.
+- No new actionable breakage found in `bfbf38d..79d56a4`. At widths insufficient for all text, trailing activity/quality is intentionally clipped after process and health; native layout acceptance remains a later coordinator gate.
+- Read the supplied correction diff once and the appended correction report. Inspected `task-1-review-fix-green-2.log`: one covering test passed, 49 filtered, exit 0, no warnings. Inspected `task-1-review-fix-format-final.log`: formatting check exit 0. No test rerun or broader checkout inspection was warranted.
+- Scope: correction diff only. No source edits, staging, commits, or subagent dispatch; only this requested rereview artifact was written.

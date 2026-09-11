@@ -1,0 +1,63 @@
+{
+  "new_header": {
+    "id": "01a08e94-0deb-76c3-a2b5-540c4874a53f",
+    "forked_from_id": "01a08e93-306b-7830-9544-0e8b46d77db0",
+    "cli_version": "0.153.0",
+    "source": "cli",
+    "history_mode": "paginated"
+  },
+  "new_file": "/private/tmp/ovrcr-codex-invalidation-m_fkuyay/provider/sessions/2026/09/10/rollout-2026-09-10T20-47-42-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl",
+  "old_file_unchanged": true,
+  "old_inode_unchanged": true,
+  "new_source_boundaries": [
+    {
+      "ordinal": 17,
+      "type": "event_msg",
+      "event": "thread_settings_applied",
+      "turn_id": null
+    },
+    {
+      "ordinal": 18,
+      "type": "event_msg",
+      "event": "thread_settings_applied",
+      "turn_id": null
+    },
+    {
+      "ordinal": 19,
+      "type": "event_msg",
+      "event": "task_started",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    {
+      "ordinal": 22,
+      "type": "event_msg",
+      "event": "item_completed",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    {
+      "ordinal": 23,
+      "type": "event_msg",
+      "event": "item_completed",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    {
+      "ordinal": 25,
+      "type": "token_usage_record",
+      "event": null,
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    },
+    {
+      "ordinal": 26,
+      "type": "event_msg",
+      "event": "token_count",
+      "turn_id": null
+    },
+    {
+      "ordinal": 27,
+      "type": "event_msg",
+      "event": "task_complete",
+      "turn_id": "01a08e94-b9ee-7830-b599-98c41b1aade2"
+    }
+  ],
+  "no_new_binding": true
+}

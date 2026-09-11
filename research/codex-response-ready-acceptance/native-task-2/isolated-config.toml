@@ -1,0 +1,48 @@
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "exec '/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr' report codex --stdin"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "exec '/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr' report codex --stdin"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "exec '/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr' report codex --stdin"
+
+[[hooks.Interrupt]]
+[[hooks.Interrupt.hooks]]
+type = "command"
+command = "exec '/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr' report codex --stdin"
+
+[[hooks.SessionEnd]]
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "exec '/Users/xlyk/Code/ovrcr/.worktrees/codex-reporting/target/debug/ovrcr' report codex --stdin"
+
+[hooks.state]
+
+[hooks.state."/private/tmp/ovrcr-codex-ready-pjuu5fpa/provider/config.toml:session_start:0:0"]
+trusted_hash = "sha256:8e38c9f93f8bef68dd9e4548653c97dad660f556306878490a0879bc3aadbb3d"
+
+[hooks.state."/private/tmp/ovrcr-codex-ready-pjuu5fpa/provider/config.toml:session_end:0:0"]
+trusted_hash = "sha256:24b6ad090d0437b4a12f53f4d4ef2aa79aed4ed93364e0f844d0a631db1fe8e0"
+
+[hooks.state."/private/tmp/ovrcr-codex-ready-pjuu5fpa/provider/config.toml:user_prompt_submit:0:0"]
+trusted_hash = "sha256:f0f9a2351ad71a90aa384c1f37fac1f4a8339ac14cdabe35d9c9b923ab3fcc91"
+
+[hooks.state."/private/tmp/ovrcr-codex-ready-pjuu5fpa/provider/config.toml:stop:0:0"]
+trusted_hash = "sha256:4cfeaae0213f800127c65fb2e319f8866f0ba7d112e4a5b85abfbb5c7724aff2"
+
+[hooks.state."/private/tmp/ovrcr-codex-ready-pjuu5fpa/provider/config.toml:interrupt:0:0"]
+trusted_hash = "sha256:90314160a85e35b9f03309aa9e5c807e600145efb5bae75777e32b211fdf6c0e"
+
+[projects."/private/tmp/ovrcr-codex-ready-pjuu5fpa/workspace"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+gpt-6-astra = 1
