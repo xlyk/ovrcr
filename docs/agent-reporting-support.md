@@ -203,3 +203,10 @@ noncanonical UUIDs, names/search/picker selection, continue, fork, and in-proces
 switching remain unavailable reporting paths. The 2.1.268 evidence does not change
 Partial conversation usage, Observed activity, or the absence of a provider
 final-accounting boundary.
+
+
+## Codex source gate, 2026-09-10
+
+Codex CLI 0.153.0 reporting is not implemented or certified. The bounded [source investigation](../research/codex-reporting-acceptance/source-contract.md) found no supported passive subscription method, and the real hook-to-rollout candidate still lacks invocation/root routing and current paginated-history certification. This does not establish that native rollout observation is impossible.
+
+No Codex native matrix or numeric comparison ran. Existing Claude acceptance does not cover Codex. There is no supported managed Codex setup; ordinary native Codex remains usable. See [Codex setup status](codex-reporting-setup.md) for the exact prerequisites and deferred scope.
