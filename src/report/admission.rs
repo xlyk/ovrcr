@@ -1542,7 +1542,6 @@ mod tests {
 
     #[test]
     fn initial_admission_probe_cleans_descendants_after_leader_exit() {
-        use std::os::unix::fs::PermissionsExt;
         for (version, exit, expected) in [
             ("2.1.267", 0, true),
             ("2.1.268", 0, true),
@@ -1551,11 +1550,23 @@ mod tests {
             ("2.1.268", 1, false),
         ] {
             let root = tempfile::tempdir().unwrap();
-            let executable = root.path().join("probe");
             let identity = root.path().join("identity");
-            std::fs::write(&executable,format!("#!/bin/sh\nsleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > '{}'\nprintf '{version} (Claude Code)\\n'\nexit {exit}\n",identity.display())).unwrap();
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let probe = pinned_version(executable.as_os_str());
+            // Exercise the same bounded probe and classification with an existing
+            // interpreter. A freshly written executable can spend the whole probe
+            // budget in host startup checks before reaching this lifecycle fixture.
+            let mut command = Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    "/bin/sleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > \"$1\"\nprintf '%s (Claude Code)\\n' \"$2\"\nexit \"$3\"\n",
+                    "probe",
+                ])
+                .arg(&identity)
+                .arg(version)
+                .arg(exit.to_string());
+            let probe = probe_command(command)
+                .as_deref()
+                .map_or(ClaudeVersionProbe::Unavailable, classify_version);
             assert_eq!(probe.supported().is_some(), expected);
             assert_eq!(
                 probe.observed(),
