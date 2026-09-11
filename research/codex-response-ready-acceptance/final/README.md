@@ -31,3 +31,5 @@ Attempt3 at56b84f9 reached server_lifecycle and failed62passed/13failed/9ignored
 The final documentation/evidence revision must pass all current-head PR checks before delivery. Its run/SHA are recorded in the PR and work diary, avoiding a self-referential evidence commit. Source56b84f9 acceptance remains pinned above. No merge or release is authorized.
 
 Rulings retained: coordinator alone commits; evidence retained despite skill cleanup default; startup fixtures coordinated without relaxing deadlines/assertions; probe cleanup uses a system interpreter rather than a cold temporary executable. No concurrent provider-launch throughput claim follows from these choices.
+
+Delivery correction: setup/doctor release status now names accepted exact0.153.0 hooks-only support; actual trust/delivery remain unverified. Public Codex setup/doctor regression3/3 passed with default threading. Generated TOML and native hook behavior are unchanged from GUI56b84f9; no GUI repeat is claimed for release-status text. The retained setup stderr capture contains the earlier pre-acceptance wording intentionally.

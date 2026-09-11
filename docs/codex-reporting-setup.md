@@ -53,7 +53,7 @@ command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 
 Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and trust the hooks through Codex's native UI; setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their order.
 
-Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. Supplied TOML can establish that expected commands are present; effective configuration, native trust and hook delivery remain unverified. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot. Doctor output does not certify release acceptance.
+Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. Supplied TOML can establish that expected commands are present; effective configuration, native trust and hook delivery remain unverified. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot. Doctor names the accepted version contract; it does not verify effective hook trust or delivery in a user configuration.
 
 ## What the indicator means
 

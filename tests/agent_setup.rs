@@ -646,6 +646,10 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                 "supplied_file_unsupported_or_unverified"
             }
         );
+        assert_eq!(
+            result["release_status"],
+            "accepted_exact_0.153.0_hooks_only"
+        );
         assert_eq!(result["configuration"]["hook_trust"], "unverified");
         assert_eq!(result["configuration"]["delivery"], "unverified");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);

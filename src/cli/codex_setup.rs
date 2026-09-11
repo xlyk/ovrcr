@@ -13,7 +13,7 @@ const HOOKS: &[&str] = &[
     "Interrupt",
     "SessionEnd",
 ];
-const REQUIREMENTS: &str = "Requires exact Codex CLI 0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Inside an OVRCR terminal run: ovrcr agent run codex -- codex. Release support remains planned until Task 4 acceptance passes.";
+const REQUIREMENTS: &str = "Requires exact Codex CLI 0.153.0 and synchronous direct-exec command hooks. Review and trust these hooks in native Codex before the first tracked prompt; an initial prompt supplied during hook review may run untracked. Configuration presence does not prove hook trust or delivery. Hooks exit successfully with empty stdout (native no-op), never an approval decision. Inside an OVRCR terminal run: ovrcr agent run codex -- codex. Exact Codex CLI 0.153.0 hooks-only support passed acceptance.";
 const FORMS: &str = "Fresh interactive codex only (executable basename codex): optional --no-alt-screen, --full-auto; separate-token --model/-m, --profile/-p, --sandbox/-s, --ask-for-approval/-a, --cd/-C followed by a nonempty value not starting with '-'; at most one prompt (use -- before a prompt matching a subcommand). Resume, fork, picker, exec, remote, unknown options and other versions run natively with reporting unavailable.";
 
 fn settings(path: Option<&Path>) -> anyhow::Result<Value> {
@@ -139,7 +139,7 @@ pub(super) fn doctor(
     println!("{}", serde_json::to_string_pretty(&json!({
         "provider":"codex", "executable":executable.to_string_lossy(), "version":version,
         "supported_versions":[ovrcr::report::codex::PINNED_VERSION], "probe_status":status,
-        "release_status":"planned_pending_task_4",
+        "release_status":"accepted_exact_0.153.0_hooks_only",
         "configuration":{"status":configuration,"effective_configuration":"unverified","hook_trust":"unverified","delivery":"unverified","issues":issues},
         "session_status":if session.is_some() { "not_inspected_use_session_usage" } else { "not_requested" },
         "capabilities":{"initial_invocation":{"fresh":supported,"resume":false,"fork":false,"picker":false},"activity":"last_observed_root_turn","completion_quality":"observed","metrics":"unavailable","task_success":false},
