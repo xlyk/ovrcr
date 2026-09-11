@@ -4,16 +4,27 @@ use std::os::unix::process::ExitStatusExt;
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let (provider, argv) = match command {
         AgentCommand::Setup {
-            provider: _,
+            provider,
             print: _,
             settings,
-        } => return super::agent_setup::setup(settings.as_deref()),
+        } => {
+            return match provider.as_str() {
+                "codex" => super::codex_setup::setup(settings.as_deref()),
+                _ => super::agent_setup::setup(settings.as_deref()),
+            };
+        }
         AgentCommand::Doctor {
-            provider: _,
+            provider,
             settings,
             session,
             executable,
-        } => return super::agent_setup::doctor(settings.as_deref(), session, &executable),
+        } => {
+            let executable = executable.unwrap_or_else(|| provider.clone().into());
+            return match provider.as_str() {
+                "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
+                _ => super::agent_setup::doctor(settings.as_deref(), session, &executable),
+            };
+        }
         AgentCommand::Run {
             provider,
             legacy_provider,

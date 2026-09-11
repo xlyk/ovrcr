@@ -2201,3 +2201,19 @@ fn claude_statusline_preserves_decimal_and_renders_after_reporting_timeout() {
         assert!(envelope.contains("claude-statusline"));
     }
 }
+
+#[test]
+fn codex_setup_and_doctor_help_expose_provider_dispatch() {
+    for action in ["setup", "doctor"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["agent", action, "--help"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let help = String::from_utf8(output.stdout).unwrap();
+        assert!(help.contains("claude, codex"), "{help}");
+        if action == "doctor" {
+            assert!(!help.contains("[default: claude]"));
+        }
+    }
+}

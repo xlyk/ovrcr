@@ -1,11 +1,70 @@
-# Codex reporting setup status
+# Codex response readiness setup
 
-The [targeted invalidation probe](../research/codex-reporting-acceptance/history-invalidation.md) confirmed that native backtracking can switch to a fork without an observation hook until its next prompt. Startup conflict detection therefore does not establish continuous foreground identity. Managed reporting remains unavailable under the current contract; fixed-original-thread or next-work-only reporting would require an explicit scope change.
+Release support is **planned pending Task 4 acceptance**. The implemented milestone reports the terminal's **last observed root turn** using exact Codex CLI **0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
-OVRCR has no implemented managed Codex reporting setup yet. Ordinary native `codex` remains usable. No proposed managed command should be installed from this source investigation.
+Inside an OVRCR terminal, launch a fresh interactive session:
 
-The [source contract](../research/codex-reporting-acceptance/source-contract.md) is blocked on a reliable detectable invalidation/current-lineage guarantee for the exact-version 0.153.0 hook-to-rollout candidate. Fresh launch grammar does not prevent native in-process history changes; unchanged file identity does not prove the file is still selected. No safe ongoing route is selected, and Tasks 2–3 must not begin. A task-owned macOS receiver prototype verified OS peer/parent attribution and matching paginated header, then native CUA verified two turns, permission, child, cancellation, error and numeric references. Credentials were reused with explicit authorization only in disposable configuration and removed afterward; live settings were preserved.
+```sh
+ovrcr agent run codex -- codex
+```
 
-After a separately authorized source continuation resolves that blocker, implementation would require supervisor native-process metadata, receiver authentication, bounded ordered source reading, conservative launch parsing and independent tests/review. Linux and current-checkout product acceptance remain unrun. WaitingInput and native remaining percentage are unavailable; usage is Partial for the admitted root thread, cost Unknown.
+A direct `codex` launch is untracked; the managed wrapper is required.
 
-Explicit resume, picker/last, fork, in-process switches, compaction recovery, Complete accounting, Confirmed completion, notifications and pricing remain deferred. There is no setup/doctor command or user configuration change to remove yet.
+The legacy `agent run --provider codex -- codex` form also works. Native argv remains unchanged. The executable basename must be `codex`. Supported optional arguments are `--no-alt-screen`, `--full-auto`, and separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`, `--ask-for-approval/-a`, `--cd/-C` with a nonempty value that does not start with `-`. At most one initial prompt is supported; use `--` before a prompt matching a native subcommand. Trust hooks before submitting the first tracked prompt: an initial prompt supplied while Codex displays hook review may run untracked.
+
+## Print and review configuration
+
+```sh
+ovrcr agent setup codex --print --settings /path/to/codex/config.toml
+ovrcr agent doctor codex --json --settings /path/to/codex/config.toml
+```
+
+Omit `--settings` to print a standalone example. Setup prints TOML to stdout and instructions to stderr; it never writes configuration or trust. Review the output, then explicitly merge it into the intended Codex `config.toml`. Do not redirect output onto the input file. Composition preserves existing values, unrelated handlers and their order, including approval handlers and trust entries. It appends missing reporters and recognizes an already configured exact reporter; comments and formatting are not preserved. If a previous installation points at a different OVRCR binary, remove only its exact reporter handlers yourself before composing the replacement. Never copy trust hashes from retained evidence.
+
+The schema matches the [native Task 2 configuration](../research/codex-response-ready-acceptance/native-task-2/isolated-config.toml), without generating its trust state. Setup substitutes the current absolute OVRCR executable path and shell-quotes paths with spaces or apostrophes:
+
+```toml
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.Interrupt]]
+[[hooks.Interrupt.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+
+[[hooks.SessionEnd]]
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
+```
+
+Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and trust the hooks through Codex's native UI; setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their order.
+
+Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. Supplied TOML can establish that expected commands are present; effective configuration, native trust and hook delivery remain unverified. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot. Doctor output does not certify release acceptance.
+
+## What the indicator means
+
+An authenticated root `UserPromptSubmit` binds the observed conversation and marks Busy. Its matching `Stop` marks ResponseReady with Observed quality once; this means the matching root Stop was observed and the response is available to review, not task success or confirmed settling. Other native Stop hooks may still affect provider behavior. `Interrupt` closes that turn as Idle without Ready. Native Ctrl-C produced Idle in the retained check; an earlier Escape attempt left Busy. Session end or reporter loss invalidates reporting.
+
+Ready survives dashboard reconnect while the server and managed invocation remain alive, until new observed activity or invalidation. The next authenticated prompt clears Ready to Busy and may rebind after the prior turn closed. In-process backtracking without a new prompt does not change the displayed last-observed-turn identity. No foreground-history guarantee is implied.
+
+Missing or unknown callbacks cannot synthesize Ready. An API error without a matching ending hook can leave Busy; a subsequent prompt while the previous turn remains open disables reporting. No timeout, transcript, screen text or metrics infer completion. Restart a fresh managed invocation after correcting hook configuration if reporting becomes unavailable.
+
+Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, sound, unread acknowledgement and transcript collection. Linux and full product/capacity gates remain unverified until their required acceptance passes. Existing Claude acceptance does not cover Codex.
+
+## Earlier broader investigation
+
+The [history invalidation probe](../research/codex-reporting-acceptance/history-invalidation.md) demonstrated that native backtracking can switch lineage without an observation hook until the next prompt. The [source contract](../research/codex-reporting-acceptance/source-contract.md) therefore remains blocked for continuous foreground identity and ongoing rollout metrics. Its earlier prohibition on Tasks 2–3 applies to that superseded broader scope. The separately approved hooks-first milestone uses last-observed-turn semantics and no transcript route. Historical attempts and failures remain evidence; they are not release acceptance for this implementation.

@@ -284,7 +284,7 @@ pub(super) fn parse_activity_state(value: &str) -> std::result::Result<AgentActi
 pub(super) enum AgentCommand {
     /// Print a reviewed settings composition; never modify provider settings.
     Setup {
-        #[arg(value_parser = ["claude"])]
+        #[arg(value_parser = ["claude", "codex"])]
         provider: String,
         #[arg(long, required = true)]
         print: bool,
@@ -293,14 +293,14 @@ pub(super) enum AgentCommand {
     },
     /// Inspect supported reporting prerequisites without starting a server.
     Doctor {
-        #[arg(value_parser = ["claude"])]
+        #[arg(value_parser = ["claude", "codex"])]
         provider: String,
         #[arg(long)]
         settings: Option<PathBuf>,
         #[arg(long)]
         session: Option<u64>,
-        #[arg(long, default_value = "claude")]
-        executable: OsString,
+        #[arg(long)]
+        executable: Option<OsString>,
     },
     #[command(
         long_about = "Run a native command with invocation supervision. Codex reporting supports exact interactive Codex CLI 0.153.0 fresh launches with synchronous direct-exec hooks configured through report codex --stdin. Native argv is unchanged. Resume, fork, exec, remote, unknown versions/options and failed probes run with reporting unavailable. A root prompt establishes Busy; its Stop yields Ready once and Interrupt closes it without Ready. Missing ending hooks can leave Busy; no transcript or timeout implies completion. Initial conversation admission supports exact interactive Claude Code 2.1.267 and 2.1.268 with a fresh startup or separate-token --resume UUID. Exact 2.1.268 also accepts -r UUID. Resume values must be canonical lowercase UUIDv4. Eligible options: --model, --permission-mode, --agent, --agents, --settings, --setting-sources, --system-prompt, --append-system-prompt, --name/-n, --strict-mcp-config, --verbose, and permission bypass flags. One prompt is supported only for fresh launches; use an explicit -- before a prompt matching a native subcommand. Unknown or ambiguous options, help/version, history selection, and other execution modes run with original argv and admission unavailable. Eligible fresh invocations receive a supervisor-selected --session-id; resume argv remains unchanged."

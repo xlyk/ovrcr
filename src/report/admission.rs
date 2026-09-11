@@ -269,7 +269,8 @@ pub fn pinned_version(executable: &OsStr) -> ClaudeVersionProbe {
         .map_or(ClaudeVersionProbe::Unavailable, classify_version)
 }
 
-pub(super) fn probe_version(executable: &OsStr) -> Option<Vec<u8>> {
+/// Bounded native --version probe, shared by launch admission and diagnostics.
+pub fn probe_version(executable: &OsStr) -> Option<Vec<u8>> {
     let mut command = Command::new(executable);
     command.arg("--version");
     probe_command(command)

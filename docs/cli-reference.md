@@ -104,6 +104,8 @@ use `terminal kill ID`, then `terminal remove ID` when finished.
 | Command | Contract |
 | --- | --- |
 | `agent run --provider claude -- claude [ARGS...]` | Supervise an exact Claude Code 2.1.267 or 2.1.268 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. Exact 2.1.268 also accepts separate-token `-r UUID`. Does not start a server. |
+| `agent setup codex --print [--settings PATH]` | Print composed Codex 0.153.0 TOML with five synchronous direct-exec reporters; preserve existing values and handler order. Explicit installation and native trust review are required. See [Codex setup](codex-reporting-setup.md). |
+| `agent doctor codex --json [--settings PATH] [--executable PATH]` | Defaults to `codex`; probes only `--version` and checks supplied TOML without a server or provider conversation. Hook trust/delivery and release acceptance remain unverified. |
 | `agent setup claude --print [--settings PATH]` | Print composed JSON; migration and removal notes go to stderr. Does not write provider settings. |
 | `agent doctor claude --json [--settings PATH] [--session ID] [--executable PATH]` | Probe the executable, report the detected version and exact supported-version list, and inspect supplied configuration and optional session health. Without `--session`, uses inherited `OVRCR_SESSION_ID` when present. Does not start a server. |
 | `session usage ID` | Emit JSON containing `agent_epoch`, raw `agent`, `reporting_unavailable`, and separate `measurement_age_ms` fields. Does not start a server. |
