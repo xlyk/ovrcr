@@ -787,21 +787,16 @@ fn render_split_metadata(
     } else {
         format!("{prefix}loading {name}")
     };
+    let ready_agent = session.and_then(|session| {
+        session.agent.as_ref().filter(|agent| {
+            agent
+                .activity
+                .as_ref()
+                .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+        })
+    });
     if let Some(session) = session
-        && session
-            .agent
-            .as_ref()
-            .and_then(|agent| agent.activity.as_ref())
-            .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
-    {
-        append_metadata_field(
-            &mut text,
-            provider_activity(session).trim(),
-            rect.metadata.width,
-        );
-    }
-    if pane.ready
-        && let Some(session) = session
+        && (pane.ready || ready_agent.is_some())
     {
         let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
             "closed".to_string()
@@ -810,7 +805,26 @@ fn render_split_metadata(
                 .pid
                 .map_or_else(|| "—".to_string(), |pid| pid.to_string())
         };
-        append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+        if let Some(agent) = ready_agent {
+            // Reserve process and health status before clipping activity quality.
+            // At intermediate widths, identity/geometry yields to these statuses.
+            let health = if agent.health.state == ReporterHealth::Unavailable {
+                " unavailable"
+            } else {
+                ""
+            };
+            let activity = provider_activity(session);
+            let activity = activity.trim().trim_end_matches(" · unavailable");
+            let status = format!("pid: {pid}{health} {activity}");
+            let with_identity = format!("{text}  {status}");
+            text = if Line::raw(&with_identity).width() <= usize::from(rect.metadata.width) {
+                with_identity
+            } else {
+                clip_text(&status, usize::from(rect.metadata.width))
+            };
+        } else {
+            append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+        }
         append_metadata_field(
             &mut text,
             &format!(

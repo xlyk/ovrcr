@@ -1347,11 +1347,63 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .sessions
         .push(ready_second);
     assert!(dashboard.split_pane());
-    let split_text = drawn(&dashboard, now, 240);
-    assert!(
-        split_text.contains("response ready · observed"),
-        "{split_text}"
-    );
+    // Read the actual pane metadata cells: sidebar labels cannot satisfy these assertions.
+    for width in [122, 142, 166, 202, 240] {
+        for unavailable in [false, true] {
+            for exited in [false, true] {
+                for session in &mut dashboard.hierarchy.projects[0].workspaces[0].sessions {
+                    session.name = "a".into();
+                    session.phase = if exited {
+                        SessionPhase::Exited {
+                            code: Some(0),
+                            signal: None,
+                        }
+                    } else {
+                        SessionPhase::Running
+                    };
+                    session.agent.as_mut().unwrap().health.state = if unavailable {
+                        ReporterHealth::Unavailable
+                    } else {
+                        ReporterHealth::Connected
+                    };
+                }
+                for pane in &mut dashboard.panes {
+                    pane.ready = true;
+                }
+                let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+                terminal
+                    .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
+                    .unwrap();
+                let rects =
+                    super::pane_rects(Rect::new(0, 0, width, 24), 2, dashboard.focused_pane);
+                assert_eq!(rects.len(), 2);
+                for rect in rects {
+                    let row: String = (rect.metadata.x..rect.metadata.right())
+                        .map(|x| terminal.backend().buffer()[(x, rect.metadata.y)].symbol())
+                        .collect();
+                    let context = format!(
+                        "width={width}, pane_width={}, exited={exited}, unavailable={unavailable}: {row}",
+                        rect.metadata.width
+                    );
+                    assert!(
+                        row.contains(if exited { "pid: closed" } else { "pid: 1" }),
+                        "{context}"
+                    );
+                    assert!(row.contains("response ready"), "{context}");
+                    assert_eq!(row.contains("unavailable"), unavailable, "{context}");
+                    if rect.metadata.width >= 62 {
+                        assert!(row.contains("response ready · observed"), "{context}");
+                    }
+                    if unavailable && rect.metadata.width == 40 {
+                        assert!(
+                            row.ends_with('…'),
+                            "readiness quality is visibly clipped: {context}"
+                        );
+                    }
+                }
+            }
+        }
+    }
     dashboard.panes.pop();
     dashboard.focused_pane = 0;
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();
