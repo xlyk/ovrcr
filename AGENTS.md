@@ -63,5 +63,8 @@ Load more when crossing boundaries. No bulk loading at startup.
 | Tests, fixtures, acceptance | [Testing](docs/development/testing.md) |
 | TUI computer use | [CUA](docs/testing-computer-use.md) |
 | PRs, reviews, merges | [Delivery](docs/development/delivery.md) |
+| Issues, specs, tracker operations | [Issue tracker](docs/agents/issue-tracker.md) |
+| Triage roles and labels | [Triage labels](docs/agents/triage-labels.md) |
+| Domain vocabulary, architectural decisions | [Domain docs](docs/agents/domain.md) |
 
 Tools: `rg` search; `git` + `gh` GitHub; `op` 1Password.
