@@ -1,6 +1,6 @@
 # Codex response-ready hooks implementation plan
 
-> Implementation and native acceptance completed through independently reviewed `56b84f9`; hosted run `34570470022` passed all four jobs. Final documentation review, delivery revision CI and diary closeout are in progress. Unit reports, corrections and failed attempts are retained in the acceptance record.
+> Implementation and acceptance complete: native GUI at independently reviewed `56b84f9`, release-status correction reviewed at `1848267`. Unit and final findings are resolved; evidence and the existing work diary are updated. Delivery requires all checks on the final PR revision; that last-SHA result is recorded in the PR and diary rather than another self-referential evidence commit. No merge or release.
 
 **Goal:** Let the user see when a managed native Codex terminal has finished a root response and is ready for review.
 
@@ -115,8 +115,8 @@ This scope permits event-time rebinding after in-process backtracking. Initial p
 - [x] Observe a distinct assistant output marker, then background-session Ready; submit another prompt and observe Busy then a second Ready. Disconnect/reconnect the dashboard and verify the retained label without acknowledgement or replay effects. Capture screenshots and relevant accessibility evidence.
 - [x] Exercise interruption and a real child event without parent Ready; backtrack and submit a new root prompt to verify readiness for the new conversation. Do not claim that the label follows callback-free history browsing. Retain all failed attempts separately from successful acceptance.
 - [x] Record macOS native results separately from Linux automated/platform results. Confirm real PTY/socket ownership, version, source revision and task-owned PID/group cleanup. Preserve resources with uncertain ownership and historical failed evidence.
-- [ ] Update support/setup docs to only capabilities actually accepted. Final independent review must cover any acceptance-driven changes. Push the final revision to the separate Codex PR; require all current-head CI checks to pass. Do not merge or release.
-- [ ] Extend the existing work diary entry, then report PR, exact revision, implemented readiness behavior, test/native/platform results and remaining gaps. No original metrics or continuous-source checkbox is completed by this feature.
+- [x] Update support/setup docs to only capabilities actually accepted. Final independent review must cover any acceptance-driven changes. Push the final revision to the separate Codex PR; require all current-head CI checks to pass. Do not merge or release.
+- [x] Extend the existing work diary entry, then report PR, exact revision, implemented readiness behavior, test/native/platform results and remaining gaps. No original metrics or continuous-source checkbox is completed by this feature.
 
 ## Plan validation and execution handoff
 

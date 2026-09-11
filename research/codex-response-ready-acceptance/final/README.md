@@ -33,3 +33,5 @@ The final documentation/evidence revision must pass all current-head PR checks b
 Rulings retained: coordinator alone commits; evidence retained despite skill cleanup default; startup fixtures coordinated without relaxing deadlines/assertions; probe cleanup uses a system interpreter rather than a cold temporary executable. No concurrent provider-launch throughput claim follows from these choices.
 
 Delivery correction: setup/doctor release status now names accepted exact0.153.0 hooks-only support; actual trust/delivery remain unverified. Public Codex setup/doctor regression3/3 passed with default threading. Generated TOML and native hook behavior are unchanged from GUI56b84f9; no GUI repeat is claimed for release-status text. The retained setup stderr capture contains the earlier pre-acceptance wording intentionally.
+
+[Final metadata rereview](delivery-rereview.md) approved1848267 with no unresolved findings. The existing work diary entry `Work diary/Personal/2026-09-09 OVRCR Grok agent reporting.md` was extended. This final checkpoint changes only review/plan records; final current-head CI and exact delivery revision are recorded in the PR and diary.
