@@ -207,6 +207,15 @@ final-accounting boundary.
 
 ## Codex source gate, 2026-09-11
 
+Optional desktop alerts reuse the accepted Codex root Ready observation and its
+binding, generation, turn and activity revision. They default off and belong to
+the active dashboard, with no replay after attachment or reconnect and no
+delivery for terminals shown in visible panes. This does not add unread state,
+sound, metrics or Confirmed completion. See [dashboard controls and host
+requirements](dashboard.md#desktop-notifications) and [notification-specific
+acceptance](../research/issue-59-desktop-alerts/README.md) for current platform
+results; earlier hooks evidence below does not establish desktop delivery.
+
 The separately authorized [targeted invalidation follow-up](../research/codex-reporting-acceptance/history-invalidation.md) reproduced native backtracking into a new conversation with no observation hook until the next prompt. Same-ID paginated revert has a distinct shutdown/reload path. The remaining gap is continuous foreground identity, not ordinary root-token parsing; no source gate or product capability is marked complete.
 
 Codex CLI 0.153.0 now has an implemented hooks-first adapter and print-only setup/doctor for the separately approved **last observed root turn** milestone. **Exact 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** Authenticated root prompt → Busy, matching Stop → ResponseReady/Observed, Interrupt → Idle. The last Ready observation persists across dashboard reconnect while the server remains alive, until replaced by new observed activity. If reporting becomes Unavailable, the snapshot retains its last activity with Unavailable health; this historical observation does not establish current readiness. The next prompt may rebind after the previous turn closes. This is not task success or continuous selected-history tracking. See [setup and exact launch grammar](codex-reporting-setup.md) and [native Task 2 evidence](../research/codex-response-ready-acceptance/native-task-2/README.md).

@@ -10252,3 +10252,449 @@ fn codex_managed_native_death_never_synthesizes_ready_and_removes_socket() {
         thread::yield_now();
     }
 }
+
+/// Runs the shipped dashboard and substitutes only the final OS notification
+/// executable. Provider callbacks, admission, broadcasts, visibility and input
+/// all still cross their real process/PTY/socket boundaries.
+struct DesktopAlertDashboard {
+    master: Option<Box<dyn portable_pty::MasterPty + Send>>,
+    writer: Box<dyn Write + Send>,
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    process_group: libc::pid_t,
+    host_process_groups: Vec<libc::pid_t>,
+    received: std::sync::mpsc::Receiver<Vec<u8>>,
+    reader: Option<thread::JoinHandle<()>>,
+    parser: vt100::Parser,
+    record: PathBuf,
+}
+
+impl DesktopAlertDashboard {
+    fn start(fixture: &ControlFixture, enabled: Option<bool>) -> Self {
+        let directory = fixture._root.path().join("desktop-host");
+        std::fs::create_dir_all(&directory).unwrap();
+        let record = directory.join("calls");
+        let executable = directory.join(if cfg!(target_os = "macos") {
+            "osascript"
+        } else {
+            "notify-send"
+        });
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_HOST_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let settings = fixture._root.path().join("dashboard.toml");
+        if let Some(enabled) = enabled {
+            std::fs::write(&settings, format!("desktop_notifications = {enabled}\n")).unwrap();
+        }
+        let size = portable_pty::PtySize {
+            rows: 32,
+            cols: 180,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+        let pair = portable_pty::native_pty_system().openpty(size).unwrap();
+        let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+        command.env("OVRCR_SOCKET", &fixture.socket);
+        command.env("OVRCR_CONFIG", fixture._root.path().join("config.toml"));
+        command.env("OVRCR_DASHBOARD_CONFIG", settings);
+        command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
+        let mut paths = vec![directory];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        command.env("PATH", std::env::join_paths(paths).unwrap());
+        command.env("TERM", "xterm-256color");
+        let child = pair.slave.spawn_command(command).unwrap();
+        let process_group = child.process_id().unwrap() as libc::pid_t;
+        assert_eq!(unsafe { libc::getpgid(process_group) }, process_group);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let writer = pair.master.take_writer().unwrap();
+        let (send, received) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut bytes = [0; 8192];
+            while let Ok(count) = reader.read(&mut bytes) {
+                if count == 0 || send.send(bytes[..count].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        drop(pair.slave);
+        let mut dashboard = Self {
+            master: Some(pair.master),
+            writer,
+            child: Some(child),
+            process_group,
+            host_process_groups: Vec::new(),
+            received,
+            reader: Some(reader),
+            parser: vt100::Parser::new(size.rows, size.cols, 0),
+            record,
+        };
+        dashboard.wait_screen(|screen| screen.contains("codex-hooks"));
+        dashboard
+    }
+
+    fn send(&mut self, bytes: &[u8]) {
+        self.writer.write_all(bytes).unwrap();
+        self.writer.flush().unwrap();
+    }
+
+    fn wait_screen(&mut self, predicate: impl Fn(&str) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if predicate(&self.parser.screen().contents()) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "dashboard screen deadline: {}",
+                self.parser.screen().contents()
+            );
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(20)) {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    fn select(&mut self, name: &str, terminal_marker: &str) {
+        let screen = self.parser.screen().contents();
+        let row = screen
+            .lines()
+            .position(|line| line.chars().take(32).collect::<String>().contains(name))
+            .unwrap_or_else(|| panic!("session {name} missing from sidebar: {screen}"));
+        self.send(format!("\x1b[<0;12;{}M\x1b[<0;12;{}m", row + 1, row + 1).as_bytes());
+        self.wait_screen(|screen| screen.contains(terminal_marker));
+    }
+
+    fn resize(&mut self, cols: u16) {
+        self.master
+            .as_ref()
+            .unwrap()
+            .resize(portable_pty::PtySize {
+                rows: 32,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        self.parser = vt100::Parser::new(32, cols, 0);
+    }
+
+    fn wait_calls(&mut self, expected: usize, session: SessionId) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let contents = std::fs::read_to_string(&self.record).unwrap_or_default();
+            let count = contents.lines().filter(|line| *line == "END").count();
+            assert!(count <= expected, "unexpected desktop call: {contents}");
+            if count == expected {
+                let body = format!("fixture / work / codex-hooks (#{})", session.0);
+                for call in contents.split("END\n").filter(|call| !call.is_empty()) {
+                    assert!(call.contains(&body), "identity missing: {call}");
+                    assert!(
+                        call.contains("OVRCR · response ready"),
+                        "title missing: {call}"
+                    );
+                    assert!(!call.contains("CODEX_CALLBACK"));
+                    assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+                    assert!(!call.contains("root.jsonl"));
+                }
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "expected {expected} desktop host calls, received {count}: {contents}; screen: {}",
+                self.parser.screen().contents()
+            );
+            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
+                self.parser.process(&bytes);
+            }
+        }
+    }
+
+    fn detach(&mut self) {
+        self.send(b"\x07q");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let child = self.child.as_mut().unwrap();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "dashboard detach failed: {status:?}");
+                self.child.take();
+                return;
+            }
+            assert!(Instant::now() < deadline, "dashboard did not detach");
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for DesktopAlertDashboard {
+    fn drop(&mut self) {
+        for &group in &self.host_process_groups {
+            if group_exists(group) {
+                unsafe { libc::kill(-group, libc::SIGKILL) };
+            }
+            if !wait_group_absent(group, Duration::from_secs(2)) {
+                eprintln!("desktop host fixture process group {group} remains");
+                assert!(
+                    std::thread::panicking(),
+                    "desktop host fixture cleanup failed"
+                );
+            }
+        }
+        if group_exists(self.process_group) {
+            unsafe { libc::kill(-self.process_group, libc::SIGKILL) };
+        }
+        if let Some(mut child) = self.child.take() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+        }
+        self.writer = Box::new(std::io::sink());
+        self.master.take();
+        if let Some(reader) = self.reader.take() {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !reader.is_finished() && Instant::now() < deadline {
+                thread::park_timeout(Duration::from_millis(5));
+            }
+            if reader.is_finished() {
+                let _ = reader.join();
+            } else {
+                eprintln!("desktop fixture reader did not terminate");
+            }
+        }
+        if !wait_group_absent(self.process_group, Duration::from_secs(2)) {
+            eprintln!(
+                "desktop fixture process group {} remains",
+                self.process_group
+            );
+            assert!(std::thread::panicking(), "desktop fixture cleanup failed");
+        }
+    }
+}
+
+fn desktop_codex_callback(
+    fixture: &ControlFixture,
+    session: SessionId,
+    index: &mut usize,
+    command: &str,
+) {
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: command.into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, &format!("CODEX_CALLBACK={index}"));
+    *index += 1;
+}
+
+#[test]
+fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(1, summary.id);
+
+    // A subsequent real completion is the delivery barrier for duplicate,
+    // stale, child and interrupted events; all preceding host calls are counted.
+    for command in [
+        "Stop:root:a",
+        "UserPromptSubmit:root:b",
+        "Stop:root:a",
+        "Stop:root:b:child",
+        "Interrupt:root:b",
+        "Stop:root:b",
+        "UserPromptSubmit:root:c",
+        "Stop:root:c",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(2, summary.id);
+
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=9");
+    for command in ["UserPromptSubmit:root:d", "Stop:root:d"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=11"));
+    // Reassign the focused pane to the fixture's other real managed session.
+    dashboard.select("setup", "HOOK_READY");
+    for command in ["UserPromptSubmit:root:e", "Stop:root:e"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(3, summary.id);
+
+    dashboard.send(b"v");
+    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=13"));
+    dashboard.send(b"\t");
+    for command in ["UserPromptSubmit:root:f", "Stop:root:f"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=15"));
+    dashboard.resize(55);
+    dashboard.wait_screen(|screen| screen.contains("split hidden"));
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("CODEX_CALLBACK=15")
+    );
+    for command in ["UserPromptSubmit:root:g", "Stop:root:g"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(4, summary.id);
+
+    dashboard.resize(180);
+    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=17"));
+    dashboard.detach();
+    for command in ["UserPromptSubmit:root:h", "Stop:root:h"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    drop(dashboard);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    dashboard.select("setup", "HOOK_READY");
+    for command in ["UserPromptSubmit:root:i", "Stop:root:i"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(5, summary.id);
+    dashboard.detach();
+}
+
+#[test]
+fn desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    // Showing the actual completed output proves this dashboard consumed the
+    // completion before enabling, without a timing-only negative assertion.
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(1, summary.id);
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    for command in ["UserPromptSubmit:root:c", "Stop:root:c"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=5");
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    for command in ["UserPromptSubmit:root:d", "Stop:root:d"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(2, summary.id);
+    dashboard.detach();
+}
+
+#[test]
+fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let local = fixture.only_session_id();
+    assert_eq!(fixture.session_summary(local).name, "local");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'DESKTOP_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "DESKTOP_SHELL_READY");
+    dashboard.select("local", "DESKTOP_SHELL_READY");
+    let mut index = 0;
+    let mode = dashboard.record.with_extension("mode");
+    let host_pid = dashboard.record.with_extension("pid");
+    std::fs::write(&mode, "fail\n").unwrap();
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("PRIVATE_HOST_ERROR")
+    );
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .activity
+            .unwrap()
+            .state,
+        ovrcr::protocol::AgentActivity::ResponseReady
+    );
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+
+    std::fs::write(&mode, "block\n").unwrap();
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let wait_host_pid = || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&host_pid)
+                && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+            {
+                return pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "host did not enter blocking command"
+            );
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    };
+    let blocked_pid = wait_host_pid();
+    dashboard.host_process_groups.push(blocked_pid);
+    assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
+    // Observe input and rendering while the OS host command is still running.
+    dashboard.send(b"\rprintf 'DESKTOP_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("DESKTOP_INPUT_READY"));
+    assert!(
+        group_exists(blocked_pid),
+        "host exited before the input check"
+    );
+    dashboard.send(b"\x07");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
+    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+
+    std::fs::remove_file(&host_pid).unwrap();
+    for command in ["UserPromptSubmit:root:c", "Stop:root:c"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let blocked_pid = wait_host_pid();
+    dashboard.host_process_groups.push(blocked_pid);
+    assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
+    dashboard.detach();
+    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
+}

@@ -1,5 +1,6 @@
 mod agents;
 mod copy;
+mod desktop;
 mod event_loop;
 mod git_hints;
 mod hints;
@@ -208,6 +209,7 @@ pub(super) struct MouseForwarding {
 }
 
 pub struct Dashboard {
+    desktop: desktop::DesktopNotifications,
     pub tasks: Option<TasksView>,
     pub hierarchy: HierarchySnapshot,
     pub mode: InputMode,

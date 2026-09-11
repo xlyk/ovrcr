@@ -543,6 +543,7 @@ impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
             tasks: None,
+            desktop: super::desktop::DesktopNotifications::default(),
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -1071,6 +1072,9 @@ impl Dashboard {
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
+        if key.kind == KeyEventKind::Press {
+            self.desktop.notice = None;
+        }
         if let Some(tasks) = &mut self.tasks {
             if tasks.event(Event::Key(key)) {
                 self.tasks = None;
@@ -1106,6 +1110,9 @@ impl Dashboard {
                 match key.code {
                     KeyCode::Char(':') => self.open_palette(),
                     KeyCode::Char('n') => self.open_create_terminal(),
+                    KeyCode::Char('N') if key.kind == KeyEventKind::Press => {
+                        self.toggle_desktop_notifications()
+                    }
                     KeyCode::Char('w') => self.open_create_workspace(),
                     KeyCode::Char('a') => self.open_register_project(),
                     KeyCode::Char('X') => self.open_close_terminal(),
@@ -2841,6 +2848,7 @@ impl Dashboard {
                     }
                 }
                 ServerEvent::SessionChanged(summary) => {
+                    self.observe_desktop_session(&summary, false);
                     for session in self
                         .hierarchy
                         .projects
@@ -2983,6 +2991,7 @@ impl Dashboard {
 
     fn update_hierarchy(&mut self, hierarchy: HierarchySnapshot) -> Vec<ClientMessage> {
         let focused_before = self.focused_session();
+        self.observe_desktop_responses(&hierarchy);
         self.hierarchy = hierarchy;
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();

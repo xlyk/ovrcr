@@ -244,10 +244,9 @@ impl Dashboard {
         }
         // Registration remains reachable even before a project exists.
         hints.extend(
-            groups
-                .into_iter()
-                .flat_map(|g| g.hints)
-                .filter(|hint| matches!(hint.action, HintAction::Key(KeyCode::Char('a' | 'q')))),
+            groups.into_iter().flat_map(|g| g.hints).filter(|hint| {
+                matches!(hint.action, HintAction::Key(KeyCode::Char('a' | 'q' | 'N')))
+            }),
         );
         vec![HintGroup {
             title: "Groups".into(),

@@ -477,13 +477,18 @@ pub(super) fn drain_dashboard_input_then_emit_with<
         return Ok(input_boundary);
     }
 
+    let desktop_changed = dashboard.emit_desktop_notifications();
     if emit_pending_history_copy(terminal, dashboard) {
         if let Some(request) = dashboard.history_request_if_needed() {
             write_frame(stream, &request)?;
         }
         return Ok(DashboardBoundary::Work);
     }
-    Ok(input_boundary)
+    Ok(if desktop_changed {
+        DashboardBoundary::Work
+    } else {
+        input_boundary
+    })
 }
 
 pub(super) fn drain_ready_dashboard_input<Poll, Process>(

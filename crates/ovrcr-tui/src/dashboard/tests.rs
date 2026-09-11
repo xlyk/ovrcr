@@ -1604,3 +1604,28 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         .metrics = None;
     assert!(!drawn(&dashboard, now, 240).contains("99%"));
 }
+
+#[test]
+fn desktop_notification_action_is_opt_in_and_discoverable() {
+    use super::DashboardAction;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+    let hints = super::hints::key_hints(&dashboard);
+    assert!(
+        hints
+            .iter()
+            .flat_map(|group| &group.hints)
+            .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
+    );
+    assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+    let hints = super::hints::key_hints(&dashboard);
+    assert!(
+        hints
+            .iter()
+            .flat_map(|group| &group.hints)
+            .any(|hint| { hint.name == "Enable desktop notifications" && hint.key == "N" })
+    );
+}
