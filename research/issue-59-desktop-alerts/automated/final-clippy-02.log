@@ -1,0 +1,8 @@
+revision: 422bc2d8a02042dfa5462920341944113d3eb7ee
+command: cargo clippy --workspace --all-targets --all-features -- -D warnings
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.61s

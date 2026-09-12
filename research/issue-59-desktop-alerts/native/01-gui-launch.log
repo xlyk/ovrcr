@@ -1,0 +1,11 @@
+Command: rtk proxy just gui
+Checkout: /Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts
+Revision: 422bc2d8a02042dfa5462920341944113d3eb7ee
+Launcher session: 2548
+Exit code: 0
+
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.38s
+

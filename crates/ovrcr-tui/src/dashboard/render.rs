@@ -673,7 +673,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
     }
     let footer = dashboard.error.as_deref().map_or_else(
         || {
-            if let Some(notice) = dashboard.copy_notice.as_deref() {
+            if let Some(notice) = dashboard
+                .copy_notice
+                .as_deref()
+                .or(dashboard.desktop.notice.as_deref())
+            {
                 if split_hidden {
                     return Line::from(Span::styled(
                         format!("{notice}  split hidden: terminal too small"),

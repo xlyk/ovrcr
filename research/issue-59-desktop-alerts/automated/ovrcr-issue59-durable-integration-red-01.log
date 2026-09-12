@@ -1,0 +1,38 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr', '--test', 'server_lifecycle', 'desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible', '--', '--exact', '--nocapture']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.49s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvqLFW3/repo/.git/
+[main (root-commit) 5c20bf1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvqLFW3/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvqLFW3/server.sock
+
+thread 'desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible' (49010002) panicked at tests/server_lifecycle.rs:10400:21:
+identity missing: BEGIN
+-e
+on run argv
+display notification (item 1 of argv) with title (item 2 of argv)
+end run
+--
+fixture / work / codex-queued (#4)
+OVRCR · response ready
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... FAILED
+
+failures:
+
+failures:
+    desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 88 filtered out; finished in 1.93s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+
+exit: 101

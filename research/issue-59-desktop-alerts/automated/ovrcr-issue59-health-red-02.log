@@ -1,0 +1,24 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_unavailable_ready']
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 1 test
+test dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery ... FAILED
+
+failures:
+
+---- dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery stdout ----
+
+thread 'dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery' (48799954) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:433:9:
+assertion failed: d.desktop.pending.is_empty()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

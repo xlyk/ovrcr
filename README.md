@@ -202,6 +202,11 @@ behaviour, history and clipboard bounds, the palette's forms and path pickers, a
 `dashboard.toml` settings — is in the
 [dashboard reference](docs/dashboard.md).
 
+Optional [desktop notifications](docs/dashboard.md#desktop-notifications) alert
+when a background managed Codex response becomes Ready. They default off; press
+`N` in browse mode to toggle them for the current dashboard. Alerts identify the
+terminal without including conversation content and require an active dashboard.
+
 ## The CLI
 
 The dashboard is optional. Every session is reachable from a script, and names and

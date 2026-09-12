@@ -1,0 +1,18 @@
+{
+  "kind": "host-preflight-observation",
+  "observed_via": "Codex CUA Notification Center accessibility and native screenshot",
+  "notification_application": "Script Editor",
+  "notification_title": "OVRCR response ready",
+  "notification_body": "Issue 59 adapter preflight / isolated fixture",
+  "notification_id": "DD1D2E26-A90F-4697-AC92-AC58F479604A",
+  "finder_get_app_seconds": 0.3319,
+  "finder_ax_screenshot_seconds": 3.9638,
+  "notification_center_get_app_seconds": 178.1366,
+  "requested_timeout_ms": 20000,
+  "settings_changed": false,
+  "feature_route_proven": false,
+  "capture_privacy": "Full native screenshot and AX are retained only in mode-0700 private temporary evidence directory because Notification Center includes unrelated notifications.",
+  "private_capture_directory": "/private/tmp/ovrcr-issue59-native-evidence",
+  "source_revision_at_observation": "1475f0ade7854773ab78db82418caa085fd57895",
+  "capture_saved_at_utc": "2026-09-11T23:23:01.262761+00:00"
+}

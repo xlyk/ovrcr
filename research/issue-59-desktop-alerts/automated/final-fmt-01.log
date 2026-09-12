@@ -1,0 +1,2 @@
+revision: 1475f0ade7854773ab78db82418caa085fd57895
+command: cargo fmt --all -- --check

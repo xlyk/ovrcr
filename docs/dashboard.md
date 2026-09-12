@@ -343,6 +343,7 @@ server rewrites that file and drops unknown tables. A missing file uses defaults
 and a parse error shows in the footer and also uses defaults.
 
 ```toml
+desktop_notifications = false        # opt in to background Codex Ready alerts
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 
@@ -354,6 +355,42 @@ argv = ["claude", "--verbose"]
 `picker_roots` defaults to `~/Code`, `~/src`, and `~`, keeping only the paths
 that exist. An `[[agents]]` row whose name matches a detected agent replaces its
 argv; a new name is inserted before `shell`.
+
+## Desktop notifications
+
+Desktop notifications are off by default. Set `desktop_notifications = true` in
+`dashboard.toml` to enable them when attaching. In browse mode, press uppercase
+`N`, or search the command palette for **desktop notifications**, to enable or
+disable them for the current dashboard. The toggle does not rewrite your settings
+file. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
+
+An alert means a managed Codex root response is ready to review, not that its task
+succeeded. Only project, workspace and terminal identity appear in the alert.
+Prompt and response text are never included. The accepted Codex reporting setup
+is still required; see [Codex setup](codex-reporting-setup.md).
+
+The active dashboard delivers alerts only when the terminal is absent from every
+visible pane. A terminal assigned to a split hidden by a small window is eligible;
+Tasks shows no terminal panes. Visibility does not acknowledge or change Ready.
+Attachment and reconnect establish a baseline: old Ready observations, including
+responses completed while disconnected, are not replayed. Enabling alerts or
+hiding a terminal does not replay a previously suppressed response. No active
+dashboard means no delivery.
+
+Host submission runs outside the input loop with bounded queues and a two-second
+subprocess deadline. Disabling notifications or detaching cancels pending work.
+Delivery is best effort, with no retries. Host failures do not change reporting,
+native approvals, input or process state. A host command error displays
+**Desktop notifications unavailable** in the footer.
+
+macOS uses `osascript`; the system chooses its sender identity and notification
+preferences. Linux uses `notify-send` from the desktop session. OVRCR requests no
+sound. Neither a successful host command nor an unchanged footer proves that the
+desktop displayed the alert: OS permission, Focus/Do Not Disturb and desktop
+policy can suppress it. OVRCR does not change those settings. Native acceptance
+and platform limits are recorded in the [issue 59 evidence](../research/issue-59-desktop-alerts/README.md).
+Actual desktop delivery is verified on macOS. Linux has automated coverage; native
+Linux desktop delivery remains unverified.
 
 ## Output delivery
 

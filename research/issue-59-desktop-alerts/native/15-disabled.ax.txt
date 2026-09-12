@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 84907  elapsed: 4m  agent unknown                                                                                        
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 84907  elapsed: 4m  agent unknown                                                                                        
+		5 text (settable)   ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │auth-handoff › rtk proxy printf 'CUA_%s\n' INPUT_OK                                                                           
+		7 text (settable)      └ terminal                        │CUA_INPUT_OK                                                                                                                  
+		8 text (settable)   - review auth handoff                │auth-handoff › rtk proxy printenv OVRCR_CONFIG                                                                                
+		9 text (settable)      └ grok / grok-4.6                 │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/config.toml                                                 
+		10 text (settable)   ✓ issue59-ready                      │auth-handoff › rtk proxy printenv OVRCR_SOCKET                                                                                
+		11 text (settable)      └ env response ready · observed   │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gAh1Q1/server.sock                                                 
+		12 text (settable)   ▼ worktree-lifecycle                 │auth-handoff › rtk proxy printf 'CUA_TERMINAL_%s\n' N                                                                         
+		13 text (settable)   - local                              │CUA_TERMINAL_N                                                                                                                
+		14 text (settable)      └ terminal                        │auth-handoff › rtk proxy printenv OVRCR_DASHBOARD_CONFIG                                                                      
+		15 text (settable)   - implement lifecycle cleanup        │auth-handoff ›                                                                                                                
+		16 text (settable)      └ claude / sonnet-4               │                                                                                                                              
+		17 text (settable)   - review websocket shutdown          │                                                                                                                              
+		18 text (settable)      └ codex / gpt-5.4                 │                                                                                                                              
+		19 text (settable)   - plan snapshot restore              │                                                                                                                              
+		20 text (settable)      └ pi / grok-4.6                   │                                                                                                                              
+		21 text (settable) ▼ 󰉋 spacelift-agent                    │                                                                                                                              
+		22 text (settable)   ▼ pipeline-progress-v2               │                                                                                                                              
+		23 text (settable)   - local                              │                                                                                                                              
+		24 text (settable)      └ terminal                        │                                                                                                                              
+		25 text (settable)   - build pipeline progress            │                                                                                                                              
+		26 text (settable)      └ claude / opus-4                 │                                                                                                                              
+		27 text (settable)   ▼ scope-quality                      │                                                                                                                              
+		28 text (settable)   - local                              │                                                                                                                              
+		29 text (settable)      └ terminal                        │                                                                                                                              
+		30 text (settable)   - review scope quality               │                                                                                                                              
+		31 text (settable)      └ codex / gpt-5.4                 │                                                                                                                              
+		32 text (settable)                                        │                                                                                                                              
+		33 text (settable)                                        │                                                                                                                              
+		34 text (settable)                                        │                                                                                                                              
+		35 text (settable)                                        │                                                                                                                              
+		36 text (settable)                                        │                                                                                                                              
+		37 text (settable)                                        │                                                                                                                              
+		38 text (settable)                                        │                                                                                                                              
+		39 text (settable)                                        │                                                                                                                              
+		40 text (settable)                                        │                                                                                                                              
+		41 text (settable)                                        │                                                                                                                              
+		42 text (settable)                                        │                                                                                                                              
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │                                                                                                                              
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │                                                                                                                              
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │                                                                                                                              
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │                                                                                                                              
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │                                                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │                                                                                                                              
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │                                                                                                                              
+		63 text (settable) Desktop notifications: off                                                                                                                                            
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 84907  elapsed: 4m  agent unknown                                                                                        
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local

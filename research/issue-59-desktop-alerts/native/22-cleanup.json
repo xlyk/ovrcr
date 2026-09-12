@@ -1,0 +1,192 @@
+{
+  "revision": "422bc2d8a02042dfa5462920341944113d3eb7ee",
+  "verified_at_utc": "2026-09-11T23:37:46.454230+00:00",
+  "launcher_exit_code": 0,
+  "demo_exists": false,
+  "socket_exists": false,
+  "process_groups": [
+    {
+      "pgid": 1886,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 1908,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 20455,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 83997,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 84873,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 84907,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 84971,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85036,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85047,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85054,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85065,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85076,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85088,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85096,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pgid": 85100,
+      "result": "ProcessLookupError"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 84873,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 84907,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 84971,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85036,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 84009,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 84707,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 84806,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85047,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85054,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85065,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85076,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85088,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85096,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 85100,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 1886,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 1908,
+      "result": "ProcessLookupError"
+    },
+    {
+      "pid": 20455,
+      "result": "ProcessLookupError"
+    }
+  ],
+  "private_capture_directory": "/private/tmp/ovrcr-issue59-native-evidence",
+  "private_files": [
+    {
+      "name": "01-preflight-notification.ax.txt",
+      "bytes": 2857,
+      "sha256": "314a1991c54a36b22fb0957db2336ffef6883f14315380a83c008a722fb4dc0f"
+    },
+    {
+      "name": "01-preflight-notification.jpg",
+      "bytes": 49116,
+      "sha256": "ed84e89f3f1dde69a013f55fae270efba323f64a8514c38c21831a3bd3870ef9"
+    },
+    {
+      "name": "08-feature-notification.ax.txt",
+      "bytes": 3147,
+      "sha256": "72528fda4b5f95ca25a228d50e665a7ad73fb347d443233c5bee6dcc7ead4e21"
+    },
+    {
+      "name": "08-feature-notification.jpg",
+      "bytes": 50753,
+      "sha256": "0555f856369c4be910d2847bf9f8031d2c0187f750ff05542589f0f8550bc4f6"
+    },
+    {
+      "name": "09-notification-group-baseline.ax.txt",
+      "bytes": 3252,
+      "sha256": "ee11bb9919bab13d94d57cc3758512a75ef8cb96e6874b419627fcc2c6cbf4d3"
+    },
+    {
+      "name": "10-after-owned-notification-close.ax.txt",
+      "bytes": 2827,
+      "sha256": "c8f3a5eb8cc7ebd40eb9c777a375b6e3dae7b1566cef4e1320bed97ebf0eebec"
+    },
+    {
+      "name": "16-suppression-observation.ax.txt",
+      "bytes": 2827,
+      "sha256": "4c5af579888dcd98113dfe3e95145ad0d3b4ba23581b6781141c9c983e3cc8bd"
+    },
+    {
+      "name": "18-reconnect-observation.ax.txt",
+      "bytes": 2827,
+      "sha256": "94af019884eb243ef8c9e5446c1f8aae844b5d49010252a405ebf7db12d484fe"
+    },
+    {
+      "name": "20-post-reconnect-notification.ax.txt",
+      "bytes": 3134,
+      "sha256": "2d850796ec6d19249e869b9316dfd66c4300744400cf2738bc522ad95c7d1ff0"
+    },
+    {
+      "name": "20-post-reconnect-notification.jpg",
+      "bytes": 52220,
+      "sha256": "a998f2bf25e283180a7eec3aca7ad8dbc0209731dd19f9591cf45c849cd0244d"
+    }
+  ]
+}

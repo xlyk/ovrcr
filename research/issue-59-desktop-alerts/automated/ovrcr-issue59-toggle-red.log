@@ -1,0 +1,29 @@
+command: ['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_notification_action_is_opt_in_and_discoverable']
+revision: 3574e92 + test only
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+error[E0433]: cannot find type `DashboardAction` in this scope
+    --> crates/ovrcr-tui/src/dashboard/tests.rs:1611:51
+     |
+1611 |     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+     |                                                   ^^^^^^^^^^^^^^^ use of undeclared type `DashboardAction`
+     |
+help: consider importing this enum through its public re-export
+     |
+   1 + use crate::DashboardAction;
+     |
+
+error[E0433]: cannot find type `DashboardAction` in this scope
+    --> crates/ovrcr-tui/src/dashboard/tests.rs:1616:51
+     |
+1616 |     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
+     |                                                   ^^^^^^^^^^^^^^^ use of undeclared type `DashboardAction`
+     |
+help: consider importing this enum through its public re-export
+     |
+   1 + use crate::DashboardAction;
+     |
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `ovrcr-tui` (lib test) due to 2 previous errors
+
+exit: 101

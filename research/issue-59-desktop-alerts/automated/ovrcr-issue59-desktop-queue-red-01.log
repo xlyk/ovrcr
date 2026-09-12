@@ -1,0 +1,45 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.67s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQ0mMja/repo/.git/
+[main (root-commit) fe8962c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQ0mMja/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQ0mMja/server.sock
+
+thread 'desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible' (48803381) panicked at tests/server_lifecycle.rs:10396:13:
+unexpected desktop call: BEGIN
+-e
+on run argv
+display notification (item 1 of argv) with title (item 2 of argv)
+end run
+--
+fixture / work / codex-queued (#4)
+OVRCR · response ready
+END
+BEGIN
+-e
+on run argv
+display notification (item 1 of argv) with title (item 2 of argv)
+end run
+--
+fixture / work / codex-hooks (#3)
+OVRCR · response ready
+END
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... FAILED
+
+failures:
+
+failures:
+    desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 87 filtered out; finished in 2.12s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

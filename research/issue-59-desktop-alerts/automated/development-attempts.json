@@ -1,0 +1,265 @@
+{
+  "source": "Development from base3574e92 through implementation2f2c9b4 and corrections1475f0a/422bc2d; filenames are attempt labels, not pass claims",
+  "host_wake_red_note": "The first wake test passed unexpectedly and only tested descriptor HUP. The final test asserts the actual wake byte; no behavioral RED is claimed for the weak attempt.",
+  "attempts": [
+    {
+      "file": "ovrcr-issue59-cancelled-failure-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-clippy-green-01.log",
+      "results": [],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-clippy-red-01.log",
+      "results": [],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-diagnose-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 85 filtered out; finished in 6.78s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-green-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 84 filtered out; finished in 12.94s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-green-02.log",
+      "results": [
+        "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 84 filtered out; finished in 11.12s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-green-03.log",
+      "results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 7.93s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-green-04.log",
+      "results": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 8.22s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-green-05.log",
+      "results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 10.45s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-integration-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 85 filtered out; finished in 7.36s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-missing-host-green-01.log",
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 88 filtered out; finished in 1.69s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-desktop-queue-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 87 filtered out; finished in 2.12s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-clippy-green-01.log",
+      "results": [],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-integration-green-01.log",
+      "results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 9.45s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-integration-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 88 filtered out; finished in 1.93s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-unit-green-01.log",
+      "results": [
+        "test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.02s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-unit-green-02.log",
+      "results": [
+        "test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.01s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-unit-green-03.log",
+      "results": [
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.02s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-durable-unit-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-event-and-tasks-red-01.log",
+      "results": [],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-event-and-tasks-red-02.log",
+      "results": [
+        "test result: FAILED. 8 passed; 2 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-health-and-queue-unit-green-01.log",
+      "results": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-health-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-health-red-02.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-host-wake-final-01.log",
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 66 filtered out; finished in 0.01s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-host-wake-red-01.log",
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 66 filtered out; finished in 0.01s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-notice-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-postreview-clippy-green-01.log",
+      "results": [],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-postreview-clippy-green-02.log",
+      "results": [],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-postreview-integration-green-01.log",
+      "results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 9.54s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-postreview-tui-lib-green-01.log",
+      "results": [
+        "test result: ok. 67 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-prehello-green-01.log",
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-prehello-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-toggle-red-02.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-toggle-red.log",
+      "results": [],
+      "classification": "failed"
+    },
+    {
+      "file": "ovrcr-issue59-tui-lib-green-01.log",
+      "results": [
+        "test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-unit-final-01.log",
+      "results": [
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-unit-green-02.log",
+      "results": [
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed"
+    },
+    {
+      "file": "ovrcr-issue59-unit-green-03.log",
+      "results": [
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed"
+    }
+  ]
+}

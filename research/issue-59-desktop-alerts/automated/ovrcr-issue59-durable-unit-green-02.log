@@ -1,0 +1,44 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.99s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 18 tests
+test dashboard::desktop::tests::desktop_rebind_and_supervisor_restart_reject_prior_identity ... ok
+test dashboard::desktop::tests::desktop_attach_disabled_and_reenable_baselines_never_replay ... ok
+test dashboard::desktop::tests::desktop_session_event_before_hello_is_part_of_attach_baseline ... ok
+test dashboard::desktop::tests::desktop_notice_yields_to_the_next_keyboard_action ... ok
+test dashboard::desktop::tests::desktop_provider_session_event_reaches_notification_observer ... ok
+test dashboard::desktop::tests::desktop_tasks_view_has_no_visible_terminal_panes ... ok
+test dashboard::desktop::tests::desktop_queued_health_loss_then_recovery_stays_cancelled ... ok
+test dashboard::desktop::tests::desktop_cancelled_host_failure_cannot_replace_new_toggle_notice ... ok
+test dashboard::desktop::tests::desktop_health_loss_before_dispatch_cancels_pending_ready ... ok
+test dashboard::desktop::tests::desktop_notification_toggle_does_not_intercept_native_input ... ok
+test dashboard::desktop::tests::desktop_unavailable_ready_is_consumed_without_replaying_on_health_recovery ... ok
+test dashboard::desktop::tests::desktop_queued_visible_then_hidden_candidate_stays_cancelled ... ok
+test dashboard::desktop::tests::desktop_ready_requires_new_accepted_root_identity_and_only_exports_identity ... ok
+test dashboard::tests::desktop_notification_action_is_opt_in_and_discoverable ... ok
+test dashboard::desktop::tests::desktop_visibility_uses_drawn_geometry_including_hidden_split_and_empty_view ... ok
+test dashboard::desktop::tests::desktop_pending_candidates_are_bounded_and_identity_text_is_not_code ... FAILED
+test dashboard::settings::tests::desktop_notifications_default_off_and_explicit_config_opt_in ... ok
+test dashboard::desktop::tests::desktop_host_completion_wakes_dashboard_for_remaining_candidates ... ok
+
+failures:
+
+---- dashboard::desktop::tests::desktop_pending_candidates_are_bounded_and_identity_text_is_not_code stdout ----
+
+thread 'dashboard::desktop::tests::desktop_pending_candidates_are_bounded_and_identity_text_is_not_code' (49028017) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:920:9:
+assertion `left == right` failed
+  left: 49
+ right: 50
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::desktop::tests::desktop_pending_candidates_are_bounded_and_identity_text_is_not_code
+
+test result: FAILED. 17 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

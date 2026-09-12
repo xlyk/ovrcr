@@ -1,0 +1,32 @@
+['rtk', 'proxy', 'cargo', 'test', '-p', 'ovrcr-tui', '--lib', 'desktop_queued_']
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-59-desktop-alerts/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.98s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 2 tests
+test dashboard::desktop::tests::desktop_queued_visible_then_hidden_candidate_stays_cancelled ... FAILED
+test dashboard::desktop::tests::desktop_queued_health_loss_then_recovery_stays_cancelled ... FAILED
+
+failures:
+
+---- dashboard::desktop::tests::desktop_queued_visible_then_hidden_candidate_stays_cancelled stdout ----
+
+thread 'dashboard::desktop::tests::desktop_queued_visible_then_hidden_candidate_stays_cancelled' (49005747) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:524:9:
+visible queued response must be consumed while host remains busy
+
+---- dashboard::desktop::tests::desktop_queued_health_loss_then_recovery_stays_cancelled stdout ----
+
+thread 'dashboard::desktop::tests::desktop_queued_health_loss_then_recovery_stays_cancelled' (49005746) panicked at crates/ovrcr-tui/src/dashboard/desktop.rs:562:9:
+same-revision health recovery must not revive cancelled Ready
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::desktop::tests::desktop_queued_health_loss_then_recovery_stays_cancelled
+    dashboard::desktop::tests::desktop_queued_visible_then_hidden_candidate_stays_cancelled
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
+
+exit: 101

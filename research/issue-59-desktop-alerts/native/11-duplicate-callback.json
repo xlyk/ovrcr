@@ -1,0 +1,6 @@
+{
+  "cols": 126,
+  "id": 11,
+  "rows": 57,
+  "text": "ISSUE59_NATIVE_FIXTURE_READY pid=1908\nUserPromptSubmit:root:native-a\nISSUE59_CALLBACK_1_OK UserPromptSubmit native-a\nStop:root:native-a\nISSUE59_CALLBACK_2_OK Stop native-a\nStop:root:native-a\nISSUE59_CALLBACK_3_OK Stop native-a"
+}

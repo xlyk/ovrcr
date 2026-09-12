@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DashboardSettings {
+    pub desktop_notifications: bool,
     pub agents: Vec<AgentOverride>,
     pub picker_roots: Vec<PathBuf>,
     pub branch_prefix: String,
@@ -17,6 +18,7 @@ pub struct AgentOverride {
 impl Default for DashboardSettings {
     fn default() -> Self {
         Self {
+            desktop_notifications: false,
             agents: Vec::new(),
             picker_roots: default_picker_roots(),
             branch_prefix: "feature/".into(),
@@ -26,6 +28,8 @@ impl Default for DashboardSettings {
 
 #[derive(Deserialize, Default)]
 struct RawSettings {
+    #[serde(default)]
+    desktop_notifications: bool,
     #[serde(default)]
     agents: Vec<AgentOverride>,
     picker_roots: Option<Vec<String>>,
@@ -48,6 +52,7 @@ pub fn load_dashboard_settings(path: &Path) -> (DashboardSettings, Option<String
 impl RawSettings {
     fn into_settings(self) -> DashboardSettings {
         DashboardSettings {
+            desktop_notifications: self.desktop_notifications,
             agents: self.agents,
             picker_roots: self
                 .picker_roots
@@ -89,6 +94,23 @@ pub(crate) static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn desktop_notifications_default_off_and_explicit_config_opt_in() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        assert!(!load_dashboard_settings(&path).0.desktop_notifications);
+        std::fs::write(&path, "desktop_notifications = true\n").unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(settings.desktop_notifications);
+        assert!(error.is_none());
+        std::fs::write(&path, "desktop_notifications = false\n").unwrap();
+        assert!(!load_dashboard_settings(&path).0.desktop_notifications);
+        std::fs::write(&path, "desktop_notifications = \"yes\"\n").unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(!settings.desktop_notifications);
+        assert!(error.is_some());
+    }
 
     #[test]
     fn loads_overrides_and_expands_picker_roots() {

@@ -1,0 +1,11 @@
+{
+  "observed_at": "2026-09-11T23:35:38.567Z",
+  "feature_notification_present": false,
+  "excerpt": [],
+  "checks": [
+    "duplicate native-a",
+    "visible native-b",
+    "disabled native-c",
+    "reenable after native-c"
+  ]
+}

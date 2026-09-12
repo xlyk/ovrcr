@@ -1,0 +1,7 @@
+isolated Rust std UnixStream, macOS native
+peer_shutdown=false configure_before=true timeout=Ok(()) read=Ok(21) data="partial failure frame"
+peer_shutdown=false configure_before=false timeout=Err(Os { code: 22, kind: InvalidInput, message: "Invalid argument" }) read=Ok(21) data="partial failure frame"
+peer_shutdown=true configure_before=true timeout=Ok(()) read=Ok(21) data="partial failure frame"
+peer_shutdown=true configure_before=false timeout=Err(Os { code: 22, kind: InvalidInput, message: "Invalid argument" }) read=Ok(21) data="partial failure frame"
+
+exit: 0

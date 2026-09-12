@@ -1,0 +1,1141 @@
+checks	Test	﻿2026-09-11T23:30:25.1748930Z ##[group]Run cargo test --workspace --all-targets --all-features
+checks	Test	2026-09-11T23:30:25.1749370Z ^[[36;1mcargo test --workspace --all-targets --all-features^[[0m
+checks	Test	2026-09-11T23:30:25.1783850Z shell: /bin/bash -e {0}
+checks	Test	2026-09-11T23:30:25.1784090Z env:
+checks	Test	2026-09-11T23:30:25.1784250Z   CARGO_TERM_COLOR: always
+checks	Test	2026-09-11T23:30:25.1784460Z   CARGO_HOME: /Users/runner/.cargo
+checks	Test	2026-09-11T23:30:25.1784680Z   CARGO_INCREMENTAL: 0
+checks	Test	2026-09-11T23:30:25.1784860Z   CACHE_ON_FAILURE: true
+checks	Test	2026-09-11T23:30:25.1785050Z ##[endgroup]
+checks	Test	2026-09-11T23:30:25.6373670Z ^[[1m^[[92m   Compiling^[[0m ovrcr-protocol v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-protocol)
+checks	Test	2026-09-11T23:30:27.6603060Z ^[[1m^[[92m   Compiling^[[0m ovrcr-terminal v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-terminal)
+checks	Test	2026-09-11T23:30:27.8621880Z ^[[1m^[[92m   Compiling^[[0m ovrcr-tui v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-tui)
+checks	Test	2026-09-11T23:30:28.3244620Z ^[[1m^[[92m   Compiling^[[0m ovrcr-runtime v0.1.0 (/Users/runner/work/ovrcr/ovrcr/crates/ovrcr-runtime)
+checks	Test	2026-09-11T23:30:36.6025820Z ^[[1m^[[92m   Compiling^[[0m ovrcr v0.1.0 (/Users/runner/work/ovrcr/ovrcr)
+checks	Test	2026-09-11T23:31:11.4266560Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 46.17s
+checks	Test	2026-09-11T23:31:11.4948180Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr-9af398db59ff42eb)
+checks	Test	2026-09-11T23:31:11.5148530Z 
+checks	Test	2026-09-11T23:31:11.5148920Z running 39 tests
+checks	Test	2026-09-11T23:31:11.5190500Z test gui::input::tests::alt_letter_encodes_meta ... ok
+checks	Test	2026-09-11T23:31:11.5193270Z test gui::input::tests::drag_is_forwarded_in_button_motion_mode ... ok
+checks	Test	2026-09-11T23:31:11.5194480Z test gui::input::tests::release_with_nothing_held_reports_nothing ... ok
+checks	Test	2026-09-11T23:31:11.5196190Z test gui::input::tests::drag_released_outside_ends_at_the_last_reported_cell ... ok
+checks	Test	2026-09-11T23:31:11.5196910Z test gui::input::tests::unmodified_letter_keeps_its_text ... ok
+checks	Test	2026-09-11T23:31:11.5197590Z test gui::input::tests::press_encoding_matches_encode_mouse ... ok
+checks	Test	2026-09-11T23:31:11.5202300Z test gui::input::tests::wheel_ignores_off_axis_drift ... ok
+checks	Test	2026-09-11T23:31:11.5203300Z test gui::input::tests::wheel_points_accumulate_into_lines ... ok
+checks	Test	2026-09-11T23:31:11.5203940Z test gui::input::tests::special_keys_carry_modifiers ... ok
+checks	Test	2026-09-11T23:31:11.5222810Z test report::admission::tests::initial_admission_argv_accepts_only_certified_explicit_uuid_resume ... ok
+checks	Test	2026-09-11T23:31:11.5224800Z test report::admission::tests::initial_admission_argv_grammar_is_conservative_and_value_aware ... ok
+checks	Test	2026-09-11T23:31:11.5249670Z test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+checks	Test	2026-09-11T23:31:11.5681340Z test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+checks	Test	2026-09-11T23:31:11.6046950Z test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+checks	Test	2026-09-11T23:31:11.6413750Z test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+checks	Test	2026-09-11T23:31:11.6419750Z test report::admission::tests::initial_resume_rejects_wrong_child_missing_source_and_end_without_binding ... ok
+checks	Test	2026-09-11T23:31:11.6830370Z test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+checks	Test	2026-09-11T23:31:11.6833480Z test report::claude::tests::claude_identity_is_typed_and_never_inferred_from_agent_type ... ok
+checks	Test	2026-09-11T23:31:11.6837160Z test report::claude::tests::claude_native_permission_notification_correlates_to_prompt ... ok
+checks	Test	2026-09-11T23:31:11.6838590Z test report::claude::tests::claude_protocol_ids_validate_before_receiver_mutation ... ok
+checks	Test	2026-09-11T23:31:11.6839720Z test report::claude::tests::claude_unknown_and_uncertified_waits_do_not_map ... ok
+checks	Test	2026-09-11T23:31:11.6845710Z test report::claude_metrics::tests::byte_cap_charges_keys_and_values_before_insertion ... ok
+checks	Test	2026-09-11T23:31:11.6846890Z test report::claude_metrics::tests::capacity_freezes_prefix_including_later_oldest_replacements ... ok
+checks	Test	2026-09-11T23:31:11.6849920Z test report::claude_metrics::tests::cost_rounds_original_decimal_ties_even_and_checks_overflow ... ok
+checks	Test	2026-09-11T23:31:11.6850800Z test report::claude_metrics::tests::invalid_replacement_and_total_overflow_leave_snapshot_intact ... ok
+checks	Test	2026-09-11T23:31:11.6851650Z test report::claude_metrics::tests::missing_usage_components_are_unknown_until_replaced ... ok
+checks	Test	2026-09-11T23:31:11.6865800Z POST_EXIT_DRAIN_NATIVE_OUTPUT
+checks	Test	2026-09-11T23:31:11.9126680Z test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+checks	Test	2026-09-11T23:31:11.9167980Z test report::claude_metrics::tests::replacement_replay_and_distinct_requests_do_not_double_count ... ok
+checks	Test	2026-09-11T23:31:11.9215150Z test report::claude_metrics::tests::statusline_context_and_exact_cost_preserve_unknowns ... ok
+checks	Test	2026-09-11T23:31:11.9216900Z test report::claude_metrics::tests::statusline_rejects_child_malformed_identity_and_invalid_context ... ok
+checks	Test	2026-09-11T23:31:11.9217930Z test report::claude_metrics::tests::unique_subset_compares_counted_unknowns_and_ignores_excluded_metadata ... ok
+checks	Test	2026-09-11T23:31:11.9218660Z test report::codex::tests::codex_closed_turn_duplicate_is_checked_before_capacity ... ok
+checks	Test	2026-09-11T23:31:12.1400410Z test report::codex::tests::codex_identity_byte_exhaustion_disables_instead_of_evicting ... ok
+checks	Test	2026-09-11T23:31:12.2520710Z test report::codex::tests::codex_identity_count_exhaustion_disables_instead_of_evicting ... ok
+checks	Test	2026-09-11T23:31:12.2622730Z test report::tests::agent_hook_claude_ignores_nested_and_unknown_events ... ok
+checks	Test	2026-09-11T23:31:12.2723180Z test report::tests::agent_hook_claude_maps_supported_events ... ok
+checks	Test	2026-09-11T23:31:12.2824750Z test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+checks	Test	2026-09-11T23:31:12.2925310Z test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+checks	Test	2026-09-11T23:31:12.5348280Z test report::admission::tests::blocked_version_probe_reaps_the_exact_group_within_budget ... ok
+checks	Test	2026-09-11T23:31:12.5356760Z 
+checks	Test	2026-09-11T23:31:12.5357590Z test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+checks	Test	2026-09-11T23:31:12.5358300Z 
+checks	Test	2026-09-11T23:31:12.5359140Z ^[[1m^[[92m     Running^[[0m unittests src/main.rs (target/debug/deps/ovrcr-6f55870b48f4e066)
+checks	Test	2026-09-11T23:31:12.5570020Z 
+checks	Test	2026-09-11T23:31:12.5571200Z running 1 test
+checks	Test	2026-09-11T23:31:12.5607010Z test cli::codex_setup::tests::configuration_presence_requires_unfiltered_synchronous_exact_command ... ok
+checks	Test	2026-09-11T23:31:12.5613610Z ^[[1m^[[92m     Running^[[0m unittests src/bin/ovrcr-gui.rs (target/debug/deps/ovrcr_gui-a47b4d77f27afaca)
+checks	Test	2026-09-11T23:31:12.5614110Z 
+checks	Test	2026-09-11T23:31:12.5619300Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+checks	Test	2026-09-11T23:31:12.5619770Z 
+checks	Test	2026-09-11T23:31:12.5796130Z 
+checks	Test	2026-09-11T23:31:12.5797100Z running 7 tests
+checks	Test	2026-09-11T23:31:12.8834530Z test native_glyph::native_raster_retains_style_scale_and_opacity ... ok
+checks	Test	2026-09-11T23:31:12.8910270Z test native_glyph_cache_evicts_entries_unused_last_frame ... ok
+checks	Test	2026-09-11T23:31:12.9012050Z test terminal_fonts_render_mockup_glyphs_or_default_symbols ... ok
+checks	Test	2026-09-11T23:31:12.9502100Z test terminal_paints_missing_unicode_as_native_images ... ok
+checks	Test	2026-09-11T23:31:13.1088350Z test terminal_paints_reserved_icon_cell_before_foreground_glyph ... ok
+checks	Test	2026-09-11T23:31:13.3779740Z test native_glyph_cache_keeps_a_screen_of_distinct_glyphs ... ok
+checks	Test	2026-09-11T23:31:18.7112930Z test command_palette_opens_when_another_control_has_focus ... ok
+checks	Test	2026-09-11T23:31:18.7115650Z 
+checks	Test	2026-09-11T23:31:18.7118070Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.13s
+checks	Test	2026-09-11T23:31:18.7118690Z 
+checks	Test	2026-09-11T23:31:18.7167850Z ^[[1m^[[92m     Running^[[0m tests/agent_setup.rs (target/debug/deps/agent_setup-9ca9941c10892bf2)
+checks	Test	2026-09-11T23:31:18.7312600Z 
+checks	Test	2026-09-11T23:31:18.7313240Z running 10 tests
+checks	Test	2026-09-11T23:31:18.7939890Z test codex_doctor_checks_supplied_hooks_without_certifying_trust ... ok
+checks	Test	2026-09-11T23:31:19.0191410Z test codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets ... ok
+checks	Test	2026-09-11T23:31:19.1399620Z test codex_setup_preserves_handlers_trust_and_quotes_noop_helper ... ok
+checks	Test	2026-09-11T23:31:19.2059900Z test doctor_does_not_certify_filtered_hooks_wrong_types_or_statusline_suffixes ... ok
+checks	Test	2026-09-11T23:31:19.2303700Z test doctor_inspects_unbound_and_unavailable_sessions_without_private_values ... ok
+checks	Test	2026-09-11T23:31:23.4041080Z test doctor_interrupt_cleans_its_owned_version_probe_before_exit ... ok
+checks	Test	2026-09-11T23:31:23.6479170Z test doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_secrets ... ok
+checks	Test	2026-09-11T23:31:23.6898740Z test setup_migrates_only_exact_legacy_statusline_and_marks_hooks ... ok
+checks	Test	2026-09-11T23:31:23.7674280Z test setup_preserves_settings_and_external_renderer_bytes_once ... ok
+checks	Test	2026-09-11T23:31:23.9113680Z test setup_quotes_actual_executable_path ... ok
+checks	Test	2026-09-11T23:31:23.9121050Z 
+checks	Test	2026-09-11T23:31:23.9174120Z test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.18s
+checks	Test	2026-09-11T23:31:23.9235730Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting.rs (target/debug/deps/claude_reporting-5f4f85ce6bb2267c)
+checks	Test	2026-09-11T23:31:23.9236220Z 
+checks	Test	2026-09-11T23:31:23.9568670Z 
+checks	Test	2026-09-11T23:31:23.9569500Z running 17 tests
+checks	Test	2026-09-11T23:31:23.9780100Z test collector_diagnostics_track_one_bounded_exchange_and_drain ... ok
+checks	Test	2026-09-11T23:31:23.9873000Z test collector_cancel_reaps_an_exited_group_before_confirming_absence ... ok
+checks	Test	2026-09-11T23:31:23.9994520Z test collector_actual_helper_appends_partial_record_and_equal_replay ... ok
+checks	Test	2026-09-11T23:31:24.0016090Z test collector_differing_duplicate_freezes_before_replacement ... ok
+checks	Test	2026-09-11T23:31:24.0080070Z test collector_expired_deadline_transfers_reaping_ownership ... ok
+checks	Test	2026-09-11T23:31:24.0154940Z test collector_drop_is_bounded_for_a_stalled_helper ... ok
+checks	Test	2026-09-11T23:31:24.0360950Z test collector_launch_clears_inherited_environment ... ok
+checks	Test	2026-09-11T23:31:24.0389170Z test collector_foreign_usage_and_nonregular_source_fail_without_content_leaks ... ok
+checks	Test	2026-09-11T23:31:24.0522230Z test collector_missing_file_retries_same_path_and_truncation_preserves_watermark ... ok
+checks	Test	2026-09-11T23:31:25.0137000Z test collector_raw_record_limit_preserves_prefix ... ok
+checks	Test	2026-09-11T23:31:25.0523460Z test collector_reads_only_one_chunk_and_excludes_sidechains ... ok
+checks	Test	2026-09-11T23:31:25.1768570Z test collector_rejects_actual_oversized_and_trailing_helper_responses_within_bound ... ok
+checks	Test	2026-09-11T23:31:25.1872100Z test collector_rejects_oversized_configuration_before_spawn ... ok
+checks	Test	2026-09-11T23:31:25.2447100Z test collector_replacement_does_not_publish_a_smaller_prefix ... ok
+checks	Test	2026-09-11T23:31:25.2726570Z test collector_stalled_helper_is_nonblocking_and_owned_group_cleanup_is_bounded ... ok
+checks	Test	2026-09-11T23:31:26.0365670Z test collector_production_byte_cap_freezes_before_identity_cap ... ok
+checks	Test	2026-09-11T23:31:26.3777710Z test collector_production_identity_cap_freezes_later_unique_usage ... ok
+checks	Test	2026-09-11T23:31:26.3779250Z 
+checks	Test	2026-09-11T23:31:26.3779570Z test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.42s
+checks	Test	2026-09-11T23:31:26.3780130Z 
+checks	Test	2026-09-11T23:31:26.3790390Z ^[[1m^[[92m     Running^[[0m tests/claude_reporting_load.rs (target/debug/deps/claude_reporting_load-d52c1a147e13ed4b)
+checks	Test	2026-09-11T23:31:26.8271430Z 
+checks	Test	2026-09-11T23:31:26.8271990Z running 2 tests
+checks	Test	2026-09-11T23:31:26.8394290Z test fifty_collector_raw_index_and_sequential_json_high_water ... ignored, isolated Linux runner only: 50 collectors at raw/index limits
+checks	Test	2026-09-11T23:31:26.8400900Z test fifty_session_reporting_capacity ... ignored, 50 real PTYs/helpers, production indices, 60 seconds; run explicitly alone
+checks	Test	2026-09-11T23:31:26.8401420Z 
+checks	Test	2026-09-11T23:31:26.8401940Z test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.03s
+checks	Test	2026-09-11T23:31:26.8402300Z 
+checks	Test	2026-09-11T23:31:26.8614220Z ^[[1m^[[92m     Running^[[0m tests/cli.rs (target/debug/deps/cli-eb87258f0b23bdcd)
+checks	Test	2026-09-11T23:31:27.2150880Z 
+checks	Test	2026-09-11T23:31:27.2152320Z running 32 tests
+checks	Test	2026-09-11T23:31:27.2354040Z test agent_hook_cli_requires_identity_without_starting_server ... ok
+checks	Test	2026-09-11T23:31:28.2461730Z test agent_hook_cli_deadline_spans_stdin_and_dripped_response ... ok
+checks	Test	2026-09-11T23:31:28.4025230Z test agent_run_preserves_native_argv_stdio_and_exit_without_server ... ok
+checks	Test	2026-09-11T23:31:28.4825000Z test agent_run_private_channel_failure_runs_native_without_inherited_reporting ... ok
+checks	Test	2026-09-11T23:31:28.5297610Z test agent_hook_cli_reaches_managed_session ... ok
+checks	Test	2026-09-11T23:31:28.6132650Z test claude_doctor_reports_exact_version_and_version_specific_resume_forms ... ok
+checks	Test	2026-09-11T23:31:28.9829640Z test agent_run_unavailable_server_passes_native_help_version_and_signal_exit ... ok
+checks	Test	2026-09-11T23:31:29.0930990Z test claude_statusline_renderer_receives_original_input_once_even_if_invalid ... ok
+checks	Test	2026-09-11T23:31:29.1112400Z test claude_statusline_renders_default_without_reporting_server ... ok
+checks	Test	2026-09-11T23:31:29.1256210Z test codex_setup_and_doctor_help_expose_provider_dispatch ... ok
+checks	Test	2026-09-11T23:31:30.3789160Z test agent_hook_cli_timeout_is_bounded ... ok
+checks	Test	2026-09-11T23:31:30.5983880Z test context_helper_invalid_input_has_no_effect ... ok
+checks	Test	2026-09-11T23:31:30.7553080Z test claude_statusline_preserves_decimal_and_renders_after_reporting_timeout ... ok
+checks	Test	2026-09-11T23:31:30.7668030Z test context_inspect_missing_session_fails ... ok
+checks	Test	2026-09-11T23:31:31.6849590Z test context_helper_missing_server_does_not_start_one ... ok
+checks	Test	2026-09-11T23:31:31.6921400Z test malformed_offline_registry_is_reported_without_replacing_it ... ok
+checks	Test	2026-09-11T23:31:31.7278080Z test max_lines_must_be_positive_and_legacy_offline_json_is_valid ... ok
+checks	Test	2026-09-11T23:31:31.8951070Z test mutations_do_not_start_a_server ... ok
+checks	Test	2026-09-11T23:31:31.9079190Z test new_and_existing_branch_flags_are_exclusive ... ok
+checks	Test	2026-09-11T23:31:31.9803980Z test offline_json_commands_keep_errors_structured_and_do_not_start_server ... ok
+checks	Test	2026-09-11T23:31:31.9881610Z test offline_project_inspection_reads_and_sorts_the_registry_without_starting_server ... ok
+checks	Test	2026-09-11T23:31:32.0194770Z test pause_resume_cli_requires_id ... ok
+checks	Test	2026-09-11T23:31:32.1398110Z test context_helper_reports_from_managed_pty ... ok
+checks	Test	2026-09-11T23:31:32.2274770Z test resource_aliases_are_visible_and_parse_as_commands ... ok
+checks	Test	2026-09-11T23:31:32.2478800Z test response_ready_cli_parses_before_requiring_hook_identity ... ok
+checks	Test	2026-09-11T23:31:32.6114700Z test context_inspect_reports_unknown_and_sample ... ok
+checks	Test	2026-09-11T23:31:32.6333840Z test runtime_errors_include_the_cause_chain ... ok
+checks	Test	2026-09-11T23:31:32.6567600Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmptDlFdn/repo/.git/
+checks	Test	2026-09-11T23:31:32.7116290Z [main (root-commit) 18c4b30] initial
+checks	Test	2026-09-11T23:31:32.7157880Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:32.7169030Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:33.6147580Z test response_ready_cli_reaches_managed_session ... ok
+checks	Test	2026-09-11T23:31:33.6233520Z test terminal_workspace_filter_requires_project ... ok
+checks	Test	2026-09-11T23:31:33.6537390Z test version_flag_prints_package_version ... ok
+checks	Test	2026-09-11T23:31:33.8229200Z test session_command_keeps_arguments_after_separator ... ok
+checks	Test	2026-09-11T23:31:35.0817600Z test requests_time_out_against_a_wedged_server ... ok
+checks	Test	2026-09-11T23:31:35.0818040Z 
+checks	Test	2026-09-11T23:31:35.0824690Z test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.87s
+checks	Test	2026-09-11T23:31:35.0826330Z 
+checks	Test	2026-09-11T23:31:35.0860560Z ^[[1m^[[92m     Running^[[0m tests/codex_reporting.rs (target/debug/deps/codex_reporting-ae7e21267cc1d4be)
+checks	Test	2026-09-11T23:31:35.1031680Z 
+checks	Test	2026-09-11T23:31:35.1034780Z running 4 tests
+checks	Test	2026-09-11T23:31:35.1035280Z test codex_fresh_grammar_rejects_resume_remote_and_unknown_forms ... ok
+checks	Test	2026-09-11T23:31:35.1132420Z test codex_hook_outside_managed_invocation_is_silent_without_reading_stdin ... ok
+checks	Test	2026-09-11T23:31:35.1697140Z test codex_version_probe_accepts_only_exact_successful_pinned_output ... ok
+checks	Test	2026-09-11T23:31:35.2066280Z test codex_native_argv_stdout_and_exit_survive_missing_reporting ... ok
+checks	Test	2026-09-11T23:31:35.2066830Z 
+checks	Test	2026-09-11T23:31:35.2067290Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+checks	Test	2026-09-11T23:31:35.2068240Z 
+checks	Test	2026-09-11T23:31:35.2069220Z ^[[1m^[[92m     Running^[[0m tests/git_lifecycle.rs (target/debug/deps/git_lifecycle-e55f18cd2c217535)
+checks	Test	2026-09-11T23:31:35.2253760Z 
+checks	Test	2026-09-11T23:31:35.2254430Z running 17 tests
+checks	Test	2026-09-11T23:31:35.2558930Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpcu3rSh/repo/.git/
+checks	Test	2026-09-11T23:31:35.2589310Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpVV0d3k/repo/.git/
+checks	Test	2026-09-11T23:31:35.2736990Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpr1RjN2/repo/.git/
+checks	Test	2026-09-11T23:31:35.3389230Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.3392080Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.3395980Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.3410400Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.3410910Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.3411380Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.3411710Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.3411990Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.3412300Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.6460230Z test add_project_refuses_relative_paths_without_creating_anything ... ok
+checks	Test	2026-09-11T23:31:35.6588660Z test add_project_creates_a_missing_workspace_root ... ok
+checks	Test	2026-09-11T23:31:35.6734600Z test add_project_leaves_no_workspace_root_when_the_repository_is_invalid ... ok
+checks	Test	2026-09-11T23:31:35.6841830Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpPXAQVf/repo/.git/
+checks	Test	2026-09-11T23:31:35.6943390Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpkW6sTJ/repo/.git/
+checks	Test	2026-09-11T23:31:35.7044860Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpbLI6U4/repo/.git/
+checks	Test	2026-09-11T23:31:35.7560820Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.7574930Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.7577890Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.7579790Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.7581120Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.7584030Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.7585150Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.7626170Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.7626660Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.8445870Z test refuses_registry_and_git_path_disagreement ... ok
+checks	Test	2026-09-11T23:31:35.8594960Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpM20S60/repo/.git/
+checks	Test	2026-09-11T23:31:35.8816360Z test inspects_clean_and_dirty_worktrees ... ok
+checks	Test	2026-09-11T23:31:35.8874860Z test creates_new_and_existing_branch_worktrees ... ok
+checks	Test	2026-09-11T23:31:35.8971560Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmphkGxkT/repo/.git/
+checks	Test	2026-09-11T23:31:35.9000350Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpxrnNJ3/repo/.git/
+checks	Test	2026-09-11T23:31:35.9089230Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.9091900Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.9094450Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.9386110Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.9391280Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.9397490Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.9397890Z [main (root-commit) 5a8a0e5] initial
+checks	Test	2026-09-11T23:31:35.9399500Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:35.9400600Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:35.9467270Z Preparing worktree (new branch 'feature/shared')
+checks	Test	2026-09-11T23:31:35.9695400Z HEAD is now at 5a8a0e5 initial
+checks	Test	2026-09-11T23:31:36.0079620Z test refuses_to_remove_unregistered_matching_worktree ... ok
+checks	Test	2026-09-11T23:31:36.0204810Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp0kw3Es/repo/.git/
+checks	Test	2026-09-11T23:31:36.0376060Z test refuses_symlink_substitution_without_touching_either_worktree ... ok
+checks	Test	2026-09-11T23:31:36.0435800Z test refuses_to_remove_branch_checked_out_elsewhere ... ok
+checks	Test	2026-09-11T23:31:36.0511250Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpaDqGFk/repo/.git/
+checks	Test	2026-09-11T23:31:36.0556140Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpGVzgna/repo/.git/
+checks	Test	2026-09-11T23:31:36.0606110Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.0607930Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.0608920Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.0671410Z Preparing worktree (new branch 'feature/outside')
+checks	Test	2026-09-11T23:31:36.0865140Z HEAD is now at 7f0bd70 initial
+checks	Test	2026-09-11T23:31:36.0923730Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.0925340Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.0926860Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.0960210Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.0961440Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.0962580Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.1026680Z test refuses_to_remove_worktree_outside_registered_root ... ok
+checks	Test	2026-09-11T23:31:36.1154160Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpz1irYW/repo/.git/
+checks	Test	2026-09-11T23:31:36.1572050Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.1574170Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.1576000Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.1788430Z test rejects_existing_worktree_destination ... ok
+checks	Test	2026-09-11T23:31:36.1790310Z test refuses_to_remove_worktree_with_tracked_changes ... ok
+checks	Test	2026-09-11T23:31:36.1940310Z test refuses_to_remove_worktree_with_untracked_files ... ok
+checks	Test	2026-09-11T23:31:36.1942570Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpNQQqpz/repo/.git/
+checks	Test	2026-09-11T23:31:36.1975880Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpwMT6gC/repo/.git/
+checks	Test	2026-09-11T23:31:36.2071430Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp2C3QjX/repo/.git/
+checks	Test	2026-09-11T23:31:36.2391000Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.2402390Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.2404160Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.2411160Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.2412800Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.2429510Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.2502700Z test rejects_workspace_path_traversal_before_git ... ok
+checks	Test	2026-09-11T23:31:36.2517790Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.2541260Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.2542530Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.2633010Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpJCU6Is/repo/.git/
+checks	Test	2026-09-11T23:31:36.2955330Z test rejects_invalid_base_and_nonlocal_existing_ref_before_worktree_creation ... ok
+checks	Test	2026-09-11T23:31:36.3034480Z [main (root-commit) 7f0bd70] initial
+checks	Test	2026-09-11T23:31:36.3038530Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:36.3039820Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:36.3514570Z test removes_clean_registered_worktree_and_preserves_branch ... ok
+checks	Test	2026-09-11T23:31:36.4090520Z test removes_workspace_whose_directory_is_gone ... ok
+checks	Test	2026-09-11T23:31:36.4091140Z 
+checks	Test	2026-09-11T23:31:36.4092860Z test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+checks	Test	2026-09-11T23:31:36.4093340Z 
+checks	Test	2026-09-11T23:31:36.4095550Z ^[[1m^[[92m     Running^[[0m tests/gui.rs (target/debug/deps/gui-ea016dc286ed693d)
+checks	Test	2026-09-11T23:31:36.4236880Z 
+checks	Test	2026-09-11T23:31:36.4239480Z running 6 tests
+checks	Test	2026-09-11T23:31:36.4287480Z test command_k_is_not_forwarded_to_terminal ... ok
+checks	Test	2026-09-11T23:31:36.4320900Z test input_preserves_control_keys_terminal_modes_and_mouse_cells ... ok
+checks	Test	2026-09-11T23:31:38.7451800Z test outer_pty_parses_attributes_and_resize_reaches_the_tty ... ok
+checks	Test	2026-09-11T23:31:39.6803720Z test palette_creates_switches_and_closes_a_real_terminal ... ok
+checks	Test	2026-09-11T23:31:39.6821100Z test demo_shells_inherit_paths_and_cli_reaches_fixture ... ok
+checks	Test	2026-09-11T23:31:41.7301670Z test real_dashboard_accepts_input_reattaches_and_cleans_up_demo ... ok
+checks	Test	2026-09-11T23:31:41.7302050Z 
+checks	Test	2026-09-11T23:31:41.7302320Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.31s
+checks	Test	2026-09-11T23:31:41.7302710Z 
+checks	Test	2026-09-11T23:31:41.7305290Z ^[[1m^[[92m     Running^[[0m tests/resource_cli.rs (target/debug/deps/resource_cli-ae0a1c7201cab030)
+checks	Test	2026-09-11T23:31:41.7437410Z 
+checks	Test	2026-09-11T23:31:41.7437960Z running 6 tests
+checks	Test	2026-09-11T23:31:41.9542360Z test managed_usage_inspection_preserves_scope_unknowns_and_component_ages ... ok
+checks	Test	2026-09-11T23:31:42.6644160Z test agent_hook_resource_inventory_reports_activity ... ok
+checks	Test	2026-09-11T23:31:42.9321620Z test pause_resume_resource_cli_preserves_input_and_close_contract ... ok
+checks	Test	2026-09-11T23:31:42.9338340Z test context_resource_inventory_matches_inspection ... ok
+checks	Test	2026-09-11T23:31:43.5056570Z test remove_project_reports_workspaces_remain ... ok
+checks	Test	2026-09-11T23:31:44.1960550Z test terminal_cli_drives_real_session_and_preserves_workspace_removal_guards ... ok
+checks	Test	2026-09-11T23:31:44.1972960Z ^[[1m^[[92m     Running^[[0m tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-b1a51093be5596ca)
+checks	Test	2026-09-11T23:31:44.1973940Z 
+checks	Test	2026-09-11T23:31:44.1977500Z test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.45s
+checks	Test	2026-09-11T23:31:44.1979000Z 
+checks	Test	2026-09-11T23:31:44.2375770Z 
+checks	Test	2026-09-11T23:31:44.2376220Z running 89 tests
+checks	Test	2026-09-11T23:31:44.2620920Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpxFUiJk/repo/.git/
+checks	Test	2026-09-11T23:31:44.2626040Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpccMeQQ/repo/.git/
+checks	Test	2026-09-11T23:31:44.3164280Z [main (root-commit) 979581a] initial
+checks	Test	2026-09-11T23:31:44.3172540Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:44.3174340Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:44.3174630Z [main (root-commit) 979581a] initial
+checks	Test	2026-09-11T23:31:44.3175430Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:44.3175730Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:46.7531700Z test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+checks	Test	2026-09-11T23:31:46.7701500Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpoJvjiJ/repo/.git/
+checks	Test	2026-09-11T23:31:46.8077920Z [main (root-commit) 57f4b55] initial
+checks	Test	2026-09-11T23:31:46.8080170Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:46.8080560Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:46.9675630Z test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+checks	Test	2026-09-11T23:31:46.9774010Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp0YEPDX/repo/.git/
+checks	Test	2026-09-11T23:31:47.0111470Z [main (root-commit) 29f1c32] initial
+checks	Test	2026-09-11T23:31:47.0112280Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:47.0113070Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:49.7878970Z test agent_admission_failed_bind_status_disconnects_watch ... ok
+checks	Test	2026-09-11T23:31:49.8088310Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmppyJcyR/repo/.git/
+checks	Test	2026-09-11T23:31:49.8587000Z [main (root-commit) 52c978f] initial
+checks	Test	2026-09-11T23:31:49.8588990Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:49.8590180Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:50.4420600Z test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+checks	Test	2026-09-11T23:31:50.4522070Z test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+checks	Test	2026-09-11T23:31:52.9910110Z test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+checks	Test	2026-09-11T23:31:53.0023230Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpAQLx33/repo/.git/
+checks	Test	2026-09-11T23:31:53.0024230Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp9t428k/repo/.git/
+checks	Test	2026-09-11T23:31:53.0459610Z [main (root-commit) 72de965] initial
+checks	Test	2026-09-11T23:31:53.0461210Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:53.0467390Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:53.0495620Z [main (root-commit) 72de965] initial
+checks	Test	2026-09-11T23:31:53.0498540Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:53.0499520Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:55.4684000Z test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+checks	Test	2026-09-11T23:31:55.6951070Z test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+checks	Test	2026-09-11T23:31:55.7087880Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpbISMfz/repo/.git/
+checks	Test	2026-09-11T23:31:55.7435960Z [main (root-commit) 552adac] initial
+checks	Test	2026-09-11T23:31:55.7436580Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:55.7436970Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:58.2728270Z test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+checks	Test	2026-09-11T23:31:58.2872560Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpmQ0Jic/repo/.git/
+checks	Test	2026-09-11T23:31:58.3295710Z [main (root-commit) 0ca19b1] initial
+checks	Test	2026-09-11T23:31:58.3296560Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:58.3297030Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:58.9669890Z test agent_hook_capability_and_exit_are_enforced ... ok
+checks	Test	2026-09-11T23:31:58.9839630Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpmAFQup/repo/.git/
+checks	Test	2026-09-11T23:31:59.0261300Z [main (root-commit) be91253] initial
+checks	Test	2026-09-11T23:31:59.0263480Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:59.0264440Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:59.4151990Z test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+checks	Test	2026-09-11T23:31:59.4365380Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmppAcHyN/repo/.git/
+checks	Test	2026-09-11T23:31:59.4369440Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpc6xAbI/repo/.git/
+checks	Test	2026-09-11T23:31:59.4824180Z [main (root-commit) be91253] initial
+checks	Test	2026-09-11T23:31:59.4831570Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:59.4832410Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:59.4833480Z [main (root-commit) be91253] initial
+checks	Test	2026-09-11T23:31:59.4834650Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:31:59.4835040Z  create mode 100644 README
+checks	Test	2026-09-11T23:31:59.9905560Z test agent_hook_sequence_does_not_regress_state ... ok
+checks	Test	2026-09-11T23:32:00.0137300Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpBat42H/repo/.git/
+checks	Test	2026-09-11T23:32:00.0139850Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpnwATRh/repo/.git/
+checks	Test	2026-09-11T23:32:00.0795280Z [main (root-commit) cef829e] initial
+checks	Test	2026-09-11T23:32:00.0799250Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:00.0799820Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:00.0819690Z [main (root-commit) cef829e] initial
+checks	Test	2026-09-11T23:32:00.0825620Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:00.0828500Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:00.4095710Z test agent_hook_startup_registration_is_visible ... ok
+checks	Test	2026-09-11T23:32:00.4096580Z test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+checks	Test	2026-09-11T23:32:00.4097900Z test agent_run_native_helper ... ignored, native child fixture launched through agent run
+checks	Test	2026-09-11T23:32:00.4244030Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpYbzddJ/repo/.git/
+checks	Test	2026-09-11T23:32:00.4600240Z [main (root-commit) cef829e] initial
+checks	Test	2026-09-11T23:32:00.4600940Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:00.4601500Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:00.5235020Z test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+checks	Test	2026-09-11T23:32:00.5453890Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpphRs71/repo/.git/
+checks	Test	2026-09-11T23:32:00.5853440Z [main (root-commit) cef829e] initial
+checks	Test	2026-09-11T23:32:00.5859830Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:00.5861980Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:01.3756430Z test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+checks	Test	2026-09-11T23:32:01.4247460Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp0abRcn/repo/.git/
+checks	Test	2026-09-11T23:32:01.4757810Z [main (root-commit) b691752] initial
+checks	Test	2026-09-11T23:32:01.4760070Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:01.4760570Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:02.0721950Z test agent_run_runtime_kill_reaches_owned_native_group ... ok
+checks	Test	2026-09-11T23:32:02.0920330Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpTT37QY/repo/.git/
+checks	Test	2026-09-11T23:32:02.1818120Z [main (root-commit) 89a0d68] initial
+checks	Test	2026-09-11T23:32:02.1821980Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:02.1823900Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:02.2690300Z test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+checks	Test	2026-09-11T23:32:02.2958490Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpATFZNJ/repo/.git/
+checks	Test	2026-09-11T23:32:02.4055600Z [main (root-commit) 89a0d68] initial
+checks	Test	2026-09-11T23:32:02.4056180Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:02.4060380Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:02.8216670Z test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+checks	Test	2026-09-11T23:32:02.8328430Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpSgoUag/repo/.git/
+checks	Test	2026-09-11T23:32:02.8857640Z [main (root-commit) 89a0d68] initial
+checks	Test	2026-09-11T23:32:02.8862380Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:02.8862920Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:03.7672030Z test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+checks	Test	2026-09-11T23:32:03.7821120Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmppNqyu0/repo/.git/
+checks	Test	2026-09-11T23:32:03.8544540Z [main (root-commit) 8b1f6bd] initial
+checks	Test	2026-09-11T23:32:03.8545280Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:03.8546240Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:04.0949720Z test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+checks	Test	2026-09-11T23:32:04.1097310Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpyVFwcW/repo/.git/
+checks	Test	2026-09-11T23:32:04.1534380Z [main (root-commit) a33f1ae] initial
+checks	Test	2026-09-11T23:32:04.1535600Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:04.1536230Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:04.5200580Z test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+checks	Test	2026-09-11T23:32:04.5383830Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp9O2X1j/repo/.git/
+checks	Test	2026-09-11T23:32:04.5896990Z [main (root-commit) a33f1ae] initial
+checks	Test	2026-09-11T23:32:04.5900370Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:04.5905100Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:05.7319200Z test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+checks	Test	2026-09-11T23:32:05.7425740Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpTfs9s7/repo/.git/
+checks	Test	2026-09-11T23:32:05.7757770Z [main (root-commit) 3d7e5fa] initial
+checks	Test	2026-09-11T23:32:05.7759920Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:05.7764360Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:05.8307220Z test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+checks	Test	2026-09-11T23:32:05.8420830Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpjsD3YQ/repo/.git/
+checks	Test	2026-09-11T23:32:05.8905490Z [main (root-commit) 3d7e5fa] initial
+checks	Test	2026-09-11T23:32:05.8909420Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:05.8921130Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:06.0730460Z test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+checks	Test	2026-09-11T23:32:06.3220990Z test client_with_wrong_protocol_version_is_refused ... ok
+checks	Test	2026-09-11T23:32:06.3222270Z test codex_hook_native_helper ... ignored, Codex synchronous native child fixture
+checks	Test	2026-09-11T23:32:06.3444310Z test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+checks	Test	2026-09-11T23:32:06.3471360Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpL0M2Fy/repo/.git/
+checks	Test	2026-09-11T23:32:06.3884940Z [main (root-commit) 174b2a1] initial
+checks	Test	2026-09-11T23:32:06.3886790Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:06.3887730Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:06.6930790Z test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+checks	Test	2026-09-11T23:32:09.5951920Z test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+checks	Test	2026-09-11T23:32:09.6132620Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpnaWYho/repo/.git/
+checks	Test	2026-09-11T23:32:09.6597210Z [main (root-commit) 9729ea9] initial
+checks	Test	2026-09-11T23:32:09.6598960Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:09.6599470Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:11.6650650Z test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+checks	Test	2026-09-11T23:32:11.6795250Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp7x4gbM/repo/.git/
+checks	Test	2026-09-11T23:32:11.7265900Z [main (root-commit) ba167ff] initial
+checks	Test	2026-09-11T23:32:11.7268140Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:11.7269190Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:12.9987470Z test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+checks	Test	2026-09-11T23:32:13.0092710Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpuAubXX/repo/.git/
+checks	Test	2026-09-11T23:32:13.0407870Z [main (root-commit) 604e58b] initial
+checks	Test	2026-09-11T23:32:13.0411580Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:13.0412820Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:14.2078650Z test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+checks	Test	2026-09-11T23:32:14.2203860Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpD11zqf/repo/.git/
+checks	Test	2026-09-11T23:32:14.2606490Z [main (root-commit) 8640174] initial
+checks	Test	2026-09-11T23:32:14.2608100Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:14.2608610Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:15.3372750Z test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+checks	Test	2026-09-11T23:32:15.3586370Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpIiybhb/repo/.git/
+checks	Test	2026-09-11T23:32:15.4129840Z [main (root-commit) 1a75f08] initial
+checks	Test	2026-09-11T23:32:15.4131720Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:15.4132390Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:15.6893780Z test context_report_rejects_old_and_invalid_samples ... ok
+checks	Test	2026-09-11T23:32:15.7011980Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp6NehxW/repo/.git/
+checks	Test	2026-09-11T23:32:15.7419200Z [main (root-commit) 1a75f08] initial
+checks	Test	2026-09-11T23:32:15.7421050Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:15.7421550Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:16.1285930Z test context_report_replaces_snapshot_and_preserves_activity ... ok
+checks	Test	2026-09-11T23:32:16.1432430Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpMrAmbi/repo/.git/
+checks	Test	2026-09-11T23:32:16.1925910Z [main (root-commit) c92d885] initial
+checks	Test	2026-09-11T23:32:16.1929100Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:16.1929660Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:16.7063350Z test context_snapshot_survives_dashboard_reattach ... ok
+checks	Test	2026-09-11T23:32:16.7219320Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpoTPXAy/repo/.git/
+checks	Test	2026-09-11T23:32:16.7701730Z [main (root-commit) c92d885] initial
+checks	Test	2026-09-11T23:32:16.7710140Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:16.7711380Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:16.8186790Z test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+checks	Test	2026-09-11T23:32:17.7436520Z test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+checks	Test	2026-09-11T23:32:17.7656860Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp4VuRVn/repo/.git/
+checks	Test	2026-09-11T23:32:17.8073930Z [main (root-commit) 8080205] initial
+checks	Test	2026-09-11T23:32:17.8075720Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:17.8076200Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:17.9495650Z test dashboard_receives_concrete_ordinary_request_errors ... ok
+checks	Test	2026-09-11T23:32:18.2018070Z test dashboard_request_id_zero_does_not_block_followup_response ... ok
+checks	Test	2026-09-11T23:32:18.4764160Z test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+checks	Test	2026-09-11T23:32:18.6872610Z test control_lifecycle_enforces_every_removal_gate ... ok
+checks	Test	2026-09-11T23:32:18.7006640Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpNidUuX/repo/.git/
+checks	Test	2026-09-11T23:32:18.7419340Z [main (root-commit) c01bc0d] initial
+checks	Test	2026-09-11T23:32:18.7420260Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:18.7421140Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:19.5190830Z test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+checks	Test	2026-09-11T23:32:19.5380640Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpHKVdZH/repo/.git/
+checks	Test	2026-09-11T23:32:19.5806720Z [main (root-commit) 80ee063] initial
+checks	Test	2026-09-11T23:32:19.5808440Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:19.5808910Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:21.4545190Z test desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable ... ok
+checks	Test	2026-09-11T23:32:21.4701930Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpK7q8aw/repo/.git/
+checks	Test	2026-09-11T23:32:21.5370190Z [main (root-commit) ca1b818] initial
+checks	Test	2026-09-11T23:32:21.5372510Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:21.5373520Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:25.3563280Z test desktop_notifications_host_failure_and_blocking_never_block_input_or_detach ... ok
+checks	Test	2026-09-11T23:32:25.3808280Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpaW4BXR/repo/.git/
+checks	Test	2026-09-11T23:32:25.4274690Z [main (root-commit) 5703d0b] initial
+checks	Test	2026-09-11T23:32:25.4275630Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:25.4276150Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:28.3302240Z test desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility ... ok
+checks	Test	2026-09-11T23:32:28.3518570Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpTDzxI7/repo/.git/
+checks	Test	2026-09-11T23:32:28.3884350Z [main (root-commit) 72f8ca2] initial
+checks	Test	2026-09-11T23:32:28.3885060Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:28.3886150Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:28.4904130Z test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+checks	Test	2026-09-11T23:32:29.5684380Z test desktop_notifications_missing_host_tool_preserves_response_and_dashboard_controls ... ok
+checks	Test	2026-09-11T23:32:29.5884370Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpdU5PjC/repo/.git/
+checks	Test	2026-09-11T23:32:29.6327170Z [main (root-commit) 81d7dcd] initial
+checks	Test	2026-09-11T23:32:29.6329740Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:29.6330760Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:31.6657590Z test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... ok
+checks	Test	2026-09-11T23:32:31.6852080Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpe0Ed3G/repo/.git/
+checks	Test	2026-09-11T23:32:31.7327050Z [main (root-commit) 1011f68] initial
+checks	Test	2026-09-11T23:32:31.7332400Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:31.7337370Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:32.6004410Z test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+checks	Test	2026-09-11T23:32:32.6005340Z test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+checks	Test	2026-09-11T23:32:32.7737360Z test fast_exit_session_is_retained_as_exited ... ok
+checks	Test	2026-09-11T23:32:32.7739570Z test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+checks	Test	2026-09-11T23:32:32.7975600Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpQyUPMI/repo/.git/
+checks	Test	2026-09-11T23:32:32.8386430Z [main (root-commit) b1e7665] initial
+checks	Test	2026-09-11T23:32:32.8387130Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:32.8387620Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:36.0709860Z test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+checks	Test	2026-09-11T23:32:36.0815700Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpinPHNi/repo/.git/
+checks	Test	2026-09-11T23:32:36.1111040Z [main (root-commit) e48101c] initial
+checks	Test	2026-09-11T23:32:36.1111780Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:36.1112680Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:36.5856320Z test history_frozen_page_survives_eviction_and_exit ... ok
+checks	Test	2026-09-11T23:32:36.5858880Z test hook_child_report_helper ... ignored
+checks	Test	2026-09-11T23:32:36.5985880Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp8s0y5i/repo/.git/
+checks	Test	2026-09-11T23:32:36.6342910Z [main (root-commit) e48101c] initial
+checks	Test	2026-09-11T23:32:36.6344690Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:36.6345240Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:36.9482740Z test history_reattach_reads_retained_output ... ok
+checks	Test	2026-09-11T23:32:36.9603210Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpLDH4R6/repo/.git/
+checks	Test	2026-09-11T23:32:36.9909620Z [main (root-commit) e48101c] initial
+checks	Test	2026-09-11T23:32:36.9911280Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:36.9913450Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:38.3230700Z test history_slow_dashboard_recovers_after_finite_burst ... ok
+checks	Test	2026-09-11T23:32:38.3231670Z test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+checks	Test	2026-09-11T23:32:38.3366000Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpNglGmq/repo/.git/
+checks	Test	2026-09-11T23:32:38.3851930Z [main (root-commit) d43f964] initial
+checks	Test	2026-09-11T23:32:38.3853270Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:38.3853900Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:39.0566530Z test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+checks	Test	2026-09-11T23:32:39.0568570Z test pause_resume_child_fixture ... ignored
+checks	Test	2026-09-11T23:32:41.3173360Z test kill_does_not_block_dashboard_geometry ... ok
+checks	Test	2026-09-11T23:32:41.3372910Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpjEpMOv/repo/.git/
+checks	Test	2026-09-11T23:32:41.3818350Z [main (root-commit) 83c0f4a] initial
+checks	Test	2026-09-11T23:32:41.3819860Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:41.3820970Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:42.9844320Z test pause_resume_backpressured_input_keeps_controls_available ... ok
+checks	Test	2026-09-11T23:32:43.0037540Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp3w1YCk/repo/.git/
+checks	Test	2026-09-11T23:32:43.0480490Z [main (root-commit) 469a282] initial
+checks	Test	2026-09-11T23:32:43.0483050Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:43.0483610Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:43.9726980Z test pause_resume_control_races_converge ... ok
+checks	Test	2026-09-11T23:32:43.9864760Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp3ifLZU/repo/.git/
+checks	Test	2026-09-11T23:32:44.0339220Z [main (root-commit) c5b4209] initial
+checks	Test	2026-09-11T23:32:44.0343840Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:44.0344260Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:45.0252660Z test pause_resume_kill_runs_group_handlers ... ok
+checks	Test	2026-09-11T23:32:45.0509450Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpngYT0q/repo/.git/
+checks	Test	2026-09-11T23:32:45.1064050Z [main (root-commit) 5b36449] initial
+checks	Test	2026-09-11T23:32:45.1065250Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:45.1065680Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:46.6233380Z test pause_resume_server_refuses_removal_and_late_mutation ... ok
+checks	Test	2026-09-11T23:32:46.6426370Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpEw4E3y/repo/.git/
+checks	Test	2026-09-11T23:32:46.6437550Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpz9DiWd/repo/.git/
+checks	Test	2026-09-11T23:32:46.6928600Z [main (root-commit) 5d25e83] initial
+checks	Test	2026-09-11T23:32:46.6931300Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:46.6932240Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:46.7035010Z [main (root-commit) 5d25e83] initial
+checks	Test	2026-09-11T23:32:46.7035890Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:46.7038600Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:47.7444140Z test pause_resume_shutdown_cleans_stopped_groups ... ok
+checks	Test	2026-09-11T23:32:47.7645080Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpLHU2jm/repo/.git/
+checks	Test	2026-09-11T23:32:47.7646390Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpGGOG4f/repo/.git/
+checks	Test	2026-09-11T23:32:47.8125200Z [main (root-commit) d86a813] initial
+checks	Test	2026-09-11T23:32:47.8132110Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:47.8133110Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:47.8133610Z [main (root-commit) d86a813] initial
+checks	Test	2026-09-11T23:32:47.8134350Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:47.8134800Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:48.2272970Z test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+checks	Test	2026-09-11T23:32:48.7233600Z test pause_resume_stops_group_and_rejects_input ... ok
+checks	Test	2026-09-11T23:32:48.7432950Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp23V7eG/repo/.git/
+checks	Test	2026-09-11T23:32:48.7893980Z [main (root-commit) 82241f7] initial
+checks	Test	2026-09-11T23:32:48.7896050Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:48.7896550Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:49.7523350Z test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+checks	Test	2026-09-11T23:32:49.7664510Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpUjwDXl/repo/.git/
+checks	Test	2026-09-11T23:32:49.8100270Z [main (root-commit) 17275cc] initial
+checks	Test	2026-09-11T23:32:49.8100850Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:49.8104270Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:49.9602060Z test shutdown_disconnected_requester_still_wakes_accept ... ok
+checks	Test	2026-09-11T23:32:50.3496340Z test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+checks	Test	2026-09-11T23:32:50.6182460Z test selection_snapshot_precedes_later_quiet_tail_output ... ok
+checks	Test	2026-09-11T23:32:50.6380620Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp3a8ly8/repo/.git/
+checks	Test	2026-09-11T23:32:50.6790630Z [main (root-commit) b3236ad] initial
+checks	Test	2026-09-11T23:32:50.6792340Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:50.6793240Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:51.6264570Z test shutdown_kill_terminates_sessions_concurrently ... ok
+checks	Test	2026-09-11T23:32:51.6435420Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpwze1m9/repo/.git/
+checks	Test	2026-09-11T23:32:51.6853100Z [main (root-commit) bf7f514] initial
+checks	Test	2026-09-11T23:32:51.6854840Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:51.6855370Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:52.5507510Z test shutdown_without_kill_rejects_exited_record ... ok
+checks	Test	2026-09-11T23:32:52.5681680Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpFo8chf/repo/.git/
+checks	Test	2026-09-11T23:32:52.6102010Z [main (root-commit) 3f43359] initial
+checks	Test	2026-09-11T23:32:52.6103940Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:52.6104900Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:54.4559650Z test slow_dashboard_recovers_after_output_burst ... ok
+checks	Test	2026-09-11T23:32:54.4815780Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpht2eDn/repo/.git/
+checks	Test	2026-09-11T23:32:54.5359170Z [main (root-commit) 0999caf] initial
+checks	Test	2026-09-11T23:32:54.5360580Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:54.5361630Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:56.2188630Z test split_server_two_streams_resize_resync_and_detach ... ok
+checks	Test	2026-09-11T23:32:56.4483390Z test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+checks	Test	2026-09-11T23:32:56.4748970Z test startup_read_only_commands_do_not_start_a_missing_server ... ok
+checks	Test	2026-09-11T23:32:56.4828490Z test startup_refuses_symlinked_socket_directory ... ok
+checks	Test	2026-09-11T23:32:56.4972420Z test startup_failure_reports_server_log ... ok
+checks	Test	2026-09-11T23:32:56.4977400Z test startup_concurrent_attempts_leave_one_server ... ok
+checks	Test	2026-09-11T23:32:56.6928060Z test startup_socket_directory_is_private ... ok
+checks	Test	2026-09-11T23:32:56.7079970Z test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+checks	Test	2026-09-11T23:32:56.7091170Z test startup_stale_socket_is_recovered ... ok
+checks	Test	2026-09-11T23:32:56.7171800Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmpdHTGJN/repo/.git/
+checks	Test	2026-09-11T23:32:56.7525400Z [main (root-commit) 0609083] initial
+checks	Test	2026-09-11T23:32:56.7526100Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:56.7526610Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:57.4455450Z test workspace_remove_succeeds_after_directory_deleted ... ok
+checks	Test	2026-09-11T23:32:57.4559330Z Initialized empty Git repository in /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp1pjVQ3/repo/.git/
+checks	Test	2026-09-11T23:32:57.4901910Z [main (root-commit) 077b87d] initial
+checks	Test	2026-09-11T23:32:57.4902550Z  1 file changed, 1 insertion(+)
+checks	Test	2026-09-11T23:32:57.4903030Z  create mode 100644 README
+checks	Test	2026-09-11T23:32:57.7116630Z test workspace_shell_failure_retains_worktree_and_registry ... ok
+checks	Test	2026-09-11T23:32:57.7117000Z 
+checks	Test	2026-09-11T23:32:57.7118050Z test result: ok. 80 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 73.47s
+checks	Test	2026-09-11T23:32:57.7118480Z 
+checks	Test	2026-09-11T23:32:57.7138250Z ^[[1m^[[92m     Running^[[0m tests/service.rs (target/debug/deps/service-73c77fa571ae19a8)
+checks	Test	2026-09-11T23:32:57.7242920Z 
+checks	Test	2026-09-11T23:32:57.7243600Z running 14 tests
+checks	Test	2026-09-11T23:32:57.7309270Z test environment_file_is_parsed_literally_in_the_application ... ok
+checks	Test	2026-09-11T23:32:57.7370390Z test install_refuses_to_take_over_an_unmanaged_server ... ok
+checks	Test	2026-09-11T23:32:57.7559650Z /var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/.tmp9c6thE/LaunchAgents/com.ovrcr.server.plist: OK
+checks	Test	2026-09-11T23:32:57.7574170Z test launchd_install_writes_login_job_that_restarts_only_after_failure ... ok
+checks	Test	2026-09-11T23:32:57.7592000Z test changed_socket_cannot_control_the_installed_job_even_without_a_listener ... ok
+checks	Test	2026-09-11T23:32:57.7605600Z test service_args_parse_install_environment_file ... ok
+checks	Test	2026-09-11T23:32:57.7613920Z test failed_graceful_shutdown_does_not_stop_the_manager ... ok
+checks	Test	2026-09-11T23:32:57.7621830Z test service_definitions_reject_relative_runtime_paths ... ok
+checks	Test	2026-09-11T23:32:57.7793310Z test start_if_installed_only_uses_an_existing_service_definition ... ok
+checks	Test	2026-09-11T23:32:57.7903600Z test service_install_refuses_when_sessions_exist ... ok
+checks	Test	2026-09-11T23:32:57.8017240Z test status_queries_but_never_starts_the_service ... ok
+checks	Test	2026-09-11T23:32:57.8218550Z test systemd_install_writes_user_unit_and_enables_login_startup ... ok
+checks	Test	2026-09-11T23:32:57.8578620Z test uninstall_removes_only_service_files_and_preserves_task_data ... ok
+checks	Test	2026-09-11T23:32:57.8602250Z test stop_requests_graceful_server_shutdown_before_stopping_the_manager ... ok
+checks	Test	2026-09-11T23:32:57.9455000Z test loaded_service_does_not_send_shutdown_to_a_foreign_listener ... ok
+checks	Test	2026-09-11T23:32:57.9455580Z 
+checks	Test	2026-09-11T23:32:57.9456100Z test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+checks	Test	2026-09-11T23:32:57.9456530Z 
+checks	Test	2026-09-11T23:32:57.9458070Z ^[[1m^[[92m     Running^[[0m tests/task_cli.rs (target/debug/deps/task_cli-30c082c73769445d)
+checks	Test	2026-09-11T23:32:57.9501620Z 
+checks	Test	2026-09-11T23:32:57.9502830Z running 3 tests
+checks	Test	2026-09-11T23:32:57.9628010Z test unicode_duration_returns_validation_error_without_starting_server ... ok
+checks	Test	2026-09-11T23:32:57.9684080Z test offline_task_and_run_reads_do_not_start_a_server ... ok
+checks	Test	2026-09-11T23:32:58.3497870Z test task_crud_persists_and_manual_failure_retains_a_run_record ... ok
+checks	Test	2026-09-11T23:32:58.3498330Z 
+checks	Test	2026-09-11T23:32:58.3498740Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+checks	Test	2026-09-11T23:32:58.3499500Z 
+checks	Test	2026-09-11T23:32:58.3501040Z ^[[1m^[[92m     Running^[[0m tests/task_execution.rs (target/debug/deps/task_execution-8b935d81ce9abfc3)
+checks	Test	2026-09-11T23:32:58.3622520Z 
+checks	Test	2026-09-11T23:32:58.3624260Z running 12 tests
+checks	Test	2026-09-11T23:32:59.3198040Z test cancel_marks_run_cancelling_immediately ... ok
+checks	Test	2026-09-11T23:33:02.0896300Z test git_run_cleanup_rejects_a_workspace_that_preexisted_preparation ... ok
+checks	Test	2026-09-11T23:33:03.5384770Z test git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup ... ok
+checks	Test	2026-09-11T23:33:04.5835320Z test git_run_cleanup_rejects_a_replacement_workspace_after_cleanup ... ok
+checks	Test	2026-09-11T23:33:04.7651180Z test git_workspace_removal_refuses_a_running_task_in_a_clean_worktree ... ok
+checks	Test	2026-09-11T23:33:05.1569150Z test scratch_output_survives_completion_and_requires_confirmed_cleanup ... ok
+checks	Test	2026-09-11T23:33:05.3943970Z test server_crash_interrupts_pi_and_recovery_does_not_replay_the_run ... ok
+checks	Test	2026-09-11T23:33:06.3064870Z test shutdown_finishes_even_when_final_state_persistence_fails ... ok
+checks	Test	2026-09-11T23:33:06.4643500Z test signal_shutdown_cleans_up_despite_final_state_write_failure ... ok
+checks	Test	2026-09-11T23:33:07.8567040Z test three_runs_stream_independently_and_cancel_admits_the_fourth ... ok
+checks	Test	2026-09-11T23:33:08.8080400Z test timeout_is_distinct_from_failure_and_same_task_pending_is_coalesced ... ok
+checks	Test	2026-09-11T23:33:24.8625650Z test forced_cancel_kills_pi_process_group ... ok
+checks	Test	2026-09-11T23:33:24.8628650Z 
+checks	Test	2026-09-11T23:33:24.8632300Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.50s
+checks	Test	2026-09-11T23:33:24.8634070Z 
+checks	Test	2026-09-11T23:33:24.8668380Z ^[[1m^[[92m     Running^[[0m tests/task_paging.rs (target/debug/deps/task_paging-d8d6d8e12de7dc30)
+checks	Test	2026-09-11T23:33:24.9094920Z 
+checks	Test	2026-09-11T23:33:24.9096260Z running 5 tests
+checks	Test	2026-09-11T23:33:24.9168390Z test deleting_an_earlier_task_between_pages_keeps_original_tasks_once ... ok
+checks	Test	2026-09-11T23:33:24.9169800Z test new_runs_between_pages_do_not_duplicate_or_omit_original_runs ... ok
+checks	Test	2026-09-11T23:33:24.9172710Z test oversized_legacy_row_returns_an_error_instead_of_a_stuck_empty_page ... ok
+checks	Test	2026-09-11T23:33:24.9174770Z test serialized_pages_are_bounded_and_keep_task_order_and_filtered_run_order ... ok
+checks	Test	2026-09-11T23:33:27.7604500Z test cli_lists_all_large_tasks_and_runs_online_and_offline ... ok
+checks	Test	2026-09-11T23:33:27.7605010Z 
+checks	Test	2026-09-11T23:33:27.7605260Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+checks	Test	2026-09-11T23:33:27.7605640Z 
+checks	Test	2026-09-11T23:33:27.7609250Z ^[[1m^[[92m     Running^[[0m tests/task_runner.rs (target/debug/deps/task_runner-d1f418c35094936c)
+checks	Test	2026-09-11T23:33:27.7688470Z 
+checks	Test	2026-09-11T23:33:27.7690160Z running 9 tests
+checks	Test	2026-09-11T23:33:28.0449710Z test completion_retains_stream_logs_and_explicit_configuration ... ok
+checks	Test	2026-09-11T23:33:28.0678540Z test acknowledgement_and_agent_end_are_not_success ... ok
+checks	Test	2026-09-11T23:33:28.0679710Z test installed_pi_background_work_survives_between_tools_but_not_the_run ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+checks	Test	2026-09-11T23:33:28.0680760Z test installed_pi_task_shell_preserves_output_and_cleans_abort_timeout_and_parent_loss ... ignored, requires OVRCR_TEST_PI_PACKAGE pointing at the installed Pi package and node on PATH
+checks	Test	2026-09-11T23:33:28.0685710Z test logs_are_bounded_and_cursor_is_in_bytes ... ok
+checks	Test	2026-09-11T23:33:28.9594830Z test error_length_abort_and_preflight_rejection_fail ... ok
+checks	Test	2026-09-11T23:33:29.2157600Z test transient_ps_failure_does_not_fail_run ... ok
+checks	Test	2026-09-11T23:33:29.4616150Z test blocked_prompt_write_still_obeys_timeout ... ok
+checks	Test	2026-09-11T23:33:30.7146410Z test timeout_cancel_and_parent_loss_remove_detached_descendants ... ok
+checks	Test	2026-09-11T23:33:30.7147050Z 
+checks	Test	2026-09-11T23:33:30.7147530Z test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.95s
+checks	Test	2026-09-11T23:33:30.7148220Z 
+checks	Test	2026-09-11T23:33:30.7151760Z ^[[1m^[[92m     Running^[[0m tests/task_schedule.rs (target/debug/deps/task_schedule-1cfb483b0f8b7d86)
+checks	Test	2026-09-11T23:33:30.7323690Z 
+checks	Test	2026-09-11T23:33:30.7324590Z running 12 tests
+checks	Test	2026-09-11T23:33:30.7368830Z test create_and_update_reject_past_one_time_schedules_but_resume_expires_them ... ok
+checks	Test	2026-09-11T23:33:30.7369610Z test create_update_pause_and_resume_use_the_injected_clock ... ok
+checks	Test	2026-09-11T23:33:30.7371910Z test advancing_a_late_interval_enqueues_once_and_preserves_its_anchor ... ok
+checks	Test	2026-09-11T23:33:30.7373390Z test delete_refuses_active_then_cancels_pending_and_preserves_history ... ok
+checks	Test	2026-09-11T23:33:30.7374090Z test admission_respects_capacity_fifo_and_one_active_run_per_task ... ok
+checks	Test	2026-09-11T23:33:30.7374710Z test manual_enqueue_coalesces_without_changing_the_schedule ... ok
+checks	Test	2026-09-11T23:33:30.7375280Z test pause_cancels_only_scheduled_pending_work ... ok
+checks	Test	2026-09-11T23:33:30.7376530Z test run_status_classification_matches_queue_and_capacity_semantics ... ok
+checks	Test	2026-09-11T23:33:30.7387830Z test helper_paths_have_the_documented_shape ... ok
+checks	Test	2026-09-11T23:33:30.7388690Z test task_specs_reject_missing_execution_inputs ... ok
+checks	Test	2026-09-11T23:33:30.7393300Z test schedules_validate_and_find_the_next_zoned_occurrence ... ok
+checks	Test	2026-09-11T23:33:30.7432630Z test store_and_run_metadata_round_trip_through_real_files ... ok
+checks	Test	2026-09-11T23:33:30.7432960Z 
+checks	Test	2026-09-11T23:33:30.7455130Z test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+checks	Test	2026-09-11T23:33:30.7455610Z 
+checks	Test	2026-09-11T23:33:30.7456190Z ^[[1m^[[92m     Running^[[0m tests/task_tui.rs (target/debug/deps/task_tui-ebb2cdf387bf9cf1)
+checks	Test	2026-09-11T23:33:30.7570720Z 
+checks	Test	2026-09-11T23:33:30.7571030Z running 28 tests
+checks	Test	2026-09-11T23:33:30.7621060Z test browse_opens_tasks_and_terminal_ctrl_t_is_literal ... ok
+checks	Test	2026-09-11T23:33:30.7622600Z test dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open ... ok
+checks	Test	2026-09-11T23:33:30.7633520Z test create_and_edit_every_field_and_multiline_prompt_in_terminal ... ok
+checks	Test	2026-09-11T23:33:30.7634210Z test destructive_actions_require_confirmation_and_escape_cancels ... ok
+checks	Test	2026-09-11T23:33:30.7662470Z test dense_task_list_and_editor_render_with_square_borders ... ok
+checks	Test	2026-09-11T23:33:30.7775160Z test history_status_live_transcript_cancel_and_confirmed_cleanup ... ok
+checks	Test	2026-09-11T23:33:30.7893360Z test confirmations_show_only_answer_controls_at_narrow_widths ... ok
+checks	Test	2026-09-11T23:33:30.7994080Z test long_editor_fields_keep_the_cursor_text_visible ... ok
+checks	Test	2026-09-11T23:33:30.8094690Z test multiline_cursor_edits_unicode_without_corruption ... ok
+checks	Test	2026-09-11T23:33:30.8195410Z test new_task_defaults_match_cli_off_thinking_and_one_hour_timeout ... ok
+checks	Test	2026-09-11T23:33:30.8295600Z test pause_resume_manual_run_and_concurrency ... ok
+checks	Test	2026-09-11T23:33:30.8396200Z test rejected_save_retains_every_field_and_prompt_for_correction ... ok
+checks	Test	2026-09-11T23:33:30.8397130Z test invalid_concurrency_shows_error_with_edit_controls_and_recovers ... ok
+checks	Test	2026-09-11T23:33:30.8497770Z test empty_task_views_only_hint_actions_with_available_targets ... ok
+checks	Test	2026-09-11T23:33:30.8602920Z test task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows ... ok
+checks	Test	2026-09-11T23:33:30.8703630Z test task_confirmations_honor_default_no_and_case_insensitive_answers ... ok
+checks	Test	2026-09-11T23:33:30.8763620Z test task_mouse_run_rows_cancel_and_cleanup_use_selected_run ... ok
+checks	Test	2026-09-11T23:33:30.8764290Z test task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once ... ok
+checks	Test	2026-09-11T23:33:30.8764870Z test task_mouse_project_picker_and_transcript_wheel_use_visible_rows ... ok
+checks	Test	2026-09-11T23:33:30.8765520Z test task_project_picker_uses_dashboard_projects_and_filters_before_save ... ok
+checks	Test	2026-09-11T23:33:30.8766180Z test task_project_picker_preserves_edit_target_and_rejects_unmatched_save ... ok
+checks	Test	2026-09-11T23:33:30.8766720Z test transcript_wrap_is_cached_between_frames ... ok
+checks	Test	2026-09-11T23:33:30.8767260Z test unicode_duration_keeps_editor_fields_available_for_correction ... ok
+checks	Test	2026-09-11T23:33:30.8767790Z test unicode_prompt_render_is_safe_while_another_field_has_focus ... ok
+checks	Test	2026-09-11T23:33:30.8768330Z test ux_empty_history_preserves_status_without_stale_working ... ok
+checks	Test	2026-09-11T23:33:30.8768870Z test ux_narrow_task_footer_keeps_escape_and_save_complete ... ok
+checks	Test	2026-09-11T23:33:30.8859380Z test transcript_preserves_split_unicode_json_and_bounds_memory ... ok
+checks	Test	2026-09-11T23:33:30.8900580Z test task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation ... ok
+checks	Test	2026-09-11T23:33:30.8900980Z 
+checks	Test	2026-09-11T23:33:30.8901240Z test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+checks	Test	2026-09-11T23:33:30.8901600Z 
+checks	Test	2026-09-11T23:33:30.8904410Z ^[[1m^[[92m     Running^[[0m tests/terminal_acceptance.rs (target/debug/deps/terminal_acceptance-47406814e444b37d)
+checks	Test	2026-09-11T23:33:30.9009710Z 
+checks	Test	2026-09-11T23:33:30.9009980Z running 10 tests
+checks	Test	2026-09-11T23:33:31.0537960Z 2
+checks	Test	2026-09-11T23:33:31.0642050Z 2
+checks	Test	2026-09-11T23:33:31.0746930Z 2
+checks	Test	2026-09-11T23:33:31.0849620Z 3
+checks	Test	2026-09-11T23:33:31.0911950Z 3
+checks	Test	2026-09-11T23:33:31.0950680Z 3
+checks	Test	2026-09-11T23:33:31.0982090Z 4
+checks	Test	2026-09-11T23:33:32.1934920Z test copy_mode_acceptance_emits_selected_text_and_reattaches ... ok
+checks	Test	2026-09-11T23:33:32.4462130Z test empty_dashboard_start_screen_reports_isolated_paths ... ok
+checks	Test	2026-09-11T23:33:32.5896650Z 2
+checks	Test	2026-09-11T23:33:32.5979270Z 3
+checks	Test	2026-09-11T23:33:32.6063420Z 4
+checks	Test	2026-09-11T23:33:33.2029400Z test default_dashboard_acceptance_wrapper_exercises_pty_controls ... ok
+checks	Test	2026-09-11T23:33:33.2035100Z test mouse_fixture_child ... ignored
+checks	Test	2026-09-11T23:33:33.3371260Z 2
+checks	Test	2026-09-11T23:33:33.3453750Z 3
+checks	Test	2026-09-11T23:33:33.3536050Z 4
+checks	Test	2026-09-11T23:33:34.0719350Z test history_keyboard_reads_old_output_during_live_session ... ok
+checks	Test	2026-09-11T23:33:34.2296230Z 2
+checks	Test	2026-09-11T23:33:34.2379050Z 3
+checks	Test	2026-09-11T23:33:34.4824480Z test mouse_forwarding_outer_pty_round_trip ... ok
+checks	Test	2026-09-11T23:33:34.6304530Z 2
+checks	Test	2026-09-11T23:33:34.6403010Z 3
+checks	Test	2026-09-11T23:33:35.2544870Z test pause_resume_dashboard_round_trip ... ok
+checks	Test	2026-09-11T23:33:35.3811700Z 2
+checks	Test	2026-09-11T23:33:35.3895220Z 3
+checks	Test	2026-09-11T23:33:35.9791220Z test split_terminal_acceptance_preserves_input_and_geometry ... ok
+checks	Test	2026-09-11T23:33:36.5676670Z test workspace_shortcut_creates_and_attaches_through_real_dashboard ... ok
+checks	Test	2026-09-11T23:33:36.7550620Z test copy_history_acceptance_emits_across_page_and_tile_boundaries ... ok
+checks	Test	2026-09-11T23:33:36.7552470Z 
+checks	Test	2026-09-11T23:33:36.7553500Z test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.85s
+checks	Test	2026-09-11T23:33:36.7554600Z 
+checks	Test	2026-09-11T23:33:36.7566840Z ^[[1m^[[92m     Running^[[0m tests/tui/main.rs (target/debug/deps/tui-4ff61a427da0d6a4)
+checks	Test	2026-09-11T23:33:36.7835130Z 
+checks	Test	2026-09-11T23:33:36.7835910Z running 180 tests
+checks	Test	2026-09-11T23:33:36.7896190Z test control_punctuation_and_modified_keys_encode ... ok
+checks	Test	2026-09-11T23:33:36.7971130Z test copy_history::browse_and_terminal_modes_keep_input_ownership_clear ... ok
+checks	Test	2026-09-11T23:33:36.8267640Z test copy_history::copy_history_extraction_joins_wrap_and_skips_continuations ... ok
+checks	Test	2026-09-11T23:33:36.8385890Z test copy_history::copy_history_invalid_snapshot_never_emits_partial_text ... ok
+checks	Test	2026-09-11T23:33:36.8487410Z test copy_history::copy_mode_keeps_alternate_and_resync_snapshots ... ok
+checks	Test	2026-09-11T23:33:36.8588080Z test copy_history::copy_mode_cancels_at_identity_boundaries ... ok
+checks	Test	2026-09-11T23:33:36.8691310Z test copy_history::copy_mode_waits_for_matching_screen ... ok
+checks	Test	2026-09-11T23:33:36.8727150Z test copy_history::copy_mode_routes_keys_and_freezes_output ... ok
+checks	Test	2026-09-11T23:33:36.8728980Z test copy_history::copy_mouse_drag_normalizes_wide_cells_and_visible_copy_close_capture_input ... ok
+checks	Test	2026-09-11T23:33:36.8729880Z test copy_history::copy_render_highlights_unicode_and_preserves_layout ... ok
+checks	Test	2026-09-11T23:33:36.8730580Z test copy_history::copy_mouse_release_position_and_focus_loss_bound_the_gesture ... ok
+checks	Test	2026-09-11T23:33:36.8731350Z test copy_history::history_begin_is_cancelled_and_captured_by_active_overlays ... ok
+checks	Test	2026-09-11T23:33:36.8760070Z test copy_history::history_cancelled_begin_releases_late_snapshot ... ok
+checks	Test	2026-09-11T23:33:36.8760830Z test copy_history::history_cursor_async_continuation_resolution_reveals_predecessor_tile ... ok
+checks	Test	2026-09-11T23:33:36.8761510Z test copy_history::history_cursor_resolution_reveals_anchored_viewport ... ok
+checks	Test	2026-09-11T23:33:36.8773890Z test copy_history::history_cursor_stays_visible_while_predecessor_tile_loads ... ok
+checks	Test	2026-09-11T23:33:36.8824840Z test copy_history::history_empty_rows_only_anchor_after_explicit_anchor ... ok
+checks	Test	2026-09-11T23:33:36.8835060Z test copy_history::history_key_kinds_gate_actions ... ok
+checks	Test	2026-09-11T23:33:36.8836910Z test copy_history::history_live_output_preserves_anchor ... ok
+checks	Test	2026-09-11T23:33:36.8840080Z test copy_history::history_mouse_bounds_match_offset_painted_cells_and_resize_keeps_capture ... ok
+checks	Test	2026-09-11T23:33:36.8841330Z test copy_history::copy_history_range_survives_live_eviction ... ok
+checks	Test	2026-09-11T23:33:36.8842620Z test copy_history::history_navigation_never_writes_to_pty ... ok
+checks	Test	2026-09-11T23:33:36.8843900Z test copy_history::copy_render_tiny_pane_and_footer ... ok
+checks	Test	2026-09-11T23:33:36.8950010Z test copy_history::history_release_precedes_hierarchy_fallback_selection ... ok
+checks	Test	2026-09-11T23:33:36.8954450Z test copy_history::history_pending_keys_coalesce ... ok
+checks	Test	2026-09-11T23:33:36.8956500Z test copy_history::history_resize_preserves_capture ... ok
+checks	Test	2026-09-11T23:33:36.8957860Z test copy_history::history_stale_response_is_ignored ... ok
+checks	Test	2026-09-11T23:33:36.8959280Z test copy_history::history_unanchored_retry_keys_reissue_failed_cursor_request ... ok
+checks	Test	2026-09-11T23:33:36.8994520Z test copy_history::history_waits_for_coalesced_focus_view_before_capture ... ok
+checks	Test	2026-09-11T23:33:36.9020440Z test copy_history::matching_history_open_clears_resize_notice_but_stale_response_does_not ... ok
+checks	Test	2026-09-11T23:33:36.9041350Z test copy_history::pause_resume_browse_keys_send_explicit_requests ... ok
+checks	Test	2026-09-11T23:33:36.9043210Z test copy_history::history_mouse_drag_uses_frozen_offsets_and_cancels_stale_completion ... ok
+checks	Test	2026-09-11T23:33:36.9044590Z test copy_history::pause_resume_input_and_paste_stay_guarded ... ok
+checks	Test	2026-09-11T23:33:36.9048080Z test copy_history::resize_matching_screen_restores_snapshot_and_ignores_stale_screen ... ok
+checks	Test	2026-09-11T23:33:36.9051250Z test copy_history::pause_resume_dense_status_has_priority ... ok
+checks	Test	2026-09-11T23:33:36.9083910Z test copy_history::history_render_preserves_cells_and_clips ... ok
+checks	Test	2026-09-11T23:33:36.9107220Z test ctrl_g_is_reserved_and_other_control_keys_reach_the_pty ... ok
+checks	Test	2026-09-11T23:33:36.9116530Z test dashboard_reader_channel_applies_bounded_backpressure ... ok
+checks	Test	2026-09-11T23:33:36.9120680Z test inverse_colors_keep_explicit_colors_and_set_reverse_modifier ... ok
+checks	Test	2026-09-11T23:33:36.9121940Z test copy_history::ux_history_footer_names_the_actual_escape_action ... ok
+checks	Test	2026-09-11T23:33:36.9123220Z test mouse::browse_click_focuses_other_running_pane_and_types_after_view_ack ... ok
+checks	Test	2026-09-11T23:33:36.9199250Z test mouse::browse_click_in_pane_focuses_without_bytes ... ok
+checks	Test	2026-09-11T23:33:36.9230200Z test mouse::ctrl_g_releases_held_buttons_before_switching ... ok
+checks	Test	2026-09-11T23:33:36.9291510Z test copy_history::whichkey_acquisition_cancels_copy_and_history_drags ... ok
+checks	Test	2026-09-11T23:33:36.9298260Z test mouse::dragging_tracked_mouse_into_sidebar_releases_application_button ... ok
+checks	Test	2026-09-11T23:33:36.9322460Z test mouse::mouse_encode_legacy_boundaries ... ok
+checks	Test	2026-09-11T23:33:36.9358610Z test mouse::mouse_encode_sgr_events ... ok
+checks	Test	2026-09-11T23:33:36.9388460Z test mouse::mouse_encode_tracking_filters ... ok
+checks	Test	2026-09-11T23:33:36.9405420Z test mouse::focus_lost_finishes_gestures_and_focus_gained_resumes ... ok
+checks	Test	2026-09-11T23:33:36.9418290Z test mouse::leaving_the_rectangle_releases_at_last_valid_cell ... ok
+checks	Test	2026-09-11T23:33:36.9447310Z test mouse::pause_cancels_a_held_mouse_gesture ... ok
+checks	Test	2026-09-11T23:33:36.9448590Z test mouse::press_outside_rectangle_is_not_clamped ... ok
+checks	Test	2026-09-11T23:33:36.9477460Z test mouse::terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session ... ok
+checks	Test	2026-09-11T23:33:36.9478290Z test mouse::protocol_change_clears_held_state ... ok
+checks	Test	2026-09-11T23:33:36.9507160Z test mouse::terminal_click_focuses_other_pane_without_forwarding ... ok
+checks	Test	2026-09-11T23:33:36.9507870Z test mouse::wheel_down_at_newest_row_returns_to_live ... ok
+checks	Test	2026-09-11T23:33:36.9536750Z test mouse::wheel_is_forwarded_when_tracking_is_enabled ... ok
+checks	Test	2026-09-11T23:33:36.9537340Z test ordinary_response_errors_remain_visible_to_dashboard ... ok
+checks	Test	2026-09-11T23:33:36.9566570Z test mouse::wheel_over_a_pane_without_tracking_opens_history_at_the_tail ... ok
+checks	Test	2026-09-11T23:33:36.9596190Z test output_for_newly_selected_session_waits_for_screen ... ok
+checks	Test	2026-09-11T23:33:36.9596700Z test mouse::wheel_up_over_the_unfocused_pane_opens_its_history ... ok
+checks	Test	2026-09-11T23:33:36.9625480Z test palette::created_session_enters_terminal_mode ... ok
+checks	Test	2026-09-11T23:33:36.9626930Z test palette::double_enter_refreshes_the_derived_workspace_root_listing ... ok
+checks	Test	2026-09-11T23:33:36.9655340Z test palette::a_opens_project_form_with_roots_and_derives_name_and_root ... ok
+checks	Test	2026-09-11T23:33:36.9656710Z test palette::empty_hierarchy_shows_start_screen ... ok
+checks	Test	2026-09-11T23:33:36.9685100Z test palette::keyboard_overlays_cancel_divider_gesture_before_consuming_release ... ok
+checks	Test	2026-09-11T23:33:36.9686290Z test palette::leader_workspace_uses_inspection_and_name_first_picker_defaults ... ok
+checks	Test	2026-09-11T23:33:36.9714830Z test palette::n_is_listed_in_the_browse_footer ... ok
+checks	Test	2026-09-11T23:33:36.9716330Z test palette::n_is_listed_in_the_hint_table ... ok
+checks	Test	2026-09-11T23:33:36.9744330Z test palette::n_opens_terminal_form_prefilled_for_selected_workspace ... ok
+checks	Test	2026-09-11T23:33:36.9745930Z test palette::narrow_popup_moves_description_to_detail_line ... ok
+checks	Test	2026-09-11T23:33:36.9774050Z test palette::nested_whichkey_container_selection_limits_groups_and_removal_target ... ok
+checks	Test	2026-09-11T23:33:36.9775480Z test palette::nested_whichkey_empty_hierarchy_can_register_and_open_global_view ... ok
+checks	Test	2026-09-11T23:33:36.9803670Z test palette::nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys ... ok
+checks	Test	2026-09-11T23:33:36.9862880Z test palette::nested_whichkey_mouse_and_enter_open_groups_before_running_actions ... ok
+checks	Test	2026-09-11T23:33:37.0259450Z test palette::nested_whichkey_removal_confirms_the_selected_target_and_can_cancel ... ok
+checks	Test	2026-09-11T23:33:37.0320470Z test palette::nested_whichkey_terminal_group_waits_for_action_and_backspace_returns ... ok
+checks	Test	2026-09-11T23:33:37.0326300Z test palette::palette_active_field_remains_visible_in_a_small_window ... ok
+checks	Test	2026-09-11T23:33:37.0336900Z test palette::palette_close_updates_selection_and_clears_removed_screen ... ok
+checks	Test	2026-09-11T23:33:37.0369840Z test palette::palette_entries_show_keys_and_descriptions ... ok
+checks	Test	2026-09-11T23:33:37.0501440Z test palette::palette_escape_cancels_pending_request ... ok
+checks	Test	2026-09-11T23:33:37.0688180Z test palette::palette_filters_and_captures_input_without_sending_it_to_terminal ... ok
+checks	Test	2026-09-11T23:33:37.1240230Z test palette::fuzzy_matched_branch_is_not_submitted_without_confirmation ... ok
+checks	Test	2026-09-11T23:33:37.1342620Z test palette::palette_hint_action_ignores_late_inspection_error ... ok
+checks	Test	2026-09-11T23:33:37.1444080Z test palette::case_only_branch_mismatch_is_refused_not_submitted ... ok
+checks	Test	2026-09-11T23:33:37.1552120Z test palette::palette_switch_drops_late_inventory_without_clearing_current_error ... ok
+checks	Test	2026-09-11T23:33:37.1590160Z test palette::palette_requires_fields_and_keeps_terminal_keys_outside_palette ... ok
+checks	Test	2026-09-11T23:33:37.1591970Z test palette::palette_switches_by_search_and_confirms_exact_close_target ... ok
+checks	Test	2026-09-11T23:33:37.1593600Z test palette::paste_into_repository_field_refreshes_the_listing ... ok
+checks	Test	2026-09-11T23:33:37.1594750Z test palette::palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes ... ok
+checks	Test	2026-09-11T23:33:37.1596360Z test palette::question_mark_popup_is_browsable ... ok
+checks	Test	2026-09-11T23:33:37.1598640Z test palette::removal_picker_rejects_no_match_and_excludes_root ... ok
+checks	Test	2026-09-11T23:33:37.1599630Z test palette::removal_pickers_with_empty_hierarchy_never_confirm ... ok
+checks	Test	2026-09-11T23:33:37.1600850Z test palette::search_selection_clamps_when_entries_shrink ... ok
+checks	Test	2026-09-11T23:33:37.1633420Z test palette::removal_pickers_filter_and_confirm_a_different_target ... ok
+checks	Test	2026-09-11T23:33:37.1705590Z test palette::space_w_n_opens_the_terminal_form ... ok
+checks	Test	2026-09-11T23:33:37.1707260Z test palette::tasks_hotkey_cancels_pending_history_like_control_t ... ok
+checks	Test	2026-09-11T23:33:37.1708480Z test palette::tab_on_a_leaf_path_advances_to_the_next_field ... ok
+checks	Test	2026-09-11T23:33:37.1709440Z test palette::picker_validation_keeps_recovery_hints_and_cancels_without_removal ... ok
+checks	Test	2026-09-11T23:33:37.1754260Z test palette::uppercase_x_confirms_session_close_without_closing_pane ... ok
+checks	Test	2026-09-11T23:33:37.1953730Z test palette::ux_browse_footer_names_actions_and_respects_availability ... ok
+checks	Test	2026-09-11T23:33:37.2045360Z test palette::ux_forms_put_task_name_in_border_and_keep_active_field_visible ... ok
+checks	Test	2026-09-11T23:33:37.2163140Z test palette::ux_search_keeps_session_identity_and_filters_complete_context ... ok
+checks	Test	2026-09-11T23:33:37.2221870Z test palette::w_opens_workspace_form_with_project_and_derived_branch ... ok
+checks	Test	2026-09-11T23:33:37.2367010Z test palette::whichkey_compact_corner_preserves_the_surrounding_dashboard ... ok
+checks	Test	2026-09-11T23:33:37.2397580Z test palette::whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture ... ok
+checks	Test	2026-09-11T23:33:37.2514150Z test palette::whichkey_copy_leader_preserves_capture_and_v_anchors ... ok
+checks	Test	2026-09-11T23:33:37.2605840Z test palette::whichkey_empty_workspace_click_sets_terminal_form_target ... ok
+checks	Test	2026-09-11T23:33:37.2867730Z test palette::whichkey_mouse_uses_rendered_rows_and_blocks_background_clicks ... ok
+checks	Test	2026-09-11T23:33:37.2976640Z test palette::whichkey_preserves_readiness_and_never_forwards_overlay_input ... ok
+checks	Test	2026-09-11T23:33:37.3251300Z test palette::whichkey_scrolled_last_row_remains_clickable_after_resize ... ok
+checks	Test	2026-09-11T23:33:37.3441500Z test palette::whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable ... ok
+checks	Test	2026-09-11T23:33:37.4059810Z test palette::typed_existing_branch_survives_hint_arrival ... ok
+checks	Test	2026-09-11T23:33:37.4184420Z test palette::workspace_created_with_exited_local_shell_closes_palette ... ok
+checks	Test	2026-09-11T23:33:37.4195470Z test palette::workspace_creation_attaches_to_its_local_shell ... ok
+checks	Test	2026-09-11T23:33:37.4364170Z test palette::workspace_creation_cancel_and_failure_do_not_attach_late ... ok
+checks	Test	2026-09-11T23:33:37.4394560Z test paste_honors_bracketed_paste_mode ... ok
+checks	Test	2026-09-11T23:33:37.4487220Z test render_terminal_copies_text_style_wide_cells_and_cursor ... ok
+checks	Test	2026-09-11T23:33:37.4516460Z test render_terminal_crossterm_roundtrip_clears_replaced_text ... ok
+checks	Test	2026-09-11T23:33:37.4545450Z test runtime_paste_event_becomes_selected_session_input ... ok
+checks	Test	2026-09-11T23:33:37.4574540Z test palette::typed_branch_missing_from_hints_is_refused_not_replaced ... ok
+checks	Test	2026-09-11T23:33:37.4603840Z test sidebar::agent_hook_sidebar_states_are_literal ... ok
+checks	Test	2026-09-11T23:33:37.4633200Z test sidebar::agent_hook_summary_updates_drive_animation ... ok
+checks	Test	2026-09-11T23:33:37.4662330Z test sidebar::agent_hook_selected_metadata_reports_activity_and_lifecycle ... ok
+checks	Test	2026-09-11T23:33:37.4691590Z test sidebar::compact_sidebar_clicks_use_both_session_lines_and_adjacent_containers ... ok
+checks	Test	2026-09-11T23:33:37.4720700Z test sidebar::collapse_and_mouse_hits_use_current_visible_tree ... ok
+checks	Test	2026-09-11T23:33:37.4750000Z test sidebar::context_updates_leave_the_compact_sidebar_unchanged ... ok
+checks	Test	2026-09-11T23:33:37.4779190Z test sidebar::dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible ... ok
+checks	Test	2026-09-11T23:33:37.4808260Z test sidebar::dashboard_geometry_remains_drawable_at_target_and_tiny_sizes ... ok
+checks	Test	2026-09-11T23:33:37.4838800Z test sidebar::empty_pane_click_preserves_the_assigned_wire_focus ... ok
+checks	Test	2026-09-11T23:33:37.4903520Z test sidebar::dashboard_layout ... ok
+checks	Test	2026-09-11T23:33:37.4933240Z test sidebar::empty_workspace_selection_does_not_cover_a_retained_terminal ... ok
+checks	Test	2026-09-11T23:33:37.4959030Z test sidebar::long_sidebar_names_clip_to_one_screen_line ... ok
+checks	Test	2026-09-11T23:33:37.4959490Z test sidebar::selected_session_uses_two_full_width_sidebar_lines ... ok
+checks	Test	2026-09-11T23:33:37.4959980Z test sidebar::fifty_session_selection_scrolls_tree_and_mouse_hits_viewport ... ok
+checks	Test	2026-09-11T23:33:37.4960480Z test sidebar::shrinking_dashboard_keeps_selected_tree_row_visible ... ok
+checks	Test	2026-09-11T23:33:37.4961020Z test sidebar::sidebar_container_click_keeps_focus_on_another_assigned_pane ... ok
+checks	Test	2026-09-11T23:33:37.4961490Z test sidebar::sidebar_animates_only_explicitly_busy_sessions ... ok
+checks	Test	2026-09-11T23:33:37.4961940Z test sidebar::sidebar_glyphs_and_columns_match_the_reference_tree ... ok
+checks	Test	2026-09-11T23:33:37.4962440Z test sidebar::sidebar_labels_select_without_toggling_and_work_in_terminal_mode ... ok
+checks	Test	2026-09-11T23:33:37.4962970Z test sidebar::sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names ... ok
+checks	Test	2026-09-11T23:33:37.4963390Z test sidebar::ux_live_metadata_is_readable_and_preserves_selection ... ok
+checks	Test	2026-09-11T23:33:37.4963890Z test split::divider_gesture_releases_all_application_buttons_without_resizing ... ok
+checks	Test	2026-09-11T23:33:37.4964440Z test split::divider_drag_resizes_both_panes_and_revokes_input_until_acknowledged ... ok
+checks	Test	2026-09-11T23:33:37.4964950Z test split::incomplete_final_ok_marks_panes_failed_and_refreshes ... ok
+checks	Test	2026-09-11T23:33:37.4965430Z test split::pane_rects_keep_split_geometry_and_hide_unfocused_tiny_pane ... ok
+checks	Test	2026-09-11T23:33:37.4966120Z test split::settings_error_survives_the_geometry_ack ... ok
+checks	Test	2026-09-11T23:33:37.4966570Z test split::split_error_is_cleared_by_the_view_the_next_selection_requests ... ok
+checks	Test	2026-09-11T23:33:37.4979480Z test split::divider_preference_survives_resize_hiding_and_focus_loss_with_nonzero_origins ... ok
+checks	Test	2026-09-11T23:33:37.4992690Z test split::split_error_survives_mouse_cleanup_ack ... ok
+checks	Test	2026-09-11T23:33:37.4993190Z test split::split_layout_geometry_and_narrow_fallback ... ok
+checks	Test	2026-09-11T23:33:37.5599770Z test split::split_layout_renders_independent_cells_and_cursor ... ok
+checks	Test	2026-09-11T23:33:37.5601740Z test split::split_preserves_history_copy_and_paused_input ... ok
+checks	Test	2026-09-11T23:33:37.5609650Z test split::split_review_absent_a_screen_cannot_authorize_reassigned_parser ... ok
+checks	Test	2026-09-11T23:33:37.5610230Z test split::split_review_cancels_inflight_history_copy_before_focus_change ... ok
+checks	Test	2026-09-11T23:33:37.5610950Z test split::split_review_close_reopen_does_not_authorize_recreated_parser ... ok
+checks	Test	2026-09-11T23:33:37.5613520Z test split::split_review_discarded_pending_view_refreshes_before_late_receipts ... ok
+checks	Test	2026-09-11T23:33:37.5617180Z test split::split_review_focus_select_and_close_revoke_public_input_until_setview_ok ... ok
+checks	Test	2026-09-11T23:33:37.5620510Z test split::split_review_keeps_history_a_while_b_changes_and_cancels_late_work ... ok
+checks	Test	2026-09-11T23:33:37.6742690Z test palette::workspace_branch_mode_uses_local_branches_and_preserves_edits ... ok
+checks	Test	2026-09-11T23:33:37.6745880Z test split::split_review_pending_a_b_a_preserves_received_parser_before_ok ... ok
+checks	Test	2026-09-11T23:33:37.6751110Z test split::split_review_pending_view_completes_after_focus_and_geometry_return ... ok
+checks	Test	2026-09-11T23:33:37.6754270Z test split::split_review_preserves_nonfirst_survivor_on_hierarchy_removal ... ok
+checks	Test	2026-09-11T23:33:37.6761660Z test split::split_review_readiness_requires_matching_targets_and_cancels_resize_copy ... ok
+checks	Test	2026-09-11T23:33:37.6765340Z test split::split_review_replaces_a_b_a_and_rejects_old_completions ... ok
+checks	Test	2026-09-11T23:33:37.6772510Z test split::split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion ... ok
+checks	Test	2026-09-11T23:33:37.6775270Z test split::split_review_terminal_modes_use_each_panes_parser ... ok
+checks	Test	2026-09-11T23:33:37.6778870Z test split::split_review_unfocused_removal_preserves_focused_history_capture ... ok
+checks	Test	2026-09-11T23:33:37.6781370Z test split::split_state_focus_and_close_preserve_sessions ... ok
+checks	Test	2026-09-11T23:33:37.6783880Z test split::split_state_ignores_stale_revisions_and_removed_sessions ... ok
+checks	Test	2026-09-11T23:33:37.6786410Z test split::split_state_modes_and_input_are_local ... ok
+checks	Test	2026-09-11T23:33:37.6902000Z test split::ux_narrow_layout_keeps_help_focus_and_nonzero_view_sizes ... ok
+checks	Test	2026-09-11T23:33:37.8647940Z test split::split_error_survives_a_screen_dirty_refresh ... ok
+checks	Test	2026-09-11T23:33:37.8838710Z test split::split_review_matching_view_error_disables_input_until_a_new_view_is_ready ... ok
+checks	Test	2026-09-11T23:33:37.8860470Z test split::view_request_ids_are_released_on_final_response ... ok
+checks	Test	2026-09-11T23:33:37.8863410Z test terminal_guard_restores_before_prior_hook_callback ... ok
+checks	Test	2026-09-11T23:33:37.8914780Z test terminal_guard_restores_each_enabled_mode_once_on_normal_return_and_unwind ... ok
+checks	Test	2026-09-11T23:33:37.8916980Z test terminal_guard_rolls_back_modes_when_a_later_enter_write_fails ... ok
+checks	Test	2026-09-11T23:33:38.0695430Z test split::view_error_on_changed_view_does_not_spin ... ok
+checks	Test	2026-09-11T23:33:38.1944200Z test split::view_error_on_unchanged_view_retries_once_after_backoff ... ok
+checks	Test	2026-09-11T23:33:38.1946920Z 
+checks	Test	2026-09-11T23:33:38.1948580Z test result: ok. 180 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s
+checks	Test	2026-09-11T23:33:38.1950560Z 
+checks	Test	2026-09-11T23:33:38.1987820Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_protocol-eb9c147f31fa9c3b)
+checks	Test	2026-09-11T23:33:38.2278170Z 
+checks	Test	2026-09-11T23:33:38.2278850Z running 23 tests
+checks	Test	2026-09-11T23:33:38.2341600Z test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+checks	Test	2026-09-11T23:33:38.2352550Z test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+checks	Test	2026-09-11T23:33:38.2358050Z test codec::tests::agent_report_round_trip_and_redaction ... ok
+checks	Test	2026-09-11T23:33:38.2359050Z test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+checks	Test	2026-09-11T23:33:38.2360000Z test codec::tests::appended_resource_requests_round_trip ... ok
+checks	Test	2026-09-11T23:33:38.2361020Z test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+checks	Test	2026-09-11T23:33:38.2362060Z test codec::tests::pause_resume_requests_round_trip ... ok
+checks	Test	2026-09-11T23:33:38.2363170Z test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+checks	Test	2026-09-11T23:33:38.2364050Z test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+checks	Test	2026-09-11T23:33:38.2364650Z test codec::tests::preamble_round_trip ... ok
+checks	Test	2026-09-11T23:33:38.2365180Z test codec::tests::split_view_frames_round_trip ... ok
+checks	Test	2026-09-11T23:33:38.2366010Z test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+checks	Test	2026-09-11T23:33:38.2366730Z test context::tests::context_claude_projection ... ok
+checks	Test	2026-09-11T23:33:38.2367540Z test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+checks	Test	2026-09-11T23:33:38.2368430Z test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+checks	Test	2026-09-11T23:33:38.2369470Z test context::tests::context_semantics ... ok
+checks	Test	2026-09-11T23:33:38.2370020Z test context::tests::context_json_validation ... ok
+checks	Test	2026-09-11T23:33:38.2371190Z test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+checks	Test	2026-09-11T23:33:38.2372100Z test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+checks	Test	2026-09-11T23:33:38.2372940Z test wire::tests::validate_rejects_oversized_panes ... ok
+checks	Test	2026-09-11T23:33:38.2373900Z test session::tests::response_ready_and_existing_activity_wire_spellings_round_trip ... ok
+checks	Test	2026-09-11T23:33:38.2374930Z test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+checks	Test	2026-09-11T23:33:38.2405590Z test codec::tests::history_page_round_trip_and_size_bound ... ok
+checks	Test	2026-09-11T23:33:38.2406170Z 
+checks	Test	2026-09-11T23:33:38.2406600Z test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+checks	Test	2026-09-11T23:33:38.2407180Z 
+checks	Test	2026-09-11T23:33:38.2410920Z ^[[1m^[[92m     Running^[[0m unittests src/lib.rs (target/debug/deps/ovrcr_runtime-88f795331a274858)
+checks	Test	2026-09-11T23:33:38.2610720Z 
+checks	Test	2026-09-11T23:33:38.2611340Z running 100 tests
+checks	Test	2026-09-11T23:33:38.2714450Z test config::tests::corrupt_registry_is_reported_and_not_replaced ... ok
+checks	Test	2026-09-11T23:33:38.2735620Z test config::tests::present_empty_registry_is_reported_and_not_replaced ... ok
+checks	Test	2026-09-11T23:33:38.2809280Z test config::tests::registry_round_trip_preserves_projects_and_workspaces ... ok
+checks	Test	2026-09-11T23:33:38.2823390Z test server::reporting_queue::tests::accounting_is_atomic_with_channel_refill ... ok
+checks	Test	2026-09-11T23:33:38.2824070Z test server::reporting_queue::tests::blocked_send_wakes_when_receiver_drops ... ok
+checks	Test	2026-09-11T23:33:38.2824730Z test server::reporting_queue::tests::receiver_drop_drains_accounting ... ok
+checks	Test	2026-09-11T23:33:38.2825500Z test server::reporting_queue::tests::receiver_wakes_on_send_and_sender_drop ... ok
+checks	Test	2026-09-11T23:33:38.2826800Z test server::reporting_queue::tests::sender_drop_cannot_be_lost_between_empty_and_wait ... ok
+checks	Test	2026-09-11T23:33:38.2919320Z test server::reporting_queue::tests::timeout_uses_channel_state_as_authority ... ok
+checks	Test	2026-09-11T23:33:38.2920170Z test agent_runner::tests::invocation_channel_rejects_payload_above_limit_without_allocating_or_dispatching ... ok
+checks	Test	2026-09-11T23:33:38.3660040Z test agent_runner::tests::invocation_channel_accepts_exact_payload_limit ... ok
+checks	Test	2026-09-11T23:33:38.3667080Z test server::tests::agent_report_queue_full_is_a_structured_conflict ... ok
+checks	Test	2026-09-11T23:33:38.5577680Z test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+checks	Test	2026-09-11T23:33:38.6977660Z test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+checks	Test	2026-09-11T23:33:38.6992610Z test server::tests::accept_loop_survives_thread_spawn_failure ... ok
+checks	Test	2026-09-11T23:33:38.8345070Z test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+checks	Test	2026-09-11T23:33:38.8801130Z test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+checks	Test	2026-09-11T23:33:38.8802300Z test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+checks	Test	2026-09-11T23:33:39.0042280Z test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+checks	Test	2026-09-11T23:33:39.0464900Z test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+checks	Test	2026-09-11T23:33:39.1577520Z test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+checks	Test	2026-09-11T23:33:39.1916860Z test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+checks	Test	2026-09-11T23:33:39.3145840Z test server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order ... ok
+checks	Test	2026-09-11T23:33:39.3209010Z test server::tests::control_and_refresh_failures_preserve_both_causes ... ok
+checks	Test	2026-09-11T23:33:41.1531250Z test server::tests::accepted_shutdown_rejects_late_mutation_while_ack_writer_is_blocked ... ok
+checks	Test	2026-09-11T23:33:41.1537510Z test server::tests::dashboard_overflow_closes_affected_connection ... ok
+checks	Test	2026-09-11T23:33:41.1538370Z test server::tests::dashboard_overflow_does_not_clear_replacement_slot ... ok
+checks	Test	2026-09-11T23:33:41.1540770Z test server::tests::dashboard_shutdown_completes_when_response_sink_is_closed ... ok
+checks	Test	2026-09-11T23:33:41.3214440Z test server::tests::close_failure_retains_record_until_cleanup_can_finish ... ok
+checks	Test	2026-09-11T23:33:41.3378190Z test server::tests::dashboard_slot_is_released_when_registration_panics ... ok
+checks	Test	2026-09-11T23:33:41.3474180Z test server::tests::dashboard_snapshot_counts_messages_terminal_and_dirty_separately ... ok
+checks	Test	2026-09-11T23:33:43.3959820Z test server::tests::current_owner_rejects_hidden_input_and_unknown_view_session ... ok
+checks	Test	2026-09-11T23:33:43.4021420Z test server::tests::history_capture_orders_with_output ... ok
+checks	Test	2026-09-11T23:33:43.7853480Z test server::tests::dashboard_shutdown_waits_for_stalled_writer_completion ... ok
+checks	Test	2026-09-11T23:33:43.7859040Z test server::tests::hook_socket_resolution_canonicalizes_parent_and_rejects_leaf_symlink ... ok
+checks	Test	2026-09-11T23:33:47.5649280Z test server::tests::history_page_overflow_disconnects_without_parser_wait ... ok
+checks	Test	2026-09-11T23:33:47.5675150Z test server::tests::history_owner_and_token_isolation ... ok
+checks	Test	2026-09-11T23:33:47.6468010Z test server::tests::kill_and_close_refresh_failures_keep_exited_records ... ok
+checks	Test	2026-09-11T23:33:47.6957950Z test server::tests::kill_failure_cleanup_retains_original_group_after_leader_exit ... ok
+checks	Test	2026-09-11T23:33:47.7312430Z test server::tests::late_response_does_not_reach_a_replacement_dashboard ... ok
+checks	Test	2026-09-11T23:33:47.7314420Z test server::tests::lifecycle_response_preserves_error_chain_and_code ... ok
+checks	Test	2026-09-11T23:33:47.8986430Z test server::tests::invalid_view_preserves_populated_geometry_and_pty_sizes ... ok
+checks	Test	2026-09-11T23:33:49.8142730Z test server::tests::oversized_set_view_returns_invalid_request_without_resizing ... ok
+checks	Test	2026-09-11T23:33:49.8357710Z test server::tests::partial_resize_connection_delivers_error_before_owner_close ... FAILED
+checks	Test	2026-09-11T23:33:49.8732490Z test server::tests::kill_session_termination_failure_revokes_and_retains_session ... ok
+checks	Test	2026-09-11T23:33:49.8761770Z test server::tests::pending_output_does_not_evict_dashboard_on_lifecycle_event ... ok
+checks	Test	2026-09-11T23:33:49.8764150Z test server::tests::raw_event_and_dispatch_queues_reject_the_65th_item ... ok
+checks	Test	2026-09-11T23:33:49.9798500Z test server::tests::registration_publishes_the_session_before_its_events_can_arrive ... ok
+checks	Test	2026-09-11T23:33:50.0171830Z test server::tests::relative_bound_socket_validates_spawn_and_child_cwd_is_distinct ... ok
+checks	Test	2026-09-11T23:33:54.0320720Z test server::tests::partial_resize_failure_does_not_restore_revision_after_owner_replacement ... ok
+checks	Test	2026-09-11T23:33:54.1898270Z test server::tests::resize_is_rejected_for_a_split_view ... ok
+checks	Test	2026-09-11T23:33:54.2179820Z test server::tests::session_output_flows_while_another_session_spawns ... ok
+checks	Test	2026-09-11T23:33:54.2242730Z test server::tests::set_view_drops_a_session_removed_before_publication ... ok
+checks	Test	2026-09-11T23:33:54.6031250Z test server::tests::partial_resize_blocked_writer_times_out_and_closes_owner ... ok
+checks	Test	2026-09-11T23:33:56.6958860Z test server::tests::set_view_publishes_without_an_unfocused_pane_removed_before_publication ... ok
+checks	Test	2026-09-11T23:33:56.7669300Z test server::tests::shutdown_refresh_failure_keeps_exited_record_and_server_available ... ok
+checks	Test	2026-09-11T23:33:56.8324050Z test server::tests::shutdown_termination_failure_is_partial_and_server_remains_available ... ok
+checks	Test	2026-09-11T23:33:56.9129170Z test server::tests::shutdown_without_kill_rejects_paused_session ... ok
+checks	Test	2026-09-11T23:33:56.9218880Z test server::tests::split_delivery_dirty_revisions_are_isolated ... ok
+checks	Test	2026-09-11T23:33:58.3303910Z test server::tests::session_refresh_dispatch_failures_disconnect_without_blocking ... ok
+checks	Test	2026-09-11T23:33:58.3338330Z test server::tests::split_delivery_snapshots_precede_increments ... ok
+checks	Test	2026-09-11T23:33:58.3463360Z test server::tests::set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames ... ok
+checks	Test	2026-09-11T23:33:58.3468030Z test server::tests::terminal_delivery_is_final_entry_and_closing_stays_sticky ... ok
+checks	Test	2026-09-11T23:33:58.3595750Z test server::tests::stale_geometry_does_not_overwrite_replacement_size ... ok
+checks	Test	2026-09-11T23:33:58.3606280Z test server::tests::uncommitted_partial_failure_does_not_publish_hierarchy ... ok
+checks	Test	2026-09-11T23:34:00.4457240Z test server::tests::view_publication_aborts_when_owner_disconnects_during_resize ... ok
+checks	Test	2026-09-11T23:34:01.1283010Z test server::tests::split_delivery_rejects_stale_owner_and_input ... ok
+checks	Test	2026-09-11T23:34:01.1286350Z test session::reporting::tests::agent_report_component_receipt_age_uses_source_order_not_transport_time ... ok
+checks	Test	2026-09-11T23:34:01.1810000Z test session::shell_prompt::tests::compact_prompt_keeps_custom_zdotdir_and_leaves_explicit_commands_alone ... ok
+checks	Test	2026-09-11T23:34:01.1812360Z test session::tests::agent_report_order_receipt_accepts_repeated_values ... ok
+checks	Test	2026-09-11T23:34:01.1813900Z test session::tests::agent_report_order_rejects_replay_and_mode_switch ... ok
+checks	Test	2026-09-11T23:34:01.1815200Z test session::tests::agent_report_order_rejects_zero_sequence_without_mutating_unset ... ok
+checks	Test	2026-09-11T23:34:01.2269250Z test session::tests::agent_report_requires_capability_and_preserves_order_on_rejection ... ok
+checks	Test	2026-09-11T23:34:01.5267040Z test session::tests::compact_zsh_prompt_preserves_config_and_reports_failure ... ok
+checks	Test	2026-09-11T23:34:01.5445820Z test session::tests::final_output_is_parsed_before_session_becomes_removable ... ok
+checks	Test	2026-09-11T23:34:01.8195700Z test session::tests::group_leader_timeout_kills_the_child ... ok
+checks	Test	2026-09-11T23:34:01.8197620Z test session::tests::group_leader_timeout_override_keeps_the_default_bound ... ok
+checks	Test	2026-09-11T23:34:01.8727090Z test session::tests::pause_resume_exit_event_cannot_be_overwritten ... ok
+checks	Test	2026-09-11T23:34:02.2075760Z test session::tests::pause_resume_phase_and_input_admission ... ok
+checks	Test	2026-09-11T23:34:02.2078080Z test session::tests::pause_resume_rejects_unsafe_group ... ok
+checks	Test	2026-09-11T23:34:02.2979800Z test session::tests::pause_resume_terminate_runs_term_handler ... ok
+checks	Test	2026-09-11T23:34:02.3562860Z test session::tests::pause_resume_terminate_serializes_competing_controls ... ok
+checks	Test	2026-09-11T23:34:02.5262420Z test server::tests::view_revision_floor_survives_exit_and_removal ... ok
+checks	Test	2026-09-11T23:34:02.6805140Z test session::tests::resize_reaches_the_child_tty ... ok
+checks	Test	2026-09-11T23:34:02.7207610Z test server::tests::terminal_frame_survives_a_concurrent_lifecycle_event ... ok
+checks	Test	2026-09-11T23:34:02.8060520Z test session::tests::terminate_reaps_group_after_transient_sigcont_permission ... ok
+checks	Test	2026-09-11T23:34:02.8178050Z test session::tests::shell_round_trip_updates_the_current_screen ... ok
+checks	Test	2026-09-11T23:34:02.8923720Z test session::tests::terminate_removes_the_whole_process_group ... ok
+checks	Test	2026-09-11T23:34:03.0403000Z test session::tests::terminate_retains_sigcont_permission_error_when_group_remains ... ok
+checks	Test	2026-09-11T23:34:03.1593410Z test task_manager::tests::cancellation_waits_for_admission_to_publish_its_worker ... ok
+checks	Test	2026-09-11T23:34:03.1708200Z test task_manager::tests::cleanup_reports_retained_directory_without_registry_ownership ... ok
+checks	Test	2026-09-11T23:34:03.1722780Z test session::tests::terminate_retains_sigcont_permission_error_for_live_group ... ok
+checks	Test	2026-09-11T23:34:03.1889550Z test task_manager::tests::corrupt_run_file_does_not_block_open ... ok
+checks	Test	2026-09-11T23:34:03.2551500Z test task_manager::tests::graceful_shutdown_refuses_a_run_crossing_admission ... ok
+checks	Test	2026-09-11T23:34:03.2933600Z test session::tests::terminate_removes_job_control_subgroups ... ok
+checks	Test	2026-09-11T23:34:03.2960160Z test task_runner::tests::reused_pid_cannot_claim_process_group_or_children ... ok
+checks	Test	2026-09-11T23:34:03.2966090Z test task_runner::tests::surviving_member_preserves_owned_group_after_leader_exits ... ok
+checks	Test	2026-09-11T23:34:03.2978430Z test tasks::tests::prune_keeps_recent_runs_and_the_newest_per_task ... ok
+checks	Test	2026-09-11T23:34:03.3298410Z test task_manager::tests::tick_does_not_reread_terminal_runs ... ok
+checks	Test	2026-09-11T23:34:03.4167890Z test task_manager::tests::workspace_removal_protects_admitted_tasks_before_run_metadata_is_written ... ok
+checks	Test	2026-09-11T23:34:03.4169030Z 
+checks	Test	2026-09-11T23:34:03.4169080Z failures:
+checks	Test	2026-09-11T23:34:03.4169170Z 
+checks	Test	2026-09-11T23:34:03.4169390Z ---- server::tests::partial_resize_connection_delivers_error_before_owner_close stdout ----
+checks	Test	2026-09-11T23:34:03.4169700Z 
+checks	Test	2026-09-11T23:34:03.4170110Z thread 'server::tests::partial_resize_connection_delivers_error_before_owner_close' (71604) panicked at crates/ovrcr-runtime/src/server/tests.rs:1881:10:
+checks	Test	2026-09-11T23:34:03.4170830Z called `Result::unwrap()` on an `Err` value: Os { code: 22, kind: InvalidInput, message: "Invalid argument" }
+checks	Test	2026-09-11T23:34:03.4171140Z 
+checks	Test	2026-09-11T23:34:03.4171140Z 
+checks	Test	2026-09-11T23:34:03.4171190Z failures:
+checks	Test	2026-09-11T23:34:03.4171440Z     server::tests::partial_resize_connection_delivers_error_before_owner_close
+checks	Test	2026-09-11T23:34:03.4171700Z 
+checks	Test	2026-09-11T23:34:03.4171920Z test result: FAILED. 99 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.16s
+checks	Test	2026-09-11T23:34:03.4172220Z 
+checks	Test	2026-09-11T23:34:03.4176960Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p ovrcr-runtime --lib`
+checks	Test	2026-09-11T23:34:03.4233160Z ##[error]Process completed with exit code 101.

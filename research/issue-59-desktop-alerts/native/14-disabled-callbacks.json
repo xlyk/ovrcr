@@ -1,0 +1,20 @@
+[
+  {
+    "command": "UserPromptSubmit:root:native-c",
+    "terminal": {
+      "cols": 126,
+      "id": 11,
+      "rows": 57,
+      "text": "ISSUE59_NATIVE_FIXTURE_READY pid=1908\nUserPromptSubmit:root:native-a\nISSUE59_CALLBACK_1_OK UserPromptSubmit native-a\nStop:root:native-a\nISSUE59_CALLBACK_2_OK Stop native-a\nStop:root:native-a\nISSUE59_CALLBACK_3_OK Stop native-a\nUserPromptSubmit:root:native-b\nISSUE59_CALLBACK_4_OK UserPromptSubmit native-b\nStop:root:native-b\nISSUE59_CALLBACK_5_OK Stop native-b\nUserPromptSubmit:root:native-c\nISSUE59_CALLBACK_6_OK UserPromptSubmit native-c"
+    }
+  },
+  {
+    "command": "Stop:root:native-c",
+    "terminal": {
+      "cols": 126,
+      "id": 11,
+      "rows": 57,
+      "text": "ISSUE59_NATIVE_FIXTURE_READY pid=1908\nUserPromptSubmit:root:native-a\nISSUE59_CALLBACK_1_OK UserPromptSubmit native-a\nStop:root:native-a\nISSUE59_CALLBACK_2_OK Stop native-a\nStop:root:native-a\nISSUE59_CALLBACK_3_OK Stop native-a\nUserPromptSubmit:root:native-b\nISSUE59_CALLBACK_4_OK UserPromptSubmit native-b\nStop:root:native-b\nISSUE59_CALLBACK_5_OK Stop native-b\nUserPromptSubmit:root:native-c\nISSUE59_CALLBACK_6_OK UserPromptSubmit native-c\nStop:root:native-c\nISSUE59_CALLBACK_7_OK Stop native-c"
+    }
+  }
+]
