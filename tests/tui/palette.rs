@@ -74,6 +74,21 @@ fn question_mark_popup_is_browsable() {
 }
 
 #[test]
+fn question_mark_popup_lists_ready_sound_beside_desktop_notifications() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('?'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Enable desktop notifications"), "{text}");
+    assert!(text.contains("Enable ready sound"), "{text}");
+    dashboard.key(KeyCode::Char('S'));
+    assert!(!palette_text(&dashboard).contains("Which key"));
+    dashboard.key(KeyCode::Char('?'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Disable ready sound"), "{text}");
+    assert!(text.contains("Enable desktop notifications"), "{text}");
+}
+
+#[test]
 fn whichkey_compact_corner_preserves_the_surrounding_dashboard() {
     for (width, height) in [(80, 40), (160, 60)] {
         let mut dashboard = dashboard_fixture();
