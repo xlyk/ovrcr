@@ -1,0 +1,14 @@
+{
+  "name": "final-fmt-01",
+  "revision": "6169e3bc4b7fea2b55a23e59bfb96269b6316d27",
+  "command": [
+    "cargo",
+    "fmt",
+    "--all",
+    "--",
+    "--check"
+  ],
+  "exit_code": 0,
+  "seconds": 0.717,
+  "test_results": []
+}

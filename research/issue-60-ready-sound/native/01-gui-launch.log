@@ -1,0 +1,13 @@
+Command: rtk proxy just gui
+Checkout: /Users/xlyk/Code/ovrcr
+Revision: 7861a97844f6760514522b191550bae836bd5179
+Started: 2026-09-12T01:46:35Z
+
+rtk proxy sh scripts/gui.sh
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.07s
+Exit code: 0

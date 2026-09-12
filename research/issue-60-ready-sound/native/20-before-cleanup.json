@@ -1,0 +1,82 @@
+{
+  "revision": "7861a97844f6760514522b191550bae836bd5179",
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA",
+  "terminals": [
+    {
+      "id": 1,
+      "name": "local",
+      "pid": 37495,
+      "pgid": 37495
+    },
+    {
+      "id": 2,
+      "name": "local",
+      "pid": 37557,
+      "pgid": 37557
+    },
+    {
+      "id": 3,
+      "name": "local",
+      "pid": 37626,
+      "pgid": 37626
+    },
+    {
+      "id": 4,
+      "name": "local",
+      "pid": 37735,
+      "pgid": 37735
+    },
+    {
+      "id": 5,
+      "name": "implement lifecycle cleanup",
+      "pid": 37742,
+      "pgid": 37742
+    },
+    {
+      "id": 6,
+      "name": "review websocket shutdown",
+      "pid": 37749,
+      "pgid": 37749
+    },
+    {
+      "id": 7,
+      "name": "plan snapshot restore",
+      "pid": 37765,
+      "pgid": 37765
+    },
+    {
+      "id": 8,
+      "name": "review auth handoff",
+      "pid": 37772,
+      "pgid": 37772
+    },
+    {
+      "id": 9,
+      "name": "build pipeline progress",
+      "pid": 37777,
+      "pgid": 37777
+    },
+    {
+      "id": 10,
+      "name": "review scope quality",
+      "pid": 37781,
+      "pgid": 37781
+    },
+    {
+      "id": 11,
+      "name": "issue60-ready",
+      "pid": 43163,
+      "pgid": 43163
+    }
+  ],
+  "infrastructure": [
+    "36450 36431 rtk proxy ./ovrcr-gui",
+    "37295 36431 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+    "37360 36431 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server",
+    "71564 71564 /bin/zsh -c source /Users/xlyk/.claude/shell-snapshots/snapshot-zsh-1789168588048-7jvdnk.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA; bin=\"/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr\"; export OVRCR_CONFIG=$root/config.toml OVRCR_SOCKET=$root/server.sock; python3 - \"$bin\" \"$root\" <<'\"'\"'PY'\"'\"'\\012import json, subprocess, sys, time, os\\012binary, root = sys.argv[1:]\\012def cli(*a): return subprocess.run([binary, *a], capture_output=True, text=True, timeout=20)\\012rows = json.loads(cli(\"terminal\",\"list\",\"--json\").stdout)\\012rows = rows if isinstance(rows, list) else rows.get(\"terminals\", rows)\\012def pgid(pid):\\012    try: return os.getpgid(pid)\\012    except ProcessLookupError: return None\\012owned = [{\"id\": t[\"id\"], \"name\": t[\"name\"], \"pid\": t[\"pid\"], \"pgid\": pgid(t[\"pid\"]) if t[\"pid\"] else None} for t in rows]\\012ps = subprocess.run([\"ps\",\"-axo\",\"pid,pgid,command\"], capture_output=True, text=True).stdout\\012infra = [l.strip() for l in ps.splitlines() if \"OVRCR GUI.app\" in l or \"ovrcr-gui\" in l]\\012before = {\"revision\": subprocess.run([\"git\",\"rev-parse\",\"HEAD\"],capture_output=True,text=True).stdout.strip(), \"root\": root, \"terminals\": owned, \"infrastructure\": infra}\\012json.dump(before, open(\"research/issue-60-ready-sound/native/20-before-cleanup.json\",\"w\"), indent=2)\\012print(len(owned), \"terminals;\", len(infra), \"infrastructure processes\")\\012cli(\"terminal\",\"send\",\"11\",\"--text\",\"exit\")\\012deadline = time.time()+10\\012while time.time()<deadline and \"ISSUE60_NATIVE_FIXTURE_EXIT\" not in cli(\"terminal\",\"read\",\"11\",\"--json\").stdout: time.sleep(0.2)\\012print(\"fixture exit marker:\", \"ISSUE60_NATIVE_FIXTURE_EXIT\" in cli(\"terminal\",\"read\",\"11\",\"--json\").stdout)\\012print(\"close 11:\", cli(\"terminal\",\"close\",\"11\",\"--json\").stdout.strip())\\012PY' && pwd -P >| /tmp/claude-17ef-cwd",
+    "71566 71564 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python - /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA",
+    "64466 64466 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+    "43163 43163 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run codex -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA/codex",
+    "43181 43181 /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA/codex"
+  ]
+}

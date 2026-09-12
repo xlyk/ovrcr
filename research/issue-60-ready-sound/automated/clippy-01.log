@@ -1,0 +1,6 @@
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-protocol)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-terminal)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-tui)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-runtime)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.06s

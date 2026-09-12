@@ -1,0 +1,55 @@
+{
+  "recorded": "2026-09-12T01:54:03Z",
+  "revision": "7861a97844f6760514522b191550bae836bd5179",
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA",
+  "root_absent": true,
+  "socket_absent": true,
+  "launcher_exit_line": [
+    "Exit code: 0"
+  ],
+  "terminal_pids": {
+    "37495": true,
+    "37557": true,
+    "37626": true,
+    "37735": true,
+    "37742": true,
+    "37749": true,
+    "37765": true,
+    "37772": true,
+    "37777": true,
+    "37781": true,
+    "43163": true
+  },
+  "terminal_pgids": {
+    "37495": true,
+    "37557": true,
+    "37626": true,
+    "37735": true,
+    "37742": true,
+    "37749": true,
+    "37765": true,
+    "37772": true,
+    "37777": true,
+    "37781": true,
+    "43163": true
+  },
+  "infrastructure_pids": {
+    "36450": true,
+    "37295": true,
+    "37360": true,
+    "71564": true,
+    "71566": true,
+    "64466": true,
+    "43163": true,
+    "43181": true
+  },
+  "infrastructure_pgids": {
+    "36431": true,
+    "43163": true,
+    "43181": true,
+    "64466": true,
+    "71564": true
+  },
+  "afplay_left": [],
+  "all_clean": true
+}

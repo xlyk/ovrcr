@@ -1,0 +1,17 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.75s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpNgexNE/repo/.git/
+[main (root-commit) 8a0e07f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test ready_sound_is_independent_of_desktop_notifications_on_the_managed_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 89 filtered out; finished in 2.75s
+

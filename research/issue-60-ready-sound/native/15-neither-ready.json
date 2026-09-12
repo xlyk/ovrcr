@@ -1,0 +1,75 @@
+{
+  "turn": "native-e",
+  "terminal_id": 11,
+  "sent_unix": {
+    "prompt": 1789177881.1533592,
+    "stop": 1789177881.3019211
+  },
+  "before": {
+    "activity": {
+      "quality": "Observed",
+      "state": "ResponseReady",
+      "turn": "native-d"
+    },
+    "activity_revision": 8,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "busy": {
+    "activity": {
+      "quality": "Observed",
+      "state": "Busy",
+      "turn": "native-e"
+    },
+    "activity_revision": 9,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "ready": {
+    "activity": {
+      "quality": "Observed",
+      "state": "ResponseReady",
+      "turn": "native-e"
+    },
+    "activity_revision": 10,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "ready_activity": "response_ready",
+  "host_processes": [],
+  "expected_none": true,
+  "stop_only": false
+}

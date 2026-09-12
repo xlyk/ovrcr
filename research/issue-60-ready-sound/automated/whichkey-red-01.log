@@ -1,0 +1,61 @@
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.99s
+     Running tests/tui/main.rs (target/debug/deps/tui-fa553edb8b43499c)
+
+running 1 test
+test palette::question_mark_popup_lists_ready_sound_beside_desktop_notifications ... FAILED
+
+failures:
+
+---- palette::question_mark_popup_lists_ready_sound_beside_desktop_notifications stdout ----
+
+thread 'palette::question_mark_popup_lists_ready_sound_beside_desktop_notifications' (50239396) panicked at tests/tui/palette.rs:82:5:
+󰚩 OVRCR  agent runtime                                                                                  [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 111  elapsed: 0m  agent unknown                                            
+  󰘬 auth                               │────────────────────────────────────────────────────────────────────────────────
+     $ local                           │                                                                                
+▌    - review                   claude │                                                                                
+  󰘬 lifecycle                          │                                                                                
+     $ local                           │                                                                                
+     · implement                claude │                                                                                
+                                       │                                                                                
+ SPACELIFT-AGENT ──────────────────────│                                                                                
+  󰘬 progress                           │                                                                                
+     $ local                           │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                                                                
+                                       │                                        ┌ Which key · Space ─────────────────┐  
+                                       │                                        │Groups                              │  
+                                       │                                        │t  Terminal                         │  
+                                       │                                        │w  Workspace                        │  
+                                       │                                        │p  Project                          │  
+                                       │                                        │v  View                             │  
+                                       │                                        │a  Register project                 │  
+                                       │                                        │N  Enable desktop notifications     │  
+                                       │                                        │q  Detach                           │  
+                                       │                                        │                                    │  
+                                       │                                        │Show actions for review             │  
+                                       │                                        └ [Close] [Back] ────────────────────┘  
+                                       │                                                                                
+BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  p Pause       
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    palette::question_mark_popup_lists_ready_sound_beside_desktop_notifications
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 182 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

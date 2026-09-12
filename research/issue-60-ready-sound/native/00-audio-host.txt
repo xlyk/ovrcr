@@ -1,0 +1,21 @@
+Recorded: 2026-09-12T01:47:03Z
+Revision: 7861a97844f6760514522b191550bae836bd5179
+
+## Sound file
+File type ID:   AIFF
+Data format:     2 ch,  48000 Hz, lpcm (0x0000000E) 24-bit big-endian signed integer
+estimated duration: 1.650083 sec
+
+## Default output device (system_profiler SPAudioDataType)
+        MacBook Pro Microphone:
+        MacBook Pro Speakers:
+          Default Output Device: Yes
+          Output Channels: 2
+        Splashtop Remote Sound:
+          Output Channels: 2
+
+## Output volume (osascript)
+false
+
+## Output volume percent
+6

@@ -1,0 +1,19 @@
+{
+  "name": "final-doctests-01",
+  "revision": "6169e3bc4b7fea2b55a23e59bfb96269b6316d27",
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--doc"
+  ],
+  "exit_code": 0,
+  "seconds": 0.924,
+  "test_results": [
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ]
+}

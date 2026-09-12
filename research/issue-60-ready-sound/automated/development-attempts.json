@@ -1,0 +1,177 @@
+{
+  "source": "Development from base 12f6b9c through 7861a97 (feature), 6169e3b (which-key) and 5b8637e (review fixes); filenames are attempt labels, classification is by log content",
+  "attempts": [
+    {
+      "file": "clippy-01.log",
+      "results": [],
+      "classification": "passed",
+      "note": "workspace clippy after implementation and integration test"
+    },
+    {
+      "file": "final-clippy-01.log",
+      "results": [],
+      "classification": "passed",
+      "note": "final gate at 6169e3b"
+    },
+    {
+      "file": "final-clippy-02.log",
+      "results": [],
+      "classification": "passed",
+      "note": "final gate at 5b8637e"
+    },
+    {
+      "file": "final-doctests-01.log",
+      "results": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed",
+      "note": "final gate at 6169e3b"
+    },
+    {
+      "file": "final-doctests-02.log",
+      "results": [
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "classification": "passed",
+      "note": "final gate at 5b8637e"
+    },
+    {
+      "file": "final-fmt-01.log",
+      "results": [],
+      "classification": "passed",
+      "note": "final gate at 6169e3b"
+    },
+    {
+      "file": "final-fmt-02.log",
+      "results": [],
+      "classification": "passed",
+      "note": "final gate at 5b8637e"
+    },
+    {
+      "file": "final-workspace-01.log",
+      "results": [
+        "test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.68s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.16s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.08s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.53s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s",
+        "test result: ok. 81 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 50.16s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.62s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.29s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.77s",
+        "test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.65s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.53s",
+        "test result: ok. 183 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s",
+        "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.95s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s"
+      ],
+      "classification": "passed",
+      "note": "final gate at 6169e3b"
+    },
+    {
+      "file": "final-workspace-02.log",
+      "results": [
+        "test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.93s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.35s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.43s",
+        "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.10s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.51s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s",
+        "test result: ok. 81 passed; 0 failed; 9 ignored; 0 measured; 0 filtered out; finished in 50.60s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.64s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.82s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.74s",
+        "test result: ok. 7 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.71s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.18s",
+        "test result: ok. 183 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s",
+        "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.78s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 76 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s"
+      ],
+      "classification": "passed",
+      "note": "final gate at 5b8637e"
+    },
+    {
+      "file": "integration-desktop-green-01.log",
+      "results": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 11.56s"
+      ],
+      "classification": "passed",
+      "note": "existing desktop integrations with the shared fixture signature change"
+    },
+    {
+      "file": "integration-green-01.log",
+      "results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 89 filtered out; finished in 2.75s"
+      ],
+      "classification": "passed",
+      "note": "real managed-path sound integration; authored after implementation, no RED exists"
+    },
+    {
+      "file": "integration-green-02.log",
+      "results": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 11.95s"
+      ],
+      "classification": "passed",
+      "note": "all six sound/desktop integrations after review fixes, with the hung-player phase"
+    },
+    {
+      "file": "unit-green-01.log",
+      "results": [
+        "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.02s"
+      ],
+      "classification": "passed",
+      "note": "focused desktop, settings and hint unit tests after implementation"
+    },
+    {
+      "file": "unit-red-01.log",
+      "results": [],
+      "classification": "failed",
+      "note": "compile failure on new symbols before implementation; compiler RED, not behavioral"
+    },
+    {
+      "file": "whichkey-green-01.log",
+      "results": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 181 filtered out; finished in 0.01s"
+      ],
+      "classification": "passed",
+      "note": "popup lists and dispatches S"
+    },
+    {
+      "file": "whichkey-red-01.log",
+      "results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 182 filtered out; finished in 0.01s"
+      ],
+      "classification": "failed",
+      "note": "behavioral RED: popup lacked the S entry"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "turn": "native-b",
+  "terminal_id": 11,
+  "sent_unix": {
+    "prompt": 1789177780.828789,
+    "stop": 1789177780.973865
+  },
+  "before": {
+    "activity": {
+      "quality": "Observed",
+      "state": "ResponseReady",
+      "turn": "native-a"
+    },
+    "activity_revision": 2,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "busy": {
+    "activity": {
+      "quality": "Observed",
+      "state": "Busy",
+      "turn": "native-b"
+    },
+    "activity_revision": 3,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "ready": {
+    "activity": {
+      "quality": "Observed",
+      "state": "ResponseReady",
+      "turn": "native-b"
+    },
+    "activity_revision": 4,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "29804dfb2902f243828904856a5ae6c969c23645dc047937eca457d2fb8e4fe3",
+      "provider": "Codex"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "ready_activity": "response_ready",
+  "host_processes": [
+    {
+      "pid": "53391",
+      "tool": "osascript",
+      "started_after_stop_s": 0.075,
+      "observed_for_s": 0.062,
+      "ps": "53391 53391 37784 osascript -e on run argv\\012display notification (item 1 of argv) with title (item 2 of argv)\\012end run -- consigint / auth-handoff / issue60-ready (#11) OVRCR \u00b7 response ready"
+    },
+    {
+      "pid": "53405",
+      "tool": "afplay",
+      "started_after_stop_s": 0.207,
+      "observed_for_s": 2.305,
+      "ps": "53405 53405 37784 afplay /System/Library/Sounds/Glass.aiff"
+    }
+  ],
+  "expected_none": false,
+  "stop_only": false
+}
