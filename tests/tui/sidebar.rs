@@ -2,6 +2,28 @@
 
 use crate::*;
 
+fn review_session(hierarchy: &HierarchySnapshot) -> &ovrcr::session::SessionSummary {
+    &hierarchy.projects[1].workspaces[1].sessions[0]
+}
+
+fn review_session_mut(hierarchy: &mut HierarchySnapshot) -> &mut ovrcr::session::SessionSummary {
+    &mut hierarchy.projects[1].workspaces[1].sessions[0]
+}
+
+fn implement_session_mut(hierarchy: &mut HierarchySnapshot) -> &mut ovrcr::session::SessionSummary {
+    &mut hierarchy.projects[1].workspaces[0].sessions[0]
+}
+
+fn sidebar_row(terminal: &Terminal<TestBackend>, y: u16) -> String {
+    (0..39)
+        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+        .collect()
+}
+
+fn enter_terminal(dashboard: &mut Dashboard) {
+    let _ = dashboard.key(KeyCode::Enter);
+}
+
 #[test]
 fn dashboard_layout() {
     let mut dashboard = dashboard_fixture();
@@ -18,34 +40,8 @@ fn dashboard_layout() {
                 .collect::<String>()
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        dashboard.visible_rows(),
-        vec![
-            ovrcr::tui::TreeRow::Project {
-                name: "consigint".into()
-            },
-            ovrcr::tui::TreeRow::Workspace {
-                project: "consigint".into(),
-                name: "auth".into()
-            },
-            ovrcr::tui::TreeRow::Session { id: SessionId(5) },
-            ovrcr::tui::TreeRow::Session { id: SessionId(1) },
-            ovrcr::tui::TreeRow::Workspace {
-                project: "consigint".into(),
-                name: "lifecycle".into()
-            },
-            ovrcr::tui::TreeRow::Session { id: SessionId(4) },
-            ovrcr::tui::TreeRow::Session { id: SessionId(2) },
-            ovrcr::tui::TreeRow::Project {
-                name: "spacelift-agent".into()
-            },
-            ovrcr::tui::TreeRow::Workspace {
-                project: "spacelift-agent".into(),
-                name: "progress".into()
-            },
-            ovrcr::tui::TreeRow::Session { id: SessionId(3) },
-        ]
-    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    assert_eq!(buffer[(0, 4)].symbol(), "▌");
     assert!(rendered[0].contains("OVRCR  agent runtime"));
     assert!(
         rendered
@@ -64,7 +60,7 @@ fn dashboard_layout() {
     assert_eq!(buffer[(0, 4)].symbol(), "▌");
     assert_eq!(buffer[(1, 4)].bg, Color::Rgb(49, 50, 68));
 
-    dashboard.select_session(SessionId(2));
+    dashboard.install_focus(SessionId(2));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -72,12 +68,13 @@ fn dashboard_layout() {
         .map(|col| terminal.backend().buffer()[(col, 1)].symbol())
         .collect::<String>();
     assert!(selected_exited.contains("pid: closed"));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
 }
 
 #[test]
 fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(5));
+    dashboard.install_focus(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -129,7 +126,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     assert_eq!(buffer[(39, 3)].symbol(), "│");
 
     // Selecting another session moves the bar and background with it.
-    dashboard.select_session(SessionId(1));
+    dashboard.install_focus(SessionId(1));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -139,6 +136,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     assert_eq!(buffer[(0, 3)].symbol(), " ");
     assert_eq!(buffer[(20, 3)].bg, Color::Rgb(30, 30, 46));
     assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 
     // Selecting a workspace container by its name uses the same bar and background.
     dashboard.mouse_action(
@@ -168,7 +166,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         SampleQuality,
     };
     let mut dashboard = dashboard_fixture();
-    let review = &mut dashboard.hierarchy.projects[1].workspaces[1].sessions[0];
+    let mut review = review_session(&fixture_hierarchy()).clone();
     review.activity = AgentActivity::ResponseReady;
     review.agent = Some(AgentSnapshot {
         binding: AgentBinding {
@@ -196,12 +194,10 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         (ReporterHealth::Unavailable, Color::Rgb(108, 112, 134)),
         (ReporterHealth::Connected, Color::Rgb(148, 226, 213)),
     ] {
-        dashboard.hierarchy.projects[1].workspaces[1].sessions[0]
-            .agent
-            .as_mut()
-            .unwrap()
-            .health
-            .state = health;
+        review.agent.as_mut().unwrap().health.state = health;
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(review.clone()),
+        )));
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
@@ -214,9 +210,13 @@ fn unavailable_reporter_mutes_the_status_glyph() {
 #[test]
 fn sidebar_animates_only_explicitly_busy_sessions() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(5));
+    dashboard.install_focus(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::Busy;
+    let mut review = review_session(&fixture_hierarchy()).clone();
+    review.activity = AgentActivity::Busy;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        review.clone(),
+    ))));
     for (time, marker) in [(0, "⠋"), (100, "⠙"), (900, "⠏"), (1000, "⠋")] {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, time))
@@ -228,13 +228,20 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
         );
         assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "$");
     }
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = AgentActivity::Idle;
+    review.activity = AgentActivity::Idle;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        review,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1100))
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(5, 4)].symbol(), " ");
     // An exited process cannot remain busy, even if an old signal is retained.
-    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].activity = AgentActivity::Busy;
+    let mut implement = fixture_hierarchy().projects[1].workspaces[0].sessions[0].clone();
+    implement.activity = AgentActivity::Busy;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        implement,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 1200))
         .unwrap();
@@ -244,7 +251,7 @@ fn sidebar_animates_only_explicitly_busy_sessions() {
 #[test]
 fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(1));
+    dashboard.install_focus(SessionId(1));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let metadata = |terminal: &Terminal<TestBackend>| {
         (40..120)
@@ -267,15 +274,24 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         ),
         (AgentActivity::Error, "pid: 111  elapsed: 0m  agent error"),
     ] {
-        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].activity = activity;
-        dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Running;
+        let mut review = review_session(&fixture_hierarchy()).clone();
+        review.activity = activity;
+        review.phase = SessionPhase::Running;
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(review),
+        )));
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
         assert_eq!(metadata(&terminal), expected);
     }
 
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Paused;
+    let mut review = review_session(&fixture_hierarchy()).clone();
+    review.activity = AgentActivity::Error;
+    review.phase = SessionPhase::Paused;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        review.clone(),
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -284,11 +300,14 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         "pid: 111  elapsed: 0m  agent error  paused"
     );
 
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].phase = SessionPhase::Exited {
+    review.phase = SessionPhase::Exited {
         code: Some(0),
         signal: None,
     };
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].pid = None;
+    review.pid = None;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        review,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -328,9 +347,12 @@ fn agent_hook_sidebar_states_are_literal() {
             Color::Rgb(166, 173, 200),
         ),
     ] {
-        let review = &mut dashboard.hierarchy.projects[1].workspaces[1].sessions[0];
+        let mut review = review_session(&fixture_hierarchy()).clone();
         review.activity = activity;
         review.phase = phase;
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(review),
+        )));
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
@@ -339,14 +361,22 @@ fn agent_hook_sidebar_states_are_literal() {
         assert_eq!(cell.fg, color, "{activity:?}");
     }
     // Exited sessions show a muted dot whatever their last activity was.
-    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].activity = AgentActivity::Error;
+    let mut implement = fixture_hierarchy().projects[1].workspaces[0].sessions[0].clone();
+    implement.activity = AgentActivity::Error;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        implement,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(5, 7)].symbol(), "·");
     assert_eq!(terminal.backend().buffer()[(5, 7)].fg, muted);
     // A local shell stays quiet until a hook reports real activity inside it.
-    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].activity = AgentActivity::Error;
+    let mut progress = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
+    progress.activity = AgentActivity::Error;
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        progress,
+    ))));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
@@ -357,8 +387,8 @@ fn agent_hook_sidebar_states_are_literal() {
 #[test]
 fn agent_hook_summary_updates_drive_animation() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(5));
-    acknowledge_focused_view(&mut dashboard, 900);
+    dashboard.install_focus(SessionId(5));
+    dashboard.install_screen(SessionId(5), &[]);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
     terminal
@@ -368,35 +398,29 @@ fn agent_hook_summary_updates_drive_animation() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
-        revision: dashboard.view_revision,
+        revision: 0,
         bytes: b"PTY output\x1b]52;c;V0FJVElORw==\x1b\\".to_vec(),
     }));
-    assert!(
-        dashboard.panes[dashboard.focused_pane]
-            .parser
-            .screen()
-            .contents()
-            .contains("PTY output")
-    );
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let pane = (0..40)
+        .map(|row| {
+            (40..120)
+                .map(|col| terminal.backend().buffer()[(col, row)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    assert!(pane.contains("PTY output"));
+    assert!(!pane.contains("V0FJVElORw=="));
+    enter_terminal(&mut dashboard);
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
     );
-    assert!(
-        !dashboard.panes[dashboard.focused_pane]
-            .parser
-            .screen()
-            .contents()
-            .contains("V0FJVElORw==")
-    );
-    assert_eq!(
-        dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity,
-        AgentActivity::Unknown
-    );
-    dashboard.mode = ovrcr::tui::InputMode::Browse;
 
-    let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
+    let mut summary = fixture_hierarchy().projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Busy;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         summary,
@@ -406,19 +430,14 @@ fn agent_hook_summary_updates_drive_animation() {
         .unwrap();
     assert_eq!(terminal.backend().buffer()[(5, 3)].symbol(), "⠙");
 
-    summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[1].clone();
+    let mut summary = fixture_hierarchy().projects[1].workspaces[1].sessions[1].clone();
     summary.activity = AgentActivity::Idle;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         summary,
     ))));
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
-    );
-    assert_eq!(
-        dashboard.hierarchy.projects[1].workspaces[1].sessions[1].activity,
-        AgentActivity::Idle
     );
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 200))
@@ -463,6 +482,7 @@ fn selected_session_uses_a_soft_bar_on_one_line() {
     assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
     assert_eq!(buffer[(7, 4)].fg, Color::Rgb(205, 214, 244));
     assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
 }
 
 #[test]
@@ -482,7 +502,7 @@ fn context_updates_leave_the_compact_sidebar_unchanged() {
         (None, None, 1_000),
         (Some(101), Some(100), 1_000),
     ] {
-        let mut summary = dashboard.hierarchy.projects[1].workspaces[1].sessions[0].clone();
+        let mut summary = review_session(&fixture_hierarchy()).clone();
         let context = ContextUsageSnapshot {
             report: ContextUsageReport {
                 source: ContextSource::Generic,
@@ -493,14 +513,10 @@ fn context_updates_leave_the_compact_sidebar_unchanged() {
             },
             received_unix_ms: 1_000,
         };
-        summary.context_usage = Some(context.clone());
+        summary.context_usage = Some(context);
         dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
             Box::new(summary),
         )));
-        assert_eq!(
-            dashboard.hierarchy.projects[1].workspaces[1].sessions[0].context_usage,
-            Some(context)
-        );
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
@@ -549,17 +565,26 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
         workspace.mouse_action(click(2, 5), area),
         ovrcr::tui::DashboardAction::Redraw
     );
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace, 0))
+        .unwrap();
     assert!(
-        workspace
-            .collapsed_workspaces
-            .contains(&("consigint".into(), "lifecycle".into()))
+        sidebar_row(&terminal, 5).contains("▸"),
+        "workspace click on the disclosure column should fold the group"
     );
     let mut project = dashboard_fixture();
     assert_eq!(
         project.mouse_action(click(0, 9), area),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(project.collapsed_projects.contains("spacelift-agent"));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 9).contains("▸"),
+        "project disclosure should fold the section"
+    );
     for row in [8, 13] {
         let mut blank = dashboard_fixture();
         assert_eq!(
@@ -574,9 +599,12 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
 #[test]
 fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(5));
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].label = "claude / sonnet-4".into();
-    dashboard.hierarchy.projects[1].workspaces[0].sessions[0].label = "unknown / model".into();
+    dashboard.install_focus(SessionId(5));
+    let mut hierarchy = fixture_hierarchy();
+    review_session_mut(&mut hierarchy).label = "claude / sonnet-4".into();
+    implement_session_mut(&mut hierarchy).label = "unknown / model".into();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(5));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -595,9 +623,12 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
 #[test]
 fn long_sidebar_names_clip_to_one_screen_line() {
     let mut dashboard = dashboard_fixture();
-    dashboard.hierarchy.projects[1].name = "consigint-界界界界界界界界界界界界界界".into();
-    dashboard.hierarchy.projects[1].workspaces[1].sessions[0].name =
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].name = "consigint-界界界界界界界界界界界界界界".into();
+    review_session_mut(&mut hierarchy).name =
         "review-a-very-long-session-name-that-must-not-wrap".into();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -631,11 +662,14 @@ fn dashboard_geometry_remains_drawable_at_target_and_tiny_sizes() {
     for (width, height, terminal_width, terminal_height) in
         [(180, 72, 140, 68), (120, 40, 80, 36), (80, 24, 40, 20)]
     {
+        let mut dashboard = dashboard_fixture();
+        let area = Rect::new(0, 0, width, height);
+        dashboard.install_area(area);
+        let terminal_rect = dashboard.pane_rects(area)[0].terminal;
         assert_eq!(
-            ovrcr::tui::actual_drawn_inner_rect(Rect::new(0, 0, width, height)),
+            terminal_rect,
             Rect::new(40, 3, terminal_width, terminal_height)
         );
-        let dashboard = dashboard_fixture();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
@@ -652,57 +686,43 @@ fn dashboard_geometry_remains_drawable_at_target_and_tiny_sizes() {
 #[test]
 fn collapse_and_mouse_hits_use_current_visible_tree() {
     let mut dashboard = dashboard_fixture();
-    dashboard.select_session(SessionId(5));
-    dashboard.toggle_selected_group();
-    assert!(
-        !dashboard
-            .visible_rows()
-            .contains(&ovrcr::tui::TreeRow::Session { id: SessionId(5) })
-    );
-    dashboard.toggle_selected_group();
+    dashboard.install_focus(SessionId(5));
     let mouse = |column, row| MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column,
         row,
         modifiers: KeyModifiers::NONE,
     };
-    let action = dashboard.mouse_action(mouse(2, 2), Rect::new(0, 0, 120, 40));
+    let area = Rect::new(0, 0, 120, 40);
+    let action = dashboard.mouse_action(mouse(2, 2), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert!(
-        !dashboard
-            .visible_rows()
-            .contains(&ovrcr::tui::TreeRow::Session { id: SessionId(5) })
-    );
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let row = |terminal: &Terminal<TestBackend>, y| {
-        (0..39)
-            .map(|column| terminal.backend().buffer()[(column, y)].symbol())
-            .collect::<String>()
-    };
     // A folded workspace shows how many sessions it hides.
-    assert_eq!(row(&terminal, 2), format!("  󰘬 auth{}▸ 2 ", " ".repeat(27)));
-    let action = dashboard.mouse_action(mouse(2, 2), Rect::new(0, 0, 120, 40));
+    assert_eq!(
+        sidebar_row(&terminal, 2),
+        format!("  󰘬 auth{}▸ 2 ", " ".repeat(27))
+    );
+    let action = dashboard.mouse_action(mouse(2, 2), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    let action = dashboard.mouse_action(mouse(4, 4), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(4, 4), area);
     assert!(matches!(action, ovrcr::tui::DashboardAction::Request(_)));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    let action = dashboard.mouse_action(mouse(0, 1), Rect::new(0, 0, 120, 40));
+    let action = dashboard.mouse_action(mouse(0, 1), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert!(dashboard.collapsed_projects.contains("consigint"));
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     // A folded project shows its workspace count and keeps its rule.
     assert_eq!(
-        row(&terminal, 1),
+        sidebar_row(&terminal, 1),
         format!(" CONSIGINT {} ▸ 2 ws ", "─".repeat(20))
     );
-    assert_eq!(row(&terminal, 2).trim_end(), "");
+    assert_eq!(sidebar_row(&terminal, 2).trim_end(), "");
     assert_eq!(
-        row(&terminal, 3),
+        sidebar_row(&terminal, 3),
         format!(" SPACELIFT-AGENT {}", "─".repeat(22))
     );
     let action = dashboard.mouse_action(
@@ -710,12 +730,12 @@ fn collapse_and_mouse_hits_use_current_visible_tree() {
             column: 60,
             ..mouse(4, 6)
         },
-        Rect::new(0, 0, 120, 40),
+        area,
     );
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut dashboard);
     assert_eq!(
-        dashboard.mouse_action(mouse(4, 5), Rect::new(0, 0, 120, 40)),
+        dashboard.mouse_action(mouse(4, 5), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
@@ -730,36 +750,52 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
         row,
         modifiers: KeyModifiers::NONE,
     };
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
 
     let mut project = dashboard_fixture();
-    project.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut project);
     assert_eq!(
         project.mouse_action(click(5, 1), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(project.focused_session().is_none());
-    assert!(!project.collapsed_projects.contains("consigint"));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project, 0))
+        .unwrap();
+    assert!(
+        !sidebar_row(&terminal, 1).contains("▸"),
+        "label click must not fold the project"
+    );
 
     let mut project_disclosure = dashboard_fixture();
-    project_disclosure.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut project_disclosure);
     assert_eq!(
         project_disclosure.mouse_action(click(0, 1), area),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert!(project_disclosure.collapsed_projects.contains("consigint"));
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &project_disclosure, 0))
+        .unwrap();
+    assert!(sidebar_row(&terminal, 1).contains("▸"));
     assert_eq!(project_disclosure.focused_session(), Some(SessionId(1)));
 
     let mut workspace = dashboard_fixture();
-    workspace.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut workspace);
     assert_eq!(
         workspace.mouse_action(click(5, 2), area),
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(workspace.focused_session().is_none());
-    assert!(workspace.collapsed_workspaces.is_empty());
+    terminal
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &workspace, 0))
+        .unwrap();
+    assert!(
+        !sidebar_row(&terminal, 2).contains("▸"),
+        "workspace label click must not fold"
+    );
 
     let mut session = dashboard_fixture();
-    session.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut session);
     assert!(matches!(
         session.mouse_action(click(6, 3), area),
         ovrcr::tui::DashboardAction::Request(_)
@@ -771,19 +807,29 @@ fn sidebar_labels_select_without_toggling_and_work_in_terminal_mode() {
 fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = dashboard_fixture();
-    assert!(dashboard.split_pane());
-    let split = dashboard
-        .view_request(area, 60)
-        .unwrap()
-        .expect("split should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, split);
-    assert!(dashboard.focus_pane(0));
-    let focused = dashboard
-        .view_request(area, 61)
-        .unwrap()
-        .expect("focus should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, focused);
-    let retained = dashboard.panes[1].session.expect("second pane session");
+    dashboard.install_area(area);
+    let action = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, action);
+    let retained = dashboard.focused_session().expect("split session");
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(retained, &[]);
+    let left = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("left pane")
+        .terminal;
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: left.x + 2,
+            row: left.y + 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(retained, &[]);
 
     assert_eq!(
         dashboard.mouse_action(
@@ -797,29 +843,12 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.focused_pane, 1);
     assert_eq!(dashboard.focused_session(), Some(retained));
 
-    let request = dashboard
-        .view_request(area, 62)
-        .unwrap()
-        .expect("container selection should retain the other pane view");
-    let Request::SetView { view } = request.request else {
-        panic!("expected SetView");
-    };
-    assert_eq!(view.panes.len(), 1);
-    assert_eq!(view.focused, Some(retained));
-    deliver_all_view_screens(&mut dashboard, request.request_id, &view);
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: request.request_id,
-        response: Response::Ok,
-    });
-    assert!(dashboard.panes[dashboard.focused_pane].ready);
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
 
     dashboard.key(KeyCode::Char(' '));
     let menu = palette_text(&dashboard);
@@ -844,7 +873,6 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
         ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(dashboard.focused_session(), Some(retained));
-    assert!(dashboard.view_request(area, 63).unwrap().is_none());
 
     assert_eq!(
         dashboard.key(KeyCode::Char('n')),
@@ -869,18 +897,39 @@ fn sidebar_container_click_keeps_focus_on_another_assigned_pane() {
 fn empty_pane_click_preserves_the_assigned_wire_focus() {
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = dashboard_fixture();
-    assert!(dashboard.split_pane());
-    let split = dashboard
-        .view_request(area, 70)
-        .unwrap()
-        .expect("split should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, split);
-    assert!(dashboard.focus_pane(0));
-    let focused = dashboard
-        .view_request(area, 71)
-        .unwrap()
-        .expect("focus should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, focused);
+    dashboard.install_area(area);
+    let action = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, action);
+    let session = dashboard.focused_session().expect("split session");
+    let split_view = dashboard
+        .handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+            session,
+            revision: 0,
+        }))
+        .into_iter()
+        .find(|msg| matches!(msg.request, Request::SetView { .. }))
+        .expect("split should request a view");
+    acknowledge_all_view_targets(&mut dashboard, split_view);
+    let split = dashboard.focused_session().expect("split session");
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(split, &[]);
+    let left = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("left pane")
+        .terminal;
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: left.x + 2,
+            row: left.y + 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(split, &[]);
 
     assert_eq!(
         dashboard.mouse_action(
@@ -894,17 +943,27 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let selected = dashboard
-        .view_request(area, 72)
-        .unwrap()
-        .expect("container selection should retain one assigned pane");
-    acknowledge_all_view_targets(&mut dashboard, selected);
-    let retained_pane = dashboard.focused_pane;
-    let retained = dashboard.focused_session().expect("retained wire focus");
-    let empty = dashboard
-        .pane_rects(area)
+    if let Some(selected) = dashboard
+        .handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+            session: dashboard.focused_session().unwrap_or(SessionId(1)),
+            revision: dashboard.view_revision(),
+        }))
         .into_iter()
-        .find(|pane| pane.pane_index != retained_pane)
+        .find(|msg| matches!(msg.request, Request::SetView { .. }))
+    {
+        acknowledge_all_view_targets(&mut dashboard, selected);
+    }
+    let retained = dashboard.focused_session().expect("retained wire focus");
+    let rects = dashboard.pane_rects(area);
+    assert_eq!(rects.len(), 2);
+    let focused_rect = rects
+        .iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("assigned pane")
+        .terminal;
+    let empty = rects
+        .iter()
+        .find(|pane| pane.pane_index == 0)
         .expect("empty pane")
         .terminal;
 
@@ -920,29 +979,20 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.focused_pane, retained_pane);
     assert_eq!(dashboard.focused_session(), Some(retained));
-    assert!(dashboard.view_request(area, 73).unwrap().is_none());
 
-    let assigned = dashboard
-        .pane_rects(area)
-        .into_iter()
-        .find(|pane| pane.pane_index == retained_pane)
-        .expect("assigned pane")
-        .terminal;
     assert_eq!(
         dashboard.mouse_action(
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: assigned.x + 2,
-                row: assigned.y + 2,
+                column: focused_rect.x + 2,
+                row: focused_rect.y + 2,
                 modifiers: KeyModifiers::NONE,
             },
             area,
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
@@ -952,21 +1002,21 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
 #[test]
 fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
     let area = Rect::new(0, 0, 120, 40);
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces.push(WorkspaceSummary {
+        project: "consigint".into(),
+        name: "empty".into(),
+        path: PathBuf::from("/tmp/empty"),
+        sessions: Vec::new(),
+    });
     let mut dashboard = dashboard_fixture();
-    dashboard.hierarchy.projects[1]
-        .workspaces
-        .push(WorkspaceSummary {
-            project: "consigint".into(),
-            name: "empty".into(),
-            path: PathBuf::from("/tmp/empty"),
-            sessions: Vec::new(),
-        });
-    assert!(dashboard.split_pane());
-    let split = dashboard
-        .view_request(area, 80)
-        .unwrap()
-        .expect("split should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, split);
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_area(area);
+    let action = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, action);
+    let retained = dashboard.focused_session().expect("split session");
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(retained, b"RETAINED_TERMINAL");
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
@@ -992,35 +1042,29 @@ fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let selected = dashboard
-        .view_request(area, 81)
-        .unwrap()
-        .expect("empty workspace selection should retain one pane");
-    acknowledge_all_view_targets(&mut dashboard, selected);
+    let retained = dashboard.focused_session().expect("retained session");
+    dashboard.install_screen(retained, b"RETAINED_TERMINAL");
     let retained_rect = dashboard
         .pane_rects(area)
         .into_iter()
-        .find(|pane| pane.pane_index == dashboard.focused_pane)
+        .find(|pane| pane.pane_index == 0)
         .expect("retained pane")
         .terminal;
-    dashboard.panes[dashboard.focused_pane]
-        .parser
-        .process(b"RETAINED_TERMINAL");
 
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    let retained = (retained_rect.x..retained_rect.right())
+    let shown = (retained_rect.x..retained_rect.right())
         .map(|column| terminal.backend().buffer()[(column, retained_rect.y)].symbol())
         .collect::<String>();
-    assert!(retained.contains("RETAINED_TERMINAL"), "{retained}");
+    assert!(shown.contains("RETAINED_TERMINAL"), "{shown}");
 }
 
 #[test]
 fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
-    dashboard.outer_area = Rect::new(0, 0, 120, 40);
-    dashboard.hierarchy = HierarchySnapshot {
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(HierarchySnapshot {
         projects: vec![ProjectSummary {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {
@@ -1028,31 +1072,26 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                 name: "workspace".into(),
                 path: PathBuf::from("/tmp/workspace"),
                 sessions: (1..=50)
-                    .map(|id| SessionSummary {
-                        id: SessionId(id),
-                        project: "project".into(),
-                        workspace: "workspace".into(),
-                        name: format!("session-{id}"),
-                        label: "sh".into(),
-                        pid: Some(id as u32),
-                        started_unix_ms: 0,
-                        phase: SessionPhase::Running,
-                        activity: AgentActivity::Unknown,
-                        context_usage: None,
-                        agent: None,
-                        agent_epoch: 0,
+                    .map(|id| {
+                        session_summary(
+                            id,
+                            "project",
+                            "workspace",
+                            &format!("session-{id}"),
+                            "sh",
+                            Some(id as u32),
+                            0,
+                        )
                     })
                     .collect(),
             }],
         }],
-    };
-    for _ in 0..50 {
-        dashboard.move_selection(1);
-    }
+    });
+    dashboard.install_focus(SessionId(50));
     assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
-        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let rendered = (0..40)
         .map(|row| {
@@ -1087,11 +1126,9 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
         assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
     }
 
-    for _ in 0..50 {
-        dashboard.move_selection(-1);
-    }
+    dashboard.install_focus(SessionId(1));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    enter_terminal(&mut dashboard);
     for _ in 0..3 {
         assert_eq!(
             dashboard.mouse_action(
@@ -1153,46 +1190,28 @@ fn dashboard_inner_rect_keeps_last_pty_row_and_cursor_visible() {
 
 #[test]
 fn shrinking_dashboard_keeps_selected_tree_row_visible() {
-    let mut dashboard = dashboard_fixture();
-    let workspace = &mut dashboard.hierarchy.projects[0].workspaces[0];
+    let mut hierarchy = fixture_hierarchy();
+    let workspace = &mut hierarchy.projects[0].workspaces[0];
     for id in 6..=50 {
-        workspace.sessions.push(SessionSummary {
-            id: SessionId(id),
-            project: "consigint".into(),
-            workspace: "auth".into(),
-            name: format!("session-{id}"),
-            label: "sh".into(),
-            pid: Some(id as u32),
-            started_unix_ms: 0,
-            phase: SessionPhase::Running,
-            activity: AgentActivity::Unknown,
-            context_usage: None,
-            agent: None,
-            agent_epoch: 0,
-        });
+        workspace.sessions.push(session_summary(
+            id,
+            "consigint",
+            "auth",
+            &format!("session-{id}"),
+            "sh",
+            Some(id as u32),
+            0,
+        ));
     }
-    dashboard.select_session(SessionId(50));
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(50));
     assert_eq!(dashboard.focused_session(), Some(SessionId(50)));
-    let resize = dashboard
-        .view_request(outer_area_for_pane(TerminalSize { rows: 20, cols: 40 }), 99)
-        .unwrap()
-        .expect("resize should request a view");
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: resize.request_id,
-        response: Response::Screen {
-            session: SessionId(50),
-            revision: dashboard.view_revision,
-            size: TerminalSize { rows: 20, cols: 40 },
-            bytes: Vec::new(),
-        },
-    });
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: resize.request_id,
-        response: Response::Ok,
-    });
+    dashboard.install_area(Rect::new(0, 0, 80, 24));
+    dashboard.install_screen(SessionId(50), &[]);
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     terminal
-        .draw(|frame| ovrcr::tui::draw_dashboard(frame, &dashboard))
+        .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
     let rendered = (0..24)
         .map(|row| {

@@ -1,9 +1,5 @@
-use super::{Dashboard, InputMode, KeyEncoding};
-use crate::protocol::ClientMessage;
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
-use ovrcr_terminal::encode_paste;
+use super::KeyEncoding;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ovrcr_terminal::vt100;
 
 pub fn encode_key(event: KeyEvent, application_cursor: bool) -> KeyEncoding {
@@ -232,41 +228,5 @@ fn encode_legacy_field(
             Some(())
         }
         vt100::MouseProtocolEncoding::Sgr => None,
-    }
-}
-
-pub fn event_to_request(
-    dashboard: &mut Dashboard,
-    event: Event,
-    request_id: u64,
-) -> Option<ClientMessage> {
-    if dashboard.palette.is_some() || dashboard.mode != InputMode::Terminal {
-        return None;
-    }
-    match event {
-        Event::Paste(text) => dashboard.input_request(
-            encode_paste(
-                &text,
-                dashboard
-                    .focused_pane()
-                    .is_some_and(|pane| pane.parser.screen().bracketed_paste()),
-            ),
-            request_id,
-        ),
-        Event::Key(key) => match encode_key(
-            key,
-            dashboard
-                .focused_pane()
-                .is_some_and(|pane| pane.parser.screen().application_cursor()),
-        ) {
-            KeyEncoding::Browse => {
-                dashboard.cancel_mouse_gesture();
-                dashboard.mode = InputMode::Browse;
-                None
-            }
-            KeyEncoding::Bytes(bytes) => dashboard.input_request(bytes, request_id),
-            KeyEncoding::Ignore => None,
-        },
-        _ => None,
     }
 }

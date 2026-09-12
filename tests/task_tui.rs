@@ -1,12 +1,15 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ovrcr::protocol::{
-    HierarchySnapshot, ProjectSummary, Response, ServerEvent, ServerMessage, WorkspaceSummary,
+    HierarchySnapshot, ProjectSummary, Request, Response, ServerEvent, ServerMessage,
+    WorkspaceSummary,
 };
 use ovrcr::session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
 use ovrcr::task_manager::{TaskRequest, TaskResponse};
 use ovrcr::task_tui::{TasksView, Transcript, draw_tasks};
 use ovrcr::tasks::*;
-use ovrcr::tui::{Dashboard, DashboardAction, InputMode};
+use ovrcr::tui::{Dashboard, DashboardAction, draw_dashboard_at};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use std::path::PathBuf;
 fn key(code: KeyCode) -> Event {
@@ -40,61 +43,94 @@ fn fixture() -> TasksView {
     v
 }
 
-fn ready_dashboard() -> Dashboard {
-    let session = SessionSummary {
-        id: SessionId(1),
-        project: "project".into(),
-        workspace: "workspace".into(),
-        name: "local".into(),
-        label: "shell".into(),
-        pid: Some(1),
-        started_unix_ms: 0,
-        phase: SessionPhase::Running,
-        activity: AgentActivity::Unknown,
-        context_usage: None,
-        agent: None,
-        agent_epoch: 0,
-    };
-    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
-    dashboard.outer_area = Rect::new(0, 0, 80, 24);
-    dashboard.hierarchy = HierarchySnapshot {
+fn task_hierarchy() -> HierarchySnapshot {
+    HierarchySnapshot {
         projects: vec![ProjectSummary {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {
                 project: "project".into(),
                 name: "workspace".into(),
                 path: PathBuf::from("/tmp/workspace"),
-                sessions: vec![session],
+                sessions: vec![SessionSummary {
+                    id: SessionId(1),
+                    project: "project".into(),
+                    workspace: "workspace".into(),
+                    name: "local".into(),
+                    label: "shell".into(),
+                    pid: Some(1),
+                    started_unix_ms: 0,
+                    phase: SessionPhase::Running,
+                    activity: AgentActivity::Unknown,
+                    context_usage: None,
+                    agent: None,
+                    agent_epoch: 0,
+                }],
             }],
         }],
-    };
-    dashboard.select_request(SessionId(1), 1);
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: 1,
-        response: Response::Screen {
-            session: SessionId(1),
-            revision: dashboard.view_revision,
-            size: dashboard.panes[dashboard.focused_pane].desired_size,
-            bytes: b"ready".to_vec(),
-        },
-    });
-    dashboard.handle_server_message(ServerMessage::Response {
-        request_id: 1,
-        response: Response::Ok,
-    });
+    }
+}
+
+fn ready_dashboard() -> Dashboard {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.install_area(Rect::new(0, 0, 80, 24));
+    dashboard.install_hierarchy(task_hierarchy());
+    dashboard.install_focus(SessionId(1));
+    dashboard.install_screen(SessionId(1), b"ready");
     dashboard
+}
+
+fn dashboard_text(dashboard: &Dashboard, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, dashboard, 0))
+        .unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect()
 }
 
 #[test]
 fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
     let mut d = ready_dashboard();
-    d.ctrl('t');
-    assert!(d.tasks.is_some());
-    d.event_action(key(KeyCode::Esc));
-    assert!(d.tasks.is_none());
-    d.mode = InputMode::Terminal;
+    assert_eq!(d.ctrl('t'), DashboardAction::Redraw);
+    let text = dashboard_text(&d, 80, 24);
+    assert!(text.contains("OVRCR  Tasks"), "{text}");
+    assert_eq!(d.event_action(key(KeyCode::Esc)), DashboardAction::Redraw);
+    let text = dashboard_text(&d, 80, 24);
+    assert!(!text.contains("OVRCR  Tasks"), "{text}");
+    let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        session: SessionId(1),
+        revision: 0,
+    }));
+    for request in requests {
+        let request_id = request.request_id;
+        let Request::SetView { view } = request.request else {
+            panic!("expected SetView, got {:?}", request.request);
+        };
+        for pane in &view.panes {
+            d.handle_server_message(ServerMessage::Response {
+                request_id,
+                response: Response::Screen {
+                    session: pane.session,
+                    revision: view.revision,
+                    size: pane.size,
+                    bytes: b"ready".to_vec(),
+                },
+            });
+        }
+        d.handle_server_message(ServerMessage::Response {
+            request_id,
+            response: Response::Ok,
+        });
+    }
+    assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
     assert_eq!(d.ctrl('t'), DashboardAction::PtyBytes(vec![20]));
-    assert!(d.tasks.is_none());
+    let text = dashboard_text(&d, 80, 24);
+    assert!(!text.contains("OVRCR  Tasks"), "{text}");
 }
 #[test]
 fn create_and_edit_every_field_and_multiline_prompt_in_terminal() {
@@ -544,27 +580,26 @@ fn multiline_cursor_edits_unicode_without_corruption() {
 fn dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open() {
     use ovrcr::protocol::Request;
     let mut d = ready_dashboard();
-    d.ctrl('t');
+    assert_eq!(d.ctrl('t'), DashboardAction::Redraw);
     d.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
-        revision: d.view_revision,
+        revision: 0,
         bytes: b"still draining".to_vec(),
     }));
-    assert!(
-        d.panes[d.focused_pane]
-            .parser
-            .screen()
-            .contents()
-            .contains("still draining")
-    );
-    let revision = d.view_revision;
     let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(1),
-        revision,
+        revision: 0,
     }));
     assert_eq!(requests.len(), 1);
     assert!(matches!(requests[0].request, Request::SetView { .. }));
-    assert!(d.tasks.is_some());
+    let text = dashboard_text(&d, 80, 24);
+    assert!(text.contains("OVRCR  Tasks"), "{text}");
+    d.event_action(key(KeyCode::Esc));
+    let text = dashboard_text(&d, 80, 24);
+    assert!(
+        text.contains("still draining"),
+        "output must apply while tasks overlay is open: {text}"
+    );
 }
 
 #[test]
@@ -751,35 +786,35 @@ fn ux_narrow_task_footer_keeps_escape_and_save_complete() {
 
 #[test]
 fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
-    let mut d = ready_dashboard();
-    d.hierarchy.projects.push(ProjectSummary {
+    let mut hierarchy = task_hierarchy();
+    hierarchy.projects.push(ProjectSummary {
         name: "ovrcr".into(),
         workspaces: vec![],
     });
-    d.ctrl('t');
+    let mut d = ready_dashboard();
+    d.install_hierarchy(hierarchy.clone());
+    assert_eq!(d.ctrl('t'), DashboardAction::Redraw);
     d.event_action(key(KeyCode::Char('n')));
     for value in ["review", "git"] {
         d.event_action(ctrl('a'));
         d.event_action(Event::Paste(value.into()));
         d.event_action(key(KeyCode::Tab));
     }
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal
-        .draw(|f| draw_tasks(f, d.tasks.as_ref().unwrap()))
-        .unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|c| c.symbol())
-        .collect::<String>();
+    let rendered = dashboard_text(&d, 100, 30);
     assert!(
         rendered.contains("ovrcr"),
         "project options must be shown: {rendered}"
     );
-    d.event_action(Event::Paste("ovr".into()));
-    d.event_action(key(KeyCode::Enter));
+
+    let mut v = TasksView::with_projects(&hierarchy, "project");
+    v.event(key(KeyCode::Char('n')));
+    for value in ["review", "git"] {
+        v.event(ctrl('a'));
+        v.event(Event::Paste(value.into()));
+        v.event(key(KeyCode::Tab));
+    }
+    v.event(Event::Paste("ovr".into()));
+    v.event(key(KeyCode::Enter));
     for value in [
         "origin",
         "main",
@@ -791,12 +826,12 @@ fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
         "1h",
         "prompt",
     ] {
-        d.event_action(ctrl('a'));
-        d.event_action(Event::Paste(value.into()));
-        d.event_action(key(KeyCode::Tab));
+        v.event(ctrl('a'));
+        v.event(Event::Paste(value.into()));
+        v.event(key(KeyCode::Tab));
     }
-    d.event_action(ctrl('s'));
-    let Some(TaskRequest::Create(spec)) = d.tasks.as_mut().unwrap().take_request() else {
+    v.event(ctrl('s'));
+    let Some(TaskRequest::Create(spec)) = v.take_request() else {
         panic!("save task");
     };
     assert_eq!(
@@ -811,13 +846,12 @@ fn task_project_picker_uses_dashboard_projects_and_filters_before_save() {
 
 #[test]
 fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
-    let mut d = ready_dashboard();
-    d.hierarchy.projects.push(ProjectSummary {
+    let mut hierarchy = task_hierarchy();
+    hierarchy.projects.push(ProjectSummary {
         name: "other".into(),
         workspaces: vec![],
     });
-    d.ctrl('t');
-    let v = d.tasks.as_mut().unwrap();
+    let mut v = TasksView::with_projects(&hierarchy, "project");
     let mut task_spec = spec();
     task_spec.target = TaskTarget::Git {
         project: "other".into(),
@@ -854,7 +888,7 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
     v.event(key(KeyCode::Down));
     for (width, height) in [(100, 30), (40, 12), (12, 5), (1, 1)] {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|f| draw_tasks(f, v)).unwrap();
+        terminal.draw(|f| draw_tasks(f, &v)).unwrap();
     }
     v.event(key(KeyCode::Enter));
     assert!(
@@ -866,27 +900,21 @@ fn task_project_picker_preserves_edit_target_and_rejects_unmatched_save() {
     assert_eq!(v.take_request(), Some(expected));
 }
 
-fn task_mouse(
-    d: &mut Dashboard,
-    kind: crossterm::event::MouseEventKind,
-    x: u16,
-    y: u16,
-    area: Rect,
-) -> DashboardAction {
-    d.mouse_action(
-        crossterm::event::MouseEvent {
+fn task_mouse(v: &mut TasksView, kind: MouseEventKind, x: u16, y: u16, area: Rect) {
+    v.mouse(
+        MouseEvent {
             kind,
             column: x,
             row: y,
             modifiers: KeyModifiers::NONE,
         },
         area,
-    )
+    );
 }
-fn task_click_text(d: &mut Dashboard, text: &str, width: u16, height: u16) -> DashboardAction {
-    task_click_text_at(d, text, Rect::new(0, 0, width, height))
+fn task_click_text(v: &mut TasksView, text: &str, width: u16, height: u16) {
+    task_click_text_at(v, text, Rect::new(0, 0, width, height));
 }
-fn task_click_text_at(d: &mut Dashboard, text: &str, area: Rect) -> DashboardAction {
+fn task_click_text_at(v: &mut TasksView, text: &str, area: Rect) {
     let mut terminal = Terminal::with_options(
         TestBackend::new(area.right(), area.bottom()),
         ratatui::TerminalOptions {
@@ -894,9 +922,7 @@ fn task_click_text_at(d: &mut Dashboard, text: &str, area: Rect) -> DashboardAct
         },
     )
     .unwrap();
-    terminal
-        .draw(|f| draw_tasks(f, d.tasks.as_ref().unwrap()))
-        .unwrap();
+    terminal.draw(|f| draw_tasks(f, v)).unwrap();
     let buffer = terminal.backend().buffer();
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
@@ -904,13 +930,8 @@ fn task_click_text_at(d: &mut Dashboard, text: &str, area: Rect) -> DashboardAct
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>();
             if row.starts_with(text) {
-                return task_mouse(
-                    d,
-                    crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                    x,
-                    y,
-                    area,
-                );
+                task_mouse(v, MouseEventKind::Down(MouseButton::Left), x, y, area);
+                return;
             }
         }
     }
@@ -919,8 +940,6 @@ fn task_click_text_at(d: &mut Dashboard, text: &str, area: Rect) -> DashboardAct
 
 #[test]
 fn task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation() {
-    use crossterm::event::{MouseButton, MouseEventKind};
-    let mut d = ready_dashboard();
     let mut v = fixture();
     v.tasks = (1..=30)
         .map(|id| Task {
@@ -930,58 +949,47 @@ fn task_mouse_selects_scrolled_rows_and_dispatches_controls_with_confirmation() 
             next_due_at: None,
         })
         .collect();
-    d.tasks = Some(v);
     let area = Rect::new(0, 0, 120, 12);
-    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 20, 4, area);
-    task_click_text(&mut d, "r run", 120, 12);
-    assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
-        Some(TaskRequest::Enqueue(TaskId(2)))
-    );
+    task_mouse(&mut v, MouseEventKind::Down(MouseButton::Left), 20, 4, area);
+    task_click_text(&mut v, "r run", 120, 12);
+    assert_eq!(v.take_request(), Some(TaskRequest::Enqueue(TaskId(2))));
     for _ in 0..12 {
-        task_mouse(&mut d, MouseEventKind::ScrollDown, 20, 5, area);
+        task_mouse(&mut v, MouseEventKind::ScrollDown, 20, 5, area);
     }
     // The selected row is kept at the bottom; click the first visible row.
-    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 20, 3, area);
-    task_click_text(&mut d, "d del", 120, 12);
-    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
-    task_click_text(&mut d, "n no", 120, 12);
-    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
-    task_click_text(&mut d, "d del", 120, 12);
-    task_click_text(&mut d, "y yes", 120, 12);
-    assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
-        Some(TaskRequest::Delete(TaskId(9)))
-    );
-    assert!(d.mouse_capture_required());
+    task_mouse(&mut v, MouseEventKind::Down(MouseButton::Left), 20, 3, area);
+    task_click_text(&mut v, "d del", 120, 12);
+    assert!(v.take_request().is_none());
+    task_click_text(&mut v, "n no", 120, 12);
+    assert!(v.take_request().is_none());
+    task_click_text(&mut v, "d del", 120, 12);
+    task_click_text(&mut v, "y yes", 120, 12);
+    assert_eq!(v.take_request(), Some(TaskRequest::Delete(TaskId(9))));
 }
 #[test]
 fn task_mouse_edits_unicode_fields_and_multiline_prompt_and_submits_once() {
-    let mut d = ready_dashboard();
-    d.tasks = Some(fixture());
-    task_click_text(&mut d, "e edit", 120, 24);
-    task_click_text(&mut d, "Model: ", 120, 24);
-    d.event_action(ctrl('a'));
-    d.event_action(Event::Paste("provider/a界z".into()));
-    task_click_text(&mut d, "界", 120, 24);
-    d.event_action(key(KeyCode::Char('X')));
-    task_click_text(&mut d, "world", 120, 24);
-    d.event_action(key(KeyCode::Char('!')));
-    task_click_text(&mut d, "Ctrl-s save", 120, 24);
-    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+    let mut v = fixture();
+    task_click_text(&mut v, "e edit", 120, 24);
+    task_click_text(&mut v, "Model: ", 120, 24);
+    v.event(ctrl('a'));
+    v.event(Event::Paste("provider/a界z".into()));
+    task_click_text(&mut v, "界", 120, 24);
+    v.event(key(KeyCode::Char('X')));
+    task_click_text(&mut v, "world", 120, 24);
+    v.event(key(KeyCode::Char('!')));
+    task_click_text(&mut v, "Ctrl-s save", 120, 24);
+    let Some(TaskRequest::Update { spec, .. }) = v.take_request() else {
         panic!("update request")
     };
     assert_eq!(spec.model, "provider/aX界z");
     assert_eq!(spec.prompt, "hello\n!world");
-    task_click_text(&mut d, "Ctrl-s save", 120, 24);
-    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
-    task_click_text(&mut d, "Esc cancel", 120, 24);
-    assert!(d.tasks.as_ref().unwrap().editor.is_none());
+    task_click_text(&mut v, "Ctrl-s save", 120, 24);
+    assert!(v.take_request().is_none());
+    task_click_text(&mut v, "Esc cancel", 120, 24);
+    assert!(v.editor.is_none());
 }
 #[test]
 fn task_mouse_project_picker_and_transcript_wheel_use_visible_rows() {
-    use crossterm::event::MouseEventKind;
-    let mut d = ready_dashboard();
     let hierarchy = HierarchySnapshot {
         projects: (0..14)
             .map(|i| ProjectSummary {
@@ -992,97 +1000,85 @@ fn task_mouse_project_picker_and_transcript_wheel_use_visible_rows() {
     };
     let mut v = TasksView::with_projects(&hierarchy, "project-00");
     v.tasks = fixture().tasks;
-    d.tasks = Some(v);
-    task_click_text(&mut d, "e edit", 120, 24);
-    task_click_text(&mut d, "Target", 120, 24);
-    d.event_action(ctrl('a'));
-    d.event_action(Event::Paste("git".into()));
-    task_click_text(&mut d, "Project", 120, 24);
+    task_click_text(&mut v, "e edit", 120, 24);
+    task_click_text(&mut v, "Target", 120, 24);
+    v.event(ctrl('a'));
+    v.event(Event::Paste("git".into()));
+    task_click_text(&mut v, "Project", 120, 24);
     for _ in 0..10 {
         task_mouse(
-            &mut d,
+            &mut v,
             MouseEventKind::ScrollDown,
             10,
             6,
             Rect::new(0, 0, 120, 24),
         );
     }
-    task_click_text(&mut d, "project-05", 120, 24);
-    task_click_text(&mut d, "Ctrl-s save", 120, 24);
-    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+    task_click_text(&mut v, "project-05", 120, 24);
+    task_click_text(&mut v, "Ctrl-s save", 120, 24);
+    let Some(TaskRequest::Update { spec, .. }) = v.take_request() else {
         panic!("update")
     };
     assert!(matches!(spec.target,TaskTarget::Git{project,..} if project=="project-05"));
-    task_click_text(&mut d, "Esc cancel", 120, 24);
-    task_click_text(&mut d, "h/H history/all", 120, 24);
-    let v = d.tasks.as_mut().unwrap();
+    task_click_text(&mut v, "Esc cancel", 120, 24);
+    task_click_text(&mut v, "h/H history/all", 120, 24);
     v.transcript.append(
         b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\n",
         100,
         false,
     );
     task_mouse(
-        &mut d,
+        &mut v,
         MouseEventKind::ScrollUp,
         10,
         17,
         Rect::new(0, 0, 120, 24),
     );
-    assert_eq!(d.tasks.as_ref().unwrap().transcript.scroll, 1);
+    assert_eq!(v.transcript.scroll, 1);
     task_mouse(
-        &mut d,
+        &mut v,
         MouseEventKind::ScrollDown,
         10,
         17,
         Rect::new(0, 0, 120, 24),
     );
-    assert_eq!(d.tasks.as_ref().unwrap().transcript.scroll, 0);
+    assert_eq!(v.transcript.scroll, 0);
 }
 
 #[test]
 fn task_mouse_narrow_offset_editor_maps_scrolled_prompt_and_ignores_hidden_rows() {
-    use crossterm::event::{MouseButton, MouseEventKind};
-    let mut d = ready_dashboard();
     let mut v = fixture();
     v.tasks[0].spec.prompt = "zero\none\ntwo\nthree\nfour\nlong 界 tail".into();
-    d.tasks = Some(v);
     let area = Rect::new(7, 5, 42, 14);
-    task_click_text_at(&mut d, "e edit", area);
+    task_click_text_at(&mut v, "e edit", area);
     // Navigate to Prompt so the small viewport is scrolled there.
     for _ in 0..11 {
-        d.event_action(key(KeyCode::Tab));
+        v.event(key(KeyCode::Tab));
     }
-    task_click_text_at(&mut d, "界", area);
-    d.event_action(key(KeyCode::Char('X')));
+    task_click_text_at(&mut v, "界", area);
+    v.event(key(KeyCode::Char('X')));
     // A click outside the offset frame must not move the editor cursor.
-    task_mouse(&mut d, MouseEventKind::Down(MouseButton::Left), 1, 1, area);
-    d.event_action(key(KeyCode::Char('Y')));
-    task_click_text_at(&mut d, "Ctrl-s save", area);
-    let Some(TaskRequest::Update { spec, .. }) = d.tasks.as_mut().unwrap().take_request() else {
+    task_mouse(&mut v, MouseEventKind::Down(MouseButton::Left), 1, 1, area);
+    v.event(key(KeyCode::Char('Y')));
+    task_click_text_at(&mut v, "Ctrl-s save", area);
+    let Some(TaskRequest::Update { spec, .. }) = v.take_request() else {
         panic!("save")
     };
     assert_eq!(spec.prompt, "zero\none\ntwo\nthree\nfour\nlong XY界 tail");
-    task_click_text_at(&mut d, "Esc cancel", area);
-    task_click_text_at(&mut d, "c limit", area);
-    d.event_action(key(KeyCode::Char('2')));
-    task_click_text_at(&mut d, "Enter save", area);
-    assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
-        Some(TaskRequest::Concurrency(Some(2)))
-    );
-    task_click_text_at(&mut d, "p pause/resume", area);
-    assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
-        Some(TaskRequest::Pause(TaskId(1)))
-    );
+    task_click_text_at(&mut v, "Esc cancel", area);
+    task_click_text_at(&mut v, "c limit", area);
+    v.event(key(KeyCode::Char('2')));
+    task_click_text_at(&mut v, "Enter save", area);
+    assert_eq!(v.take_request(), Some(TaskRequest::Concurrency(Some(2))));
+    task_click_text_at(&mut v, "p pause/resume", area);
+    assert_eq!(v.take_request(), Some(TaskRequest::Pause(TaskId(1))));
 }
 #[test]
 fn task_mouse_run_rows_cancel_and_cleanup_use_selected_run() {
-    let mut d = ready_dashboard();
-    d.tasks = Some(fixture());
-    task_click_text(&mut d, "h/H history/all", 120, 24);
+    let mut v = fixture();
+    task_click_text(&mut v, "h/H history/all", 120, 24);
     assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
+        v.take_request(),
         Some(TaskRequest::ListRuns(Some(TaskId(1))))
     );
     let mut store = TaskStore::default();
@@ -1096,36 +1092,33 @@ fn task_mouse_run_rows_cancel_and_cleanup_use_selected_run() {
             run
         })
         .collect();
-    d.tasks.as_mut().unwrap().receive(
+    v.receive(
         &TaskRequest::ListRuns(Some(TaskId(1))),
         Ok(TaskResponse::Runs(runs)),
     );
-    d.tasks.as_mut().unwrap().take_request();
+    v.take_request();
     task_mouse(
-        &mut d,
-        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        &mut v,
+        MouseEventKind::Down(MouseButton::Left),
         10,
         3,
         Rect::new(0, 0, 120, 24),
     );
     assert!(matches!(
-        d.tasks.as_mut().unwrap().take_request(),
+        v.take_request(),
         Some(TaskRequest::ReadLog {
             id: RunId(2),
             offset: 0,
             ..
         })
     ));
-    task_click_text(&mut d, "x cancel run", 120, 24);
+    task_click_text(&mut v, "x cancel run", 120, 24);
+    assert_eq!(v.take_request(), Some(TaskRequest::Cancel(RunId(2))));
+    task_click_text(&mut v, "d cleanup", 120, 24);
+    assert!(v.take_request().is_none());
+    task_click_text(&mut v, "y yes", 120, 24);
     assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
-        Some(TaskRequest::Cancel(RunId(2)))
-    );
-    task_click_text(&mut d, "d cleanup", 120, 24);
-    assert!(d.tasks.as_mut().unwrap().take_request().is_none());
-    task_click_text(&mut d, "y yes", 120, 24);
-    assert_eq!(
-        d.tasks.as_mut().unwrap().take_request(),
+        v.take_request(),
         Some(TaskRequest::Clean {
             id: RunId(2),
             confirmed: true

@@ -1,13 +1,13 @@
-use super::copy::{CopyMotion, CopyPoint, CopySelection};
+use super::copy::{
+    CopyMotion, CopyPoint, CopySelection, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange,
+};
 use super::event_loop::{
     dashboard_hello_result, dashboard_message_channel, drain_dashboard_input_then_emit_with,
     drain_ready_dashboard_input, emit_pending_history_copy, install_panic_terminal_restore_hook,
     next_dashboard_message,
 };
-use super::{
-    Dashboard, HistoryCopyCompletion, HistoryCopyPoint, HistoryCopyRange, HistoryCursor,
-    HistoryView, InputMode, PANIC_TERMINAL_RESTORED,
-};
+use super::state::{HistoryCursor, HistoryView};
+use super::{Dashboard, InputMode, PANIC_TERMINAL_RESTORED};
 use crate::protocol::{
     ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
     HistorySnapshotId, Request, Response, ServerEvent, ServerMessage, SessionId, TerminalSize,
@@ -794,6 +794,62 @@ fn failed_history_copy_writer_preserves_selection_for_retry() {
             .windows(b"\x1b]52;c;YQ==\x1b\\".len())
             .any(|window| { window == b"\x1b]52;c;YQ==\x1b\\" })
     );
+}
+
+fn emit_staged_history_copy(dashboard: &mut Dashboard) -> bool {
+    let mut bytes = Vec::new();
+    let backend = CrosstermBackend::new(&mut bytes);
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 6, 2)),
+        },
+    )
+    .unwrap();
+    emit_pending_history_copy(&mut terminal, dashboard)
+}
+
+#[test]
+fn pending_history_copy_is_dropped_when_focus_leaves_the_session() {
+    let mut dashboard = staged_history_copy_dashboard();
+    dashboard.select_session(SessionId(2));
+    assert!(!emit_staged_history_copy(&mut dashboard));
+}
+
+#[test]
+fn pending_history_copy_survives_unfocused_hierarchy_removal() {
+    use crate::protocol::{HierarchySnapshot, ProjectSummary, WorkspaceSummary};
+    use crate::session::{SessionPhase, SessionSummary};
+    let mut dashboard = staged_history_copy_dashboard();
+    let summary = |id| SessionSummary {
+        id: SessionId(id),
+        project: "p".into(),
+        workspace: "w".into(),
+        name: format!("s{id}"),
+        label: "zsh".into(),
+        pid: Some(1),
+        started_unix_ms: 0,
+        phase: SessionPhase::Running,
+        activity: crate::session::AgentActivity::Unknown,
+        agent: None,
+        agent_epoch: 0,
+        context_usage: None,
+    };
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 99,
+        response: Response::Hierarchy(HierarchySnapshot {
+            projects: vec![ProjectSummary {
+                name: "p".into(),
+                workspaces: vec![WorkspaceSummary {
+                    project: "p".into(),
+                    name: "w".into(),
+                    path: std::path::PathBuf::from("/tmp"),
+                    sessions: vec![summary(1)],
+                }],
+            }],
+        }),
+    });
+    assert!(emit_staged_history_copy(&mut dashboard));
 }
 
 #[test]
@@ -1652,4 +1708,240 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
             .flat_map(|group| &group.hints)
             .any(|hint| { hint.name == "Enable desktop notifications" && hint.key == "N" })
     );
+}
+
+#[test]
+fn render_terminal_copies_text_style_wide_cells_and_cursor() {
+    use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Modifier};
+    let mut parser = vt100::Parser::new(3, 12, 0);
+    parser.process(b"plain \x1b[31mred\x1b[0m\r\nwide: \xE7\x95\x8C");
+    let backend = TestBackend::new(12, 3);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            super::render::render_terminal(frame, Rect::new(0, 0, 12, 3), parser.screen(), true);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(0, 0)].symbol(), "p");
+    assert_eq!(buffer[(0, 0)].fg, Color::Rgb(205, 214, 244));
+    assert_eq!(buffer[(0, 0)].bg, Color::Rgb(30, 30, 46));
+    assert_eq!(buffer[(6, 0)].fg, Color::Indexed(1));
+    assert_eq!(buffer[(6, 1)].symbol(), "界");
+    assert_eq!(buffer[(7, 1)].symbol(), " ");
+    assert_eq!(buffer[(7, 0)].modifier, Modifier::empty());
+    assert_eq!(terminal.backend().cursor_position(), (8, 1).into());
+}
+
+#[test]
+fn render_terminal_crossterm_roundtrip_clears_replaced_text() {
+    let mut output = Vec::new();
+    {
+        let backend = CrosstermBackend::new(&mut output);
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 20, 2)),
+            },
+        )
+        .unwrap();
+
+        let mut initial = vt100::Parser::new(2, 20, 0);
+        initial.process(b"CODEX BANNER\r\nprompt$ ");
+        terminal
+            .draw(|frame| {
+                super::render::render_terminal(
+                    frame,
+                    Rect::new(0, 0, 20, 2),
+                    initial.screen(),
+                    false,
+                );
+            })
+            .unwrap();
+
+        let mut replacement = vt100::Parser::new(2, 20, 0);
+        replacement.process(b"ok");
+        terminal
+            .draw(|frame| {
+                super::render::render_terminal(
+                    frame,
+                    Rect::new(0, 0, 20, 2),
+                    replacement.screen(),
+                    false,
+                );
+            })
+            .unwrap();
+    }
+
+    let mut outer = vt100::Parser::new(2, 20, 0);
+    outer.process(&output);
+    let rows = outer.screen().rows(0, 20).collect::<Vec<_>>();
+    assert_eq!(rows[0].trim_end(), "ok");
+    assert_eq!(rows[1].trim_end(), "");
+}
+
+#[test]
+fn inverse_colors_keep_explicit_colors_and_set_reverse_modifier() {
+    use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Modifier};
+    let mut parser = vt100::Parser::new(1, 1, 0);
+    parser.process(b"\x1b[31;42;7mX");
+    let backend = TestBackend::new(1, 1);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|frame| {
+            super::render::render_terminal(frame, Rect::new(0, 0, 1, 1), parser.screen(), true);
+        })
+        .unwrap();
+    let cell = &terminal.backend().buffer()[(0, 0)];
+    assert_eq!(cell.fg, Color::Indexed(1));
+    assert_eq!(cell.bg, Color::Indexed(2));
+    assert!(cell.modifier.contains(Modifier::REVERSED));
+}
+
+fn history_cell(text: &str, width: u8) -> HistoryCell {
+    HistoryCell {
+        text: text.into(),
+        width,
+        fg: HistoryColor::Default,
+        bg: HistoryColor::Default,
+        attributes: 0,
+    }
+}
+
+#[test]
+fn history_cursor_async_continuation_resolution_reveals_predecessor_tile() {
+    use super::copy::HistoryCopyPoint;
+    use super::state::HistoryCursorTarget;
+
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
+    dashboard.mode = InputMode::History;
+    let mut view = HistoryView::new(
+        HistoryOpened {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            revision: 1,
+            size: TerminalSize { rows: 10, cols: 20 },
+            history_rows: 0,
+            total_rows: 1,
+        },
+        0,
+    );
+    view.left = 128;
+    view.cursor = Some(HistoryCursor {
+        point: HistoryCopyPoint { row: 0, col: 0 },
+        row_width: 130,
+        cell_width: 1,
+    });
+    view.cursor_target = Some(HistoryCursorTarget::At(HistoryCopyPoint {
+        row: 0,
+        col: 128,
+    }));
+    dashboard.history = Some(view);
+    let first = dashboard
+        .history_request_if_needed()
+        .expect("continuation tile request");
+    assert!(matches!(
+        first.request,
+        Request::HistoryPage {
+            start_row: 0,
+            start_col: 128,
+            ..
+        }
+    ));
+    let predecessor = dashboard
+        .handle_server_message(ServerMessage::Response {
+            request_id: first.request_id,
+            response: Response::HistoryRows(HistoryRows {
+                session: SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                start_row: 0,
+                start_col: 128,
+                rows: vec![HistoryRow {
+                    width: 130,
+                    cells: vec![history_cell("", 0), history_cell("tail", 1)],
+                    wrapped: false,
+                }],
+            }),
+        })
+        .into_iter()
+        .next()
+        .expect("predecessor tile request");
+    assert_eq!(
+        dashboard.history.as_ref().unwrap().cursor.unwrap().point,
+        HistoryCopyPoint { row: 0, col: 0 }
+    );
+    assert!(matches!(
+        predecessor.request,
+        Request::HistoryPage {
+            start_row: 0,
+            start_col: 0,
+            ..
+        }
+    ));
+    let mut leader_cells = vec![history_cell("", 1); 128];
+    leader_cells[127] = history_cell("界", 2);
+    let follow_up = dashboard.handle_server_message(ServerMessage::Response {
+        request_id: predecessor.request_id,
+        response: Response::HistoryRows(HistoryRows {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            start_row: 0,
+            start_col: 0,
+            rows: vec![HistoryRow {
+                width: 130,
+                cells: leader_cells,
+                wrapped: false,
+            }],
+        }),
+    });
+    assert!(follow_up.is_empty());
+    let view = dashboard.history.as_ref().unwrap();
+    assert_eq!(view.left, 127);
+    assert_eq!(
+        view.cursor.unwrap().point,
+        HistoryCopyPoint { row: 0, col: 127 }
+    );
+    assert_eq!(view.cursor.unwrap().cell_width, 2);
+}
+
+#[test]
+fn history_footer_names_escape_back_when_copy_notice_is_clear() {
+    use super::copy::HistoryCopyPoint;
+    use ratatui::backend::TestBackend;
+
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.mode = InputMode::History;
+    let mut view = HistoryView::new(
+        HistoryOpened {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(7),
+            revision: 1,
+            size: TerminalSize { rows: 10, cols: 20 },
+            history_rows: 0,
+            total_rows: 2,
+        },
+        0,
+    );
+    view.anchor = Some(HistoryCopyPoint { row: 0, col: 0 });
+    view.cursor = Some(HistoryCursor {
+        point: HistoryCopyPoint { row: 0, col: 1 },
+        row_width: 2,
+        cell_width: 1,
+    });
+    dashboard.history = Some(view);
+    dashboard.copy_notice = None;
+    let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+    terminal
+        .draw(|frame| super::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let footer: String = (0..120)
+        .map(|x| terminal.backend().buffer()[(x, 23)].symbol().to_string())
+        .collect();
+    assert!(footer.contains("Esc Back"), "{footer}");
+    assert!(footer.contains("y Copy"), "{footer}");
 }
