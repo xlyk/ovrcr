@@ -1,4 +1,4 @@
-use super::render::{draw_dashboard, pane_size};
+use super::render::pane_size;
 use super::settings::load_dashboard_settings;
 use super::terminal_guard::TerminalGuard;
 use super::{
@@ -217,7 +217,7 @@ fn dashboard_loop<W: Write>(
         first_frame = false;
         if pending_redraw && Instant::now() >= next_frame_redraw {
             update_mouse_capture(terminal, dashboard, mouse_enabled)?;
-            terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
+            dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
             next_idle_redraw = Instant::now() + dashboard.redraw_interval();
@@ -329,7 +329,7 @@ fn dashboard_loop<W: Write>(
                 }
                 DashboardBoundary::Work | DashboardBoundary::Idle => {}
             }
-            terminal.draw(|frame| draw_dashboard(frame, dashboard))?;
+            dashboard.draw(terminal)?;
             pending_redraw = false;
             next_frame_redraw = Instant::now() + DASHBOARD_FRAME_INTERVAL;
             next_idle_redraw = Instant::now() + dashboard.redraw_interval();
@@ -805,4 +805,220 @@ fn terminal_size() -> Result<TerminalSize> {
         rows: size.1.max(1),
         cols: size.0.max(1),
     })
+}
+
+#[cfg(test)]
+mod unread_review_tests {
+    use super::*;
+    use crate::protocol::{
+        AgentActivity, AgentBinding, AgentProvider, HierarchySnapshot, ProjectSummary,
+        ReadyObservation, ServerEvent, SessionId, SessionPhase, SessionSummary, WorkspaceSummary,
+    };
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{TerminalOptions, Viewport};
+
+    fn fixture() -> (Dashboard, SessionSummary) {
+        let summary = SessionSummary {
+            id: SessionId(1),
+            project: "project".into(),
+            workspace: "work".into(),
+            name: "codex".into(),
+            label: "codex".into(),
+            pid: Some(1),
+            started_unix_ms: 0,
+            phase: SessionPhase::Running,
+            activity: AgentActivity::ResponseReady,
+            agent: None,
+            agent_epoch: 1,
+            context_usage: None,
+            unread: Some(ReadyObservation {
+                binding: AgentBinding {
+                    provider: AgentProvider::Codex,
+                    invocation: "inv".into(),
+                    conversation: "conv".into(),
+                    generation: 1,
+                },
+                turn: Some("displayed-A".into()),
+                activity_revision: 2,
+            }),
+        };
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 20,
+            cols: 120,
+        });
+        dashboard.hierarchy = HierarchySnapshot {
+            projects: vec![ProjectSummary {
+                name: "project".into(),
+                workspaces: vec![WorkspaceSummary {
+                    project: "project".into(),
+                    name: "work".into(),
+                    path: "/fixture".into(),
+                    sessions: vec![summary.clone()],
+                }],
+            }],
+        };
+        dashboard.select_session(summary.id);
+        (dashboard, summary)
+    }
+
+    #[test]
+    fn unread_input_boundary_reviews_presented_ready_before_next_draw() {
+        let (mut dashboard, first) = fixture();
+        let mut bytes = Vec::new();
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut bytes),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+            },
+        )
+        .unwrap();
+        dashboard.draw(&mut terminal).unwrap();
+        let (mut stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let (sender, messages) = dashboard_message_channel();
+        let mut second = first.clone();
+        second.unread.as_mut().unwrap().turn = Some("unseen-B".into());
+        second.unread.as_mut().unwrap().activity_revision = 4;
+        sender
+            .send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                second.clone(),
+            ))))
+            .unwrap();
+        // This is the real loop's message-drain-before-input order. No intervening draw.
+        assert!(next_dashboard_messages(&messages, &mut dashboard, &mut stream).unwrap());
+        assert_eq!(
+            dashboard.hierarchy.projects[0].workspaces[0].sessions[0],
+            second
+        );
+        let mut queued = true;
+        let mut mouse_enabled = false;
+        let boundary = drain_dashboard_input_then_emit_with(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            &mut mouse_enabled,
+            || {
+                let ready = queued;
+                queued = false;
+                Ok(ready)
+            },
+            |terminal, stream, dashboard, mouse_enabled| {
+                let action = dashboard.event_action(Event::Key(KeyEvent::new(
+                    KeyCode::Char('R'),
+                    KeyModifiers::NONE,
+                )));
+                send_dashboard_action(terminal, stream, dashboard, mouse_enabled, action)
+            },
+        )
+        .unwrap();
+        assert_eq!(boundary, DashboardBoundary::Work);
+        let sent: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert_eq!(
+            sent.request,
+            Request::MarkReviewed {
+                session: first.id,
+                expected: first.unread.unwrap(),
+            },
+            "queued R must name A, the last drawn observation, after B updates the hierarchy"
+        );
+        // Once the new frame succeeds, the same explicit action may name B.
+        dashboard.draw(&mut terminal).unwrap();
+        let action = dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::NONE,
+        )));
+        send_dashboard_action(
+            &mut terminal,
+            &mut stream,
+            &mut dashboard,
+            &mut mouse_enabled,
+            action,
+        )
+        .unwrap();
+        let sent: ClientMessage = crate::protocol::read_frame(&mut peer).unwrap();
+        assert_eq!(
+            sent.request,
+            Request::MarkReviewed {
+                session: second.id,
+                expected: second.unread.unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn unread_failed_draw_and_overlay_do_not_advance_presented_observation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Writer(Arc<AtomicBool>);
+        impl Write for Writer {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                if self.0.load(Ordering::SeqCst) {
+                    Err(io::Error::other("fixture draw failed"))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let (mut dashboard, first) = fixture();
+        assert_eq!(
+            dashboard.key(KeyCode::Char('R')),
+            DashboardAction::None,
+            "no review before the first presentation"
+        );
+        let fail = Arc::new(AtomicBool::new(false));
+        let mut writer = Writer(fail.clone());
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(&mut writer),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 20)),
+            },
+        )
+        .unwrap();
+        dashboard.draw(&mut terminal).unwrap();
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .unread
+            .as_mut()
+            .unwrap()
+            .turn = Some("unseen-B".into());
+        fail.store(true, Ordering::SeqCst);
+        assert!(dashboard.draw(&mut terminal).is_err());
+        fail.store(false, Ordering::SeqCst);
+        let DashboardAction::Request(sent) = dashboard.key(KeyCode::Char('R')) else {
+            panic!("expected review request");
+        };
+        assert_eq!(
+            sent.request,
+            Request::MarkReviewed {
+                session: first.id,
+                expected: first.unread.clone().unwrap()
+            }
+        );
+        dashboard.key(KeyCode::Char(':'));
+        dashboard.draw(&mut terminal).unwrap();
+        dashboard.key(KeyCode::Esc);
+        let DashboardAction::Request(sent) = dashboard.key(KeyCode::Char('R')) else {
+            panic!("expected review request");
+        };
+        assert_eq!(
+            sent.request,
+            Request::MarkReviewed {
+                session: first.id,
+                expected: first.unread.unwrap()
+            },
+            "overlay cannot commit obscured Ready state"
+        );
+        let mut other = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+        other.id = SessionId(2);
+        dashboard.hierarchy.projects[0].workspaces[0]
+            .sessions
+            .push(other);
+        dashboard.select_session(SessionId(2));
+        assert_eq!(
+            dashboard.key(KeyCode::Char('R')),
+            DashboardAction::None,
+            "session selection needs a successful presentation before review"
+        );
+    }
 }

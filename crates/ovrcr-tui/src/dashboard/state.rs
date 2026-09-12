@@ -544,6 +544,7 @@ impl Dashboard {
         Self {
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
+            presented_unread: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -3110,9 +3111,13 @@ impl Dashboard {
         let Some(session) = self.action_session() else {
             return DashboardAction::None;
         };
-        let Some(expected) = find_session(self, session).and_then(|s| s.unread.clone()) else {
+        let Some((presented_session, expected)) = self.presented_unread.as_ref() else {
             return DashboardAction::None;
         };
+        if *presented_session != session {
+            return DashboardAction::None;
+        }
+        let expected = expected.clone();
         DashboardAction::Request(ClientMessage {
             request_id: self.error_owning_request_id(),
             request: Request::MarkReviewed { session, expected },

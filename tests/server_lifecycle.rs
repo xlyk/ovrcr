@@ -10704,6 +10704,67 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
 }
 
 #[test]
+fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (first, _) = codex_session(&fixture, &fixture.socket);
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, first.id, &mut index, command);
+    }
+    assert!(fixture.session_summary(first.id).unread.is_some());
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: first.id }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("expected inventory");
+    };
+    assert!(
+        sessions
+            .iter()
+            .all(|s| s.id != first.id && s.unread.is_none()),
+        "removing a terminal removes its unread result"
+    );
+
+    let (second, _) = codex_session_named(&fixture, &fixture.socket, "codex-restart");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, second.id, &mut index, command);
+    }
+    assert!(fixture.session_summary(second.id).unread.is_some());
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    fixture
+        .thread
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .join()
+        .unwrap();
+    let socket = fixture.socket.clone();
+    let registry = fixture._root.path().join("config.toml");
+    *fixture.thread.lock().unwrap() = Some(thread::spawn(move || {
+        run_server(ServerPaths { socket }, registry).unwrap();
+    }));
+    fixture.wait_socket();
+    let Response::Inventory { sessions, registry } = fixture.request(Request::Inspect) else {
+        panic!("expected inventory");
+    };
+    assert!(
+        !registry.projects.is_empty(),
+        "restart uses the same saved configuration"
+    );
+    assert!(
+        sessions.is_empty(),
+        "new server cannot resurrect live terminals or unread results from saved configuration"
+    );
+}
+
+#[test]
 fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
@@ -10952,7 +11013,7 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("✓ codex-queued"));
+    dashboard.wait_screen(|screen| screen.contains("✓ ● codex-queued"));
     assert!(
         group_exists(blocked_pid),
         "first host no longer blocks the queue"

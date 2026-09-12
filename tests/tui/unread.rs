@@ -31,6 +31,8 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
     let mut d = screen_ready_dashboard(b"VISIBLE_RESPONSE");
     let unread = observation("one", 2);
     selected(&mut d).unread = Some(unread.clone());
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    d.draw(&mut terminal).unwrap();
     let original = selected(&mut d).clone();
     let id = original.id;
     // Selection and terminal entry leave review state alone.
@@ -127,6 +129,8 @@ fn unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes() {
 fn unread_review_action_is_discoverable_in_palette_and_terminal_keys() {
     let mut d = screen_ready_dashboard(b"REVIEWABLE");
     selected(&mut d).unread = Some(observation("one", 2));
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    d.draw(&mut terminal).unwrap();
     d.key(KeyCode::Char(':'));
     for ch in "Mark reviewed".chars() {
         d.key(KeyCode::Char(ch));
