@@ -1,0 +1,62 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                          [Actions] [Menu]
+ CONSIGINT ────────────│Unread Unavailable response ready …│  local 36x36  pid: 68903           
+  󰘬 auth-handoff       │tokens —  cost —                   │────────────────────────────────────
+     $ local           │ISSUE60_NATIVE_FIXTURE_READ        │worktree-lifecycle ›                
+     - review auth han…│UserPromptSubmit:root:nativ        │                                    
+▌    · ● issue61-unread│I
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                          [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────│Unread Unavailable response ready …│  local 36x36  pid: 68903           
+		5 text (settable)   󰘬 auth-handoff       │tokens —  cost —                   │────────────────────────────────────
+		6 text (settable)      $ local           │ISSUE60_NATIVE_FIXTURE_READ        │worktree-lifecycle ›                
+		7 text (settable)      - review auth han…│UserPromptSubmit:root:nativ        │                                    
+		8 text (settable) ▌    · ● issue61-unread│ISSUE60_CALLBACK_1_OK UserP        │                                    
+		9 text (settable)   󰘬 worktree-lifecycle │Stop:root:native-a                 │                                    
+		10 text (settable)      $ local           │ISSUE60_CALLBACK_2_OK Stop         │                                    
+		11 text (settable)      - implement lifec…│UserPromptSubmit:root:nativ        │                                    
+		12 text (settable)      - review websocke…│ISSUE60_CALLBACK_3_OK UserP        │                                    
+		13 text (settable)      - plan snapshot r…│Stop:root:native-b                 │                                    
+		14 text (settable)                        │ISSUE60_CALLBACK_4_OK Stop         │                                    
+		15 text (settable)  SPACELIFT-AGENT ──────│UserPromptSubmit:root:nativ        │                                    
+		16 text (settable)   󰘬 pipeline-progress-…│ISSUE60_CALLBACK_5_OK UserP        │                                    
+		17 text (settable)      $ local           │Stop:root:native-R                 │                                    
+		18 text (settable)      - build pipeline …│ISSUE60_CALLBACK_6_OK Stop         │                                    
+		19 text (settable)   󰘬 scope-quality      │exit                               │                                    
+		20 text (settable)      $ local           │ISSUE60_NATIVE_FIXTURE_EXIT        │                                    
+		21 text (settable)      - review scope qu…│                                   │                                    
+		22 text (settable)                        │                                   │                                    
+		23 text (settable)                        │                                   │                                    
+		24 text (settable)                        │                                   │                                    
+		25 text (settable)                        │                                   │                                    
+		26 text (settable)                        │                                   │                                    
+		27 text (settable)                        │                                   │                                    
+		28 text (settable)                        │                                   │                                    
+		29 text (settable)                        │                                   │                                    
+		30 text (settable)                        │                                   │                                    
+		31 text (settable)                        │                                   │                                    
+		32 text (settable)                        │                                   │                                    
+		33 text (settable)                        │                                   │                                    
+		34 text (settable)                        │                                   │                                    
+		35 text (settable)                        │                                   │                                    
+		36 text (settable)                        │                                   │                                    
+		37 text (settable)                        │                                   │                                    
+		38 text (settable)                        │                                   │                                    
+		39 text (settable)                        │                                   │                                    
+		40 text (settable)                        │                                   │                                    
+		41 text (settable)                        │                                   │                                    
+		42 text (settable) BROWSE  ? Help  R Mark reviewed  Tab Next pane  x Close pane  n Create terminal  : Search       
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text OVRCR GUI
+47 menu bar
+	48 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                          [Actions] [Menu]
+ CONSIGINT ────────────│Unread Unavailable response ready …│  local 36x36  pid: 68903           
+  󰘬 auth-handoff       │tokens —  cost —                   │────────────────────────────────────
+     $ local           │ISSUE60_NATIVE_FIXTURE_READ        │worktree-lifecycle ›                
+     - review auth han…│UserPromptSubmit:root:nativ        │                                    
+▌    · ● issue61-unread│I

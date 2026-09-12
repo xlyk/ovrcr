@@ -1,0 +1,37 @@
+{
+  "root_absent": true,
+  "socket_absent": true,
+  "pids": {
+    "7748": "absent",
+    "68752": "absent",
+    "68794": "absent",
+    "68903": "absent",
+    "68935": "absent",
+    "69012": "absent",
+    "69096": "absent",
+    "69116": "absent",
+    "69124": "absent",
+    "69131": "absent",
+    "69139": "absent",
+    "69149": "absent",
+    "69161": "absent",
+    "82555": "absent",
+    "82559": "absent"
+  },
+  "pgids": {
+    "7748": "absent",
+    "63904": "absent",
+    "68903": "absent",
+    "68935": "absent",
+    "69012": "absent",
+    "69096": "absent",
+    "69116": "absent",
+    "69124": "absent",
+    "69131": "absent",
+    "69139": "absent",
+    "69149": "absent",
+    "69161": "absent",
+    "82555": "absent",
+    "82559": "absent"
+  }
+}

@@ -211,6 +211,12 @@ terminal without including conversation content and require an active dashboard.
 An independent [ready sound](docs/dashboard.md#ready-sound), toggled with `S`,
 follows the same responses and also defaults off.
 
+Managed Codex terminals also show an [unread indicator](docs/dashboard.md#unread-responses)
+for their latest unreviewed Ready response. Press `R` in Browse mode or choose
+**Mark reviewed** in the terminal actions. Viewing output and receiving Busy do
+not clear it. Unread state survives dashboard reconnect while the server lives;
+scripts can acknowledge an exact observation with `terminal mark-reviewed`.
+
 ## The CLI
 
 The dashboard is optional. Every session is reachable from a script, and names and

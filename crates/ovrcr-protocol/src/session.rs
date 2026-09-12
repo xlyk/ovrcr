@@ -43,6 +43,7 @@ pub struct SessionSummary {
     pub activity: AgentActivity,
     pub agent: Option<crate::AgentSnapshot>,
     pub agent_epoch: u64,
+    pub unread: Option<crate::ReadyObservation>,
     pub context_usage: Option<ContextUsageSnapshot>,
 }
 

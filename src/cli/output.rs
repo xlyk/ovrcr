@@ -94,6 +94,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "exit_signal": exit_signal,
         "agent": session.agent,
         "agent_epoch": session.agent_epoch,
+        "unread": session.unread,
         "reporting_unavailable": reporting_unavailable(session),
         "measurement_age_ms": measurement_age_ms(session, now_unix_ms),
         "context_usage": session.context_usage,
@@ -207,7 +208,7 @@ pub(super) fn print_workspace(value: &Value) {
 
 pub(super) fn print_terminal_row(value: &Value) {
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         value["id"],
         value["project"].as_str().unwrap_or_default(),
         value["workspace"].as_str().unwrap_or_default(),
@@ -219,6 +220,11 @@ pub(super) fn print_terminal_row(value: &Value) {
         value["activity"].as_str().unwrap_or_default(),
         json_scalar(&value["exit_code"]),
         json_scalar(&value["exit_signal"]),
+        if value["unread"].is_object() {
+            "unread"
+        } else {
+            ""
+        },
     );
 }
 

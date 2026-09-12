@@ -10534,6 +10534,237 @@ fn desktop_codex_callback(
 }
 
 #[test]
+fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let id = summary.id.0.to_string();
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let first = fixture.session_summary(summary.id);
+    let first_unread = first.unread.clone().expect("native Ready is unread");
+    let expected_json = serde_json::to_string(&first_unread).unwrap();
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let listed = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(
+        listed["unread"],
+        serde_json::to_value(&first_unread).unwrap()
+    );
+    let text = cli_with_output(bin, &config, &fixture.socket, &["terminal", "list"]);
+    assert!(text.status.success());
+    assert!(
+        String::from_utf8_lossy(&text.stdout)
+            .lines()
+            .any(|line| line.contains("codex-hooks") && line.ends_with("unread"))
+    );
+
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
+    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        first,
+        "opening the response does not acknowledge it"
+    );
+    dashboard.send(b"\x07R");
+    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    let mut reviewed = first.clone();
+    reviewed.unread = None;
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        reviewed,
+        "actual dashboard input changes unread only"
+    );
+    desktop_codex_callback(&fixture, summary.id, &mut index, "Stop:root:a");
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        reviewed,
+        "native duplicate does not reopen reviewed response"
+    );
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let second = fixture.session_summary(summary.id);
+    let stale = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &[
+            "terminal",
+            "mark-reviewed",
+            &id,
+            "--expected",
+            &expected_json,
+            "--json",
+        ],
+    );
+    assert!(!stale.status.success(), "stale CLI action must fail");
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("Ready observation changed"));
+    assert_eq!(fixture.session_summary(summary.id), second);
+    let expected_json = serde_json::to_string(second.unread.as_ref().unwrap()).unwrap();
+    for _ in 0..2 {
+        let ack = cli_with_output(
+            bin,
+            &config,
+            &fixture.socket,
+            &[
+                "terminal",
+                "mark-reviewed",
+                &id,
+                "--expected",
+                &expected_json,
+                "--json",
+            ],
+        );
+        assert!(
+            ack.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ack.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&ack.stdout).unwrap(),
+            serde_json::json!({"ok": true})
+        );
+    }
+    let mut expected = second;
+    expected.unread = None;
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        expected,
+        "actual CLI requests change unread only"
+    );
+    for command in [
+        "UserPromptSubmit:root:c",
+        "Stop:root:c",
+        "UserPromptSubmit:root:d",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let busy = fixture.session_summary(summary.id);
+    assert_eq!(busy.activity, ovrcr::protocol::AgentActivity::Busy);
+    assert_eq!(busy.unread.as_ref().unwrap().turn.as_deref(), Some("c"));
+    dashboard.detach();
+    drop(dashboard);
+    assert_eq!(fixture.session_summary(summary.id), busy);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=7");
+    dashboard.wait_screen(|screen| screen.contains("Unread") && screen.contains("busy observed"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        busy,
+        "reattaching retains unread while server lives"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "CODEX_NATIVE_EXIT=17");
+    dashboard.resize(80);
+    dashboard.wait_screen(|screen| screen.contains("Unread Unavailable"));
+    let lost = fixture.session_summary(summary.id);
+    assert_eq!(lost.unread, busy.unread);
+    assert_eq!(
+        lost.agent.as_ref().unwrap().health.state,
+        ovrcr::protocol::ReporterHealth::Unavailable
+    );
+    dashboard.send(b"\x07R");
+    dashboard.wait_screen(|screen| {
+        !screen.contains("Unread") && screen.contains("CODEX_NATIVE_EXIT=17")
+    });
+    dashboard.resize(180);
+    dashboard.wait_screen(|screen| screen.contains("unavailable"));
+    let mut expected = lost;
+    expected.unread = None;
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        expected,
+        "review cannot revive a lost reporter or complete native work"
+    );
+    dashboard.detach();
+}
+
+#[test]
+fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (first, _) = codex_session(&fixture, &fixture.socket);
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, first.id, &mut index, command);
+    }
+    assert!(fixture.session_summary(first.id).unread.is_some());
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: first.id }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("expected inventory");
+    };
+    assert!(
+        sessions
+            .iter()
+            .all(|s| s.id != first.id && s.unread.is_none()),
+        "removing a terminal removes its unread result"
+    );
+
+    let (second, _) = codex_session_named(&fixture, &fixture.socket, "codex-restart");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+        desktop_codex_callback(&fixture, second.id, &mut index, command);
+    }
+    assert!(fixture.session_summary(second.id).unread.is_some());
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: true }),
+        Response::Ok
+    );
+    fixture
+        .thread
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap()
+        .join()
+        .unwrap();
+    let socket = fixture.socket.clone();
+    let registry = fixture._root.path().join("config.toml");
+    *fixture.thread.lock().unwrap() = Some(thread::spawn(move || {
+        run_server(ServerPaths { socket }, registry).unwrap();
+    }));
+    fixture.wait_socket();
+    let Response::Inventory { sessions, registry } = fixture.request(Request::Inspect) else {
+        panic!("expected inventory");
+    };
+    assert!(
+        !registry.projects.is_empty(),
+        "restart uses the same saved configuration"
+    );
+    assert!(
+        sessions.is_empty(),
+        "new server cannot resurrect live terminals or unread results from saved configuration"
+    );
+}
+
+#[test]
 fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
@@ -10782,7 +11013,7 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
     }
-    dashboard.wait_screen(|screen| screen.contains("✓ codex-queued"));
+    dashboard.wait_screen(|screen| screen.contains("✓ ● codex-queued"));
     assert!(
         group_exists(blocked_pid),
         "first host no longer blocks the queue"

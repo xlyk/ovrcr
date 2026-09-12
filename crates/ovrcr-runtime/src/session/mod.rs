@@ -417,6 +417,7 @@ impl Session {
                 context_usage: None,
                 agent: None,
                 agent_epoch: 0,
+                unread: None,
             },
             state: Mutex::new(SessionState {
                 reporting: reporting::ReportingState::default(),
@@ -493,6 +494,7 @@ impl Session {
         summary.activity = state.activity;
         summary.context_usage = state.context_usage.clone();
         summary.agent_epoch = state.reporting.epoch;
+        summary.unread = state.reporting.unread();
         summary.agent = state.reporting.snapshot.clone();
         if let Some(agent) = &summary.agent {
             summary.activity = agent

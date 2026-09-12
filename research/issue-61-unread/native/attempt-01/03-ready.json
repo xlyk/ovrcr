@@ -1,0 +1,129 @@
+{
+  "action": "stop",
+  "time_unix": 1789200431.487836,
+  "root": "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-08fRnD",
+  "config": "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-08fRnD/config.toml",
+  "socket": "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-08fRnD/server.sock",
+  "binary": "/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/target/OVRCR GUI.app/Contents/MacOS/ovrcr",
+  "provider_fixture": "unchanged issue60 codex-fixture.py",
+  "terminal_id": 11,
+  "ownership": "/private/tmp/ovrcr-issue61-evidence/native/01-create.json",
+  "before": {
+    "activity": "busy",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "Busy",
+        "turn": "native-a"
+      },
+      "activity_revision": 1,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 0,
+      "metrics": null,
+      "metrics_revision": 0
+    },
+    "agent_epoch": 1,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 11,
+    "label": "env",
+    "measurement_age_ms": null,
+    "name": "issue61-unread",
+    "phase": "running",
+    "pid": 82555,
+    "project": "consigint",
+    "reporting_unavailable": false,
+    "started_unix_ms": 1789200403295,
+    "unread": null,
+    "workspace": "auth-handoff"
+  },
+  "inventory": {
+    "processes": [
+      {
+        "pid": 82555,
+        "ppid": 68794,
+        "pgid": 82555
+      },
+      {
+        "pid": 82559,
+        "ppid": 82555,
+        "pgid": 82559
+      }
+    ],
+    "unix_sockets": [
+      {
+        "pid": 82555,
+        "path": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-a-WUzINs/hook"
+      }
+    ]
+  },
+  "sent": "Stop:root:native-a",
+  "sent_unix": 1789200431.569313,
+  "read": {
+    "cols": 126,
+    "id": 11,
+    "rows": 57,
+    "text": "ISSUE60_NATIVE_FIXTURE_READY pid=82559\nUserPromptSubmit:root:native-a\nISSUE60_CALLBACK_1_OK UserPromptSubmit native-a\nStop:root:native-a\nISSUE60_CALLBACK_2_OK Stop native-a"
+  },
+  "summary": {
+    "activity": "response_ready",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "ResponseReady",
+        "turn": "native-a"
+      },
+      "activity_revision": 2,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 0,
+      "metrics": null,
+      "metrics_revision": 0
+    },
+    "agent_epoch": 1,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 11,
+    "label": "env",
+    "measurement_age_ms": null,
+    "name": "issue61-unread",
+    "phase": "running",
+    "pid": 82555,
+    "project": "consigint",
+    "reporting_unavailable": false,
+    "started_unix_ms": 1789200403295,
+    "unread": {
+      "activity_revision": 2,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "turn": "native-a"
+    },
+    "workspace": "auth-handoff"
+  },
+  "status": "ok"
+}

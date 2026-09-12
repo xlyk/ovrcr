@@ -36,6 +36,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `a` | Register a project (form) |
 | `X` | Close the selected terminal; asks for confirmation |
 | `p` / `r` | Pause or resume the selected session; no confirmation |
+| `R` | Mark the selected terminal's displayed unread Ready observation reviewed |
 | `[` | Freeze the current screen for copying |
 | `PageUp` | Open the session's retained history |
 | `t` or `Ctrl-t` | Open scheduled tasks |
@@ -46,6 +47,40 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 Other `Ctrl`-modified keys are ignored in Browse. `Esc` and `Ctrl-g` cancel a
 history request that has not opened yet.
+
+## Unread responses
+
+A managed Codex terminal keeps one unread indicator for its latest unreviewed
+root Ready response. The indicator is separate from its activity glyph: a new
+Busy report does not clear an earlier unread response. Selecting a terminal,
+viewing its output or receiving a notification does not acknowledge it.
+
+Press `R` in Browse mode, or choose **Mark reviewed** in the terminal action
+menu or command palette. The action names the unread observation displayed by
+the dashboard. If a newer Ready arrives first, the server rejects the stale
+acknowledgement and preserves the newer unread response. Refresh your view and
+review that response before acknowledging it. Repeating a completed
+acknowledgement is safe.
+
+For scripts, read `unread` from the intended terminal's JSON row and pass that
+complete JSON object to the CLI:
+
+```sh
+ovrcr terminal list --json
+ovrcr terminal mark-reviewed 11 --expected "$observation_json" --json
+```
+
+Set `observation_json` to the exact non-null `unread` object you reviewed; it
+contains the binding, turn and activity revision. Do not replace it with a newly
+fetched identity merely to retry a stale request. Mark-reviewed changes only
+unread state, preserving activity, quality, health and native provider behavior.
+
+Unread state survives dashboard detach and reconnect while the server lives.
+Reporter loss retains the historical unread response alongside Unavailable
+health. The server stores at most one observation per terminal; terminal removal
+or server death discards it. No response queue or durable review history is kept.
+Unread tracking is independent of notification preferences and needs no extra
+hook configuration.
 
 ## Copy keys
 

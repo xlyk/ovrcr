@@ -523,6 +523,7 @@ mod tests {
                         activity: state,
                         context_usage: None,
                         agent_epoch: 1,
+                        unread: None,
                         agent: Some(AgentSnapshot {
                             binding: AgentBinding {
                                 provider: AgentProvider::Codex,

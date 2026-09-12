@@ -275,6 +275,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                 activity: AgentActivity::Unknown,
                 context_usage: None,
                 agent_epoch: 1,
+                unread: None,
                 agent: bound.then(|| AgentSnapshot {
                     binding: AgentBinding {
                         provider: AgentProvider::Claude,

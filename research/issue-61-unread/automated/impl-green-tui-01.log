@@ -1,0 +1,22 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.46s
+     Running tests/tui/main.rs (target/debug/deps/tui-fa553edb8b43499c)
+
+running 3 tests
+test unread::unread_review_key_captures_visible_observation_without_optimistic_clear ... ok
+
+thread 'unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes' (52947286) panicked at tests/tui/unread.rs:69:13:
+80 split=true: 󰚩 OVRCR  agent runtime                                          [Actions] [Menu] CONSIGINT ────────────────────────────│> loading local                           󰘬 auth                               │────────────────────────────────────────     $ local                           │                                             ⠋ ● very-long-session-na…  claude │                                          󰘬 lifecycle                          │                                        ▌    $ local                           │                                             · implement                claude │                                                                               │                                         SPACELIFT-AGENT ──────────────────────│                                          󰘬 progress                           │                                             $ local                           │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                        split hidden  BROWSE  ? Help  Tab Next pane  x Close pane  n Create terminal    
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes ... FAILED
+test unread::unread_review_action_is_discoverable_in_palette_and_terminal_keys ... ok
+
+failures:
+
+failures:
+    unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 183 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

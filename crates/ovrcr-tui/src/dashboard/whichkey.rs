@@ -169,7 +169,9 @@ impl Dashboard {
                     {
                         "Enter"
                     }
-                    (Some('t'), HintAction::Key(KeyCode::Char('p' | 'r'))) if hint.enabled => {
+                    (Some('t'), HintAction::Key(KeyCode::Char('p' | 'r' | 'R')))
+                        if hint.enabled =>
+                    {
                         hint.key
                     }
                     (Some('t'), HintAction::Key(KeyCode::Char('X'))) => "x",

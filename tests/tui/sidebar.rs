@@ -1041,6 +1041,7 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
                         context_usage: None,
                         agent: None,
                         agent_epoch: 0,
+                        unread: None,
                     })
                     .collect(),
             }],
@@ -1169,6 +1170,7 @@ fn shrinking_dashboard_keeps_selected_tree_row_visible() {
             context_usage: None,
             agent: None,
             agent_epoch: 0,
+            unread: None,
         });
     }
     dashboard.select_session(SessionId(50));
