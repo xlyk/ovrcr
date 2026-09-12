@@ -1,0 +1,70 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling fnv v1.0.7
+   Compiling ident_case v1.0.1
+   Compiling strsim v0.11.1
+   Compiling autocfg v1.5.1
+   Compiling serde_core v1.0.229
+   Compiling core-foundation-sys v0.8.7
+   Compiling serde v1.0.229
+   Compiling heck v0.5.0
+   Compiling siphasher v1.0.3
+   Compiling zmij v1.0.23
+   Compiling chrono-tz v0.10.4
+   Compiling virtue v0.0.18
+   Compiling anyhow v1.0.104
+   Compiling phf_shared v0.12.1
+   Compiling iana-time-zone v0.1.65
+   Compiling serde_json v1.0.151
+   Compiling unty v0.0.4
+   Compiling phf v0.12.1
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling num-traits v0.2.19
+   Compiling bincode_derive v2.0.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.5
+   Compiling chrono v0.4.45
+   Compiling serde_derive v1.0.229
+   Compiling darling_core v0.20.11
+   Compiling strum_macros v0.27.2
+   Compiling darling_macro v0.20.11
+   Compiling strum v0.27.2
+   Compiling darling v0.20.11
+   Compiling bincode v2.0.1
+   Compiling derive_builder_core v0.20.2
+   Compiling derive_builder_macro v0.20.2
+   Compiling derive_builder v0.20.2
+   Compiling croner v3.0.1
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.06s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-8a57607605970f51)
+
+running 23 tests
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test codec::tests::preamble_round_trip ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test context::tests::context_claude_projection ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+test context::tests::context_semantics ... ok
+test context::tests::context_json_validation ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test session::tests::response_ready_and_existing_activity_wire_spellings_round_trip ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

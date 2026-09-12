@@ -1,0 +1,61 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.72s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprzQVny/repo/.git/
+[main (root-commit) bbfe0e3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprzQVny/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmprzQVny/server.sock
+
+thread 'codex_unread_real_cli_and_dashboard_review_preserve_native_reporting' (53020801) panicked at tests/server_lifecycle.rs:10367:13:
+dashboard screen deadline: 󰚩 OVRCR  agent runtime                                          [Actions] [Menu]
+ FIXTURE ──────────────────────────────│pid: 84920  elapsed: 0m  agent unavailab
+  󰘬 work                               │tokens —  cost —                        
+     $ local                           │                                        
+     - setup                        sh │running 1 test                          
+▌    ⠼ codex-hooks                  sh │CODEX_NATIVE_READY                      
+                                       │CODEX_CALLBACK=0                        
+                                       │CODEX_CALLBACK=1                        
+                                       │CODEX_CALLBACK=2                        
+                                       │CODEX_CALLBACK=3                        
+                                       │CODEX_CALLBACK=4                        
+                                       │CODEX_CALLBACK=5                        
+                                       │CODEX_CALLBACK=6                        
+                                       │CODEX_CALLBACK=7                        
+                                       │CODEX_NATIVE_EXIT=17                    
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+                                       │                                        
+BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach     
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+test codex_unread_real_cli_and_dashboard_review_preserve_native_reporting ... FAILED
+
+failures:
+
+failures:
+    codex_unread_real_cli_and_dashboard_review_preserve_native_reporting
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 90 filtered out; finished in 6.92s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

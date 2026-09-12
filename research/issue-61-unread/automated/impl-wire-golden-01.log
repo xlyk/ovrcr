@@ -1,0 +1,85 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.05s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-8a57607605970f51)
+
+running 1 test
+wire snapshot for PROTOCOL_VERSION 7:
+        ("Request::DashboardHello", "00"),
+        ("Request::DashboardGeometry", "010102"),
+        ("Request::List", "02"),
+        ("Request::AddProject", "030161022f72022f77"),
+        ("Request::RemoveProject", "040161"),
+        ("Request::CreateWorkspace", "0501610162010163"),
+        ("Request::RemoveWorkspace", "0601610162"),
+        ("Request::CreateSession", "07016101620163000100027368"),
+        ("Request::RemoveSession", "0801"),
+        ("Request::KillSession", "0901"),
+        ("Request::PauseSession", "0a01"),
+        ("Request::ResumeSession", "0b01"),
+        ("Request::Select", "0c010102"),
+        ("Request::Input", "0d010107"),
+        ("Request::Resize", "0e010102"),
+        ("Request::Shutdown", "0f01"),
+        ("Request::Inspect", "10"),
+        ("Request::ReadTerminal", "11010103"),
+        ("Request::SendTerminal", "1201017401"),
+        ("Request::CloseTerminal", "1301"),
+        ("Request::Task", "1400"),
+        ("Request::AgentReport", "1501090909090909090909090909090909090909090909090909090909090909090901010002"),
+        ("Request::HistoryBegin", "1601"),
+        ("Request::HistoryPage", "17010203040506"),
+        ("Request::HistoryEnd", "180102"),
+        ("Request::SetView", "1903010101020101"),
+        ("Request::MarkReviewed", "1e010103696e7604636f6e760101047475726e02"),
+        ("Response::Ok", "00"),
+        ("Response::Hierarchy", "0100"),
+        ("Response::CreatedSession", "020101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506"),
+        ("Response::Screen", "03010301020107"),
+        ("Response::Error", "0401016d"),
+        ("Response::Inventory", "0500010101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506"),
+        ("Response::TerminalText", "060101020174"),
+        ("Response::Task", "070601"),
+        ("Response::HistoryOpened", "0801020301020405"),
+        ("Response::HistoryRows", "090102030401010101780100020102030000"),
+        ("ServerEvent::HierarchyChanged", "0000"),
+        ("ServerEvent::Output", "0101030107"),
+        ("ServerEvent::ScreenDirty", "020103"),
+        ("ServerEvent::SessionChanged", "030101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506"),
+        ("TaskRequest::ListTasks", "00"),
+        ("TaskRequest::GetTask", "0301"),
+        ("TaskRequest::Cancel", "0e01"),
+        ("TaskRequest::Clean", "0f0101"),
+        ("AgentRequest::0", "1a01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507726573657276650003696e7600"),
+        ("AgentRequest::1", "1d01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"),
+        ("AgentRequest::2", "1c01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70"),
+        ("AgentRequest::3", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70000004636f6e76"),
+        ("AgentRequest::4", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70010003696e7604636f6e76010300010a016400076669787475726501036f6e650101000000010a0105010301020101076669787475726501036f6e6501010001000101076669787475726501036f6e65010100"),
+        ("AgentRequest::5", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f7002010003696e7604636f6e7601"),
+        ("AgentRequest::6", "1b01a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5026f70030003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374"),
+        ("AgentRequest::7", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010100020101047475726e"),
+        ("AgentRequest::8", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010100010a016400076669787475726501036f6e650101000000010a0105010301020101076669787475726501036f6e6501010001000101076669787475726501036f6e65010100"),
+        ("AgentRequest::9", "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374"),
+        ("AgentResponse::0", "0a0001a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5"),
+        ("AgentResponse::1", "0a010003696e7604636f6e7601"),
+        ("AgentResponse::2", "0a02"),
+        ("AgentResponse::3", "0a03"),
+        ("AgentActivity::Unknown", "00"),
+        ("AgentActivity::Idle", "01"),
+        ("AgentActivity::Busy", "02"),
+        ("AgentActivity::WaitingInput", "03"),
+        ("AgentActivity::Error", "04"),
+        ("AgentActivity::ResponseReady", "05"),
+
+thread 'wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version' (53023401) panicked at crates/ovrcr-protocol/src/wire.rs:880:13:
+wire encoding changed; bump PROTOCOL_VERSION in codec.rs and replace EXPECTED with the block above
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... FAILED
+
+failures:
+
+failures:
+    wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-protocol --lib`

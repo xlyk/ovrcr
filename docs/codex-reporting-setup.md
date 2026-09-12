@@ -103,6 +103,10 @@ Initial resume, picker/last, fork, exec, remote and unknown versions/options are
 
 ## Acceptance evidence
 
+The [unread acceptance record](../research/issue-61-unread/README.md) documents
+exact-observation acknowledgement, reconnect and lifetime behavior, retained
+failures, independent review, and separate automated/native results.
+
 The [macOS native acceptance](../research/codex-response-ready-acceptance/native-final/README.md) used actual setup output and verified background Ready, reconnect with the same provider PID, a second Busy→Ready turn, child completion while the root remained Busy, next-prompt rebinding after backtracking, and retained Ready with Unavailable health at 50 columns after exit. Interruption evidence from Task 2 is retained for the unchanged hook code. Metrics remained null.
 
 The [final verification record](../research/codex-response-ready-acceptance/final/README.md) records four passing hosted CI jobs in run `34570470022`: 663 macOS and 637 Linux tests, with 14 intentional ignores on each platform and separate passing capacity and memory gates. Linux evidence is automated. Local full-suite attempts failed and remain retained; no local full-suite pass is claimed. Failed native input attempts are also retained separately from the accepted retry. All 21 recorded processes and 16 process groups were verified absent, and task-owned socket, temporary root and private credential copy were removed.

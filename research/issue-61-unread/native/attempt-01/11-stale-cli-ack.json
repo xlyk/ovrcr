@@ -1,0 +1,114 @@
+{
+  "expected": {
+    "activity_revision": 2,
+    "binding": {
+      "conversation": "root",
+      "generation": 1,
+      "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+      "provider": "Codex"
+    },
+    "turn": "native-a"
+  },
+  "before": {
+    "activity": "response_ready",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "ResponseReady",
+        "turn": "native-b"
+      },
+      "activity_revision": 4,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 0,
+      "metrics": null,
+      "metrics_revision": 0
+    },
+    "agent_epoch": 1,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 11,
+    "label": "env",
+    "measurement_age_ms": null,
+    "name": "issue61-unread",
+    "phase": "running",
+    "pid": 82555,
+    "project": "consigint",
+    "reporting_unavailable": false,
+    "started_unix_ms": 1789200403295,
+    "unread": {
+      "activity_revision": 4,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "turn": "native-b"
+    },
+    "workspace": "auth-handoff"
+  },
+  "after": {
+    "activity": "response_ready",
+    "agent": {
+      "activity": {
+        "quality": "Observed",
+        "state": "ResponseReady",
+        "turn": "native-b"
+      },
+      "activity_revision": 4,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "health": {
+        "reason": null,
+        "state": "Connected"
+      },
+      "health_revision": 0,
+      "metrics": null,
+      "metrics_revision": 0
+    },
+    "agent_epoch": 1,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 11,
+    "label": "env",
+    "measurement_age_ms": null,
+    "name": "issue61-unread",
+    "phase": "running",
+    "pid": 82555,
+    "project": "consigint",
+    "reporting_unavailable": false,
+    "started_unix_ms": 1789200403295,
+    "unread": {
+      "activity_revision": 4,
+      "binding": {
+        "conversation": "root",
+        "generation": 1,
+        "invocation": "d8a5a6045cffe46189fe03dd05389dc9d09a6123946c0ec906c025ed2b7294ba",
+        "provider": "Codex"
+      },
+      "turn": "native-b"
+    },
+    "workspace": "auth-handoff"
+  },
+  "exit": 1,
+  "stdout": "",
+  "stderr": "{\"error\":{\"code\":\"Conflict\",\"message\":\"Ready observation changed; inspect the unread response before reviewing it\"}}\n",
+  "expected_result": "stale"
+}

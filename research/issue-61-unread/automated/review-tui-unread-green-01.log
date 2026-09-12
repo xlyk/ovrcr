@@ -1,0 +1,15 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-tui)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.66s
+     Running tests/tui/main.rs (target/debug/deps/tui-fa553edb8b43499c)
+
+running 3 tests
+test unread::unread_review_key_captures_visible_observation_without_optimistic_clear ... ok
+test unread::unread_review_action_is_discoverable_in_palette_and_terminal_keys ... ok
+test unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 183 filtered out; finished in 0.02s
+
