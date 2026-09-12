@@ -34,6 +34,7 @@ mod mouse;
 mod palette;
 mod sidebar;
 mod split;
+mod unread;
 
 fn dashboard_fixture() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
@@ -56,6 +57,7 @@ fn dashboard_fixture() -> Dashboard {
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     };
     dashboard.hierarchy = HierarchySnapshot {
         projects: vec![

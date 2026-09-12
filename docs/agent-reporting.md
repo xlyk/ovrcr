@@ -78,6 +78,13 @@ line, with a `✓` glyph in the sidebar, and retain it until the next activity
 report, including across reconnects. Reporter health and process exit remain
 separate; Ready does not acknowledge unread output or imply known usage or cost.
 
+Managed Codex also retains one unread identity for its latest root Ready
+observation. [Mark-reviewed](dashboard.md#unread-responses) is explicit and checks
+that identity before clearing it. Selecting or viewing a terminal, new Busy
+activity, and reporter loss do not clear unread state. The server retains it
+through dashboard reconnect but does not persist it across server death. Manual
+activity reports and other providers do not create Codex unread observations.
+
 Reports without `--sequence` are accepted in arrival order; the first such report
 selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects
 sequenced mode, which must advance the session's sequence. The two modes cannot

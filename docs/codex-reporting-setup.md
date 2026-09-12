@@ -83,7 +83,23 @@ observations. An alert retains the same Observed meaning as the indicator.
 An independent `ready_sound` setting, or uppercase `S` in browse mode, plays a
 [sound](dashboard.md#ready-sound) for the same responses under the same rules.
 
-Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, unread acknowledgement and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+Unread state is separate from activity and alerts. Each accepted managed Codex
+root Ready observation replaces the terminal's previous unread observation.
+Selecting the terminal, viewing its output, receiving Busy, or delivering an
+alert does not mark it reviewed. Use the explicit [mark-reviewed
+action](dashboard.md#unread-responses) when you have reviewed the response.
+Acknowledgement names the observation you saw, so a delayed acknowledgement
+cannot clear a newer response. Repeating an acknowledgement is safe.
+
+The server retains at most one unread observation per terminal in memory.
+Dashboard detach and reconnect preserve it while the server lives. Reporter loss
+retains it alongside Unavailable health; an unread historical response does not
+prove current readiness. Mark-reviewed changes only unread state, preserving
+activity, quality, reporter health and native behavior. Removing the terminal or
+losing the server loses its unread state; there is no durable response history.
+Unread tracking requires no notification preference or additional hook setup.
+
+Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. This scope excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
 ## Acceptance evidence
 

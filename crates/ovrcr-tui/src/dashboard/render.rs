@@ -507,6 +507,12 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 ))
             },
             |session| {
+                if session.unread.is_some() {
+                    return Line::from(Span::styled(
+                        clip_text(&unread_status(session), usize::from(rect.metadata.width)),
+                        Style::default().fg(TEAL),
+                    ));
+                }
                 let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
                     "closed".to_string()
                 } else {
@@ -812,6 +818,10 @@ fn render_split_metadata(
             rect.metadata.width,
         );
     }
+    if let Some(session) = session.filter(|session| session.unread.is_some()) {
+        // Keep both unread and reporting availability ahead of names, PID and geometry.
+        text = clip_text(&unread_status(session), usize::from(rect.metadata.width));
+    }
     let style = if focused {
         Style::default().fg(CRUST).bg(MAUVE)
     } else {
@@ -1012,12 +1022,19 @@ fn tree_line_text(
                     status => status,
                 };
                 let subtext = Style::default().fg(SUBTEXT);
+                let unread = if session.unread.is_some() { " ●" } else { "" };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
+                        Span::styled(unread, Style::default().fg(TEAL)),
                         Span::styled(
-                            clip_text(" local", width.saturating_sub(SESSION_INDENT.len() + 1)),
+                            clip_text(
+                                " local",
+                                width.saturating_sub(
+                                    SESSION_INDENT.len() + 1 + Line::raw(unread).width(),
+                                ),
+                            ),
                             subtext,
                         ),
                     ],
@@ -1037,15 +1054,16 @@ fn tree_line_text(
                     .map_or(session.label.as_str(), |(_, model)| model)
                     .trim();
                 let model_cells = Line::raw(model).width();
+                let unread = if session.unread.is_some() { "● " } else { "" };
+                let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
                 // Name width when the model is shown: two cells of gap and one trailing cell.
-                let name_width_with_model =
-                    width.saturating_sub(SESSION_NAME_COLUMN + model_cells + 3);
+                let name_width_with_model = width.saturating_sub(name_column + model_cells + 3);
                 let show_model =
                     !model.is_empty() && name_width_with_model >= SESSION_NAME_MIN_WIDTH;
                 let name_width = if show_model {
                     name_width_with_model
                 } else {
-                    width.saturating_sub(SESSION_NAME_COLUMN)
+                    width.saturating_sub(name_column)
                 };
                 let right = if show_model {
                     let color = label_color(&session.label);
@@ -1064,6 +1082,7 @@ fn tree_line_text(
                         Span::raw(SESSION_INDENT),
                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
                         Span::raw(" "),
+                        Span::styled(unread, Style::default().fg(TEAL)),
                         Span::styled(clip_text(&session.name, name_width), name_style),
                     ],
                     Span::raw(" "),
@@ -1125,6 +1144,17 @@ fn compose_row(
     spans.push(Span::styled(fill.content.repeat(gap), fill.style));
     spans.extend(right);
     Line::from(spans)
+}
+
+fn unread_status(session: &SessionSummary) -> String {
+    let unavailable = session
+        .agent
+        .as_ref()
+        .is_none_or(|agent| agent.health.state == ReporterHealth::Unavailable);
+    let health = if unavailable { " Unavailable" } else { "" };
+    let activity = provider_activity(session);
+    let activity = activity.replace(" unavailable", "");
+    format!("Unread{health}{activity}")
 }
 
 fn provider_activity(session: &SessionSummary) -> String {

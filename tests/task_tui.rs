@@ -54,6 +54,7 @@ fn ready_dashboard() -> Dashboard {
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     };
     let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
     dashboard.outer_area = Rect::new(0, 0, 80, 24);

@@ -105,6 +105,13 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
 pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppResult<()> {
     match command {
         TerminalCommand::Create(args) => create_terminal(args, json_output),
+        TerminalCommand::MarkReviewed { id, expected } => mutate_without_start(
+            Request::MarkReviewed {
+                session: SessionId(id),
+                expected,
+            },
+            json_output,
+        ),
         TerminalCommand::List { project, workspace } => {
             let (registry, mut sessions) = inspect()?;
             if let Some(project) = project.as_deref() {

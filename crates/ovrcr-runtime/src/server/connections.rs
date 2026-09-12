@@ -438,7 +438,8 @@ pub(super) fn handle_request_with_id(
         request @ (Request::ReserveAgent(_)
         | Request::Supervisor(_)
         | Request::AgentStatus { .. }
-        | Request::SupervisorHello(_)) => {
+        | Request::SupervisorHello(_)
+        | Request::MarkReviewed { .. }) => {
             let (completion, result) = mpsc::sync_channel(1);
             match state.dispatch.try_send(DispatchMessage::AgentCommand {
                 request,
