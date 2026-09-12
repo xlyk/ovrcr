@@ -1,0 +1,411 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-d94f0a974003d1a6)
+
+running 90 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvCHawX/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXIH1Vp/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3Xnt2I/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpk96drp/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpvmnPmz/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGTighn/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOFIvZN/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpd07zla/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXXDfxs/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLXCtNn/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpHW98Fw/repo/.git/
+[main (root-commit) 5be474f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) ee67afb] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_sequence_does_not_regress_state ... ok
+test agent_run_native_exec_helper ... ignored, native exec descriptor fixture launched through agent run
+test agent_run_native_helper ... ignored, native child fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpCNfJ1K/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpcfeDGR/repo/.git/
+[main (root-commit) adf0656] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) adf0656] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_hook_startup_registration_is_visible ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpD41Rbb/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpYHtaxn/repo/.git/
+[main (root-commit) 78fe556] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 78fe556] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_channel_failure_releases_reservation_before_native_fallback ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpPOlfWf/repo/.git/
+[main (root-commit) 78fe556] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_native_exec_does_not_inherit_supervisor_lease ... ok
+test agent_hook_round_trip_survives_dashboard_reconnect ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpTCyO6W/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpT8zif6/repo/.git/
+[main (root-commit) 78fe556] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 78fe556] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_failed_bind_status_disconnects_watch ... FAILED
+test agent_admission_failed_unavailable_publication_disconnects_watch ... FAILED
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... FAILED
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpJPjIIM/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQxmJjO/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfYtXk5/repo/.git/
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... FAILED
+test agent_admission_branch_freezes_without_replacement_or_reopening ... FAILED
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppnZyy2/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxtqzil/repo/.git/
+test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+test agent_run_owns_native_group_and_restores_terminal_after_forwarded_term ... ok
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test client_with_wrong_protocol_version_is_refused ... ok
+test codex_hook_native_helper ... ignored, Codex synchronous native child fixture
+test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+test agent_run_runtime_kill_reaches_owned_native_group ... ok
+test agent_hook_capability_and_exit_are_enforced ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpyDRpCL/repo/.git/
+[main (root-commit) 2e0ad01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_run_supervisor_sigkill_releases_reporting_watch ... ok
+test cli_exit_preserves_session_and_shutdown_kill_cleans_up ... ok
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+test claude_metrics_missing_initial_file_preserves_activity_and_recovers_same_path ... ok
+test claude_metrics_collector_loss_propagates_while_native_stays_usable ... ok
+test claude_metrics_route_collects_partial_usage_and_finalizes_native_exit ... ok
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+test dashboard_duplicate_hello_does_not_write_from_reader_thread ... ok
+test claude_metrics_finalization_recovers_original_receipt_after_lost_ack ... ok
+test dashboard_receives_concrete_ordinary_request_errors ... ok
+test dashboard_request_id_zero_does_not_block_followup_response ... ok
+test backpressured_input_and_send_do_not_block_inspect_or_kill ... ok
+test dashboard_shutdown_acknowledges_through_writer_before_teardown ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5gsUMo/repo/.git/
+[main (root-commit) f3b9af3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbaH6b3/repo/.git/
+[main (root-commit) f3b9af3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_hooks_ready_interrupt_duplicates_and_rebind ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpbwu6dx/repo/.git/
+[main (root-commit) 9c67fd3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_lost_bind_receipt_recovers_before_busy ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmAL5zz/repo/.git/
+[main (root-commit) 8e03583] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test codex_managed_missing_end_disables_overlap_without_native_failure ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVivRDv/repo/.git/
+[main (root-commit) 9b7b5bd] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test duplicate_dashboard_hello_uses_the_sole_writer ... ok
+test codex_managed_native_death_never_synthesizes_ready_and_removes_socket ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppGaVYv/repo/.git/
+[main (root-commit) 6e18bf7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplDbjO6/repo/.git/
+[main (root-commit) a037eb1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_report_rejects_old_and_invalid_samples ... ok
+test fresh_pty_outer_channel_helper ... ignored, isolated inherited environment fixture subprocess
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpQsEGLq/repo/.git/
+[main (root-commit) d2eb8e4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test fresh_pty_does_not_inherit_outer_managed_reporting_channel ... ok
+test history_memory_measurements ... ignored, bounded historical scrollback RSS measurement
+test context_report_replaces_snapshot_and_preserves_activity ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1Gfry4/repo/.git/
+[main (root-commit) d2eb8e4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test context_snapshot_survives_dashboard_reattach ... ok
+test hook_child_report_helper ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpek20d7/repo/.git/
+[main (root-commit) f7fa17a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_fixture_failure_cleanup_reaps_owned_child_and_server ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLc0kWM/repo/.git/
+[main (root-commit) f7fa17a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test control_lifecycle_enforces_every_removal_gate ... ok
+test native_exit_stalled_reporting_helper ... ignored, isolated signal handler and native supervision fixture
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp0ZWkYN/repo/.git/
+[main (root-commit) 59115b8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test dashboard_geometry_sizes_connected_empty_and_detached_sessions ... ok
+test pause_resume_child_fixture ... ignored
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpA7gWkL/repo/.git/
+[main (root-commit) 028b2a6] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test native_exit_is_bounded_when_reporting_callback_stalls ... ok
+test desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmppwomaI/repo/.git/
+[main (root-commit) 5b477e2] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_host_failure_and_blocking_never_block_input_or_detach ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5onDQr/repo/.git/
+[main (root-commit) fd635a9] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpOe30hM/repo/.git/
+[main (root-commit) a3a63e4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_missing_host_tool_preserves_response_and_dashboard_controls ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXfYgUK/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdtR9F7/repo/.git/
+[main (root-commit) a36670a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) a36670a] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_delivery_failure_disconnects_without_stopping_native ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp1GpCDc/repo/.git/
+[main (root-commit) ab67a01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4HJ9wU/repo/.git/
+[main (root-commit) ab67a01] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test fast_exit_session_is_retained_as_exited ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGPTAJF/repo/.git/
+[main (root-commit) 7b2759f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+test fifty_sessions_survive_detach_and_leave_no_process_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpgZBorf/repo/.git/
+[main (root-commit) 847be4c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_disconnected_requester_still_wakes_accept ... ok
+test history_frozen_page_survives_eviction_and_exit ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpHHN0gt/repo/.git/
+[main (root-commit) 241f36c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_reattach_reads_retained_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphFNVLZ/repo/.git/
+[main (root-commit) e48769e] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test history_slow_dashboard_recovers_after_finite_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZ9RjyZ/repo/.git/
+[main (root-commit) e48769e] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test kill_does_not_block_dashboard_geometry ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRu28Fd/repo/.git/
+[main (root-commit) ecfe402] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_backpressured_input_keeps_controls_available ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpp7QAlX/repo/.git/
+[main (root-commit) b031895] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_control_races_converge ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpCszWsk/repo/.git/
+[main (root-commit) 131c46b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_keeps_shared_existing_socket_directory_and_secures_the_socket ... ok
+test startup_read_only_commands_do_not_start_a_missing_server ... ok
+test startup_refuses_symlinked_socket_directory ... ok
+test startup_socket_directory_is_private ... ok
+test startup_stale_concurrent_attempts_leave_one_surviving_server ... ok
+test pause_resume_kill_runs_group_handlers ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp5LCeGv/repo/.git/
+[main (root-commit) 131c46b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test startup_stale_socket_is_recovered ... ok
+test pause_resume_server_refuses_removal_and_late_mutation ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3sbm4Q/repo/.git/
+[main (root-commit) d4896f3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_shutdown_cleans_stopped_groups ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFSittM/repo/.git/
+[main (root-commit) d4896f3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pause_resume_stops_group_and_rejects_input ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFR61ee/repo/.git/
+[main (root-commit) d4896f3] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test ready_sound_is_independent_of_desktop_notifications_on_the_managed_path ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpusqMIx/repo/.git/
+[main (root-commit) 94d3d1d] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test resource_terminal_requests_preserve_background_state_and_close_cleanly ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpFyZ1Ek/repo/.git/
+[main (root-commit) 9ef07ba] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test selection_snapshot_precedes_later_quiet_tail_output ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdMY2pZ/repo/.git/
+[main (root-commit) 227c78b] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_kill_terminates_sessions_concurrently ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpBbsNx1/repo/.git/
+[main (root-commit) 8b3c666] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test shutdown_without_kill_rejects_exited_record ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMpZwpU/repo/.git/
+[main (root-commit) 8b3c666] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test slow_dashboard_recovers_after_output_burst ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpnkWO6B/repo/.git/
+[main (root-commit) b01b306] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test split_server_two_streams_resize_resync_and_detach ... ok
+test startup_concurrent_attempts_leave_one_server ... ok
+test startup_failure_reports_server_log ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpe8PrBS/repo/.git/
+[main (root-commit) d8f91b4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_remove_succeeds_after_directory_deleted ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMFmVFs/repo/.git/
+[main (root-commit) d8f91b4] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test workspace_shell_failure_retains_worktree_and_registry ... ok
+
+failures:
+
+---- agent_admission_failed_bind_status_disconnects_watch stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3Xnt2I/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp3Xnt2I/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'agent_admission_failed_bind_status_disconnects_watch' (52893363) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ovrcr server stopped
+
+---- agent_admission_failed_unavailable_publication_disconnects_watch stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpHW98Fw/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpHW98Fw/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'agent_admission_failed_unavailable_publication_disconnects_watch' (52893364) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+ovrcr server stopped
+
+---- agent_admission_private_claude_route_binds_once_and_clear_retains_lease stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLXCtNn/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLXCtNn/server.sock
+
+thread 'agent_admission_private_claude_route_binds_once_and_clear_retains_lease' (52893367) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+ovrcr server stopped
+
+---- agent_admission_lost_bind_then_clear_resolves_without_another_startup stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGTighn/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpGTighn/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+
+thread 'agent_admission_lost_bind_then_clear_resolves_without_another_startup' (52893366) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+ovrcr server stopped
+
+---- agent_admission_branch_freezes_without_replacement_or_reopening stdout ----
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXXDfxs/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpXXDfxs/server.sock
+
+thread 'agent_admission_branch_freezes_without_replacement_or_reopening' (52893361) panicked at tests/server_lifecycle.rs:5513:9:
+session SessionId(3) did not produce terminal marker "ADMISSION_READY"; last response: Some(TerminalText { session: SessionId(3), size: TerminalSize { rows: 40, cols: 120 }, text: "" })
+ovrcr server stopped
+
+
+failures:
+    agent_admission_branch_freezes_without_replacement_or_reopening
+    agent_admission_failed_bind_status_disconnects_watch
+    agent_admission_failed_unavailable_publication_disconnects_watch
+    agent_admission_lost_bind_then_clear_resolves_without_another_startup
+    agent_admission_private_claude_route_binds_once_and_clear_retains_lease
+
+test result: FAILED. 76 passed; 5 failed; 9 ignored; 0 measured; 0 filtered out; finished in 41.95s
+
+error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`

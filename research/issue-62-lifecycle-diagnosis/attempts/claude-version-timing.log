@@ -1,0 +1,5 @@
+# 2026-09-12T08:21:03Z /usr/bin/time -p claude --version, three runs, host loadavg { 5.99 6.35 6.08 }
+# /Users/xlyk/.local/bin/claude
+2.1.269 (Claude Code) real 0.00 user 0.00 sys 0.00 
+2.1.269 (Claude Code) real 0.00 user 0.00 sys 0.00 
+2.1.269 (Claude Code) real 0.00 user 0.00 sys 0.00 

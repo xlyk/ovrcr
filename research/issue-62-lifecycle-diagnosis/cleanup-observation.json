@@ -1,0 +1,36 @@
+{
+  "observed_utc": "2026-09-12T08:22:56.479038+00:00",
+  "scope": "processes whose executable lives under this worktree's target directory (the tool shell whose command line merely quotes the path is excluded), and ControlFixture temporary roots (.tmp*) in the user temporary directory",
+  "processes_from_this_worktree_now": [],
+  "fixture_tmp_roots_now": {
+    "count": 1778,
+    "modified_at_or_after_session_start_2026-09-12T08:01Z": 0,
+    "by_day": {
+      "2026-09-05": 82,
+      "2026-09-06": 217,
+      "2026-09-07": 360,
+      "2026-09-08": 419,
+      "2026-09-09": 308,
+      "2026-09-10": 229,
+      "2026-09-11": 143,
+      "2026-09-12 (before 08:01Z)": 20
+    },
+    "ownership": "not established by this task; left untouched"
+  },
+  "earlier_observations": [
+    {
+      "when": "after attempts 01-05, before attempt 06",
+      "processes_from_this_worktree": [],
+      "fixture_tmp_roots": "reported 0 by `ls | grep -c '^\\.tmp'`, which omits dot entries; that count was invalid and is superseded by the listing above"
+    },
+    {
+      "when": "immediately after attempt 06",
+      "processes_from_this_worktree": [],
+      "other_server_lifecycle_processes": "two from .worktrees/issue-61-unread (pids 40889, 53271), a sibling session's own suite; not signaled",
+      "fixture_tmp_roots": "same invalid check; superseded"
+    }
+  ],
+  "limits": "fixture PIDs/PGIDs are recorded inside each ControlFixture and reaped on drop; this file is a post-run absence check, not a per-process-group manifest",
+  "fixture_roots_named_in_attempt_logs": 295,
+  "fixture_roots_named_in_attempt_logs_still_present": []
+}

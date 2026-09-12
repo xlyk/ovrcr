@@ -1,0 +1,48 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-d94f0a974003d1a6)
+
+running 9 tests
+test agent_admission_native_helper ... ignored, native admission fixture launched through agent run
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZxEthF/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpF1NL8W/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpH6KWDq/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVGbM9q/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpmEIkSe/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpX1ddgZ/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpdui2g9/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpx4XDig/repo/.git/
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 8814b4f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test agent_admission_explicit_resume_preserves_argv_and_collects_conversation_usage ... ok
+test agent_admission_short_resume_on_2_1_268_preserves_argv_and_lifecycle ... ok
+test agent_admission_private_claude_route_binds_once_and_clear_retains_lease ... ok
+test agent_admission_branch_freezes_without_replacement_or_reopening ... ok
+test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+test agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments ... ok
+test agent_admission_lost_bind_then_clear_resolves_without_another_startup ... ok
+test agent_admission_failed_bind_status_disconnects_watch ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 81 filtered out; finished in 3.65s
+

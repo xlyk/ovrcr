@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "--locked",
+    "--offline",
+    "--",
+    "--nocapture"
+  ],
+  "revision": "b7f139f62b66eb10f73f22ffff51b8b074163fc3",
+  "source_change": "attempts/diagnostic-02.patch applied (env_lock guard removed, timeline instrumentation)",
+  "test_threads": "default",
+  "host_loadavg_before": "{ 5.09 6.58 5.00 }",
+  "start_utc": "2026-09-12T08:05:30.276006+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-09-12T08:06:14.870809+00:00"
+}

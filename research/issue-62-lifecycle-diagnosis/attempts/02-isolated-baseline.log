@@ -1,0 +1,23 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-d94f0a974003d1a6)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpE6eVMx/repo/.git/
+[main (root-commit) 5ddc942] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpE6eVMx/server.sock
+ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpE6eVMx/server.sock
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_TIMELINE agent_admission_failed_unavailable_publication_disconnects_watch: ready=true create_session_ms=3 observed_after_create_ms=740 identity_mtime=Some(6) argv_mtime=Some(727) probe_diag=Ok(["+545ms pid=93187 agent run entered", "+550ms pid=93187 lease reserved", "+550ms pid=93187 receiver entered lease=true", "+723ms pid=93187 exited Some(ExitStatus(unix_wait_status(0))) after 171ms (spawn 0ms) bytes=22", "+723ms pid=93187 receiver decided launch=true"])
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=supervisor
+ADMISSION_PROXY request=inspect
+ADMISSION_PROXY request=reserve
+ADMISSION_PROXY request=supervisor
+ovrcr server stopped
+test agent_admission_failed_unavailable_publication_disconnects_watch ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 89 filtered out; finished in 2.82s
+
