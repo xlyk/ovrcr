@@ -15,7 +15,7 @@
     "--nocapture"
   ],
   "revision": "b7f139f62b66eb10f73f22ffff51b8b074163fc3",
-  "source_change": "diagnostic-only.patch (v2) applied: env_lock guard removed, probe/receiver/agent-run timeline instrumented, ADMISSION_READY wait reports timeline",
+  "source_change": "attempts/diagnostic-02.patch applied (env_lock guard removed, timeline instrumentation)",
   "test_threads": "default",
   "host_loadavg_before": "{ 5.70 6.79 5.03 }",
   "start_utc": "2026-09-12T08:05:07.759474+00:00",

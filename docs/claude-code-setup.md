@@ -44,10 +44,11 @@ the probe returns a recognized Claude version line, and separate `unsupported`
 or `unavailable` probe status. Its `resume_forms` field describes the forms for
 the detected supported version. Doctor never starts a server and does not certify
 all effective settings sources. The probe waits at most one second for the
-executable's version line; on a saturated host a supported executable can
-therefore report `unavailable`, and a managed launch prints `agent admission
-unavailable; running native command` and continues natively. Rerun once the
-host is quieter before treating that as a version problem.
+executable's version line. When it misses that budget, doctor reports
+`unavailable` and a managed launch prints `agent admission unavailable;
+running native command`, then runs the native command. A heavily loaded host
+can cause this with a supported version, so rerun on a quieter host before
+treating it as a version problem.
 
 ## Launch and inspect
 
