@@ -363,6 +363,7 @@ and a parse error shows in the footer and also uses defaults.
 
 ```toml
 desktop_notifications = false        # opt in to background Codex Ready alerts
+ready_sound = false                  # opt in to a sound for the same responses
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 
@@ -397,19 +398,48 @@ hiding a terminal does not replay a previously suppressed response. No active
 dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
-subprocess deadline. Disabling notifications or detaching cancels pending work.
+subprocess deadline. Disabling the last enabled alert channel (notifications or the
+[ready sound](#ready-sound)) or detaching cancels pending work.
 Delivery is best effort, with no retries. Host failures do not change reporting,
 native approvals, input or process state. A host command error displays
 **Desktop notifications unavailable** in the footer.
 
 macOS uses `osascript`; the system chooses its sender identity and notification
 preferences. Linux uses `notify-send` from the desktop session. OVRCR requests no
-sound. Neither a successful host command nor an unchanged footer proves that the
+notification sound; the [ready sound](#ready-sound) is a separate option. Neither
+a successful host command nor an unchanged footer proves that the
 desktop displayed the alert: OS permission, Focus/Do Not Disturb and desktop
 policy can suppress it. OVRCR does not change those settings. Native acceptance
 and platform limits are recorded in the [issue 59 evidence](../research/issue-59-desktop-alerts/README.md).
 Actual desktop delivery is verified on macOS. Linux has automated coverage; native
 Linux desktop delivery remains unverified.
+
+## Ready sound
+
+The ready sound is off by default and independent of desktop notifications:
+either, both or neither can be on. Set `ready_sound = true` in `dashboard.toml`
+to enable it when attaching. In browse mode, press uppercase `S`, or search the
+command palette for **ready sound**, to toggle it for the current dashboard
+without rewriting your settings file. In terminal mode `S` remains ordinary
+terminal input; use Ctrl-g first.
+
+A sound follows exactly the same selection as a desktop alert: one accepted
+managed Codex root response becoming Ready outside every visible pane, with the
+same deduplication, visibility suppression and attach/reconnect baseline. When
+both are on, one response produces one alert and one sound. Nothing about the
+response or terminal is passed to the player.
+
+macOS plays `/System/Library/Sounds/Glass.aiff` with `afplay` at the current
+output volume. Linux plays the freedesktop sound theme's
+`/usr/share/sounds/freedesktop/stereo/complete.oga` with `paplay`. Playback uses
+the same bounded host queue as notifications, after the notification when both
+are on, with a five-second deadline. A missing or failing player displays
+**Ready sound unavailable** in the footer and changes nothing else. Neither a
+successful player command nor an unchanged footer proves the sound was audible:
+a muted or absent output device silences it, and OVRCR does not change those
+settings. Real host playback is recorded in the
+[issue 60 evidence](../research/issue-60-ready-sound/README.md) for macOS.
+Linux has automated coverage only; native Linux playback remains unverified.
 
 ## Output delivery
 

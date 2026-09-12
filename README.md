@@ -208,6 +208,8 @@ Optional [desktop notifications](docs/dashboard.md#desktop-notifications) alert
 when a background managed Codex response becomes Ready. They default off; press
 `N` in browse mode to toggle them for the current dashboard. Alerts identify the
 terminal without including conversation content and require an active dashboard.
+An independent [ready sound](docs/dashboard.md#ready-sound), toggled with `S`,
+follows the same responses and also defaults off.
 
 ## The CLI
 

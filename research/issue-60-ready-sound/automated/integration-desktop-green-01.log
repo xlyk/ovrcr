@@ -1,0 +1,37 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/server_lifecycle.rs (target/debug/deps/server_lifecycle-9cb885944ef19423)
+
+running 6 tests
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp9l1NZA/repo/.git/
+[main (root-commit) 7b59f21] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_default_off_and_disabled_events_do_not_replay_on_enable ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp55K31u/repo/.git/
+[main (root-commit) b558934] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmptPU1gO/repo/.git/
+[main (root-commit) 44b1f53] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_host_failure_and_blocking_never_block_input_or_detach ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpLBZDyw/repo/.git/
+[main (root-commit) 641e887] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test ready_sound_is_independent_of_desktop_notifications_on_the_managed_path ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpR7q1Wn/repo/.git/
+[main (root-commit) b0aa099] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_missing_host_tool_preserves_response_and_dashboard_controls ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpZK6y7n/repo/.git/
+[main (root-commit) 9836edc] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 84 filtered out; finished in 11.56s
+

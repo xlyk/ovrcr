@@ -10277,10 +10277,21 @@ struct DesktopAlertDashboard {
 }
 
 impl DesktopAlertDashboard {
-    fn start(fixture: &ControlFixture, enabled: Option<bool>) -> Self {
+    fn start(fixture: &ControlFixture, settings: Option<&str>) -> Self {
         let directory = fixture._root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
+        let player = directory.join(if cfg!(target_os = "macos") {
+            "afplay"
+        } else {
+            "paplay"
+        });
+        std::fs::write(
+            &player,
+            "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.sound.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.sound.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_SOUND_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.sound.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD.sound\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o700)).unwrap();
         let executable = directory.join(if cfg!(target_os = "macos") {
             "osascript"
         } else {
@@ -10292,9 +10303,9 @@ impl DesktopAlertDashboard {
         )
         .unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let settings = fixture._root.path().join("dashboard.toml");
-        if let Some(enabled) = enabled {
-            std::fs::write(&settings, format!("desktop_notifications = {enabled}\n")).unwrap();
+        let settings_path = fixture._root.path().join("dashboard.toml");
+        if let Some(settings) = settings {
+            std::fs::write(&settings_path, settings).unwrap();
         }
         let size = portable_pty::PtySize {
             rows: 32,
@@ -10306,7 +10317,7 @@ impl DesktopAlertDashboard {
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
         command.env("OVRCR_SOCKET", &fixture.socket);
         command.env("OVRCR_CONFIG", fixture._root.path().join("config.toml"));
-        command.env("OVRCR_DASHBOARD_CONFIG", settings);
+        command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
         // Never fall back to the user's real desktop tool if this fixture's
         // executable is deliberately removed for the unavailable-host test.
@@ -10388,35 +10399,58 @@ impl DesktopAlertDashboard {
         self.parser = vt100::Parser::new(32, cols, 0);
     }
 
-    fn wait_calls(&mut self, expected: usize, session: SessionId) {
+    fn wait_record(&mut self, record: &std::path::Path, expected: usize, check: impl Fn(&str)) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let contents = std::fs::read_to_string(&self.record).unwrap_or_default();
+            let contents = std::fs::read_to_string(record).unwrap_or_default();
             let count = contents.lines().filter(|line| *line == "END").count();
-            assert!(count <= expected, "unexpected desktop call: {contents}");
+            assert!(count <= expected, "unexpected host call: {contents}");
             if count == expected {
-                let body = format!("fixture / work / codex-hooks (#{})", session.0);
                 for call in contents.split("END\n").filter(|call| !call.is_empty()) {
-                    assert!(call.contains(&body), "identity missing: {call}");
-                    assert!(
-                        call.contains("OVRCR · response ready"),
-                        "title missing: {call}"
-                    );
-                    assert!(!call.contains("CODEX_CALLBACK"));
-                    assert!(!call.contains("OVRCR_HOOK_TOKEN"));
-                    assert!(!call.contains("root.jsonl"));
+                    check(call);
                 }
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "expected {expected} desktop host calls, received {count}: {contents}; screen: {}",
+                "expected {expected} host calls, received {count}: {contents}; screen: {}",
                 self.parser.screen().contents()
             );
             if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
                 self.parser.process(&bytes);
             }
         }
+    }
+
+    fn wait_calls(&mut self, expected: usize, session: SessionId) {
+        let body = format!("fixture / work / codex-hooks (#{})", session.0);
+        let record = self.record.clone();
+        self.wait_record(&record, expected, |call| {
+            assert!(call.contains(&body), "identity missing: {call}");
+            assert!(
+                call.contains("OVRCR · response ready"),
+                "title missing: {call}"
+            );
+            assert!(!call.contains("CODEX_CALLBACK"));
+            assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+            assert!(!call.contains("root.jsonl"));
+        });
+    }
+
+    fn wait_sound_calls(&mut self, expected: usize) {
+        let file = if cfg!(target_os = "macos") {
+            "/System/Library/Sounds/Glass.aiff"
+        } else {
+            "/usr/share/sounds/freedesktop/stereo/complete.oga"
+        };
+        let record = self.record.with_extension("sound");
+        self.wait_record(&record, expected, |call| {
+            assert_eq!(
+                call,
+                format!("BEGIN\n{file}\n"),
+                "the player receives only the fixed sound file"
+            );
+        });
     }
 
     fn detach(&mut self) {
@@ -10504,7 +10538,8 @@ fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visib
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
-    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     dashboard.select("setup", "HOOK_READY");
     let mut index = 0;
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
@@ -10568,7 +10603,8 @@ fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visib
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
     }
     drop(dashboard);
-    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     dashboard.select("setup", "HOOK_READY");
     for command in ["UserPromptSubmit:root:i", "Stop:root:i"] {
         desktop_codex_callback(&fixture, summary.id, &mut index, command);
@@ -10619,7 +10655,8 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
-    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     let local = fixture.only_session_id();
     assert_eq!(fixture.session_summary(local).name, "local");
     assert_eq!(
@@ -10713,7 +10750,8 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
     let fixture = ControlFixture::new_bounded();
     let (first, _) = codex_session(&fixture, &fixture.socket);
     let (queued, _) = codex_session_named(&fixture, &fixture.socket, "codex-queued");
-    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     dashboard.select("setup", "HOOK_READY");
     let mode = dashboard.record.with_extension("mode");
     let host_pid = dashboard.record.with_extension("pid");
@@ -10775,7 +10813,8 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
-    let mut dashboard = DesktopAlertDashboard::start(&fixture, Some(true));
+    let mut dashboard =
+        DesktopAlertDashboard::start(&fixture, Some("desktop_notifications = true\n"));
     dashboard.select("setup", "HOOK_READY");
     std::fs::remove_file(
         dashboard
@@ -10813,4 +10852,161 @@ fn desktop_notifications_missing_host_tool_preserves_response_and_dashboard_cont
     dashboard.send(b"N");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
     dashboard.detach();
+}
+
+#[test]
+fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    let (summary, _) = codex_session(&fixture, &fixture.socket);
+    let sound_only = Some("ready_sound = true\n");
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, sound_only);
+    dashboard.select("setup", "HOOK_READY");
+    let mut index = 0;
+    for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_sound_calls(1);
+    // The next accepted completion is the barrier for duplicate, child and
+    // interrupted events; every preceding player call is counted.
+    for command in [
+        "Stop:root:a",
+        "UserPromptSubmit:root:b",
+        "Stop:root:b:child",
+        "Interrupt:root:b",
+        "UserPromptSubmit:root:c",
+        "Stop:root:c",
+    ] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_sound_calls(2);
+    assert!(
+        !dashboard.record.exists(),
+        "sound only never calls the desktop host"
+    );
+
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: on"));
+    for command in ["UserPromptSubmit:root:d", "Stop:root:d"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(1, summary.id);
+    dashboard.wait_sound_calls(3);
+
+    dashboard.send(b"S");
+    dashboard.wait_screen(|screen| screen.contains("Ready sound: off"));
+    for command in ["UserPromptSubmit:root:e", "Stop:root:e"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_calls(2, summary.id);
+    dashboard.wait_sound_calls(3);
+
+    // Neither channel: showing the completed output proves this dashboard
+    // consumed the completion before sound is enabled again.
+    dashboard.send(b"N");
+    dashboard.wait_screen(|screen| screen.contains("Desktop notifications: off"));
+    for command in ["UserPromptSubmit:root:f", "Stop:root:f"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=13");
+    dashboard.select("setup", "HOOK_READY");
+    dashboard.send(b"S");
+    dashboard.wait_screen(|screen| screen.contains("Ready sound: on"));
+
+    // A visible response stays silent; the next hidden one is the barrier.
+    dashboard.select("codex-hooks", "CODEX_CALLBACK=13");
+    for command in ["UserPromptSubmit:root:g", "Stop:root:g"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("CODEX_CALLBACK=15"));
+    dashboard.select("setup", "HOOK_READY");
+    for command in ["UserPromptSubmit:root:h", "Stop:root:h"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_sound_calls(4);
+    dashboard.wait_calls(2, summary.id);
+
+    // A failing player is reported without its output and preserves Ready.
+    let mode = dashboard.record.with_extension("sound.mode");
+    std::fs::write(&mode, "fail\n").unwrap();
+    for command in ["UserPromptSubmit:root:i", "Stop:root:i"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_screen(|screen| screen.contains("Ready sound unavailable"));
+    assert!(
+        !dashboard
+            .parser
+            .screen()
+            .contents()
+            .contains("PRIVATE_SOUND_ERROR")
+    );
+    assert_eq!(
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .unwrap()
+            .activity
+            .unwrap()
+            .state,
+        ovrcr::protocol::AgentActivity::ResponseReady
+    );
+    std::fs::remove_file(&mode).unwrap();
+
+    // Completions while disconnected never replay after reconnect.
+    dashboard.detach();
+    for command in ["UserPromptSubmit:root:j", "Stop:root:j"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    drop(dashboard);
+    let mut dashboard = DesktopAlertDashboard::start(&fixture, sound_only);
+    dashboard.select("setup", "HOOK_READY");
+    for command in ["UserPromptSubmit:root:k", "Stop:root:k"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_sound_calls(5);
+    dashboard.wait_calls(2, summary.id);
+
+    // A hung player never blocks terminal input or detach; detach ends its
+    // process group without waiting for the playback deadline.
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'SOUND_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "SOUND_SHELL_READY");
+    dashboard.select("local", "SOUND_SHELL_READY");
+    std::fs::write(&mode, "block\n").unwrap();
+    for command in ["UserPromptSubmit:root:l", "Stop:root:l"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let player_pid = dashboard.record.with_extension("sound.pid");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let blocked_pid = loop {
+        if let Ok(text) = std::fs::read_to_string(&player_pid)
+            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "player did not enter blocking mode"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    dashboard.host_process_groups.push(blocked_pid);
+    assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
+    dashboard.send(b"\rprintf 'SOUND_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("SOUND_INPUT_READY"));
+    assert!(
+        group_exists(blocked_pid),
+        "player exited before the input check"
+    );
+    dashboard.send(b"\x07");
+    dashboard.detach();
+    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
 }

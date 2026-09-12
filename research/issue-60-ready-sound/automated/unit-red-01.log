@@ -1,0 +1,191 @@
+   Compiling libc v0.2.189
+   Compiling derive_builder v0.20.2
+   Compiling serde_json v1.0.151
+   Compiling croner v3.0.1
+   Compiling errno v0.3.14
+   Compiling parking_lot_core v0.9.12
+   Compiling num_threads v0.1.7
+   Compiling mio v1.2.3
+   Compiling filedescriptor v0.8.3
+   Compiling getrandom v0.4.3
+   Compiling time v0.3.55
+   Compiling signal-hook-registry v1.4.8
+   Compiling rustix v1.1.4
+   Compiling parking_lot v0.12.5
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-protocol)
+   Compiling signal-hook v0.3.18
+   Compiling signal-hook-mio v0.2.5
+   Compiling ratatui-widgets v0.3.2
+   Compiling crossterm v0.29.0
+   Compiling tempfile v3.27.0
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ratatui v0.30.2
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-terminal)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-tui)
+error[E0425]: cannot find value `CHANNEL_DESKTOP` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1071:31
+     |
+1071 |             assert_eq!(mask & CHANNEL_DESKTOP != 0, desktop);
+     |                               ^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `CHANNEL_SOUND` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1072:31
+     |
+1072 |             assert_eq!(mask & CHANNEL_SOUND != 0, sound);
+     |                               ^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `CHANNEL_SOUND` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1095:59
+     |
+1095 |         assert_eq!(host.channels.load(Ordering::Acquire), CHANNEL_SOUND);
+     |                                                           ^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `SOUND_TIMEOUT` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1127:17
+     |
+  19 | const HOST_TIMEOUT: Duration = Duration::from_secs(2);
+     | ------------------------------------------------------ similarly named constant `HOST_TIMEOUT` defined here
+...
+1127 |         assert!(SOUND_TIMEOUT >= HOST_TIMEOUT);
+     |                 ^^^^^^^^^^^^^
+     |
+help: a constant with a similar name exists
+     |
+1127 -         assert!(SOUND_TIMEOUT >= HOST_TIMEOUT);
+1127 +         assert!(HOST_TIMEOUT >= HOST_TIMEOUT);
+     |
+
+error[E0425]: cannot find value `CHANNEL_SOUND` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1135:25
+     |
+1135 |         failed.send((0, CHANNEL_SOUND)).unwrap();
+     |                         ^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `CHANNEL_DESKTOP` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1138:25
+     |
+1138 |         failed.send((0, CHANNEL_DESKTOP)).unwrap();
+     |                         ^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0560]: struct `desktop::DesktopHost` has no field named `channels`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1044:13
+     |
+1044 |             channels: Arc::new(AtomicU8::new(d.alert_channels())),
+     |             ^^^^^^^^ `desktop::DesktopHost` does not have this field
+     |
+     = note: all struct fields are already assigned
+
+error[E0599]: no method named `alert_channels` found for mutable reference `&mut dashboard::Dashboard` in the current scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1044:48
+     |
+1044 |             channels: Arc::new(AtomicU8::new(d.alert_channels())),
+     |                                                ^^^^^^^^^^^^^^ method not found in `&mut dashboard::Dashboard`
+
+error[E0308]: mismatched types
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1048:20
+     |
+1048 |         (receiver, failed)
+     |                    ^^^^^^ expected `SyncSender<(u64, u8)>`, found `SyncSender<u64>`
+     |
+     = note: expected struct `SyncSender<(u64, u8)>`
+                found struct `SyncSender<u64>`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1058:24
+     |
+1058 |             d.settings.ready_sound = sound;
+     |                        ^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `channels` on type `&desktop::DesktopHost`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1070:57
+     |
+1070 |             let mask = d.desktop.host.as_ref().unwrap().channels.load(Ordering::Acquire);
+     |                                                         ^^^^^^^^ unknown field
+     |
+     = note: available fields are: `sender`, `failures`, `enabled`, `epoch`, `stop`, `worker`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1087:28
+     |
+1087 |         assert!(d.settings.ready_sound && d.settings.desktop_notifications);
+     |                            ^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `channels` on type `&desktop::DesktopHost`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1095:25
+     |
+1095 |         assert_eq!(host.channels.load(Ordering::Acquire), CHANNEL_SOUND);
+     |                         ^^^^^^^^ unknown field
+     |
+     = note: available fields are: `sender`, `failures`, `enabled`, `epoch`, `stop`, `worker`
+
+error[E0609]: no field `channels` on type `&desktop::DesktopHost`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1101:25
+     |
+1101 |         assert_eq!(host.channels.load(Ordering::Acquire), 0);
+     |                         ^^^^^^^^ unknown field
+     |
+     = note: available fields are: `sender`, `failures`, `enabled`, `epoch`, `stop`, `worker`
+
+error[E0425]: cannot find function `sound_command` in this scope
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1111:23
+     |
+ 397 | fn host_command(notification: &Notification) -> Command {
+     | ------------------------------------------------------- similarly named function `host_command` defined here
+...
+1111 |         let command = sound_command();
+     |                       ^^^^^^^^^^^^^
+     |
+help: a function with a similar name exists
+     |
+1111 -         let command = sound_command();
+1111 +         let command = host_command();
+     |
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+    --> crates/ovrcr-tui/src/dashboard/desktop.rs:1173:28
+     |
+1173 |         assert!(d.settings.ready_sound);
+     |                            ^^^^^^^^^^^ unknown field
+     |
+     = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+   --> crates/ovrcr-tui/src/dashboard/settings.rs:119:51
+    |
+119 |         assert!(!load_dashboard_settings(&path).0.ready_sound);
+    |                                                   ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+   --> crates/ovrcr-tui/src/dashboard/settings.rs:122:26
+    |
+122 |         assert!(settings.ready_sound);
+    |                          ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+   --> crates/ovrcr-tui/src/dashboard/settings.rs:128:27
+    |
+128 |         assert!(!settings.ready_sound);
+    |                           ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+error[E0609]: no field `ready_sound` on type `DashboardSettings`
+   --> crates/ovrcr-tui/src/dashboard/settings.rs:131:27
+    |
+131 |         assert!(!settings.ready_sound);
+    |                           ^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `desktop_notifications`, `agents`, `picker_roots`, `branch_prefix`
+
+Some errors have detailed explanations: E0308, E0425, E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `ovrcr-tui` (lib test) due to 20 previous errors

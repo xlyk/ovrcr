@@ -1,0 +1,10 @@
+{
+  "revision": "6169e3bc4b7fea2b55a23e59bfb96269b6316d27",
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2BGIfC",
+  "infrastructure": [
+    "80959 80824 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui",
+    "81024 80824 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server",
+    "85483 85483 /bin/zsh -c source /Users/xlyk/.claude/shell-snapshots/snapshot-zsh-1789168588048-7jvdnk.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2BGIfC; python3 - \"$root\" <<'\"'\"'PY'\"'\"'\\012import json, os, subprocess, sys\\012root = sys.argv[1]\\012ps = subprocess.run([\"ps\",\"-axo\",\"pid,pgid,command\"], capture_output=True, text=True).stdout\\012infra = [l.strip() for l in ps.splitlines() if \"OVRCR GUI.app\" in l]\\012json.dump({\"revision\": subprocess.run([\"git\",\"rev-parse\",\"HEAD\"],capture_output=True,text=True).stdout.strip(), \"root\": root, \"infrastructure\": infra}, open(\"research/issue-60-ready-sound/native/25-popup-before-cleanup.json\",\"w\"), indent=2)\\012print(len(infra), \"GUI processes recorded\")\\012PY' && pwd -P >| /tmp/claude-ed03-cwd",
+    "81489 81489 /Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  ]
+}

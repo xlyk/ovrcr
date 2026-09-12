@@ -1114,6 +1114,9 @@ impl Dashboard {
                     KeyCode::Char('N') if key.kind == KeyEventKind::Press => {
                         self.toggle_desktop_notifications()
                     }
+                    KeyCode::Char('S') if key.kind == KeyEventKind::Press => {
+                        self.toggle_ready_sound()
+                    }
                     KeyCode::Char('w') => self.open_create_workspace(),
                     KeyCode::Char('a') => self.open_register_project(),
                     KeyCode::Char('X') => self.open_close_terminal(),

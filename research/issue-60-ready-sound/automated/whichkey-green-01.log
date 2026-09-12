@@ -1,0 +1,11 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.85s
+     Running tests/tui/main.rs (target/debug/deps/tui-fa553edb8b43499c)
+
+running 2 tests
+test palette::question_mark_popup_is_browsable ... ok
+test palette::question_mark_popup_lists_ready_sound_beside_desktop_notifications ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 181 filtered out; finished in 0.01s
+

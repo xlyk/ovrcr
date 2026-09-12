@@ -1607,6 +1607,29 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
 }
 
 #[test]
+fn ready_sound_action_is_opt_in_and_discoverable() {
+    use super::DashboardAction;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    let names = |dashboard: &Dashboard| -> Vec<(String, String)> {
+        super::hints::key_hints(dashboard)
+            .iter()
+            .flat_map(|group| &group.hints)
+            .map(|hint| (hint.key.to_string(), hint.name.to_string()))
+            .collect()
+    };
+    assert!(names(&dashboard).contains(&("S".into(), "Enable ready sound".into())));
+    assert_eq!(dashboard.key(KeyCode::Char('S')), DashboardAction::Redraw);
+    assert!(names(&dashboard).contains(&("S".into(), "Disable ready sound".into())));
+    assert!(
+        names(&dashboard).contains(&("N".into(), "Enable desktop notifications".into())),
+        "sound leaves desktop notifications untouched"
+    );
+}
+
+#[test]
 fn desktop_notification_action_is_opt_in_and_discoverable() {
     use super::DashboardAction;
     let mut dashboard = Dashboard::new(TerminalSize {

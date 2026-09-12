@@ -210,11 +210,14 @@ final-accounting boundary.
 Optional desktop alerts reuse the accepted Codex root Ready observation and its
 binding, generation, turn and activity revision. They default off and belong to
 the active dashboard, with no replay after attachment or reconnect and no
-delivery for terminals shown in visible panes. This does not add unread state,
-sound, metrics or Confirmed completion. See [dashboard controls and host
-requirements](dashboard.md#desktop-notifications) and [notification-specific
-acceptance](../research/issue-59-desktop-alerts/README.md) for current platform
-results; earlier hooks evidence below does not establish desktop delivery.
+delivery for terminals shown in visible panes. An independent optional
+[ready sound](dashboard.md#ready-sound) reuses that same selection; its host
+playback results are in the [issue 60 evidence](../research/issue-60-ready-sound/README.md).
+This does not add unread state, metrics or Confirmed completion. See [dashboard
+controls and host requirements](dashboard.md#desktop-notifications) and
+[notification-specific acceptance](../research/issue-59-desktop-alerts/README.md)
+for current platform results; earlier hooks evidence below does not establish
+desktop delivery.
 
 The separately authorized [targeted invalidation follow-up](../research/codex-reporting-acceptance/history-invalidation.md) reproduced native backtracking into a new conversation with no observation hook until the next prompt. Same-ID paginated revert has a distinct shutdown/reload path. The remaining gap is continuous foreground identity, not ordinary root-token parsing; no source gate or product capability is marked complete.
 

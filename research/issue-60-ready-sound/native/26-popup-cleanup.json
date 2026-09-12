@@ -1,0 +1,20 @@
+{
+  "revision": "6169e3bc4b7fea2b55a23e59bfb96269b6316d27",
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-2BGIfC",
+  "root_absent": true,
+  "launcher_exit_line": [
+    "Exit code: 0"
+  ],
+  "pids": {
+    "80959": true,
+    "81024": true,
+    "85483": true,
+    "81489": true
+  },
+  "pgids": {
+    "80824": true,
+    "81489": true,
+    "85483": true
+  },
+  "all_clean": true
+}

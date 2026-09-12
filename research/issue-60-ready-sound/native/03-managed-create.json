@@ -1,0 +1,38 @@
+{
+  "revision": "7861a97844f6760514522b191550bae836bd5179",
+  "root": "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA",
+  "terminal_id": 11,
+  "argv_tail": [
+    "agent",
+    "run",
+    "codex",
+    "--",
+    "/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-SKtXnA/codex"
+  ],
+  "read": {
+    "cols": 126,
+    "id": 11,
+    "rows": 57,
+    "text": "ISSUE60_NATIVE_FIXTURE_READY pid=43181"
+  },
+  "summary": {
+    "activity": "unknown",
+    "agent": null,
+    "agent_epoch": 1,
+    "context_stale": null,
+    "context_usage": null,
+    "exit_code": null,
+    "exit_signal": null,
+    "id": 11,
+    "label": "env",
+    "measurement_age_ms": null,
+    "name": "issue60-ready",
+    "phase": "running",
+    "pid": 43163,
+    "project": "consigint",
+    "reporting_unavailable": null,
+    "started_unix_ms": 1789177666538,
+    "workspace": "auth-handoff"
+  },
+  "dashboard_config_env": null
+}
