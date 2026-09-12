@@ -262,6 +262,10 @@ pub enum Request {
         operation: String,
     },
     SupervisorHello(crate::SupervisorAuth),
+    MarkReviewed {
+        session: SessionId,
+        expected: crate::ReadyObservation,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +365,19 @@ mod wire_snapshot {
             .collect()
     }
 
+    fn unread() -> crate::ReadyObservation {
+        crate::ReadyObservation {
+            binding: crate::AgentBinding {
+                provider: crate::AgentProvider::Codex,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            turn: Some("turn".into()),
+            activity_revision: 2,
+        }
+    }
+
     fn summary() -> SessionSummary {
         SessionSummary {
             id: SessionId(1),
@@ -374,6 +391,7 @@ mod wire_snapshot {
             activity: AgentActivity::Unknown,
             agent: None,
             agent_epoch: 0,
+            unread: Some(unread()),
             context_usage: Some(ContextUsageSnapshot {
                 report: ContextUsageReport {
                     source: ContextSource::Generic,
@@ -685,6 +703,13 @@ mod wire_snapshot {
                 .iter()
                 .map(|(n, v)| (format!("Request::{n}"), encode(v))),
         );
+        all.push((
+            "Request::MarkReviewed".into(),
+            encode(&Request::MarkReviewed {
+                session: SessionId(1),
+                expected: unread(),
+            }),
+        ));
         all.extend(
             responses()
                 .iter()
@@ -759,17 +784,21 @@ mod wire_snapshot {
         ("Request::HistoryPage", "17010203040506"),
         ("Request::HistoryEnd", "180102"),
         ("Request::SetView", "1903010101020101"),
+        (
+            "Request::MarkReviewed",
+            "1e010103696e7604636f6e760101047475726e02",
+        ),
         ("Response::Ok", "00"),
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020101700177016e016c01020300000000010000000104010506",
+            "020101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("Response::Screen", "03010301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010101700177016e016c01020300000000010000000104010506",
+            "0500010101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -783,7 +812,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "020103"),
         (
             "ServerEvent::SessionChanged",
-            "030101700177016e016c01020300000000010000000104010506",
+            "030101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),

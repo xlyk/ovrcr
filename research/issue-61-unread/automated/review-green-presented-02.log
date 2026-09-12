@@ -1,0 +1,10 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.13s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-608b02674241a382)
+
+running 2 tests
+test dashboard::event_loop::unread_review_tests::unread_input_boundary_reviews_presented_ready_before_next_draw ... ok
+test dashboard::event_loop::unread_review_tests::unread_failed_draw_and_overlay_do_not_advance_presented_observation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.01s
+

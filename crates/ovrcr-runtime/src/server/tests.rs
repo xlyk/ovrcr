@@ -5988,6 +5988,249 @@ mod agent_reporting {
     }
 
     #[test]
+    fn codex_unread_socket_acknowledges_only_expected_ready_and_survives_reconnect() {
+        let f = Fixture::new();
+        let mut reserve = f.reserve(0, "codex-unread");
+        if let Request::ReserveAgent(r) = &mut reserve {
+            r.provider = AgentProvider::Codex;
+        }
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) =
+            f.request(reserve)
+        else {
+            panic!("reservation failed");
+        };
+        let auth = SupervisorAuth {
+            session: SessionId(900),
+            lease: reservation.lease,
+        };
+        let binding = f.bind(&auth, None, "A", "bind");
+        fn request(client: &mut UnixStream, request: Request) -> Response {
+            write_frame(
+                client,
+                &ClientMessage {
+                    request_id: 61,
+                    request,
+                },
+            )
+            .unwrap();
+            loop {
+                if let ServerMessage::Response {
+                    request_id: 61,
+                    response,
+                } = read_frame(client).unwrap()
+                {
+                    return response;
+                }
+            }
+        }
+        fn connect(f: &Fixture) -> (UnixStream, thread::JoinHandle<()>) {
+            let (server, mut client) = UnixStream::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let state = f.state.clone();
+            let handle = thread::spawn(move || connections::handle_connection(state, server));
+            exchange_preamble(&mut client).unwrap();
+            assert!(matches!(
+                request(&mut client, Request::DashboardHello),
+                Response::Hierarchy(_)
+            ));
+            (client, handle)
+        }
+        fn summary(client: &mut UnixStream) -> serde_json::Value {
+            let Response::Inventory { sessions, .. } = request(client, Request::Inspect) else {
+                panic!("expected inventory");
+            };
+            serde_json::to_value(sessions.iter().find(|s| s.id == SessionId(900)).unwrap()).unwrap()
+        }
+        fn mark(expected: &serde_json::Value) -> Request {
+            serde_json::from_value(
+                serde_json::json!({"MarkReviewed": {"session": 900, "expected": expected}}),
+            )
+            .unwrap()
+        }
+        let report = |binding: &AgentBinding, revision, state, turn: &str| {
+            Request::AgentReport(AgentReport {
+                session: SessionId(900),
+                capability: [7; 32],
+                sequence: None,
+                update: AgentUpdate::Provider(ProviderReport {
+                    binding: binding.clone(),
+                    revision,
+                    observation: AgentObservation::Activity(ActivitySample {
+                        state,
+                        quality: SampleQuality::Observed,
+                        turn: Some(turn.into()),
+                    }),
+                }),
+            })
+        };
+        let (mut client, handler) = connect(&f);
+        assert_eq!(
+            request(
+                &mut client,
+                report(&binding, 1, AgentActivity::ResponseReady, "one")
+            ),
+            Response::Ok
+        );
+        let first = summary(&mut client);
+        assert_eq!(
+            first["unread"]["turn"], "one",
+            "accepted Codex Ready must become unread"
+        );
+        assert_eq!(
+            first["unread"]["binding"],
+            serde_json::to_value(&binding).unwrap()
+        );
+        assert_eq!(first["unread"]["activity_revision"], 1);
+        // Viewing and a newer Busy observation must not acknowledge the previous result.
+        assert!(matches!(
+            request(
+                &mut client,
+                Request::ReadTerminal {
+                    session: SessionId(900),
+                    max_lines: Some(2)
+                }
+            ),
+            Response::TerminalText { .. }
+        ));
+        assert_eq!(
+            request(&mut client, report(&binding, 2, AgentActivity::Busy, "two")),
+            Response::Ok
+        );
+        assert_eq!(summary(&mut client)["unread"], first["unread"]);
+        drop(client);
+        handler.join().unwrap();
+        let (mut client, handler) = connect(&f);
+        assert_eq!(summary(&mut client)["unread"], first["unread"]);
+        // Deterministic race: newer Ready wins the dispatch order before an old acknowledgement.
+        assert_eq!(
+            request(
+                &mut client,
+                report(&binding, 3, AgentActivity::ResponseReady, "two")
+            ),
+            Response::Ok
+        );
+        let second = summary(&mut client);
+        rejected(request(&mut client, mark(&first["unread"])));
+        assert_eq!(
+            summary(&mut client),
+            second,
+            "stale acknowledgement changes no state"
+        );
+        for pointer in [
+            "/activity_revision",
+            "/turn",
+            "/binding/generation",
+            "/binding/invocation",
+            "/binding/conversation",
+        ] {
+            let mut wrong = second["unread"].clone();
+            let target = wrong.pointer_mut(pointer).unwrap();
+            *target = if target.is_number() {
+                serde_json::json!(99)
+            } else {
+                serde_json::json!("wrong")
+            };
+            rejected(request(&mut client, mark(&wrong)));
+            assert_eq!(
+                summary(&mut client),
+                second,
+                "{pointer} is part of the acknowledgement target"
+            );
+        }
+        assert_eq!(request(&mut client, mark(&second["unread"])), Response::Ok);
+        let reviewed = summary(&mut client);
+        let mut expected = second.clone();
+        expected["unread"] = serde_json::Value::Null;
+        assert_eq!(reviewed, expected, "acknowledgement changes only unread");
+        assert_eq!(request(&mut client, mark(&second["unread"])), Response::Ok);
+        assert_eq!(
+            summary(&mut client),
+            reviewed,
+            "duplicate acknowledgement is harmless"
+        );
+        rejected(request(
+            &mut client,
+            report(&binding, 3, AgentActivity::ResponseReady, "two"),
+        ));
+        assert_eq!(
+            request(
+                &mut client,
+                report(&binding, 4, AgentActivity::ResponseReady, "two")
+            ),
+            Response::Ok
+        );
+        assert!(
+            summary(&mut client)["unread"].is_null(),
+            "duplicate Ready at a higher revision cannot reopen reviewed turn"
+        );
+        assert_eq!(
+            request(
+                &mut client,
+                report(&binding, 5, AgentActivity::ResponseReady, "three")
+            ),
+            Response::Ok
+        );
+        let unread = summary(&mut client)["unread"].clone();
+        // Rebinding changes native reporting identity without acknowledging the previous turn.
+        let rebound = f.bind(&auth, Some(binding), "B", "rebind");
+        assert_eq!(summary(&mut client)["unread"], unread);
+        assert_eq!(
+            f.command(
+                &auth,
+                "release",
+                AgentCommand::Release {
+                    expected_binding: Some(rebound)
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::Released)
+        );
+        let lost = summary(&mut client);
+        assert_eq!(lost["unread"], unread);
+        assert_eq!(lost["agent"]["health"]["state"], "Unavailable");
+        assert_eq!(
+            request(
+                &mut client,
+                Request::AgentReport(AgentReport {
+                    session: SessionId(900),
+                    capability: [7; 32],
+                    sequence: None,
+                    update: AgentUpdate::Activity(AgentActivity::Idle),
+                })
+            ),
+            Response::Ok
+        );
+        let legacy = summary(&mut client);
+        assert!(
+            legacy["agent"].is_null(),
+            "legacy shell reporting clears the old agent snapshot"
+        );
+        assert_eq!(legacy["unread"], unread);
+        let reserved = f.request(f.reserve(1, "next-reservation"));
+        assert!(matches!(
+            reserved,
+            Response::AgentOperation(AgentOperationResult::Reserved(_))
+        ));
+        let reserving = summary(&mut client);
+        assert!(reserving["agent"].is_null());
+        assert_eq!(
+            reserving["unread"], unread,
+            "reserving another invocation does not review a response"
+        );
+        assert_eq!(request(&mut client, mark(&unread)), Response::Ok);
+        let mut expected = reserving;
+        expected["unread"] = serde_json::Value::Null;
+        assert_eq!(
+            summary(&mut client),
+            expected,
+            "review remains available after reporter loss"
+        );
+        drop(client);
+        handler.join().unwrap();
+    }
+
+    #[test]
     fn agent_report_supervisor_connection_loss_and_late_cleanup() {
         let f = Fixture::new();
         let auth = f.acquire();

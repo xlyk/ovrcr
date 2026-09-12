@@ -216,6 +216,8 @@ pub struct Dashboard {
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
+    // Review actions name only the observation committed by the last successful draw.
+    presented_unread: Option<(SessionId, ovrcr_protocol::ReadyObservation)>,
     mode: InputMode,
     panes: Vec<PaneState>,
     focused_pane: usize,

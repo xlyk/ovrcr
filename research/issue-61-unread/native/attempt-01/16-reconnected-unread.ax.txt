@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│Unread response ready · observed                                                                                              
+  󰘬 auth-handoff                       │tokens —  cost —                                                                                                              
+     $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│Unread response ready · observed                                                                                              
+		5 text (settable)   󰘬 auth-handoff                       │tokens —  cost —                                                                                                              
+		6 text (settable)      $ local                           │ISSUE60_NATIVE_FIXTURE_READY pid=82559                                                                                        
+		7 text (settable)      - review auth handoff    grok-4.6 │UserPromptSubmit:root:native-a                                                                                                
+		8 text (settable) ▌    ✓ ● issue61-unread            env │ISSUE60_CALLBACK_1_OK UserPromptSubmit native-a                                                                               
+		9 text (settable)   󰘬 worktree-lifecycle                 │Stop:root:native-a                                                                                                            
+		10 text (settable)      $ local                           │ISSUE60_CALLBACK_2_OK Stop native-a                                                                                           
+		11 text (settable)      - implement lifecycle …  sonnet-4 │UserPromptSubmit:root:native-b                                                                                                
+		12 text (settable)      - review websocket shut…  gpt-5.4 │ISSUE60_CALLBACK_3_OK UserPromptSubmit native-b                                                                               
+		13 text (settable)      - plan snapshot restore  grok-4.6 │Stop:root:native-b                                                                                                            
+		14 text (settable)                                        │ISSUE60_CALLBACK_4_OK Stop native-b                                                                                           
+		15 text (settable)  SPACELIFT-AGENT ──────────────────────│UserPromptSubmit:root:native-R                                                                                                
+		16 text (settable)   󰘬 pipeline-progress-v2               │ISSUE60_CALLBACK_5_OK UserPromptSubmit native-R                                                                               
+		17 text (settable)      $ local                           │Stop:root:native-R                                                                                                            
+		18 text (settable)      - build pipeline progress  opus-4 │ISSUE60_CALLBACK_6_OK Stop native-R                                                                                           
+		19 text (settable)   󰘬 scope-quality                      │                                                                                                                              
+		20 text (settable)      $ local                           │                                                                                                                              
+		21 text (settable)      - review scope quality    gpt-5.4 │                                                                                                                              
+		22 text (settable)                                        │                                                                                                                              
+		23 text (settable)                                        │                                                                                                                              
+		24 text (settable)                                        │                                                                                                                              
+		25 text (settable)                                        │                                                                                                                              
+		26 text (settable)                                        │                                                                                                                              
+		27 text (settable)                                        │                                                                                                                              
+		28 text (settable)                                        │                                                                                                                              
+		29 text (settable)                                        │                                                                                                                              
+		30 text (settable)                                        │                                                                                                                              
+		31 text (settable)                                        │                                                                                                                              
+		32 text (settable)                                        │                                                                                                                              
+		33 text (settable)                                        │                                                                                                                              
+		34 text (settable)                                        │                                                                                                                              
+		35 text (settable)                                        │                                                                                                                              
+		36 text (settable)                                        │                                                                                                                              
+		37 text (settable)                                        │                                                                                                                              
+		38 text (settable)                                        │                                                                                                                              
+		39 text (settable)                                        │                                                                                                                              
+		40 text (settable)                                        │                                                                                                                              
+		41 text (settable)                                        │                                                                                                                              
+		42 text (settable)                                        │                                                                                                                              
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │                                                                                                                              
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │                                                                                                                              
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │                                                                                                                              
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │                                                                                                                              
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │                                                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │                                                                                                                              
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │                                                                                                                              
+		63 text (settable) BROWSE  ? Help  Enter Focus  R Mark reviewed  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader  
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│Unread response ready · observed                                                                                              
+  󰘬 auth-handoff                       │tokens —  cost —                                                                                                              
+     $ lo

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "--locked",
+    "--offline"
+  ],
+  "revision": "b7f139f62b66eb10f73f22ffff51b8b074163fc3",
+  "source_change": "attempts/diagnostic-01.patch applied: env_lock guard removed, probe outcome instrumented (no timestamps)",
+  "test_threads": "default",
+  "start_utc": "2026-09-12T08:01:40Z",
+  "exit_code": 101,
+  "end_utc": "2026-09-12T08:02:22.842409Z",
+  "start_utc_note": "second precision; the original stamp used an unsupported date format",
+  "host_loadavg_before": "{ 9.43 7.23 4.64 }"
+}

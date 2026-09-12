@@ -121,6 +121,7 @@ pub fn run_dispatcher(
             } => {
                 let id = match &request {
                     Request::ReserveAgent(r) => r.session,
+                    Request::MarkReviewed { session, .. } => *session,
                     Request::Supervisor(r) => r.auth.session,
                     Request::AgentStatus { auth, .. } | Request::SupervisorHello(auth) => {
                         auth.session

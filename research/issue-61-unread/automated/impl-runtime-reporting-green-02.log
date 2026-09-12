@@ -1,0 +1,43 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.28s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-387c4bd08e9ed8e5)
+
+running 11 tests
+agent reporting fixture owned pid/pgid=96440
+agent reporting fixture owned pid/pgid=96439
+agent reporting fixture owned pid/pgid=96443
+agent reporting fixture owned pid/pgid=96441
+agent reporting fixture owned pid/pgid=96442
+agent reporting fixture owned pid/pgid=96444
+agent reporting fixture owned pid/pgid=96503
+agent reporting fixture cleaned pgid=96503
+test server::tests::agent_reporting::agent_report_lost_reservation_delivery_and_delayed_reservation_do_not_allocate ... ok
+agent reporting fixture cleaned pgid=96444
+agent reporting fixture cleaned pgid=96439
+test server::tests::agent_reporting::agent_report_component_order_survives_uncertain_clear ... ok
+test server::tests::agent_reporting::agent_report_rejects_decreases_after_unknown_and_collector_loss ... ok
+agent reporting fixture cleaned pgid=96441
+agent reporting fixture cleaned pgid=96443
+test server::tests::agent_reporting::agent_report_reservation_retry_and_stale_compare_exchange ... ok
+test server::tests::agent_reporting::agent_report_independent_streams_atomic_components_and_authentication ... ok
+agent reporting fixture cleaned pgid=96440
+test server::tests::agent_reporting::agent_report_legacy_remains_available_until_binding ... ok
+agent reporting fixture cleaned pgid=96442
+test server::tests::agent_reporting::codex_unread_socket_acknowledges_only_expected_ready_and_survives_reconnect ... ok
+agent reporting fixture owned pid/pgid=96509
+agent reporting fixture owned pid/pgid=96538
+agent reporting fixture owned pid/pgid=96539
+agent reporting fixture cleaned pgid=96538
+test server::tests::agent_reporting::response_ready_socket_snapshot_reconnect_and_revision_order ... ok
+agent reporting fixture cleaned pgid=96539
+test server::tests::agent_reporting::agent_report_reservation_connection_loss_releases_unbound_slot ... ok
+agent reporting fixture cleaned pgid=96509
+test server::tests::agent_reporting::agent_report_supervisor_connection_loss_and_late_cleanup ... ok
+agent reporting fixture owned pid/pgid=96550
+agent reporting fixture cleaned pgid=96550
+test server::tests::agent_reporting::agent_report_finalize_atomic_retry_and_exit_rejection ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.32s
+

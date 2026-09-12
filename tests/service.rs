@@ -351,6 +351,7 @@ fn service_install_refuses_when_sessions_exist() {
                         context_usage: None,
                         agent: None,
                         agent_epoch: 0,
+                        unread: None,
                     }],
                 },
                 other => panic!("install sent {other:?}"),

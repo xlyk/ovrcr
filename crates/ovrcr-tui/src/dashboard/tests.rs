@@ -102,6 +102,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
                 context_usage: None,
                 agent: None,
                 agent_epoch: 0,
+                unread: None,
             }],
         }],
     });
@@ -833,6 +834,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
         activity: crate::session::AgentActivity::Unknown,
         agent: None,
         agent_epoch: 0,
+        unread: None,
         context_usage: None,
     };
     dashboard.handle_server_message(ServerMessage::Response {
@@ -969,6 +971,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
@@ -1092,6 +1095,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     };
     let hierarchy = |ids: &[u64]| HierarchySnapshot {
         projects: vec![ProjectSummary {
@@ -1371,6 +1375,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                     health_revision: 1,
                 }),
                 agent_epoch: 1,
+                unread: None,
             }],
         }],
     });

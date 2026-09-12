@@ -1,0 +1,104 @@
+Read-only source/log diagnosis at 8ebbf0b7984f8f277ba8958ddda9689fd2754d5f
+No reproduction run. Original workspace run remains FAILED: exit101, 80 passed, 2 failed, 9 ignored.
+
+PRIMARY: Intentional unread marker invalidated unchanged literal screen predicate.
+tests/server_lifecycle.rs:10955 requires "✓ codex-queued".
+Actual screen from failed run is "✓ ● codex-queued"; predicate cannot match.
+The test therefore never reaches queued-pane selection or notification-cancellation assertions.
+The later unavailable footer follows waiting beyond the existing host deadline.
+
+FOLLOW-ON: Split-stream test acquires poisoned ENV_LOCK with unwrap and fails before fixture setup.
+The notification test held the same ENV_LOCK during its panic. Other tests use env_lock(), which recovers poison.
+
+Recommendation: Update the single screen predicate to "✓ ● codex-queued", preserving Ready state, unread marker and exact session identity. Run the exact notification test after the coordinated test-file edits; retain the failed original log. Do not treat a retry as a pass for the original revision.
+
+Evidence:
+
+tests/server_lifecycle.rs
+30: static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+31: 
+32: /// Serialize tests that share process-wide state. A test that panics while
+33: /// holding the lock poisons it; later tests still run rather than failing
+34: /// on the poison, so a CI log shows the one real failure.
+35: fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+36:     ENV_LOCK
+37:         .lock()
+38:         .unwrap_or_else(std::sync::PoisonError::into_inner)
+39: }
+
+tests/server_lifecycle.rs
+6295: #[test]
+6296: fn split_server_two_streams_resize_resync_and_detach() {
+6297:     let _env_lock = ENV_LOCK.lock().unwrap();
+6298:     let fixture = ControlFixture::new_bounded();
+6299:     assert_eq!(
+6300:         fixture.request(Request::AddProject {
+
+tests/server_lifecycle.rs
+10949:     // behind it before we make that session visible through real mouse input.
+10950:     std::fs::remove_file(mode).unwrap();
+10951:     let mut queued_index = 0;
+10952:     for command in ["UserPromptSubmit:root:b", "Stop:root:b"] {
+10953:         desktop_codex_callback(&fixture, queued.id, &mut queued_index, command);
+10954:     }
+10955:     dashboard.wait_screen(|screen| screen.contains("✓ codex-queued"));
+10956:     assert!(
+10957:         group_exists(blocked_pid),
+10958:         "first host no longer blocks the queue"
+10959:     );
+10960:     dashboard.select("codex-queued", "CODEX_CALLBACK=1");
+10961:     // Seeing this response consumes its candidate permanently, even if the
+10962:     // pane becomes hidden again before the busy host finishes.
+10963:     dashboard.select("setup", "HOOK_READY");
+
+crates/ovrcr-tui/src/dashboard/render.rs
+1054:                     .map_or(session.label.as_str(), |(_, model)| model)
+1055:                     .trim();
+1056:                 let model_cells = Line::raw(model).width();
+1057:                 let unread = if session.unread.is_some() { "● " } else { "" };
+1058:                 let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
+1059:                 // Name width when the model is shown: two cells of gap and one trailing cell.
+
+crates/ovrcr-tui/src/dashboard/render.rs
+1081:                     vec![
+1082:                         Span::raw(SESSION_INDENT),
+1083:                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
+1084:                         Span::raw(" "),
+1085:                         Span::styled(unread, Style::default().fg(TEAL)),
+1086:                         Span::styled(clip_text(&session.name, name_width), name_style),
+1087:                     ],
+
+/private/tmp/ovrcr-issue61-evidence/final-workspace-01.log
+644: ---- desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible stdout ----
+645: ovrcr server starting for /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpb6KAEg/server.sock
+646: ovrcr server listening on /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpb6KAEg/server.sock
+647: 
+648: thread 'desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible' (53149172) panicked at tests/server_lifecycle.rs:10367:13:
+649: dashboard screen deadline: 󰚩 OVRCR  agent runtime                                                                                                                                              [Actions] [Menu]
+650:  FIXTURE ──────────────────────────────│pid: 55368  elapsed: 0m  agent unknown                                                                                                      
+651:   󰘬 work                               │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+652:      $ local                           │HOOK_READY                                                                                                                                  
+653: ▌    - setup                        sh │                                                                                                                                            
+654:      ✓ ● codex-hooks                sh │                                                                                                                                            
+655:      ✓ ● codex-queued               sh │                                                                                                                                            
+
+/private/tmp/ovrcr-issue61-evidence/final-workspace-01.log
+680: Desktop notifications unavailable                                                                                                                                                   
+681: ovrcr server stopped
+682: 
+683: ---- split_server_two_streams_resize_resync_and_detach stdout ----
+684: 
+685: thread 'split_server_two_streams_resize_resync_and_detach' (53163277) panicked at tests/server_lifecycle.rs:6297:37:
+686: called `Result::unwrap()` on an `Err` value: PoisonError { .. }
+687: 
+688: 
+689: failures:
+690:     desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible
+691:     split_server_two_streams_resize_resync_and_detach
+692: 
+693: test result: FAILED. 80 passed; 2 failed; 9 ignored; 0 measured; 0 filtered out; finished in 55.14s
+694: 
+695: error: test failed, to rerun pass `-p ovrcr --test server_lifecycle`
+
+Unchanged parent-revision predicate:
+8ebbf0b^:tests/server_lifecycle.rs:10785:     dashboard.wait_screen(|screen| screen.contains("✓ codex-queued"));

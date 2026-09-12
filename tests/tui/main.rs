@@ -30,6 +30,7 @@ mod mouse;
 mod palette;
 mod sidebar;
 mod split;
+mod unread;
 
 fn session_summary(
     id: u64,
@@ -53,6 +54,7 @@ fn session_summary(
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     }
 }
 

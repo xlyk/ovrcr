@@ -35,3 +35,4 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 - Follow [Computer-use testing](../testing-computer-use.md) for `just gui`. Use the exact checkout under review and fresh screenshots/accessibility state.
 - Record owned fixture PIDs/PGIDs and paths, retain the launcher result, and verify cleanup. Permission denial does not prove a process group is gone. Stop a hung owned test before starting another.
 - Never bypass a tool's access denial through another control channel or modify the user's live agent configuration to make an acceptance check pass.
+- The shared initial-admission lifecycle cases can fail with `supervisor must select a fresh UUID` when a saturated host pushes the fixture's `/bin/sh` reply past the product's one-second probe budget; read a recurrence as contention unless its evidence says otherwise, per the [issue #62 diagnosis](../../research/issue-62-lifecycle-diagnosis/README.md).

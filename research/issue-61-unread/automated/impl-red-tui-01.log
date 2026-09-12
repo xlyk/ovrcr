@@ -1,0 +1,112 @@
+   Compiling strsim v0.11.1
+   Compiling unicode-segmentation v1.13.3
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling equivalent v1.0.2
+   Compiling rustversion v1.0.23
+   Compiling thiserror v2.0.20
+   Compiling either v1.18.0
+   Compiling syn v3.0.5
+   Compiling rustix v1.1.4
+   Compiling strum_macros v0.28.0
+   Compiling instability v0.3.13
+   Compiling ryu v1.0.23
+   Compiling parking_lot_core v0.9.12
+   Compiling static_assertions v1.1.0
+   Compiling indoc v2.0.7
+   Compiling scopeguard v1.2.0
+   Compiling darling_core v0.20.11
+   Compiling itertools v0.14.0
+   Compiling critical-section v1.2.0
+   Compiling hashbrown v0.17.1
+   Compiling hashbrown v0.16.1
+   Compiling convert_case v0.10.0
+   Compiling smallvec v1.16.0
+   Compiling lock_api v0.4.14
+   Compiling mio v1.2.3
+   Compiling derive_more-impl v2.1.1
+   Compiling num_threads v0.1.7
+   Compiling deranged v0.5.8
+   Compiling litrs v1.0.0
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling lru v0.18.4
+   Compiling powerfmt v0.2.0
+   Compiling signal-hook-mio v0.2.5
+   Compiling line-clipping v0.3.8
+   Compiling base64 v0.22.1
+   Compiling utf8parse v0.2.2
+   Compiling anstyle v1.0.14
+   Compiling document-features v0.2.12
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling derive_more v2.1.1
+   Compiling parking_lot v0.12.5
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling unicode-truncate v2.0.1
+   Compiling anstream v1.0.0
+   Compiling clap_lex v1.1.0
+   Compiling castaway v0.2.4
+   Compiling time v0.3.55
+   Compiling clap_builder v4.6.6
+   Compiling strum v0.28.0
+   Compiling darling_macro v0.20.11
+   Compiling compact_str v0.9.1
+   Compiling darling v0.20.11
+   Compiling crossterm v0.29.0
+   Compiling tempfile v3.27.0
+   Compiling darling_core v0.24.1
+   Compiling derive_builder_core v0.20.2
+   Compiling thiserror-impl v2.0.20
+   Compiling serde_derive v1.0.229
+   Compiling clap_derive v4.6.4
+   Compiling derive_builder_macro v0.20.2
+   Compiling derive_builder v0.20.2
+   Compiling croner v3.0.1
+   Compiling clap v4.6.6
+   Compiling kasuari v0.4.12
+   Compiling darling_macro v0.24.1
+   Compiling ratatui-core v0.1.2
+   Compiling darling v0.24.1
+   Compiling serde v1.0.229
+   Compiling bincode v2.0.1
+   Compiling ratatui-widgets v0.3.2
+   Compiling ratatui-crossterm v0.1.2
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+   Compiling ratatui-macros v0.7.2
+   Compiling ratatui v0.30.2
+   Compiling ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-terminal)
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-runtime)
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-tui)
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.80s
+     Running tests/tui/main.rs (target/debug/deps/tui-fa553edb8b43499c)
+
+running 3 tests
+
+thread 'unread::unread_review_key_captures_visible_observation_without_optimistic_clear' (52938506) panicked at tests/tui/unread.rs:42:9:
+Browse R must submit mark-reviewed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test unread::unread_review_key_captures_visible_observation_without_optimistic_clear ... FAILED
+
+thread 'unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes' (52938504) panicked at tests/tui/unread.rs:69:13:
+80 split=false: 󰚩 OVRCR  agent runtime                                          [Actions] [Menu] CONSIGINT ────────────────────────────│pid: 111  elapsed: 0m  agent busy         󰘬 auth                               │────────────────────────────────────────     $ local                           │                                        ▌    ⠋ very-long-session-name…  claude │                                          󰘬 lifecycle                          │                                             $ local                           │                                             · implement                claude │                                                                               │                                         SPACELIFT-AGENT ──────────────────────│                                          󰘬 progress                           │                                             $ local                           │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                                                               │                                        BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach     
+test unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes ... FAILED
+
+thread 'unread::unread_review_action_is_discoverable_in_palette_and_terminal_keys' (52938505) panicked at tests/tui/unread.rs:83:5:
+assertion failed: matches!(d.key(KeyCode::Enter),
+    DashboardAction::Request(ClientMessage
+    { request: Request::MarkReviewed { .. }, .. }))
+test unread::unread_review_action_is_discoverable_in_palette_and_terminal_keys ... FAILED
+
+failures:
+
+failures:
+    unread::unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes
+    unread::unread_review_action_is_discoverable_in_palette_and_terminal_keys
+    unread::unread_review_key_captures_visible_observation_without_optimistic_clear
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 183 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ovrcr --test tui`

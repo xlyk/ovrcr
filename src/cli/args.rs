@@ -174,6 +174,13 @@ pub(super) enum WorkspaceCommand {
 
 #[derive(Subcommand)]
 pub(super) enum TerminalCommand {
+    /// Mark one observed Codex response reviewed. Changes unread only.
+    MarkReviewed {
+        id: u64,
+        /// Exact non-null unread object from `terminal list --json`.
+        #[arg(long, value_parser = parse_ready_observation)]
+        expected: ovrcr::protocol::ReadyObservation,
+    },
     Create(NewArgs),
     List {
         #[arg(long)]
@@ -313,4 +320,13 @@ pub(super) enum AgentCommand {
         #[arg(last = true, required = true)]
         argv: Vec<OsString>,
     },
+}
+
+fn parse_ready_observation(value: &str) -> Result<ovrcr::protocol::ReadyObservation, String> {
+    let expected: ovrcr::protocol::ReadyObservation =
+        serde_json::from_str(value).map_err(|error| {
+            format!("expected the unread JSON object from terminal list --json: {error}")
+        })?;
+    expected.validate().map_err(|error| error.to_string())?;
+    Ok(expected)
 }

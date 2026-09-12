@@ -1,0 +1,21 @@
+   Compiling ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.25s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_runtime-387c4bd08e9ed8e5)
+
+running 1 test
+
+thread 'session::reporting::tests::unread_requires_observed_codex_ready_with_identified_turn' (52951441) panicked at crates/ovrcr-runtime/src/session/reporting.rs:476:13:
+assertion `left == right` failed: Codex Confirmed Some("one") Connected
+  left: true
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test session::reporting::tests::unread_requires_observed_codex_ready_with_identified_turn ... FAILED
+
+failures:
+
+failures:
+    session::reporting::tests::unread_requires_observed_codex_ready_with_identified_turn
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 101 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p ovrcr-runtime --lib`

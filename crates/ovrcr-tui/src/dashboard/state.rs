@@ -544,6 +544,7 @@ impl Dashboard {
         Self {
             tasks: None,
             desktop: super::desktop::DesktopNotifications::default(),
+            presented_unread: None,
             hierarchy: HierarchySnapshot {
                 projects: Vec::new(),
             },
@@ -1217,6 +1218,9 @@ impl Dashboard {
                     KeyCode::PageUp => self.begin_history_request(false),
                     KeyCode::Char('p') => self.pause_request(true),
                     KeyCode::Char('r') => self.pause_request(false),
+                    KeyCode::Char('R') if key.kind == KeyEventKind::Press => {
+                        self.mark_reviewed_request()
+                    }
                     KeyCode::Char('v') => {
                         self.split_pane();
                         DashboardAction::Redraw
@@ -3190,6 +3194,23 @@ impl Dashboard {
         self.view_request(self.outer_area, request_id)
             .ok()
             .flatten()
+    }
+
+    fn mark_reviewed_request(&mut self) -> DashboardAction {
+        let Some(session) = self.action_session() else {
+            return DashboardAction::None;
+        };
+        let Some((presented_session, expected)) = self.presented_unread.as_ref() else {
+            return DashboardAction::None;
+        };
+        if *presented_session != session {
+            return DashboardAction::None;
+        }
+        let expected = expected.clone();
+        DashboardAction::Request(ClientMessage {
+            request_id: self.error_owning_request_id(),
+            request: Request::MarkReviewed { session, expected },
+        })
     }
 
     pub fn input_request(&mut self, bytes: Vec<u8>, request_id: u64) -> Option<ClientMessage> {

@@ -110,6 +110,31 @@ pub struct ProviderReport {
     pub observation: AgentObservation,
 }
 
+/// The first accepted Ready observation for a Codex turn. Used as an exact
+/// acknowledgement target; a later activity revision does not change this identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadyObservation {
+    pub binding: AgentBinding,
+    pub turn: Option<String>,
+    pub activity_revision: u64,
+}
+
+impl ReadyObservation {
+    pub fn validate(&self) -> Result<()> {
+        self.binding.validate()?;
+        optional_id(&self.turn)?;
+        if self.binding.provider != AgentProvider::Codex
+            || self.activity_revision == 0
+            || self.turn.is_none()
+        {
+            bail!(
+                "review requires a Codex Ready observation with a turn and positive activity revision"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Receipt age is per component; transport activity never refreshes a replay.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
@@ -303,6 +328,61 @@ pub(crate) mod tests {
             })),
         }
     }
+    #[test]
+    fn reviewed_observation_validates_identity_and_round_trips_request() {
+        let ready = ReadyObservation {
+            binding: AgentBinding {
+                provider: AgentProvider::Codex,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            turn: Some("turn".into()),
+            activity_revision: 2,
+        };
+        ready.validate().unwrap();
+        let request = Request::MarkReviewed {
+            session: SessionId(1),
+            expected: ready.clone(),
+        };
+        let mut frame = Vec::new();
+        write_frame(&mut frame, &request).unwrap();
+        assert_eq!(
+            read_frame::<Request>(&mut frame.as_slice()).unwrap(),
+            request
+        );
+        for invalid in [
+            ReadyObservation {
+                turn: None,
+                ..ready.clone()
+            },
+            ReadyObservation {
+                turn: Some(String::new()),
+                ..ready.clone()
+            },
+            ReadyObservation {
+                activity_revision: 0,
+                ..ready.clone()
+            },
+            ReadyObservation {
+                binding: AgentBinding {
+                    generation: 0,
+                    ..ready.binding.clone()
+                },
+                ..ready.clone()
+            },
+            ReadyObservation {
+                binding: AgentBinding {
+                    provider: AgentProvider::Claude,
+                    ..ready.binding.clone()
+                },
+                ..ready
+            },
+        ] {
+            assert!(invalid.validate().is_err());
+        }
+    }
+
     #[test]
     fn agent_report_validation_and_integer_boundaries() {
         assert!(metrics().validate().is_ok());

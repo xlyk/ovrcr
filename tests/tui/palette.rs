@@ -1324,6 +1324,7 @@ fn created_session_enters_terminal_mode() {
         context_usage: None,
         agent: None,
         agent_epoch: 0,
+        unread: None,
     };
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,

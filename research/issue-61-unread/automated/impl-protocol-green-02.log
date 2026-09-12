@@ -1,0 +1,32 @@
+   Compiling ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/issue-61-unread/crates/ovrcr-protocol)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.10s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_protocol-8a57607605970f51)
+
+running 24 tests
+test codec::tests::oversized_frame_is_rejected_before_allocation ... ok
+test codec::tests::split_view_validation_rejects_ambiguous_targets ... ok
+test codec::tests::preamble_rejects_wrong_magic_and_version ... ok
+test codec::tests::preamble_round_trip ... ok
+test codec::tests::agent_report_round_trip_and_redaction ... ok
+test codec::tests::split_view_frames_round_trip ... ok
+test codec::tests::request_round_trip_preserves_raw_bytes ... ok
+test codec::tests::appended_resource_requests_round_trip ... ok
+test agent::tests::reviewed_observation_validates_identity_and_round_trips_request ... ok
+test codec::tests::pause_resume_requests_round_trip ... ok
+test context::tests::context_semantics ... ok
+test context::tests::context_claude_projection_rejects_checked_add_overflow ... ok
+test context::tests::context_claude_projection ... ok
+test context::tests::context_claude_projection_missing_components_are_unknown ... ok
+test registry::tests::project_removal_rejects_recorded_workspaces ... ok
+test registry::tests::registry_rejects_duplicate_projects_and_invalid_names ... ok
+test codec::agent_foundation_red::agent_report_reservation_wire_contract ... ok
+test context::tests::context_json_validation ... ok
+test session::tests::response_ready_and_existing_activity_wire_spellings_round_trip ... ok
+test wire::tests::validate_rejects_oversized_panes ... ok
+test agent::tests::agent_report_all_variants_roundtrip_and_secret_redaction ... ok
+test agent::tests::agent_report_validation_and_integer_boundaries ... ok
+test wire::wire_snapshot::wire_encoding_matches_snapshot_for_protocol_version ... ok
+test codec::tests::history_page_round_trip_and_size_bound ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

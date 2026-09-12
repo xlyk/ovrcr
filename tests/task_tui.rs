@@ -64,6 +64,7 @@ fn task_hierarchy() -> HierarchySnapshot {
                     context_usage: None,
                     agent: None,
                     agent_epoch: 0,
+                    unread: None,
                 }],
             }],
         }],

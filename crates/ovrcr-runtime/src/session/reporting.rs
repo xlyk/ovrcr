@@ -11,6 +11,8 @@ pub(super) struct ReportingState {
     owner: Option<Arc<()>>,
     pub snapshot: Option<AgentSnapshot>,
     measurements: MeasurementWatermarks,
+    // One turn only, retained across reporting resets for the server lifetime.
+    ready: Option<(ReadyObservation, bool)>,
 }
 
 fn now_ms() -> u64 {
@@ -21,6 +23,25 @@ fn now_ms() -> u64 {
 }
 
 impl ReportingState {
+    pub fn unread(&self) -> Option<ReadyObservation> {
+        self.ready
+            .as_ref()
+            .filter(|(_, reviewed)| !reviewed)
+            .map(|(ready, _)| ready.clone())
+    }
+
+    fn mark_reviewed(&mut self, expected: &ReadyObservation) -> Result<()> {
+        expected.validate()?;
+        let Some((ready, reviewed)) = &mut self.ready else {
+            bail!("Ready observation is no longer available");
+        };
+        if ready != expected {
+            bail!("Ready observation changed; inspect the unread response before reviewing it");
+        }
+        *reviewed = true;
+        Ok(())
+    }
+
     pub fn active(&self) -> bool {
         self.lease.is_some()
     }
@@ -68,6 +89,24 @@ impl ReportingState {
             AgentObservation::Activity(activity) => {
                 if report.revision <= snapshot.activity_revision {
                     bail!("stale activity revision");
+                }
+                if report.binding.provider == AgentProvider::Codex
+                    && activity.state == AgentActivity::ResponseReady
+                    && activity.quality == SampleQuality::Observed
+                    && activity.turn.is_some()
+                    && snapshot.health.state == ReporterHealth::Connected
+                    && self.ready.as_ref().is_none_or(|(ready, _)| {
+                        ready.binding != report.binding || ready.turn != activity.turn
+                    })
+                {
+                    self.ready = Some((
+                        ReadyObservation {
+                            binding: report.binding.clone(),
+                            turn: activity.turn.clone(),
+                            activity_revision: report.revision,
+                        },
+                        false,
+                    ));
                 }
                 snapshot.activity = Some(activity.clone());
                 snapshot.activity_revision = report.revision;
@@ -217,6 +256,10 @@ impl Session {
         owner: Option<&Arc<()>>,
     ) -> Result<Response> {
         let mut state = self.state.lock().unwrap();
+        if let Request::MarkReviewed { expected, .. } = request {
+            state.reporting.mark_reviewed(expected)?;
+            return Ok(Response::Ok);
+        }
         if matches!(state.phase, SessionPhase::Exited { .. }) || state.hook_capability.is_none() {
             bail!("agent session is unavailable");
         }
@@ -411,6 +454,96 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unread_requires_observed_codex_ready_with_identified_turn() {
+        for (provider, quality, turn, health, expected) in [
+            (
+                AgentProvider::Codex,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                true,
+            ),
+            (
+                AgentProvider::Claude,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                false,
+            ),
+            (
+                AgentProvider::Codex,
+                SampleQuality::Confirmed,
+                Some("one"),
+                ReporterHealth::Connected,
+                false,
+            ),
+            (
+                AgentProvider::Codex,
+                SampleQuality::Estimated,
+                Some("one"),
+                ReporterHealth::Connected,
+                false,
+            ),
+            (
+                AgentProvider::Codex,
+                SampleQuality::Observed,
+                None,
+                ReporterHealth::Connected,
+                false,
+            ),
+            (
+                AgentProvider::Codex,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Unavailable,
+                false,
+            ),
+        ] {
+            let binding = AgentBinding {
+                provider,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            };
+            let mut reporting = ReportingState {
+                lease: Some(AgentSecret([1; 32])),
+                snapshot: Some(AgentSnapshot {
+                    binding: binding.clone(),
+                    activity: None,
+                    metrics: None,
+                    health: HealthSample {
+                        state: health,
+                        reason: None,
+                    },
+                    activity_revision: 0,
+                    metrics_revision: 0,
+                    health_revision: 0,
+                }),
+                ..Default::default()
+            };
+            reporting
+                .apply(
+                    &ProviderReport {
+                        binding,
+                        revision: 1,
+                        observation: AgentObservation::Activity(ActivitySample {
+                            state: AgentActivity::ResponseReady,
+                            quality,
+                            turn: turn.map(str::to_owned),
+                        }),
+                    },
+                    false,
+                )
+                .unwrap();
+            assert_eq!(
+                reporting.unread().is_some(),
+                expected,
+                "{provider:?} {quality:?} {turn:?} {health:?}"
+            );
+        }
+    }
+
     #[test]
     fn agent_report_component_receipt_age_uses_source_order_not_transport_time() {
         let first = Measurement {

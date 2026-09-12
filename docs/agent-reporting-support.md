@@ -213,7 +213,12 @@ the active dashboard, with no replay after attachment or reconnect and no
 delivery for terminals shown in visible panes. An independent optional
 [ready sound](dashboard.md#ready-sound) reuses that same selection; its host
 playback results are in the [issue 60 evidence](../research/issue-60-ready-sound/README.md).
-This does not add unread state, metrics or Confirmed completion. See [dashboard
+Explicit [unread acknowledgement](dashboard.md#unread-responses) is a separate
+server-owned state for the latest managed Codex Ready observation. It survives
+dashboard reconnect, Busy and reporter loss, and is cleared only by an explicit
+acknowledgement naming that observation or the end of its terminal/server
+lifetime. It does not change activity, quality or health. Neither feature adds
+metrics or Confirmed completion. See [dashboard
 controls and host requirements](dashboard.md#desktop-notifications) and
 [notification-specific acceptance](../research/issue-59-desktop-alerts/README.md)
 for current platform results; earlier hooks evidence below does not establish
