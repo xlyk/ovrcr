@@ -420,6 +420,7 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
         HintGroup { title: "View".into(), hints: view },
         HintGroup { title: "Dashboard".into(), hints: vec![
             hint("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Toggle notifications for new background Codex responses in this dashboard; no replay".into(), Char('N')),
+            hint("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Toggle a sound for new background Codex responses in this dashboard, independent of desktop notifications; no replay".into(), Char('S')),
             hint("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q')),
         ] },
     ]

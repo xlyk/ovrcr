@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DashboardSettings {
     pub desktop_notifications: bool,
+    pub ready_sound: bool,
     pub agents: Vec<AgentOverride>,
     pub picker_roots: Vec<PathBuf>,
     pub branch_prefix: String,
@@ -19,6 +20,7 @@ impl Default for DashboardSettings {
     fn default() -> Self {
         Self {
             desktop_notifications: false,
+            ready_sound: false,
             agents: Vec::new(),
             picker_roots: default_picker_roots(),
             branch_prefix: "feature/".into(),
@@ -30,6 +32,8 @@ impl Default for DashboardSettings {
 struct RawSettings {
     #[serde(default)]
     desktop_notifications: bool,
+    #[serde(default)]
+    ready_sound: bool,
     #[serde(default)]
     agents: Vec<AgentOverride>,
     picker_roots: Option<Vec<String>>,
@@ -53,6 +57,7 @@ impl RawSettings {
     fn into_settings(self) -> DashboardSettings {
         DashboardSettings {
             desktop_notifications: self.desktop_notifications,
+            ready_sound: self.ready_sound,
             agents: self.agents,
             picker_roots: self
                 .picker_roots
@@ -109,6 +114,26 @@ mod tests {
         std::fs::write(&path, "desktop_notifications = \"yes\"\n").unwrap();
         let (settings, error) = load_dashboard_settings(&path);
         assert!(!settings.desktop_notifications);
+        assert!(error.is_some());
+    }
+
+    #[test]
+    fn ready_sound_default_off_and_independent_of_desktop_notifications() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        assert!(!load_dashboard_settings(&path).0.ready_sound);
+        std::fs::write(&path, "ready_sound = true\n").unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(settings.ready_sound);
+        assert!(!settings.desktop_notifications);
+        assert!(error.is_none());
+        std::fs::write(&path, "desktop_notifications = true\n").unwrap();
+        let settings = load_dashboard_settings(&path).0;
+        assert!(settings.desktop_notifications);
+        assert!(!settings.ready_sound);
+        std::fs::write(&path, "ready_sound = \"yes\"\n").unwrap();
+        let (settings, error) = load_dashboard_settings(&path);
+        assert!(!settings.ready_sound);
         assert!(error.is_some());
     }
 

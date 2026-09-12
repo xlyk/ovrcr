@@ -17,6 +17,11 @@ use std::time::{Duration, Instant};
 
 const QUEUE_CAPACITY: usize = 50;
 const HOST_TIMEOUT: Duration = Duration::from_secs(2);
+// The system player exits after playback; measured afplay wall time for the
+// fixed sound is about 2.5 seconds on macOS.
+const SOUND_TIMEOUT: Duration = Duration::from_secs(5);
+const CHANNEL_DESKTOP: u8 = 1;
+const CHANNEL_SOUND: u8 = 2;
 const HOST_POLL: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
@@ -68,22 +73,36 @@ pub(super) struct DesktopNotifications {
 }
 
 impl Dashboard {
+    fn alert_channels(&self) -> u8 {
+        let mut channels = 0;
+        if self.settings.desktop_notifications {
+            channels |= CHANNEL_DESKTOP;
+        }
+        if self.settings.ready_sound {
+            channels |= CHANNEL_SOUND;
+        }
+        channels
+    }
+
     pub(super) fn toggle_desktop_notifications(&mut self) -> DashboardAction {
         self.settings.desktop_notifications = !self.settings.desktop_notifications;
-        if !self.settings.desktop_notifications {
+        self.alerts_changed("Desktop notifications", self.settings.desktop_notifications)
+    }
+
+    pub(super) fn toggle_ready_sound(&mut self) -> DashboardAction {
+        self.settings.ready_sound = !self.settings.ready_sound;
+        self.alerts_changed("Ready sound", self.settings.ready_sound)
+    }
+
+    fn alerts_changed(&mut self, name: &str, enabled: bool) -> DashboardAction {
+        let channels = self.alert_channels();
+        if channels == 0 {
             self.desktop.pending.clear();
         }
         if let Some(host) = &mut self.desktop.host {
-            host.set_enabled(self.settings.desktop_notifications);
+            host.set_channels(channels);
         }
-        self.desktop.notice = Some(format!(
-            "Desktop notifications: {}",
-            if self.settings.desktop_notifications {
-                "on"
-            } else {
-                "off"
-            }
-        ));
+        self.desktop.notice = Some(format!("{name}: {}", if enabled { "on" } else { "off" }));
         DashboardAction::Redraw
     }
 
@@ -169,7 +188,7 @@ impl Dashboard {
         // Consume all accepted revisions, including disabled and visible responses. Visibility
         // and settings changes never rescan old Ready state for later delivery.
         if !initial
-            && self.settings.desktop_notifications
+            && self.alert_channels() != 0
             && new_ready
             && ready_session(session)
             && !self.desktop_session_visible(session.id)
@@ -191,7 +210,7 @@ impl Dashboard {
     }
 
     fn desktop_notification_valid(&self, notification: &Notification) -> bool {
-        self.settings.desktop_notifications
+        self.alert_channels() != 0
             && !self.desktop_session_visible(notification.session)
             && super::state::find_session(self, notification.session)
                 .is_some_and(|session| notification_matches_session(notification, session))
@@ -228,7 +247,7 @@ impl Dashboard {
                     .as_ref()
                     .map(std::os::unix::net::UnixStream::try_clone)
                     .transpose()
-                    .and_then(DesktopHost::start);
+                    .and_then(|wake| DesktopHost::start(wake, self.alert_channels()));
                 match host {
                     Ok(host) => self.desktop.host = Some(host),
                     Err(_) => {
@@ -248,14 +267,20 @@ impl Dashboard {
                 self.desktop.in_flight = Some(delivery);
             }
         }
-        if let Some(host) = &self.desktop.host
-            && host
-                .failures
-                .try_recv()
-                .is_ok_and(|ticket| host.enabled && ticket == host.epoch.load(Ordering::Acquire))
-        {
-            self.desktop.notice = Some("Desktop notifications unavailable".into());
-            changed = true;
+        if let Some(host) = &self.desktop.host {
+            while let Ok((ticket, channel)) = host.failures.try_recv() {
+                if host.enabled && ticket == host.epoch.load(Ordering::Acquire) {
+                    self.desktop.notice = Some(
+                        if channel == CHANNEL_SOUND {
+                            "Ready sound unavailable"
+                        } else {
+                            "Desktop notifications unavailable"
+                        }
+                        .into(),
+                    );
+                    changed = true;
+                }
+            }
         }
         changed
     }
@@ -293,20 +318,26 @@ fn safe_identity(text: &str) -> String {
 
 struct DesktopHost {
     sender: mpsc::SyncSender<(u64, Delivery)>,
-    failures: mpsc::Receiver<u64>,
+    failures: mpsc::Receiver<(u64, u8)>,
     enabled: bool,
     epoch: Arc<AtomicU64>,
+    channels: Arc<AtomicU8>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl DesktopHost {
-    fn start(mut wake: Option<std::os::unix::net::UnixStream>) -> std::io::Result<Self> {
+    fn start(
+        mut wake: Option<std::os::unix::net::UnixStream>,
+        channels: u8,
+    ) -> std::io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<(u64, Delivery)>(1);
-        let (failure, failures) = mpsc::sync_channel(1);
+        let (failure, failures) = mpsc::sync_channel(2);
         let epoch = Arc::new(AtomicU64::new(0));
+        let channels = Arc::new(AtomicU8::new(channels));
         let stop = Arc::new(AtomicBool::new(false));
         let worker_epoch = Arc::clone(&epoch);
+        let worker_channels = Arc::clone(&channels);
         let worker_stop = Arc::clone(&stop);
         let worker = thread::Builder::new()
             .name("ovrcr-desktop-notifications".into())
@@ -320,11 +351,30 @@ impl DesktopHost {
                             || worker_stop.load(Ordering::Acquire)
                             || delivery.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
                     };
-                    let success = cancelled() || run_host(&delivery.notification, cancelled);
-                    let report_failure = !success && !cancelled();
+                    let mut failed = 0;
+                    // ponytail: channels run one after another; run them concurrently
+                    // if a sound-length backlog per response ever matters.
+                    for (channel, command, timeout) in [
+                        (
+                            CHANNEL_DESKTOP,
+                            host_command(&delivery.notification),
+                            HOST_TIMEOUT,
+                        ),
+                        (CHANNEL_SOUND, sound_command(), SOUND_TIMEOUT),
+                    ] {
+                        // A toggle applies to every host command not yet started.
+                        if cancelled() || worker_channels.load(Ordering::Acquire) & channel == 0 {
+                            continue;
+                        }
+                        if !run_host(command, timeout, cancelled) && !cancelled() {
+                            failed |= channel;
+                        }
+                    }
                     delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
-                    if report_failure {
-                        let _ = failure.try_send(ticket);
+                    for channel in [CHANNEL_DESKTOP, CHANNEL_SOUND] {
+                        if failed & channel != 0 {
+                            let _ = failure.try_send((ticket, channel));
+                        }
                     }
                     if let Some(wake) = &mut wake {
                         super::event_loop::notify_dashboard_wake(wake);
@@ -334,13 +384,16 @@ impl DesktopHost {
         Ok(Self {
             sender,
             failures,
-            enabled: true,
+            enabled: channels.load(Ordering::Acquire) != 0,
             epoch,
+            channels,
             stop,
             worker: Some(worker),
         })
     }
-    fn set_enabled(&mut self, enabled: bool) {
+    fn set_channels(&mut self, channels: u8) {
+        self.channels.store(channels, Ordering::Release);
+        let enabled = channels != 0;
         if enabled != self.enabled {
             self.enabled = enabled;
             self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -364,8 +417,7 @@ impl Drop for DesktopHost {
     }
 }
 
-fn run_host(notification: &Notification, cancelled: impl Fn() -> bool) -> bool {
-    let mut command = host_command(notification);
+fn run_host(mut command: Command, timeout: Duration, cancelled: impl Fn() -> bool) -> bool {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -374,7 +426,7 @@ fn run_host(notification: &Notification, cancelled: impl Fn() -> bool) -> bool {
     let Ok(mut child) = command.spawn() else {
         return false;
     };
-    let deadline = Instant::now() + HOST_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status.success(),
@@ -422,6 +474,20 @@ fn host_command(notification: &Notification) -> Command {
         notification.title,
         &body,
     ]);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn sound_command() -> Command {
+    let mut command = Command::new("afplay");
+    command.arg("/System/Library/Sounds/Glass.aiff");
+    command
+}
+
+#[cfg(not(target_os = "macos"))]
+fn sound_command() -> Command {
+    let mut command = Command::new("paplay");
+    command.arg("/usr/share/sounds/freedesktop/stereo/complete.oga");
     command
 }
 #[cfg(test)]
@@ -519,6 +585,7 @@ mod tests {
             failures,
             enabled: true,
             epoch: Arc::new(AtomicU64::new(0)),
+            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
             stop: Arc::new(AtomicBool::new(false)),
             worker: None,
         });
@@ -611,6 +678,7 @@ mod tests {
             failures,
             enabled: true,
             epoch: Arc::new(AtomicU64::new(0)),
+            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
             stop: Arc::new(AtomicBool::new(false)),
             worker: None,
         });
@@ -662,7 +730,7 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         sender.set_nonblocking(true).unwrap();
-        let host = DesktopHost::start(Some(sender)).unwrap();
+        let host = DesktopHost::start(Some(sender), CHANNEL_DESKTOP).unwrap();
         assert!(host.send(Delivery {
             notification: d.desktop.pending.pop_front().unwrap(),
             state: Arc::new(AtomicU8::new(DELIVERY_CANCELLED))
@@ -982,12 +1050,13 @@ mod tests {
             failures,
             enabled: true,
             epoch: Arc::new(AtomicU64::new(0)),
+            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
             stop: Arc::new(AtomicBool::new(false)),
             worker: None,
         });
         d.key(KeyCode::Char('N'));
         d.key(KeyCode::Char('N'));
-        failed.send(0).unwrap();
+        failed.send((0, CHANNEL_DESKTOP)).unwrap();
         assert!(!d.emit_desktop_notifications());
         assert_eq!(
             d.desktop.notice.as_deref(),
@@ -1032,5 +1101,166 @@ mod tests {
             DashboardAction::PtyBytes(b"N".to_vec())
         );
         assert!(d.settings.desktop_notifications);
+    }
+    type StubHost = (mpsc::Receiver<(u64, Delivery)>, mpsc::SyncSender<(u64, u8)>);
+    fn stub_host(d: &mut Dashboard) -> StubHost {
+        let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
+        let (failed, failures) = mpsc::sync_channel(2);
+        d.desktop.host = Some(DesktopHost {
+            sender,
+            failures,
+            enabled: true,
+            epoch: Arc::new(AtomicU64::new(0)),
+            channels: Arc::new(AtomicU8::new(d.alert_channels())),
+            stop: Arc::new(AtomicBool::new(false)),
+            worker: None,
+        });
+        (receiver, failed)
+    }
+    #[test]
+    fn sound_only_desktop_only_both_and_neither_share_one_accepted_candidate() {
+        for (desktop, sound) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut d = Dashboard::new(TerminalSize {
+                rows: 24,
+                cols: 120,
+            });
+            d.settings.desktop_notifications = desktop;
+            d.settings.ready_sound = sound;
+            deliver(&mut d, snapshot(1, "a", AgentActivity::Busy));
+            let (receiver, _failed) = stub_host(&mut d);
+            deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+            if !desktop && !sound {
+                assert!(d.desktop.pending.is_empty(), "neither channel enqueues");
+                continue;
+            }
+            assert_eq!(
+                d.desktop.pending.len(),
+                1,
+                "desktop={desktop} sound={sound}"
+            );
+            assert!(d.emit_desktop_notifications() || d.desktop.in_flight.is_some());
+            let (_, delivery) = receiver.try_recv().unwrap();
+            assert_eq!(delivery.notification.session, SessionId(1));
+            let mask = d
+                .desktop
+                .host
+                .as_ref()
+                .unwrap()
+                .channels
+                .load(Ordering::Acquire);
+            assert_eq!(mask & CHANNEL_DESKTOP != 0, desktop);
+            assert_eq!(mask & CHANNEL_SOUND != 0, sound);
+            delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
+            deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+            deliver(&mut d, snapshot(3, "a", AgentActivity::ResponseReady));
+            d.emit_desktop_notifications();
+            assert!(
+                receiver.try_recv().is_err(),
+                "one delivery per accepted response for desktop={desktop} sound={sound}"
+            );
+        }
+    }
+    #[test]
+    fn ready_sound_toggle_is_independent_and_only_disabling_both_cancels_pending() {
+        let mut d = dashboard();
+        assert_eq!(d.key(KeyCode::Char('S')), DashboardAction::Redraw);
+        assert!(d.settings.ready_sound && d.settings.desktop_notifications);
+        assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound: on"));
+        let (_receiver, _failed) = stub_host(&mut d);
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+        d.key(KeyCode::Char('N'));
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "sound alone keeps the candidate"
+        );
+        let host = d.desktop.host.as_ref().unwrap();
+        assert_eq!(host.channels.load(Ordering::Acquire), CHANNEL_SOUND);
+        assert_eq!(
+            host.epoch.load(Ordering::Acquire),
+            0,
+            "no cancellation while enabled"
+        );
+        d.key(KeyCode::Char('S'));
+        assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound: off"));
+        assert!(
+            d.desktop.pending.is_empty(),
+            "disabling the last channel cancels"
+        );
+        let host = d.desktop.host.as_ref().unwrap();
+        assert_eq!(host.channels.load(Ordering::Acquire), 0);
+        assert_eq!(host.epoch.load(Ordering::Acquire), 1);
+        d.key(KeyCode::Char('S'));
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        assert!(d.desktop.pending.is_empty(), "enabling sound never replays");
+        deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+    }
+    #[test]
+    fn sound_host_command_is_a_fixed_system_player_without_identity() {
+        let command = sound_command();
+        let program = command.get_program().to_string_lossy().into_owned();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(program, "afplay");
+            assert_eq!(args, ["/System/Library/Sounds/Glass.aiff"]);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(program, "paplay");
+            assert_eq!(args, ["/usr/share/sounds/freedesktop/stereo/complete.oga"]);
+        }
+        assert!(SOUND_TIMEOUT >= HOST_TIMEOUT);
+    }
+    #[test]
+    fn sound_host_failure_reports_its_own_notice() {
+        let mut d = dashboard();
+        d.key(KeyCode::Char('S'));
+        let (_receiver, failed) = stub_host(&mut d);
+        d.desktop.notice = None;
+        failed.send((0, CHANNEL_SOUND)).unwrap();
+        assert!(d.emit_desktop_notifications());
+        assert_eq!(d.desktop.notice.as_deref(), Some("Ready sound unavailable"));
+        failed.send((0, CHANNEL_DESKTOP)).unwrap();
+        assert!(d.emit_desktop_notifications());
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Desktop notifications unavailable")
+        );
+    }
+    #[test]
+    fn ready_sound_toggle_does_not_intercept_native_input() {
+        let mut d = dashboard();
+        d.key(KeyCode::Char('S'));
+        d.select_session(SessionId(1));
+        let request = d.view_request(d.outer_area, 78).unwrap().unwrap();
+        let ovrcr_protocol::Request::SetView { view } = request.request else {
+            panic!("expected view");
+        };
+        d.handle_server_message(ServerMessage::Response {
+            request_id: 78,
+            response: Response::Screen {
+                session: SessionId(1),
+                revision: view.revision,
+                size: view.panes[0].size,
+                bytes: Vec::new(),
+            },
+        });
+        d.handle_server_message(ServerMessage::Response {
+            request_id: 78,
+            response: Response::Ok,
+        });
+        assert_eq!(d.key(KeyCode::Enter), DashboardAction::Redraw);
+        assert_eq!(d.mode, InputMode::Terminal);
+        assert_eq!(
+            d.key(KeyCode::Char('S')),
+            DashboardAction::PtyBytes(b"S".to_vec())
+        );
+        assert!(d.settings.ready_sound);
     }
 }

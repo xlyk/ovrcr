@@ -80,8 +80,10 @@ in `dashboard.toml`, or press uppercase `N` in dashboard browse mode for a
 session-only toggle. Alerts contain terminal/project/workspace identity only.
 Attaching, reconnecting or enabling alerts does not replay existing Ready
 observations. An alert retains the same Observed meaning as the indicator.
+An independent `ready_sound` setting, or uppercase `S` in browse mode, plays a
+[sound](dashboard.md#ready-sound) for the same responses under the same rules.
 
-Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, sound, unread acknowledgement and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
+Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. First release excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion, unread acknowledgement and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
 ## Acceptance evidence
 
