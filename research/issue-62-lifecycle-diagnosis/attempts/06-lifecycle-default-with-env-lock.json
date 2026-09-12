@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "ovrcr",
+    "--test",
+    "server_lifecycle",
+    "--all-features",
+    "--locked",
+    "--offline",
+    "--",
+    "--nocapture"
+  ],
+  "revision": "b7f139f62b66eb10f73f22ffff51b8b074163fc3",
+  "source_change": "diagnostic-only.patch (v2) instrumentation with the merged env_lock guard restored (a42cb12 fixture state); probe/receiver/agent-run timeline instrumented, ADMISSION_READY wait reports timeline",
+  "test_threads": "default",
+  "host_loadavg_before": "{ 4.69 6.60 5.71 }",
+  "start_utc": "2026-09-12T08:11:11.426014+00:00",
+  "exit_code": 0,
+  "end_utc": "2026-09-12T08:12:09.964871+00:00"
+}
