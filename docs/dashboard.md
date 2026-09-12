@@ -398,7 +398,8 @@ hiding a terminal does not replay a previously suppressed response. No active
 dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
-subprocess deadline. Disabling notifications or detaching cancels pending work.
+subprocess deadline. Disabling the last enabled alert channel (notifications or the
+[ready sound](#ready-sound)) or detaching cancels pending work.
 Delivery is best effort, with no retries. Host failures do not change reporting,
 native approvals, input or process state. A host command error displays
 **Desktop notifications unavailable** in the footer.

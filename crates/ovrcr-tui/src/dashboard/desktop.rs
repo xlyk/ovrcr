@@ -251,7 +251,8 @@ impl Dashboard {
                 match host {
                     Ok(host) => self.desktop.host = Some(host),
                     Err(_) => {
-                        self.desktop.notice = Some("Desktop notifications unavailable".into());
+                        self.desktop.notice =
+                            Some(unavailable_notice(self.alert_channels()).into());
                         changed = true;
                         continue;
                     }
@@ -267,19 +268,18 @@ impl Dashboard {
                 self.desktop.in_flight = Some(delivery);
             }
         }
+        let channels = self.alert_channels();
         if let Some(host) = &self.desktop.host {
+            let mut failed = 0;
             while let Ok((ticket, channel)) = host.failures.try_recv() {
-                if host.enabled && ticket == host.epoch.load(Ordering::Acquire) {
-                    self.desktop.notice = Some(
-                        if channel == CHANNEL_SOUND {
-                            "Ready sound unavailable"
-                        } else {
-                            "Desktop notifications unavailable"
-                        }
-                        .into(),
-                    );
-                    changed = true;
+                if ticket == host.epoch.load(Ordering::Acquire) {
+                    // A channel disabled after its command started reports nothing.
+                    failed |= channel & channels;
                 }
+            }
+            if failed != 0 {
+                self.desktop.notice = Some(unavailable_notice(failed).into());
+                changed = true;
             }
         }
         changed
@@ -312,6 +312,14 @@ fn ready_session(session: &SessionSummary) -> bool {
         })
 }
 
+fn unavailable_notice(channels: u8) -> &'static str {
+    match channels {
+        CHANNEL_SOUND => "Ready sound unavailable",
+        CHANNEL_DESKTOP => "Desktop notifications unavailable",
+        _ => "Desktop notifications and ready sound unavailable",
+    }
+}
+
 fn safe_identity(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).take(80).collect()
 }
@@ -319,7 +327,6 @@ fn safe_identity(text: &str) -> String {
 struct DesktopHost {
     sender: mpsc::SyncSender<(u64, Delivery)>,
     failures: mpsc::Receiver<(u64, u8)>,
-    enabled: bool,
     epoch: Arc<AtomicU64>,
     channels: Arc<AtomicU8>,
     stop: Arc<AtomicBool>,
@@ -351,7 +358,6 @@ impl DesktopHost {
                             || worker_stop.load(Ordering::Acquire)
                             || delivery.state.load(Ordering::Acquire) != DELIVERY_ACTIVE
                     };
-                    let mut failed = 0;
                     // ponytail: channels run one after another; run them concurrently
                     // if a sound-length backlog per response ever matters.
                     for (channel, command, timeout) in [
@@ -367,15 +373,10 @@ impl DesktopHost {
                             continue;
                         }
                         if !run_host(command, timeout, cancelled) && !cancelled() {
-                            failed |= channel;
-                        }
-                    }
-                    delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
-                    for channel in [CHANNEL_DESKTOP, CHANNEL_SOUND] {
-                        if failed & channel != 0 {
                             let _ = failure.try_send((ticket, channel));
                         }
                     }
+                    delivery.state.store(DELIVERY_FINISHED, Ordering::Release);
                     if let Some(wake) = &mut wake {
                         super::event_loop::notify_dashboard_wake(wake);
                     }
@@ -384,23 +385,23 @@ impl DesktopHost {
         Ok(Self {
             sender,
             failures,
-            enabled: channels.load(Ordering::Acquire) != 0,
             epoch,
             channels,
             stop,
             worker: Some(worker),
         })
     }
+    fn enabled(&self) -> bool {
+        self.channels.load(Ordering::Acquire) != 0
+    }
     fn set_channels(&mut self, channels: u8) {
-        self.channels.store(channels, Ordering::Release);
-        let enabled = channels != 0;
-        if enabled != self.enabled {
-            self.enabled = enabled;
+        let previous = self.channels.swap(channels, Ordering::AcqRel);
+        if (previous != 0) != (channels != 0) {
             self.epoch.fetch_add(1, Ordering::AcqRel);
         }
     }
     fn send(&self, delivery: Delivery) -> bool {
-        self.enabled
+        self.enabled()
             && self
                 .sender
                 .try_send((self.epoch.load(Ordering::Acquire), delivery))
@@ -578,17 +579,7 @@ mod tests {
             notification: d.desktop.pending.pop_front().unwrap(),
             state: Arc::new(AtomicU8::new(DELIVERY_ACTIVE)),
         });
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let (_failed, failures) = mpsc::sync_channel(1);
-        d.desktop.host = Some(DesktopHost {
-            sender,
-            failures,
-            enabled: true,
-            epoch: Arc::new(AtomicU64::new(0)),
-            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
-            stop: Arc::new(AtomicBool::new(false)),
-            worker: None,
-        });
+        let (receiver, _failed) = stub_host(&mut d);
         assert_eq!(d.desktop.pending.len(), 1);
         (d, receiver)
     }
@@ -671,17 +662,7 @@ mod tests {
     #[test]
     fn desktop_health_loss_before_dispatch_cancels_pending_ready() {
         let mut d = dashboard();
-        let (sender, received) = mpsc::sync_channel(QUEUE_CAPACITY);
-        let (_failed, failures) = mpsc::sync_channel(1);
-        d.desktop.host = Some(DesktopHost {
-            sender,
-            failures,
-            enabled: true,
-            epoch: Arc::new(AtomicU64::new(0)),
-            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
-            stop: Arc::new(AtomicBool::new(false)),
-            worker: None,
-        });
+        let (received, _failed) = stub_host(&mut d);
         deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
         let mut unavailable = snapshot(2, "a", AgentActivity::ResponseReady);
         session(&mut unavailable)
@@ -1043,17 +1024,7 @@ mod tests {
     #[test]
     fn desktop_cancelled_host_failure_cannot_replace_new_toggle_notice() {
         let mut d = dashboard();
-        let (sender, _received) = mpsc::sync_channel(QUEUE_CAPACITY);
-        let (failed, failures) = mpsc::sync_channel(1);
-        d.desktop.host = Some(DesktopHost {
-            sender,
-            failures,
-            enabled: true,
-            epoch: Arc::new(AtomicU64::new(0)),
-            channels: Arc::new(AtomicU8::new(CHANNEL_DESKTOP)),
-            stop: Arc::new(AtomicBool::new(false)),
-            worker: None,
-        });
+        let (_received, failed) = stub_host(&mut d);
         d.key(KeyCode::Char('N'));
         d.key(KeyCode::Char('N'));
         failed.send((0, CHANNEL_DESKTOP)).unwrap();
@@ -1109,7 +1080,6 @@ mod tests {
         d.desktop.host = Some(DesktopHost {
             sender,
             failures,
-            enabled: true,
             epoch: Arc::new(AtomicU64::new(0)),
             channels: Arc::new(AtomicU8::new(d.alert_channels())),
             stop: Arc::new(AtomicBool::new(false)),
@@ -1232,6 +1202,22 @@ mod tests {
             d.desktop.notice.as_deref(),
             Some("Desktop notifications unavailable")
         );
+        failed.send((0, CHANNEL_DESKTOP)).unwrap();
+        failed.send((0, CHANNEL_SOUND)).unwrap();
+        assert!(d.emit_desktop_notifications());
+        assert_eq!(
+            d.desktop.notice.as_deref(),
+            Some("Desktop notifications and ready sound unavailable")
+        );
+        d.key(KeyCode::Char('S'));
+        d.desktop.notice = None;
+        failed.send((0, CHANNEL_SOUND)).unwrap();
+        assert!(
+            !d.emit_desktop_notifications(),
+            "a channel disabled after its command started reports nothing"
+        );
+        assert!(d.desktop.notice.is_none());
+        assert_eq!(unavailable_notice(CHANNEL_SOUND), "Ready sound unavailable");
     }
     #[test]
     fn ready_sound_toggle_does_not_intercept_native_input() {

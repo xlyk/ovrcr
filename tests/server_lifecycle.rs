@@ -10288,7 +10288,7 @@ impl DesktopAlertDashboard {
         });
         std::fs::write(
             &player,
-            "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.sound.mode\" ]; then\n  printf 'PRIVATE_SOUND_ERROR' >&2; exit 17\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD.sound\"\n",
+            "#!/bin/sh\nif [ -f \"$OVRCR_TEST_DESKTOP_RECORD.sound.mode\" ]; then\n  IFS= read -r mode < \"$OVRCR_TEST_DESKTOP_RECORD.sound.mode\"\n  case \"$mode\" in\n    fail) printf 'PRIVATE_SOUND_ERROR' >&2; exit 17 ;;\n    block) printf '%s\\n' \"$$\" > \"$OVRCR_TEST_DESKTOP_RECORD.sound.pid\"; exec /bin/sleep 30 ;;\n  esac\nfi\n{ printf 'BEGIN\\n'; printf '%s\\n' \"$@\"; printf 'END\\n'; } >> \"$OVRCR_TEST_DESKTOP_RECORD.sound\"\n",
         )
         .unwrap();
         std::fs::set_permissions(&player, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -10399,29 +10399,21 @@ impl DesktopAlertDashboard {
         self.parser = vt100::Parser::new(32, cols, 0);
     }
 
-    fn wait_calls(&mut self, expected: usize, session: SessionId) {
+    fn wait_record(&mut self, record: &std::path::Path, expected: usize, check: impl Fn(&str)) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let contents = std::fs::read_to_string(&self.record).unwrap_or_default();
+            let contents = std::fs::read_to_string(record).unwrap_or_default();
             let count = contents.lines().filter(|line| *line == "END").count();
-            assert!(count <= expected, "unexpected desktop call: {contents}");
+            assert!(count <= expected, "unexpected host call: {contents}");
             if count == expected {
-                let body = format!("fixture / work / codex-hooks (#{})", session.0);
                 for call in contents.split("END\n").filter(|call| !call.is_empty()) {
-                    assert!(call.contains(&body), "identity missing: {call}");
-                    assert!(
-                        call.contains("OVRCR · response ready"),
-                        "title missing: {call}"
-                    );
-                    assert!(!call.contains("CODEX_CALLBACK"));
-                    assert!(!call.contains("OVRCR_HOOK_TOKEN"));
-                    assert!(!call.contains("root.jsonl"));
+                    check(call);
                 }
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "expected {expected} desktop host calls, received {count}: {contents}; screen: {}",
+                "expected {expected} host calls, received {count}: {contents}; screen: {}",
                 self.parser.screen().contents()
             );
             if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
@@ -10430,37 +10422,35 @@ impl DesktopAlertDashboard {
         }
     }
 
+    fn wait_calls(&mut self, expected: usize, session: SessionId) {
+        let body = format!("fixture / work / codex-hooks (#{})", session.0);
+        let record = self.record.clone();
+        self.wait_record(&record, expected, |call| {
+            assert!(call.contains(&body), "identity missing: {call}");
+            assert!(
+                call.contains("OVRCR · response ready"),
+                "title missing: {call}"
+            );
+            assert!(!call.contains("CODEX_CALLBACK"));
+            assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+            assert!(!call.contains("root.jsonl"));
+        });
+    }
+
     fn wait_sound_calls(&mut self, expected: usize) {
-        let record = self.record.with_extension("sound");
         let file = if cfg!(target_os = "macos") {
             "/System/Library/Sounds/Glass.aiff"
         } else {
             "/usr/share/sounds/freedesktop/stereo/complete.oga"
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let contents = std::fs::read_to_string(&record).unwrap_or_default();
-            let count = contents.lines().filter(|line| *line == "END").count();
-            assert!(count <= expected, "unexpected sound call: {contents}");
-            if count == expected {
-                for call in contents.split("END\n").filter(|call| !call.is_empty()) {
-                    assert_eq!(
-                        call,
-                        format!("BEGIN\n{file}\n"),
-                        "the player receives only the fixed sound file"
-                    );
-                }
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "expected {expected} sound calls, received {count}: {contents}; screen: {}",
-                self.parser.screen().contents()
+        let record = self.record.with_extension("sound");
+        self.wait_record(&record, expected, |call| {
+            assert_eq!(
+                call,
+                format!("BEGIN\n{file}\n"),
+                "the player receives only the fixed sound file"
             );
-            if let Ok(bytes) = self.received.recv_timeout(Duration::from_millis(10)) {
-                self.parser.process(&bytes);
-            }
-        }
+        });
     }
 
     fn detach(&mut self) {
@@ -10975,5 +10965,48 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     }
     dashboard.wait_sound_calls(5);
     dashboard.wait_calls(2, summary.id);
+
+    // A hung player never blocks terminal input or detach; detach ends its
+    // process group without waiting for the playback deadline.
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: local,
+            text: "printf 'SOUND_%s\\n' SHELL_READY".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(local, "SOUND_SHELL_READY");
+    dashboard.select("local", "SOUND_SHELL_READY");
+    std::fs::write(&mode, "block\n").unwrap();
+    for command in ["UserPromptSubmit:root:l", "Stop:root:l"] {
+        desktop_codex_callback(&fixture, summary.id, &mut index, command);
+    }
+    let player_pid = dashboard.record.with_extension("sound.pid");
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let blocked_pid = loop {
+        if let Ok(text) = std::fs::read_to_string(&player_pid)
+            && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "player did not enter blocking mode"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    dashboard.host_process_groups.push(blocked_pid);
+    assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
+    dashboard.send(b"\rprintf 'SOUND_INPUT_%s\\n' READY\r");
+    dashboard.wait_screen(|screen| screen.contains("SOUND_INPUT_READY"));
+    assert!(
+        group_exists(blocked_pid),
+        "player exited before the input check"
+    );
+    dashboard.send(b"\x07");
     dashboard.detach();
+    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
 }
