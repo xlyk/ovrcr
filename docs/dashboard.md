@@ -136,17 +136,32 @@ resize.
 
 ## Sidebar and status
 
-Each sidebar session uses two lines: the session name and its label. The selected
-session is highlighted across both lines, and clicking either selects it.
-Projects and workspaces follow one another without blank separator lines.
+Each project is a section: its name in upper case with a rule to the sidebar
+edge, and a blank line before every project after the first. Workspaces follow
+with a branch glyph and a bold name. Each session takes one line: a status
+glyph, the session name, and the model from its label right-aligned in the
+provider colour. A long name clips with `…` before the model, and the model is
+dropped when fewer than twelve cells would remain for the name. Local shells
+show `$ local` with no model unless a hook reports activity inside them. The
+selected row shows a mauve bar in its first column and a lighter background; its
+own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
+`▸ N` at the right edge.
 
-| Slot | Meaning |
+| Glyph | Meaning |
 | --- | --- |
 | `-` | No hook report accepted yet |
-| blank | Idle, or exited (exited rows are dimmed) |
-| braille spinner | Busy |
-| `?` | Waiting for input |
-| `!` | Reported error |
+| blank | Idle |
+| braille spinner (green) | Busy |
+| `?` (yellow) | Waiting for input |
+| `!` (red) | Reported error |
+| `✓` (teal) | Response ready |
+| `P` | Paused |
+| `·` | Exited (the row is dimmed) |
+
+An unavailable reporter draws the glyph in the muted colour. The literal state,
+quality, and reporter health (`agent busy confirmed`, `response ready ·
+observed`, `unavailable`) appear on the selected session's metadata line, not
+in the sidebar.
 
 The selected metadata line shows `pid: closed` after the managed process exits.
 Live metadata labels the same observation as `agent unknown`, `agent idle`,
@@ -161,14 +176,18 @@ for provider reporting behavior.
 In Browse and Terminal modes:
 
 - Clicking a session row selects it.
-- Clicking a project or workspace label selects it. Clicking its disclosure arrow
-  expands or collapses it.
+- Clicking a project or workspace name selects it. Clicking the first cell of a
+  project header, or the branch glyph of a workspace, folds or unfolds it. The
+  blank line before a project does nothing.
 - Scrolling over the sidebar scrolls its visible rows.
 - Clicking inside a terminal focuses that pane for typing. A click that changes
   focus is consumed by the dashboard.
 - Dragging the divider between two panes changes their widths. Each visible pane
   keeps at least 20 columns. The split proportion survives window resizing and
   the temporary single-pane layout used in narrow windows.
+- Dragging the sidebar's right border changes the sidebar width, between 20
+  columns and half the window; the panes take the remaining width and are
+  resized. The chosen width lasts for the attachment and is not saved.
 - Wheel-up over a pane opens History at the captured tail. Further wheel ticks
   move one row; wheel-down at the newest row returns to the live pane.
 

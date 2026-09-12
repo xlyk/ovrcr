@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>03 · sections</title>
+<link rel="stylesheet" href="base.css">
+<div class="window"><div class="titlebar"><span class="pill">▣</span> OVRCR GUI</div><div class="sidebar" id="sb"></div></div>
+<p class="note"><b>03 · Sections instead of a tree.</b> Chevrons are gone. Projects become upper-case section headers with a rule to the edge and a blank line before them; workspaces get a branch glyph and bold; sessions are a plain indented list. Depth is carried by typography and whitespace, which is easier to scan than four indent steps that differ by two cells. Selection is a left bar plus a lighter background, so the status and provider colours stay visible on the selected row. Fold by clicking a header; folded rows show a count.</p>
+<script src="data.js"></script>
+<script>
+function render(){
+  let h = quietHeader();
+  DATA.forEach((p,i)=>{
+    if(i) h += line([[' ','']]);
+    const pk='p:'+p.name, pc=isCollapsed(pk), title=' '+p.name.toUpperCase()+' ';
+    const right = pc?[[' ▸ '+p.workspaces.length+' ws ','muted']]:[];
+    h += line([[title,'blue b'],['─'.repeat(W-len(title)-len(right.map(x=>x[0]).join(''))),'surface']], right, '', `data-fold="${pk}"`);
+    if(pc) return;
+    for(const w of p.workspaces){
+      const wk='w:'+p.name+'/'+w.name, wc=isCollapsed(wk);
+      h += line([['  󰘬 '+w.name,'text b']], wc?[['▸ '+w.sessions.length+' ','muted']]:[], '', `data-fold="${wk}"`);
+      if(wc) continue;
+      for(const s of w.sessions){
+        const sel=s.id===state.selected, dim=(s.phase==='exited'&&!sel)?' dim':'';
+        if(s.name==='local'){ h += line([['     $ local','subtext']],[],sel?'soft-sel':'',`data-sid="${s.id}"`); continue; }
+        const [g,gc,sp]=status(s), m=model(s);
+        h += line([['     ',''],[g,gc+(sp?' spin':'')],[' ',''],[trunc(s.name, W-7-len(m)-2),'text'+dim]],[[m,pinfo(s).cls+dim],[' ','']],sel?'soft-sel':'',`data-sid="${s.id}"`);
+      }
+    }
+  });
+  sb.innerHTML=h;
+}
+bind(sb,render); render();
+</script>

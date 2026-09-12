@@ -28,7 +28,7 @@ use std::thread;
 use std::time::Duration;
 
 #[test]
-fn compact_sidebar_maps_each_line_to_its_visible_tree_row() {
+fn sidebar_maps_each_line_to_its_visible_tree_row() {
     use super::TreeRow;
     use super::render::{tree_line_at, tree_line_count};
 
@@ -50,26 +50,26 @@ fn compact_sidebar_maps_each_line_to_its_visible_tree_row() {
         TreeRow::Session { id: SessionId(2) },
         TreeRow::Project { name: "two".into() },
     ];
+    // One line per row; a blank gap line precedes every project after the first.
     let expected = [
-        (0, 0),
-        (1, 0),
-        (2, 0),
-        (2, 1),
-        (3, 0),
-        (4, 0),
-        (5, 0),
-        (5, 1),
-        (6, 0),
+        Some(0),
+        Some(1),
+        Some(2),
+        Some(3),
+        Some(4),
+        Some(5),
+        None,
+        Some(6),
     ];
-    assert_eq!(tree_line_count(&rows), 9);
-    for (line, (row, detail)) in expected.into_iter().enumerate() {
+    assert_eq!(tree_line_count(&rows), 8);
+    for (line, row) in expected.into_iter().enumerate() {
         assert_eq!(
             tree_line_at(&rows, line),
-            Some((&rows[row], detail)),
+            row.map(|row| &rows[row]),
             "line {line}"
         );
     }
-    assert_eq!(tree_line_at(&rows, 9), None);
+    assert_eq!(tree_line_at(&rows, 8), None);
     assert_eq!(tree_line_count(&[]), 0);
     assert_eq!(tree_line_at(&[], 0), None);
 }
@@ -1380,20 +1380,21 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         terminal
             .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
             .unwrap();
-        let row: String = (0..39)
+        // The sidebar shows Ready as a glyph, muted while the reporter is unavailable;
+        // the literal state and health text live on the metadata line.
+        let cell = &terminal.backend().buffer()[(5, 3)];
+        assert_eq!(
+            cell.symbol(),
+            "✓",
+            "background Codex glyph at width {width}"
+        );
+        assert_eq!(cell.fg, ratatui::style::Color::Rgb(108, 112, 134));
+        let next_row: String = (0..39)
             .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
             .collect();
         assert!(
-            row.contains("unavailable") && row.contains("response ready"),
-            "background Codex row: {row}"
-        );
-        assert!(row.starts_with("     └"), "compact Codex detail: {row}");
-        let next_row: String = (0..39)
-            .map(|x| terminal.backend().buffer()[(x, 5)].symbol())
-            .collect();
-        assert!(
             next_row.contains(&original.name),
-            "the next session follows the readiness detail: {next_row}"
+            "the next session follows the background row: {next_row}"
         );
     }
     dashboard.hierarchy.projects[0].workspaces[0].sessions.pop();

@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>00 · current</title>
+<link rel="stylesheet" href="base.css">
+<div class="window"><div class="titlebar"><span class="pill">▣</span> OVRCR GUI</div><div class="sidebar" id="sb"></div></div>
+<p class="note"><b>00 · Current (baseline).</b> Same fixture as every other mockup, drawn with the in-progress branch's grammar: two lines per session, a <code>└</code> label line, the mauve header band, and a status slot that shows <code>-</code> until a hook reports. Click rows to select, chevrons to fold.</p>
+<script src="data.js"></script>
+<script>
+function render(){
+  let h = line([[' 󰚩 OVRCR','b'],['  agent runtime','']],[],'band');
+  for(const p of DATA){
+    const pk='p:'+p.name, pc=isCollapsed(pk);
+    h += line([[(pc?'▶':'▼')+' 󰉋 '+p.name,'blue b']],[],'',`data-fold="${pk}"`);
+    if(pc) continue;
+    for(const w of p.workspaces){
+      const wk='w:'+p.name+'/'+w.name, wc=isCollapsed(wk);
+      h += line([['  '+(wc?'▶':'▼')+' '+w.name,'text b']],[],'',`data-fold="${wk}"`);
+      if(wc) continue;
+      for(const s of w.sessions){
+        const sel=s.id===state.selected, [g,gc,sp]=status(s), dim=(s.phase==='exited'&&!sel)?' dim':'';
+        h += line([['  ',''],[g,gc+(sp?' spin':'')],[' '+s.name,'text b'+dim]],[],sel?'sel':'',`data-sid="${s.id}"`);
+        const lbl=s.name==='local'?'terminal':s.label;
+        h += line([['     └ ','text'],[lbl,(s.name==='local'?'subtext':'peach')+dim]],[],sel?'sel':'',`data-sid="${s.id}"`);
+      }
+    }
+  }
+  sb.innerHTML=h;
+}
+bind(sb,render); render();
+</script>

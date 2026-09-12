@@ -139,14 +139,16 @@ the form and menu checks in a short window to exercise scrolling and clipping.
    Click each pane and run `rtk proxy printf 'MOUSE_%s\n' LEFT_OK` or
    `rtk proxy printf 'MOUSE_%s\n' RIGHT_OK`. Confirm distinct output in the
    intended pane. Switch directly from an active terminal without `Ctrl-g`.
-2. Drag the divider left and right. In each pane run `rtk proxy stty size` and
+2. Drag the sidebar border and confirm the pane narrows and widens with it.
+   Drag the divider left and right. In each pane run `rtk proxy stty size` and
    compare the reported columns with the drawn terminal width. Make the window
    too narrow for both panes, widen it again, and confirm assignments and the
    chosen split survive. Release the drag outside the terminal and confirm the
    next click works normally.
-3. Click a project or workspace label to select it without collapsing it. Click
-   its disclosure arrow to collapse and expand it. Scroll the sidebar and select
-   a row that was initially offscreen. Confirm the selected target by its name.
+3. Click a project or workspace name to select it without collapsing it. Click
+   the first cell of a project header, or the branch glyph of a workspace, to
+   collapse and expand it. Scroll the sidebar and select a row that was
+   initially offscreen. Confirm the selected target by its name.
 4. Open a creation form from the visible action menu. Click a nonactive field,
    edit in the middle of its value, choose a pick-list option, and operate any
    toggle. Browse a directory through the path picker. Use Cancel, reopen, and

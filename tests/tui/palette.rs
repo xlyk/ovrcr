@@ -1686,7 +1686,7 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
     use ovrcr::tui::DashboardAction;
     for (row, group, expected) in [
         (
-            "spacelift-agent",
+            "SPACELIFT-AGENT",
             'p',
             Request::RemoveProject {
                 name: "spacelift-agent".into(),

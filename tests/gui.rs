@@ -52,7 +52,7 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let root = demo.root().to_owned();
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle cleanup")?;
+    wait_screen(&terminal, "implement lifecycle")?;
     terminal.send(b":create terminal\r")?;
     wait_screen(&terminal, "┌ Create terminal")?;
     // Filter Agent to shell (CI may have no detected agents; local PATH may).
@@ -127,16 +127,16 @@ fn real_dashboard_accepts_input_reattaches_and_cleans_up_demo() -> Result<()> {
     let root = demo.root().to_owned();
     let pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle cleanup")?;
-    select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
+    wait_screen(&terminal, "implement lifecycle")?;
+    select_sidebar_session(&mut terminal, "implement lifecycle")?;
     enter_selected_session(&mut terminal, "fixture: lifecycle cleanup")?;
     terminal.send(b"printf 'GUI_%s\\n' CHECKPOINT\r")?;
     wait_screen(&terminal, "GUI_CHECKPOINT")?;
     terminal.send(b"\x07q")?;
     terminal.stop()?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
-    wait_screen(&terminal, "implement lifecycle cleanup")?;
-    select_sidebar_session(&mut terminal, "implement lifecycle cleanup")?;
+    wait_screen(&terminal, "implement lifecycle")?;
+    select_sidebar_session(&mut terminal, "implement lifecycle")?;
     enter_selected_session(&mut terminal, "GUI_CHECKPOINT")?;
     terminal.stop()?;
     demo.shutdown()?;
@@ -163,13 +163,9 @@ fn demo_shells_inherit_paths_and_cli_reaches_fixture() -> Result<()> {
     eprintln!("fixture={} session_pgids={pgids:?}", root.display());
     let mut terminal = demo.dashboard(40, 160, Default::default())?;
     let result = (|| -> Result<()> {
-        wait_screen(&terminal, "implement lifecycle cleanup")?;
+        wait_screen(&terminal, "implement lifecycle")?;
         for (index, name, ready) in [
-            (
-                0,
-                "implement lifecycle cleanup",
-                "fixture: lifecycle cleanup",
-            ),
+            (0, "implement lifecycle", "fixture: lifecycle cleanup"),
             (1, "local", "Terminal mode"),
         ] {
             select_sidebar_session(&mut terminal, name)?;

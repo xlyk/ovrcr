@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>06 · attention</title>
+<link rel="stylesheet" href="base.css">
+<div class="window"><div class="titlebar"><span class="pill">▣</span> OVRCR GUI</div><div class="sidebar" id="sb"></div></div>
+<p class="note"><b>06 · Attention list, terminals pinned to the workspace row.</b> Two moves. First, every <code>local</code> shell leaves the tree and becomes a <code>$</code> cell at the right edge of its workspace row: click it to select the shell, and it lights up when selected. That deletes eight near-empty rows from this fixture. Second, sessions that are waiting for input or in error are lifted into a NEEDS ATTENTION block at the top, across all projects, so the thing you should act on is always at the top of the sidebar and one click away.</p>
+<script src="data.js"></script>
+<script>
+function render(){
+  const attn = ALL.filter(s=>s.phase==='running' && (s.activity==='waiting'||s.activity==='error'));
+  let h = quietHeader([...rollup(counts(ALL)),[' ','']]);
+  if(attn.length){
+    h += line([[' NEEDS ATTENTION','yellow b']]);
+    for(const s of attn){
+      const sel=s.id===state.selected, [g,gc]=status(s), el=s.elapsed;
+      h += line([['  ',''],[g,gc+' b'],[' ',''],[trunc(s.name, W-4-len(el)-2),'text']],[[el,'muted'],[' ','']],sel?'sel':'',`data-sid="${s.id}"`);
+    }
+    h += rule();
+  }
+  for(const p of DATA){
+    const pk='p:'+p.name, pc=isCollapsed(pk);
+    h += line([[(pc?'▶':'▼')+' 󰉋 '+p.name,'blue b']], pc?[[p.workspaces.length+' ws ','muted']]:[], '', `data-fold="${pk}"`);
+    if(pc) continue;
+    for(const w of p.workspaces){
+      const wk='w:'+p.name+'/'+w.name, wc=isCollapsed(wk);
+      const local=w.sessions.find(s=>s.name==='local'), lsel=local&&local.id===state.selected;
+      const right = wc? [...rollup(counts(w.sessions)),[' ','']] : [];
+      if(local) right.push([' $ ','subtext'+(lsel?' sel-cell':''),`data-sid="${local.id}" title="local shell"`]);
+      h += line([['  '+(wc?'▶':'▼')+' '+trunc(w.name,24),'text b']], right, '', `data-fold="${wk}"`);
+      if(wc) continue;
+      for(const s of w.sessions){
+        if(s.name==='local') continue;
+        const sel=s.id===state.selected, dim=(s.phase==='exited'&&!sel)?' dim':'', [g,gc,sp]=status(s), m=model(s);
+        h += line([['    ',''],[g,gc+(sp?' spin':'')],[' ',''],[trunc(s.name, W-6-len(m)-2),'text'+dim]],[[m,pinfo(s).cls+dim],[' ','']],sel?'sel':'',`data-sid="${s.id}"`);
+      }
+    }
+  }
+  sb.innerHTML=h;
+}
+bind(sb,render); render();
+</script>

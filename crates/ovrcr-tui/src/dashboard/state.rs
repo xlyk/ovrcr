@@ -5,7 +5,7 @@ use super::copy::{
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
 use super::render::{
-    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_height,
+    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_start,
 };
 use super::settings::DashboardSettings;
 use super::{
@@ -562,6 +562,7 @@ impl Dashboard {
             history_begin_request: None,
             mouse: super::MouseForwarding::default(),
             split_preference: None,
+            sidebar_width: None,
             mouse_focused: true,
             deferred_history_at_tail: None,
             tree_offset: 0,
@@ -1060,8 +1061,8 @@ impl Dashboard {
             return;
         };
         let height = self.tree_viewport_height();
-        let selected_start = rows.iter().take(index).map(tree_row_height).sum::<usize>();
-        let selected_end = selected_start.saturating_add(tree_row_height(&rows[index]));
+        let selected_start = tree_row_start(rows, index);
+        let selected_end = selected_start.saturating_add(1);
         if selected_start < self.tree_offset {
             self.tree_offset = selected_start;
         } else if selected_end > self.tree_offset.saturating_add(height) {
@@ -1911,6 +1912,7 @@ impl Dashboard {
     pub fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
         self.mouse.split_dragging = false;
+        self.mouse.sidebar_dragging = false;
         if let Some(copy) = &mut self.copy {
             copy.dragging = false;
         }
@@ -1929,6 +1931,7 @@ impl Dashboard {
             self.panes.len(),
             self.focused_pane,
             self.split_preference,
+            self.sidebar_width,
         )
     }
 
@@ -1936,7 +1939,7 @@ impl Dashboard {
         if !matches!(self.mode, InputMode::Browse | InputMode::Terminal) {
             return None;
         }
-        let sidebar = sidebar_area(area);
+        let sidebar = sidebar_area(area, self.sidebar_width);
         if !point_in_rect(mouse, sidebar) {
             return None;
         }
@@ -1959,7 +1962,7 @@ impl Dashboard {
             MouseEventKind::Down(MouseButton::Left) => {
                 let row_index = self.tree_offset + usize::from(mouse.row.saturating_sub(sidebar.y));
                 let rows = self.visible_rows();
-                let (row, _) = tree_line_at(&rows, row_index)?;
+                let row = tree_line_at(&rows, row_index)?;
                 let row = row.clone();
                 let column = mouse.column.saturating_sub(sidebar.x);
                 match row {
@@ -2017,14 +2020,36 @@ impl Dashboard {
                 _ => Some(DashboardAction::None),
             };
         }
+        if self.mouse.sidebar_dragging {
+            return match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    Some(if self.resize_sidebar(area, mouse.column) {
+                        DashboardAction::Redraw
+                    } else {
+                        DashboardAction::None
+                    })
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.mouse.sidebar_dragging = false;
+                    Some(DashboardAction::Redraw)
+                }
+                _ => Some(DashboardAction::None),
+            };
+        }
 
+        let sidebar = sidebar_area(area, self.sidebar_width);
         let rects = self.pane_rects(area);
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && rects.len() == 2
-            && mouse.column == rects[0].terminal.right()
+            && mouse.row >= sidebar.y
+            && mouse.row < sidebar.bottom()
         {
-            let sidebar = sidebar_area(area);
-            if mouse.row >= sidebar.y && mouse.row < sidebar.bottom() {
+            // The sidebar's border column sits just past its content.
+            if mouse.column == sidebar.right() {
+                self.queue_held_releases();
+                self.mouse.sidebar_dragging = true;
+                return Some(DashboardAction::Redraw);
+            }
+            if rects.len() == 2 && mouse.column == rects[0].terminal.right() {
                 self.queue_held_releases();
                 self.mouse.split_dragging = true;
                 return Some(DashboardAction::Redraw);
@@ -2059,6 +2084,36 @@ impl Dashboard {
         None
     }
 
+    /// Drag the sidebar border to `column`; the panes take the remaining width.
+    fn resize_sidebar(&mut self, area: Rect, column: u16) -> bool {
+        let body_width = area.width;
+        let width = column
+            .saturating_add(1)
+            .saturating_sub(area.x)
+            .clamp(super::MIN_SIDEBAR_WIDTH, body_width / 2);
+        if width == super::sidebar_width_for(area, self.sidebar_width) {
+            return false;
+        }
+        self.sidebar_width = Some(width);
+        self.apply_pane_sizes(area);
+        true
+    }
+
+    /// Copy the drawn pane sizes into each pane's desired size and revoke readiness.
+    fn apply_pane_sizes(&mut self, area: Rect) {
+        for rect in self.pane_rects(area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height,
+                    cols: rect.terminal.width,
+                };
+            }
+        }
+        self.queue_held_releases();
+        self.pending_user_view_change = true;
+        self.invalidate_view_readiness();
+    }
+
     fn resize_split(&mut self, area: Rect, column: u16) -> bool {
         let rects = self.pane_rects(area);
         if rects.len() != 2 {
@@ -2077,17 +2132,7 @@ impl Dashboard {
             return false;
         }
         self.split_preference = Some(super::SplitPreference { left, available });
-        for rect in self.pane_rects(area) {
-            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
-                pane.desired_size = TerminalSize {
-                    rows: rect.terminal.height,
-                    cols: rect.terminal.width,
-                };
-            }
-        }
-        self.queue_held_releases();
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
+        self.apply_pane_sizes(area);
         true
     }
 
@@ -3155,6 +3200,24 @@ impl Dashboard {
         (was_view_request, owns_error)
     }
 }
+pub(super) fn find_workspace<'a>(
+    dashboard: &'a Dashboard,
+    project: &str,
+    name: &str,
+) -> Option<&'a ovrcr_protocol::WorkspaceSummary> {
+    dashboard
+        .hierarchy
+        .projects
+        .iter()
+        .find(|candidate| candidate.name == project)
+        .and_then(|candidate| {
+            candidate
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == name)
+        })
+}
+
 pub(super) fn find_session(
     dashboard: &Dashboard,
     id: SessionId,

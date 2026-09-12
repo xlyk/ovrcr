@@ -414,6 +414,8 @@ fn press_outside_rectangle_is_not_clamped() {
     let area = Rect::new(0, 0, 120, 40);
     enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
     let inner = focused_terminal_rect(&dashboard, area);
+    // The column left of the pane is the sidebar border: the dashboard takes the
+    // press as a resize gesture instead of clamping it into the application.
     assert_eq!(
         dashboard.mouse_action(
             mouse_event(
@@ -424,7 +426,19 @@ fn press_outside_rectangle_is_not_clamped() {
             ),
             area,
         ),
-        ovrcr::tui::DashboardAction::None
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert_eq!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Up(MouseButton::Left),
+                inner.x.saturating_sub(1),
+                inner.y,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::Redraw
     );
     assert_eq!(
         dashboard.mouse_action(
