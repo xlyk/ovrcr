@@ -17,22 +17,13 @@ pub(crate) mod text_cursor;
 mod whichkey;
 
 pub use agents::detect_agents;
-pub use copy::{
-    CopyMotion, CopyPoint, CopySelection, HistoryCopyCompletion, HistoryCopyJob, HistoryCopyPoint,
-    HistoryCopyRange, append_history_selection, write_clipboard,
-};
+pub(crate) use copy::CopySelection;
+pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
-pub use input::{encode_key, encode_mouse, event_to_request};
-pub use render::{
-    actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_copy, render_history,
-    render_terminal,
-};
+pub use input::{encode_key, encode_mouse};
+pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
 pub use settings::DashboardSettings;
-pub use state::{
-    HistoryCursor, HistoryCursorTarget, HistoryPagePurpose, HistoryView, PendingHistoryBegin,
-    PendingHistoryPage,
-};
-pub use terminal_guard::TerminalGuard;
+pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
 use crate::task_tui::TasksView;
 use crossterm::event::MouseEvent;
@@ -43,7 +34,7 @@ use std::collections::HashSet;
 
 pub const DASHBOARD_READER_QUEUE_CAPACITY: usize = 64;
 
-pub fn history_view_size(pane: TerminalSize) -> TerminalSize {
+pub(crate) fn history_view_size(pane: TerminalSize) -> TerminalSize {
     TerminalSize {
         rows: pane.rows.clamp(1, 64),
         cols: pane.cols.clamp(1, 256),
@@ -51,7 +42,7 @@ pub fn history_view_size(pane: TerminalSize) -> TerminalSize {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputMode {
+pub(crate) enum InputMode {
     Browse,
     Terminal,
     History,
@@ -59,7 +50,7 @@ pub enum InputMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TreeRow {
+pub(crate) enum TreeRow {
     Project { name: String },
     Workspace { project: String, name: String },
     Session { id: SessionId },
@@ -84,7 +75,7 @@ pub enum KeyEncoding {
     Ignore,
 }
 
-pub struct PaneState {
+pub(crate) struct PaneState {
     pub session: Option<SessionId>,
     pub parser: vt100::Parser,
     pub size: TerminalSize,
@@ -223,61 +214,61 @@ pub(super) struct MouseForwarding {
 
 pub struct Dashboard {
     desktop: desktop::DesktopNotifications,
-    pub tasks: Option<TasksView>,
-    pub hierarchy: HierarchySnapshot,
+    tasks: Option<TasksView>,
+    hierarchy: HierarchySnapshot,
     // Review actions name only the observation committed by the last successful draw.
     presented_unread: Option<(SessionId, ovrcr_protocol::ReadyObservation)>,
-    pub mode: InputMode,
-    pub panes: Vec<PaneState>,
-    pub focused_pane: usize,
-    pub view_revision: u64,
-    pub outer_area: Rect,
-    pub collapsed_projects: HashSet<String>,
-    pub collapsed_workspaces: HashSet<(String, String)>,
-    pub error: Option<String>,
+    mode: InputMode,
+    panes: Vec<PaneState>,
+    focused_pane: usize,
+    view_revision: u64,
+    outer_area: Rect,
+    collapsed_projects: HashSet<String>,
+    collapsed_workspaces: HashSet<(String, String)>,
+    error: Option<String>,
     /// Whether the banner in `error` was written by a refused view, which is the only writer a
     /// successful view completion is allowed to clear. `set_error` releases it.
-    pub(super) error_owned_by_view: bool,
-    pub copy: Option<CopySelection>,
-    pub copy_notice: Option<String>,
-    pub history: Option<HistoryView>,
-    pub history_begin_request: Option<PendingHistoryBegin>,
-    pub(super) mouse: MouseForwarding,
-    pub(super) split_preference: Option<SplitPreference>,
+    error_owned_by_view: bool,
+    copy: Option<CopySelection>,
+    copy_notice: Option<String>,
+    history: Option<HistoryView>,
+    history_begin_request: Option<PendingHistoryBegin>,
+    mouse: MouseForwarding,
+    split_preference: Option<SplitPreference>,
     /// Sidebar width chosen by dragging its border; `None` means the default.
-    pub(super) sidebar_width: Option<u16>,
-    pub(super) mouse_focused: bool,
+    sidebar_width: Option<u16>,
+    mouse_focused: bool,
     /// Pane index whose history a wheel tick asked for while that pane was still loading.
-    pub(super) deferred_history_at_tail: Option<usize>,
+    deferred_history_at_tail: Option<usize>,
     tree_offset: usize,
     next_request_id: u64,
     palette: Option<palette::Palette>,
     whichkey: Option<whichkey::WhichKey>,
     selected_container: Option<TreeRow>,
-    pub configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     history_page_error: bool,
     history_end_after_selection: Option<ClientMessage>,
     ignored_responses: HashSet<u64>,
-    pub settings: settings::DashboardSettings,
-    pub config_dir: std::path::PathBuf,
-    pub(super) last_view_request_id: Option<u64>,
-    pub(super) pending_view: Option<PendingView>,
-    pub(super) requested_view: Option<RequestedView>,
+    settings: settings::DashboardSettings,
+    config_dir: std::path::PathBuf,
+    last_view_request_id: Option<u64>,
+    pending_view: Option<PendingView>,
+    requested_view: Option<RequestedView>,
     /// The view the server refused, with the instant of the refusal. The same view waits out
     /// `VIEW_RETRY_BACKOFF` before it is re-sent so a repeating failure cannot spin the loop.
-    pub(super) failed_view: Option<(RequestedView, std::time::Instant)>,
-    pub(super) force_view_refresh: bool,
+    failed_view: Option<(RequestedView, std::time::Instant)>,
+    force_view_refresh: bool,
     /// Ids of `SetView` requests still waiting for their final `Ok` or `Error`.
-    pub view_request_ids: HashSet<u64>,
+    view_request_ids: HashSet<u64>,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
-    pub(super) error_owning_requests: HashSet<u64>,
+    error_owning_requests: HashSet<u64>,
     /// Set when the user changes selection, splits, focuses, or closes a pane, and consumed by the
     /// next `SetView` those changes produce, which then owns the error banner: a banner written
     /// before the change describes the state the user just left. A server-driven refresh mints its
     /// request with this clear, so its success leaves a fresh banner alone.
-    pub(super) pending_user_view_change: bool,
-    pub(super) pending_snapshot_sessions: HashSet<SessionId>,
+    pending_user_view_change: bool,
+    pending_snapshot_sessions: HashSet<SessionId>,
 }
 
 #[derive(Clone)]

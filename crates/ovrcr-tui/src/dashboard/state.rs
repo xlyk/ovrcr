@@ -589,6 +589,95 @@ impl Dashboard {
         }
     }
 
+    pub fn install_hierarchy(&mut self, hierarchy: HierarchySnapshot) {
+        let _ = self.update_hierarchy(hierarchy);
+    }
+
+    pub fn install_settings(&mut self, settings: DashboardSettings) {
+        self.settings = settings;
+    }
+
+    pub fn install_config_dir(&mut self, dir: std::path::PathBuf) {
+        self.config_dir = dir;
+    }
+
+    pub fn install_area(&mut self, area: Rect) {
+        self.outer_area = area;
+        for rect in self.pane_rects(area) {
+            if let Some(pane) = self.panes.get_mut(rect.pane_index) {
+                pane.desired_size = TerminalSize {
+                    rows: rect.terminal.height.max(1),
+                    cols: rect.terminal.width.max(1),
+                };
+            }
+        }
+        let rows = self.visible_rows();
+        self.ensure_selection_visible(&rows);
+    }
+
+    pub fn install_focus(&mut self, id: SessionId) {
+        self.select_session(id);
+    }
+
+    pub fn install_unready(&mut self, session: SessionId) {
+        if let Some(pane) = self
+            .panes
+            .iter_mut()
+            .find(|pane| pane.session == Some(session))
+        {
+            pane.ready = false;
+            pane.snapshot_installed = false;
+        }
+    }
+
+    pub fn install_screen(&mut self, session: SessionId, bytes: &[u8]) {
+        if !self.panes.iter().any(|pane| pane.session == Some(session)) {
+            let index = self
+                .panes
+                .iter()
+                .position(|pane| pane.session.is_none())
+                .unwrap_or(self.focused_pane);
+            if let Some(pane) = self.panes.get_mut(index) {
+                pane.session = Some(session);
+            }
+        }
+        let size = self
+            .pane_rects(self.outer_area)
+            .into_iter()
+            .find(|rect| {
+                self.panes
+                    .get(rect.pane_index)
+                    .and_then(|pane| pane.session)
+                    == Some(session)
+            })
+            .map(|rect| TerminalSize {
+                rows: rect.terminal.height.max(1),
+                cols: rect.terminal.width.max(1),
+            })
+            .unwrap_or_else(|| self.focused_size());
+        let Some(pane) = self
+            .panes
+            .iter_mut()
+            .find(|pane| pane.session == Some(session))
+        else {
+            return;
+        };
+        pane.size = size;
+        pane.desired_size = size;
+        pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
+        pane.parser.process(bytes);
+        pane.snapshot_installed = true;
+        pane.ready = true;
+        pane.error = None;
+        let rows = self.visible_rows();
+        self.ensure_selection_visible(&rows);
+        if self.focused_session() == Some(session) {
+            self.reconcile_mouse_protocol();
+        }
+        self.pending_user_view_change = false;
+        self.requested_view = Some(self.desired_view());
+    }
+
     /// Shows `message` in the error banner. A refused view is the only writer whose banner a
     /// later view completion clears, so every other writer comes through here and releases it.
     pub(super) fn set_error(&mut self, message: impl Into<String>) {
@@ -596,6 +685,23 @@ impl Dashboard {
         self.error_owned_by_view = false;
     }
 
+    pub fn view_revision(&self) -> u64 {
+        self.view_revision
+    }
+
+    pub fn request_view_at(&mut self, area: Rect) -> Option<ClientMessage> {
+        let id = self.next_request_id();
+        self.view_request(area, id).ok().flatten()
+    }
+
+    pub fn focused_bracketed_paste(&self) -> bool {
+        self.focused_pane()
+            .is_some_and(|pane| pane.parser.screen().bracketed_paste())
+    }
+
+    pub fn install_terminal_input(&mut self) {
+        self.mode = InputMode::Terminal;
+    }
     pub fn focused_session(&self) -> Option<SessionId> {
         self.panes
             .get(self.focused_pane)
@@ -662,7 +768,7 @@ impl Dashboard {
         true
     }
 
-    pub fn focus_pane(&mut self, index: usize) -> bool {
+    pub(crate) fn focus_pane(&mut self, index: usize) -> bool {
         if index >= self.panes.len() || index == self.focused_pane {
             return false;
         }
@@ -675,7 +781,7 @@ impl Dashboard {
         true
     }
 
-    pub fn close_focused_pane(&mut self) -> bool {
+    pub(crate) fn close_focused_pane(&mut self) -> bool {
         if self.panes.len() < 2 {
             return false;
         }
@@ -745,7 +851,7 @@ impl Dashboard {
         false
     }
 
-    pub fn view_request(
+    pub(crate) fn view_request(
         &mut self,
         area: Rect,
         request_id: u64,
@@ -872,7 +978,7 @@ impl Dashboard {
         }))
     }
 
-    pub fn apply_screen(
+    pub(crate) fn apply_screen(
         &mut self,
         revision: u64,
         session: SessionId,
@@ -933,7 +1039,7 @@ impl Dashboard {
         }
     }
 
-    pub fn visible_rows(&self) -> Vec<TreeRow> {
+    pub(crate) fn visible_rows(&self) -> Vec<TreeRow> {
         let mut projects = self.hierarchy.projects.iter().collect::<Vec<_>>();
         projects.sort_by(|left, right| left.name.cmp(&right.name));
         let mut rows = Vec::new();
@@ -969,7 +1075,7 @@ impl Dashboard {
         rows
     }
 
-    pub fn move_selection(&mut self, delta: isize) {
+    pub(crate) fn move_selection(&mut self, delta: isize) {
         let rows = self.visible_rows();
         let ids = rows
             .iter()
@@ -999,28 +1105,7 @@ impl Dashboard {
         self.ensure_selection_visible(&rows);
     }
 
-    pub fn toggle_selected_group(&mut self) {
-        let Some(selected) = self.focused_session() else {
-            return;
-        };
-        for project in &self.hierarchy.projects {
-            for workspace in &project.workspaces {
-                if workspace
-                    .sessions
-                    .iter()
-                    .any(|session| session.id == selected)
-                {
-                    let key = (project.name.clone(), workspace.name.clone());
-                    if !self.collapsed_workspaces.remove(&key) {
-                        self.collapsed_workspaces.insert(key);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-
-    pub fn select_session(&mut self, id: SessionId) {
+    pub(crate) fn select_session(&mut self, id: SessionId) {
         self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
             self.focus_pane(index);
@@ -1322,14 +1407,14 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    pub fn cancel_copy(&mut self, notice: Option<&str>) {
+    pub(crate) fn cancel_copy(&mut self, notice: Option<&str>) {
         self.whichkey = None;
         self.copy = None;
         self.mode = InputMode::Browse;
         self.copy_notice = notice.map(str::to_owned);
     }
 
-    pub fn finish_copy(&mut self, result: std::io::Result<()>) {
+    pub(crate) fn finish_copy(&mut self, result: std::io::Result<()>) {
         self.copy_notice = Some(match result {
             Ok(()) => "Clipboard request sent; paste to verify".to_owned(),
             Err(error) => error.to_string(),
@@ -1664,7 +1749,7 @@ impl Dashboard {
         self.history_end_after_selection.take()
     }
 
-    pub fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
+    pub(crate) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
         if self.history_page_error {
             return None;
         }
@@ -1899,7 +1984,7 @@ impl Dashboard {
         self.mouse_action(mouse, area)
     }
 
-    pub fn mouse_capture_required(&self) -> bool {
+    pub(crate) fn mouse_capture_required(&self) -> bool {
         if self.palette.is_some() {
             return true;
         }
@@ -1916,7 +2001,7 @@ impl Dashboard {
         }
     }
 
-    pub fn cancel_mouse_gesture(&mut self) {
+    pub(crate) fn cancel_mouse_gesture(&mut self) {
         self.queue_held_releases();
         self.mouse.split_dragging = false;
         self.mouse.sidebar_dragging = false;
@@ -1928,7 +2013,7 @@ impl Dashboard {
         }
     }
 
-    pub fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
+    pub(crate) fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
         self.mouse.pending_cleanup.take()
     }
 
@@ -2973,7 +3058,7 @@ impl Dashboard {
         }
     }
 
-    pub fn take_pending_history_copy(&mut self) -> Option<String> {
+    pub(crate) fn take_pending_history_copy(&mut self) -> Option<String> {
         let focused_session = self.focused_session();
         let view = self.history.as_mut()?;
         let completion = view.copy_completion.take()?;
@@ -3100,7 +3185,11 @@ impl Dashboard {
         outgoing
     }
 
-    pub fn select_request(&mut self, id: SessionId, request_id: u64) -> Option<ClientMessage> {
+    pub(crate) fn select_request(
+        &mut self,
+        id: SessionId,
+        request_id: u64,
+    ) -> Option<ClientMessage> {
         self.select_session(id);
         self.view_request(self.outer_area, request_id)
             .ok()
