@@ -1,9 +1,8 @@
 use crate::config::RegistryPath;
-use crate::protocol::{
-    ClientMessage, ErrorCode, Request, Response, ServerMessage, read_frame, write_frame,
-};
+use crate::protocol::ErrorCode;
+use crate::protocol::client;
 use crate::server::{ServerPaths, connect_if_running, connect_raw_if_running, handshake};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Subcommand};
 use directories::BaseDirs;
 use serde::Serialize;
@@ -281,20 +280,19 @@ fn install(
             .with_context(|| format!("create OVRCR data directory {}", parent.display()))?;
     }
     if let Some(mut stream) = connection {
-        match request_shutdown(&mut stream, kill_sessions)? {
-            Response::Ok => {}
-            Response::Error {
-                code: ErrorCode::SessionsRemain,
-                message,
-            } => {
-                let sessions = count_sessions(config)?;
-                bail!(
-                    "OVRCR server refused shutdown ({message}): {sessions} session(s) open; \
-                     close them or rerun install with --kill-sessions"
-                );
+        if let Err(error) = client::shutdown(&mut stream, 1, kill_sessions) {
+            match error.downcast_ref::<client::ServerError>() {
+                Some(refused) if refused.code == ErrorCode::SessionsRemain => {
+                    let sessions = count_sessions(config)?;
+                    bail!(
+                        "OVRCR server refused shutdown ({}): {sessions} session(s) open; \
+                         close them or rerun install with --kill-sessions",
+                        refused.message
+                    );
+                }
+                Some(refused) => bail!("OVRCR refused shutdown: {}", refused.message),
+                None => return Err(error.context("request graceful OVRCR shutdown")),
             }
-            Response::Error { message, .. } => bail!("OVRCR refused shutdown: {message}"),
-            response => bail!("unexpected OVRCR shutdown response: {response:?}"),
         }
     }
     let definition = match config.platform {
@@ -481,49 +479,19 @@ fn status(config: &ServiceConfig, json: bool) -> Result<()> {
 }
 
 fn graceful_shutdown(stream: &mut UnixStream) -> Result<()> {
-    match request_shutdown(stream, true)? {
-        Response::Ok => Ok(()),
-        Response::Error { message, .. } => bail!("OVRCR refused shutdown: {message}"),
-        response => bail!("unexpected OVRCR shutdown response: {response:?}"),
-    }
-}
-
-fn request_shutdown(mut stream: &mut UnixStream, kill: bool) -> Result<Response> {
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::Shutdown { kill },
-        },
-    )
-    .context("request graceful OVRCR shutdown")?;
-    match read_frame::<ServerMessage>(&mut stream).context("read OVRCR shutdown response")? {
-        ServerMessage::Response {
-            request_id: 1,
-            response,
-        } => Ok(response),
-        message => bail!("unexpected OVRCR shutdown response: {message:?}"),
-    }
+    client::shutdown(stream, 1, true).map_err(|error| {
+        match error.downcast_ref::<client::ServerError>() {
+            Some(refused) => anyhow!("OVRCR refused shutdown: {}", refused.message),
+            None => error.context("request graceful OVRCR shutdown"),
+        }
+    })
 }
 
 fn count_sessions(config: &ServiceConfig) -> Result<usize> {
     let mut stream = connect_if_running(&config.server_paths)?
         .context("OVRCR server stopped while refusing shutdown")?;
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::List,
-        },
-    )
-    .context("request OVRCR session list")?;
-    match read_frame::<ServerMessage>(&mut stream).context("read OVRCR session list")? {
-        ServerMessage::Response {
-            response: Response::Inventory { sessions, .. },
-            ..
-        } => Ok(sessions.len()),
-        message => bail!("unexpected OVRCR session list response: {message:?}"),
-    }
+    let snapshot = client::list(&mut stream, 1).context("request OVRCR session list")?;
+    Ok(client::session_count(&snapshot))
 }
 
 // Match the socket assignment emitted by our definitions before controlling the job.
