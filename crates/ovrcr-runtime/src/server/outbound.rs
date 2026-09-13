@@ -398,22 +398,10 @@ fn encoded_len(message: &ServerMessage) -> usize {
         .map_or(0, |bytes| bytes.len())
 }
 
-pub(super) struct DashboardSlot {
-    pub(super) sink: Arc<DashboardSink>,
-    pub(super) identity: Arc<()>,
-    pub(super) stream: UnixStream,
-    pub(super) history: Option<ovrcr_terminal::history::FrozenHistory>,
-    pub(super) next_history_id: u64,
-}
-
-pub(super) struct DashboardSnapshot {
-    pub(super) sink: Arc<DashboardSink>,
-    pub(super) identity: Arc<()>,
-    pub(super) stream: UnixStream,
-}
-
+/// Thin wrappers over [`ActiveDashboard`] kept so existing callers compile.
+/// The next ticket routes each caller at the module directly and deletes these.
 pub(super) fn dashboard_try_send(state: &ServerState, message: ServerMessage) -> bool {
-    dashboard_send(state, message, None)
+    state.dashboard.try_send(message)
 }
 
 pub(super) fn dashboard_send(
@@ -421,54 +409,15 @@ pub(super) fn dashboard_send(
     message: ServerMessage,
     completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
-    let Some(snapshot) = dashboard_snapshot(state) else {
-        return false;
-    };
-    queue_for_snapshot(
-        state,
-        snapshot,
-        DashboardOutbound {
-            message,
-            completion,
-        },
-    )
-}
-
-/// Queue one message on an already resolved dashboard, disconnecting only when
-/// the queue is closed. A draining queue still owes its client a terminal
-/// frame, so the socket must stay open for the writer to flush it.
-fn queue_for_snapshot(
-    state: &ServerState,
-    snapshot: DashboardSnapshot,
-    outbound: DashboardOutbound,
-) -> bool {
-    match snapshot.sink.enqueue(outbound) {
-        Enqueue::Queued => true,
-        Enqueue::Draining => false,
-        Enqueue::Closed => {
-            disconnect_dashboard(state, snapshot);
-            false
-        }
-    }
+    state.dashboard.send(message, completion)
 }
 
 pub(super) fn dashboard_snapshot(state: &ServerState) -> Option<DashboardSnapshot> {
-    let slot = state.dashboard_slot.lock().unwrap();
-    let slot = slot.as_ref()?;
-    Some(DashboardSnapshot {
-        sink: slot.sink.clone(),
-        identity: slot.identity.clone(),
-        stream: slot.stream.try_clone().ok()?,
-    })
+    state.dashboard.snapshot()
 }
 
 pub(super) fn dashboard_owner_matches(state: &ServerState, owner: &Arc<()>) -> bool {
-    state
-        .dashboard_slot
-        .lock()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing())
+    state.dashboard.owns(owner)
 }
 
 pub(super) fn dashboard_send_owner(
@@ -476,32 +425,18 @@ pub(super) fn dashboard_send_owner(
     owner: &Arc<()>,
     message: ServerMessage,
 ) -> bool {
-    dashboard_send_owner_with_completion(state, owner, message, None)
+    state.dashboard.send_owner(owner, message)
 }
 
-/// Send to `owner` only, reporting the write result on `completion`.
-///
-/// Callers that must wait for the frame to reach the socket still have to prove
-/// the dashboard they answer is the one that asked.
 pub(super) fn dashboard_send_owner_with_completion(
     state: &ServerState,
     owner: &Arc<()>,
     message: ServerMessage,
     completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
-    let Some(snapshot) =
-        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
-    else {
-        return false;
-    };
-    queue_for_snapshot(
-        state,
-        snapshot,
-        DashboardOutbound {
-            message,
-            completion,
-        },
-    )
+    state
+        .dashboard
+        .send_owner_with_completion(owner, message, completion)
 }
 
 pub(super) fn dashboard_send_owner_terminal(
@@ -510,35 +445,11 @@ pub(super) fn dashboard_send_owner_terminal(
     message: ServerMessage,
     completion: Option<SyncSender<Result<(), String>>>,
 ) -> bool {
-    let Some(snapshot) =
-        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
-    else {
-        return false;
-    };
-    match snapshot.sink.enqueue_terminal(DashboardOutbound {
-        message,
-        completion,
-    }) {
-        Enqueue::Queued => true,
-        Enqueue::Draining => false,
-        Enqueue::Closed => {
-            disconnect_dashboard(state, snapshot);
-            false
-        }
-    }
+    state
+        .dashboard
+        .send_owner_terminal(owner, message, completion)
 }
 
 pub(super) fn disconnect_dashboard(state: &ServerState, snapshot: DashboardSnapshot) {
-    let _ = snapshot.stream.shutdown(std::net::Shutdown::Both);
-    snapshot.sink.close();
-    let mut slot = state.dashboard_slot.lock().unwrap();
-    if slot
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, &snapshot.identity))
-    {
-        let _ = slot.take();
-        *state.dashboard.lock().unwrap() = None;
-        *state.view.lock().unwrap() = None;
-        clear_dashboard_geometry(state, &snapshot.identity);
-    }
+    state.dashboard.disconnect(snapshot);
 }

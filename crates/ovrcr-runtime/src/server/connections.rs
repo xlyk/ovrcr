@@ -20,18 +20,7 @@ struct DashboardOwnership {
 
 impl Drop for DashboardOwnership {
     fn drop(&mut self) {
-        let mut slot = self.state.dashboard_slot.lock().unwrap();
-        let owns_dashboard = slot
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(&current.identity, &self.identity));
-        if owns_dashboard {
-            if let Some(current) = slot.take() {
-                current.sink.close();
-            }
-            *self.state.dashboard.lock().unwrap() = None;
-            *self.state.view.lock().unwrap() = None;
-            clear_dashboard_geometry(&self.state, &self.identity);
-        }
+        self.state.dashboard.release(&self.identity);
     }
 }
 
@@ -168,13 +157,16 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 }
                 break;
             }
-            let identity = Arc::new(());
             let Ok(close_stream) = stream.try_clone() else {
                 break;
             };
-            let mut slot = state.dashboard_slot.lock().unwrap();
-            if slot.is_some() {
-                drop(slot);
+            let Ok(writer_stream) = stream.try_clone() else {
+                break;
+            };
+            let Some(identity) = state
+                .dashboard
+                .claim(Arc::clone(&dashboard_sink), close_stream)
+            else {
                 let _ = send_direct(
                     &mut stream,
                     message.request_id,
@@ -184,20 +176,11 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     ),
                 );
                 break;
-            }
-            *slot = Some(DashboardSlot {
-                sink: Arc::clone(&dashboard_sink),
-                identity: identity.clone(),
-                stream: close_stream,
-                history: None,
-                next_history_id: 1,
-            });
+            };
             #[cfg(feature = "acceptance-diagnostics")]
             if let Some(monitor) = &state.dashboard_monitor {
                 monitor.register(&dashboard_sink);
             }
-            drop(slot);
-            *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
             ownership = Some(DashboardOwnership {
                 state: Arc::clone(&state),
                 identity: Arc::clone(&identity),
@@ -207,72 +190,12 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 panic!("injected panic after dashboard registration");
             }
             role = ClientRole::Dashboard;
-            let mut output = stream.try_clone().ok();
-            let writer_sink = Arc::clone(&dashboard_sink);
-            let writer_state = Arc::clone(&state);
-            let writer_identity = Arc::clone(&identity);
-            let Ok(writer_close_stream) = stream.try_clone() else {
-                break;
-            };
-            let spawned = thread::Builder::new()
-                .name("ovrcr-dashboard-writer".into())
-                .spawn(move || {
-                    while let Some(delivery) = writer_sink.next() {
-                        let (message, completion, dirty, terminal) = match delivery {
-                            DashboardDelivery::Message(outbound) => {
-                                (outbound.message, outbound.completion, None, false)
-                            }
-                            DashboardDelivery::Terminal(outbound) => {
-                                (outbound.message, outbound.completion, None, true)
-                            }
-                            DashboardDelivery::Dirty { revision, session } => (
-                                ServerMessage::Event(ServerEvent::ScreenDirty {
-                                    session,
-                                    revision,
-                                }),
-                                None,
-                                Some((revision, session)),
-                                false,
-                            ),
-                        };
-                        #[cfg(test)]
-                        if let Some(hook) = writer_state
-                            .before_dashboard_write_hook
-                            .lock()
-                            .unwrap()
-                            .clone()
-                        {
-                            hook();
-                        }
-                        let result = match output.as_mut() {
-                            Some(stream) => {
-                                write_frame(stream, &message).map_err(|error| error.to_string())
-                            }
-                            None => Err("dashboard writer stream unavailable".into()),
-                        };
-                        if result.is_ok()
-                            && let Some((revision, session)) = dirty
-                        {
-                            writer_sink.dirty_sent(revision, session);
-                        }
-                        if let Some(completion) = completion {
-                            let _ = completion.send(result.clone());
-                        }
-                        if result.is_err() || terminal {
-                            writer_sink.close();
-                            let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
-                            disconnect_dashboard(
-                                &writer_state,
-                                DashboardSnapshot {
-                                    sink: writer_sink,
-                                    identity: writer_identity,
-                                    stream: writer_close_stream,
-                                },
-                            );
-                            break;
-                        }
-                    }
-                });
+            let spawned = spawn_writer(
+                Arc::clone(&state),
+                Arc::clone(&dashboard_sink),
+                Arc::clone(&identity),
+                writer_stream,
+            );
             match spawned {
                 Ok(handle) => writer = Some(handle),
                 Err(_) => break,
@@ -490,12 +413,7 @@ pub(super) fn handle_request_with_id(
             let Some(owner) = owner else {
                 return error_response(ErrorCode::Conflict, "dashboard is disconnected");
             };
-            let revision = state
-                .view
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map_or(1, |view| view.revision.saturating_add(1));
+            let revision = state.dashboard.next_revision();
             let (sender, receiver) = mpsc::sync_channel(1);
             if state
                 .dispatch
@@ -553,13 +471,7 @@ pub(super) fn handle_request_with_id(
         Request::Input { session, bytes } => {
             if !dashboard
                 || owner.is_none_or(|owner| !dashboard_owner_matches(state, owner))
-                || state
-                    .view
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .and_then(|view| view.focused)
-                    != Some(session)
+                || state.dashboard.view().and_then(|view| view.focused) != Some(session)
             {
                 return error_response(
                     ErrorCode::InvalidRequest,
@@ -588,7 +500,7 @@ pub(super) fn handle_request_with_id(
             let Some(owner) = owner else {
                 return error_response(ErrorCode::Conflict, "dashboard is disconnected");
             };
-            let Some(current) = state.view.lock().unwrap().clone() else {
+            let Some(current) = state.dashboard.view() else {
                 return error_response(
                     ErrorCode::InvalidRequest,
                     "resize is only accepted for a singleton dashboard view",
@@ -719,7 +631,7 @@ pub(super) fn handle_request_with_id(
             // that waited out a mutation must not resize a replacement owner's
             // panes, or the next session spawns with the wrong size.
             if dashboard_owner_matches(state, owner) {
-                set_dashboard_geometry(state, owner, size);
+                state.dashboard.set_geometry(owner, size);
                 Response::Ok
             } else {
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")
