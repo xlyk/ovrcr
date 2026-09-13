@@ -279,20 +279,20 @@ fn install(
         fs::create_dir_all(parent)
             .with_context(|| format!("create OVRCR data directory {}", parent.display()))?;
     }
-    if let Some(mut stream) = connection {
-        if let Err(error) = client::shutdown(&mut stream, 1, kill_sessions) {
-            match error.downcast_ref::<client::ServerError>() {
-                Some(refused) if refused.code == ErrorCode::SessionsRemain => {
-                    let sessions = count_sessions(config)?;
-                    bail!(
-                        "OVRCR server refused shutdown ({}): {sessions} session(s) open; \
-                         close them or rerun install with --kill-sessions",
-                        refused.message
-                    );
-                }
-                Some(refused) => bail!("OVRCR refused shutdown: {}", refused.message),
-                None => return Err(error.context("request graceful OVRCR shutdown")),
+    if let Some(mut stream) = connection
+        && let Err(error) = client::shutdown(&mut stream, 1, kill_sessions)
+    {
+        match error.downcast_ref::<client::ServerError>() {
+            Some(refused) if refused.code == ErrorCode::SessionsRemain => {
+                let sessions = count_sessions(config)?;
+                bail!(
+                    "OVRCR server refused shutdown ({}): {sessions} session(s) open; \
+                     close them or rerun install with --kill-sessions",
+                    refused.message
+                );
             }
+            Some(refused) => bail!("OVRCR refused shutdown: {}", refused.message),
+            None => return Err(error.context("request graceful OVRCR shutdown")),
         }
     }
     let definition = match config.platform {
