@@ -679,7 +679,7 @@ fn agent_exchange(
     deadline: Instant,
 ) -> Result<Response> {
     client::request(&mut DeadlineIo::new(stream, deadline), request_id, request)
-        .map_err(|_| anyhow::anyhow!("invalid supervisor response"))
+        .context("supervisor exchange")
 }
 
 #[cfg(test)]

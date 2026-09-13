@@ -625,10 +625,17 @@ impl Dashboard {
         self.select_session(id);
     }
 
+    /// Fixture seam: puts a session in the state a `ScreenDirty` leaves it in, by marking it
+    /// stale and forcing the next `desire` to refresh. Stays `pub` for the root crate's
+    /// `tests/tui` suites, which use it alongside this crate's own tests.
     pub fn install_unready(&mut self, session: SessionId) {
         self.handshake.mark_stale(session);
     }
 
+    /// Fixture seam: seeds a pane's parser with `bytes` and counts the resulting desired view
+    /// as acknowledged, discarding any in-flight request — the shortest path to a ready pane
+    /// without a server. Stays `pub` for the root crate's `tests/tui` suites, which use it
+    /// alongside this crate's own tests.
     pub fn install_screen(&mut self, session: SessionId, bytes: &[u8]) {
         if !self.panes.iter().any(|pane| pane.session == Some(session)) {
             let index = self
@@ -706,6 +713,9 @@ impl Dashboard {
     }
 
     /// Everything queued since the last drain, then the next history page if one is due.
+    /// Every drain calls `history_request_if_needed`, which may resolve the history cursor and
+    /// set a history page error as a side effect; a pending page suppresses it, so repeating
+    /// the call is idempotent.
     pub fn drain_outbox(&mut self) -> Vec<ClientMessage> {
         let mut batch = self.outbox.drain();
         if let Some(request) = self.history_request_if_needed() {

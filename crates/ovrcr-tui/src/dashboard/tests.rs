@@ -2018,18 +2018,43 @@ fn history_end_survives_split_and_leave_history() {
     let mut dashboard = staged_history_copy_dashboard();
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
     assert!(dashboard.split_pane());
-    let batch = dashboard.drain_outbox();
-    assert!(
-        batch.iter().any(|message| matches!(
-            message.request,
-            Request::HistoryEnd {
-                session: SessionId(1),
-                ..
-            }
+    // Deliberately undrained: re-open history on the new pane and leave it, so the split's
+    // release and `leave_history`'s end compete for the one slot the old code parked in.
+    dashboard.mode = InputMode::History;
+    dashboard.history = Some(HistoryView::new(
+        HistoryOpened {
+            session: SessionId(2),
+            snapshot: HistorySnapshotId(9),
+            revision: 1,
+            size: TerminalSize { rows: 4, cols: 20 },
+            history_rows: 0,
+            total_rows: 1,
+        },
+        0,
+    ));
+    assert!(matches!(
+        dashboard.key_action(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
         )),
-        "split must release the captured history: {batch:?}"
+        super::DashboardAction::EnterBrowse
+    ));
+    let batch = dashboard.drain_outbox();
+    let ends: Vec<SessionId> = batch
+        .iter()
+        .filter_map(|message| match message.request {
+            Request::HistoryEnd { session, .. } => Some(session),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ends,
+        vec![SessionId(1), SessionId(2)],
+        "the split's release and the later leave must both survive: {batch:?}"
     );
     assert!(dashboard.drain_outbox().is_empty(), "drained once");
+    assert_eq!(dashboard.mode, InputMode::Browse);
 }
 
 #[test]

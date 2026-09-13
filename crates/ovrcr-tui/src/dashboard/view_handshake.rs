@@ -253,6 +253,11 @@ impl ViewHandshake {
             // immediate re-request: `failed` is clear whenever a request is in flight, so
             // recording it here would let that re-request through and spin one `SetView` per
             // snapshot-less `Ok`.
+            //
+            // The previous grant must go with it: the panes still hold the screens of the view
+            // this `Ok` failed to replace, and leaving `acknowledged` intact would keep
+            // `is_ready` true — and input allowed — against them until the next grant.
+            self.acknowledged = None;
             self.force_refresh = true;
             return Some(Acknowledged::Incomplete { view: pending.view });
         }
@@ -427,6 +432,50 @@ mod tests {
             h.desire(v.clone(), 4, later).unwrap(),
             Desire::Send { .. }
         ));
+    }
+
+    #[test]
+    fn an_incomplete_acknowledgement_revokes_the_previous_grant() {
+        // A resize mints a new view without `invalidate`, so the grant for the previous one is
+        // all that stands between a snapshot-less `Ok` and input reaching a pane whose parser
+        // still holds the screen the failed view was meant to replace.
+        let mut h = ViewHandshake::default();
+        let granted = view(&[1]);
+        send(&mut h, &granted, 1);
+        h.record_snapshot(SessionId(1));
+        assert!(matches!(
+            h.acknowledge(1, &granted),
+            Some(Acknowledged::Granted)
+        ));
+        assert!(h.is_ready(SessionId(1)));
+
+        let mut resized = granted.clone();
+        resized.targets[0].1 = TerminalSize { rows: 20, cols: 40 };
+        send(&mut h, &resized, 2);
+        let Some(Acknowledged::Incomplete { view: first }) = h.acknowledge(2, &resized) else {
+            panic!("a missing snapshot must not complete the view");
+        };
+        assert!(
+            !h.is_ready(SessionId(1)),
+            "the superseded grant must not outlive an incomplete acknowledgement"
+        );
+
+        // The caller's immediate re-request, answered the same way: the pass that then waits out
+        // the backoff must not find readiness restored either.
+        send(&mut h, &resized, 3);
+        h.record_failure(first);
+        assert!(matches!(
+            h.acknowledge(3, &resized),
+            Some(Acknowledged::Incomplete { .. })
+        ));
+        assert!(matches!(
+            h.desire(resized.clone(), 4, Instant::now()).unwrap(),
+            Desire::Waiting
+        ));
+        assert!(
+            !h.is_ready(SessionId(1)),
+            "input stays revoked for the whole backoff"
+        );
     }
 
     #[test]
