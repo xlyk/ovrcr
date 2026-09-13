@@ -721,7 +721,8 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             "received_unix_ms":4000,"context_received_unix_ms":1000,"usage_received_unix_ms":3000,"cost_received_unix_ms":2000
         },
         "health":{"state":"Unavailable","reason":"source_completion_unverified"},
-        "activity_revision":2,"metrics_revision":3,"health_revision":1
+        "activity_revision":2,"metrics_revision":3,"health_revision":1,
+        "input_request":null,"input_revision":0
     });
     for scenario in 0..6 {
         let case = scenario / 2;

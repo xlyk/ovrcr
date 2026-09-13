@@ -292,6 +292,8 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                     activity_revision: 0,
                     metrics_revision: 0,
                     health_revision: 1,
+                    input_request: None,
+                    input_revision: 0,
                 }),
             };
             write_frame(

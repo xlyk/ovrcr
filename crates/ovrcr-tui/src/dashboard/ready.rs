@@ -80,6 +80,8 @@ mod tests {
                 activity_revision: 1,
                 metrics_revision: 0,
                 health_revision: 0,
+                input_request: None,
+                input_revision: 0,
             }),
         }
     }

@@ -138,6 +138,13 @@ impl ReportingState {
                 snapshot.health = health.clone();
                 snapshot.health_revision = report.revision;
             }
+            AgentObservation::Input(request) => {
+                if report.revision <= snapshot.input_revision {
+                    bail!("stale input revision");
+                }
+                snapshot.input_request = request.clone();
+                snapshot.input_revision = report.revision;
+            }
         }
         Ok(true)
     }
@@ -392,6 +399,8 @@ impl Session {
                     activity_revision: 0,
                     metrics_revision: 0,
                     health_revision: 0,
+                    input_request: None,
+                    input_revision: 0,
                 });
                 AgentOperationResult::Bound(binding)
             }
@@ -557,6 +566,8 @@ mod tests {
                     activity_revision: 0,
                     metrics_revision: 0,
                     health_revision: 0,
+                    input_request: None,
+                    input_revision: 0,
                 }),
                 ..Default::default()
             };
