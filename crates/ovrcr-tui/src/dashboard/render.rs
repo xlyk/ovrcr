@@ -405,20 +405,21 @@ impl Dashboard {
         terminal: &mut ratatui::Terminal<B>,
     ) -> Result<(), B::Error> {
         let area = terminal.draw(|frame| draw_dashboard(frame, self))?.area;
-        // Overlays may obscure the response; keep the last unobscured observation.
+        // Overlays may obscure the response; keep the last unobscured Presented Unread.
         if self.tasks.is_none() && self.palette.is_none() && self.whichkey.is_none() {
-            self.presented_unread = self.action_session().and_then(|session| {
-                let visible = self.pane_rects(area).iter().any(|rect| {
-                    rect.pane_index == self.focused_pane
-                        && rect.metadata.width >= 6
-                        && rect.metadata.height > 0
-                });
-                visible.then_some(session).and_then(|session| {
-                    find_session(self, session)
-                        .and_then(|summary| summary.unread.clone())
-                        .map(|unread| (session, unread))
-                })
-            });
+            self.unread
+                .commit_presented(self.action_session().and_then(|session| {
+                    let visible = self.pane_rects(area).iter().any(|rect| {
+                        rect.pane_index == self.focused_pane
+                            && rect.metadata.width >= 6
+                            && rect.metadata.height > 0
+                    });
+                    visible.then_some(session).and_then(|session| {
+                        find_session(self, session)
+                            .and_then(|summary| summary.unread.clone())
+                            .map(|unread| (session, unread))
+                    })
+                }));
         }
         Ok(())
     }
