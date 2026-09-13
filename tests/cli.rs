@@ -1,5 +1,6 @@
 use ovrcr::protocol::{
-    ClientMessage, Request, Response, ServerMessage, connect_server, read_frame, write_frame,
+    ClientMessage, Request, Response, ServerMessage, client, connect_server, read_frame,
+    write_frame,
 };
 use ovrcr::session::{SessionId, SessionPhase};
 use std::fs::File;
@@ -1242,18 +1243,7 @@ fn cli_request(socket: &std::path::Path, request: Request) -> Result<Response, S
     stream
         .set_write_timeout(Some(Duration::from_millis(250)))
         .map_err(|error| error.to_string())?;
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id: 1,
-            request,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    match read_frame::<ServerMessage>(&mut stream).map_err(|error| error.to_string())? {
-        ServerMessage::Response { response, .. } => Ok(response),
-        ServerMessage::Event(_) => Err("server sent an event before response".into()),
-    }
+    client::request(&mut stream, 1, request).map_err(|error| error.to_string())
 }
 
 fn select_session(socket: &std::path::Path, session: SessionId) -> UnixStream {
