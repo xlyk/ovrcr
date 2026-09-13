@@ -14,6 +14,9 @@ use std::{
 };
 
 pub const EXTENSION_SOURCE: &str = include_str!("../pi-reporting-extension.mjs");
+/// Bounded delivery shared by every provider extension; materialized as its sibling.
+pub const TRANSPORT_SOURCE: &str = include_str!("../ovrcr-reporting-transport.mjs");
+const TRANSPORT_FILE: &str = "ovrcr-reporting-transport.mjs";
 const EXTENSION_FILE: &str = "ovrcr-pi-reporting.mjs";
 const BINARY_TOKEN: &str = "__OVRCR_BINARY__";
 const MAX_IDENTITIES: usize = 65_536;
@@ -72,7 +75,8 @@ pub fn extension_source(binary: &Path) -> Option<String> {
     Some(EXTENSION_SOURCE.replacen(BINARY_TOKEN, &encoded, 1))
 }
 
-/// A task-owned 0700 directory holding the materialized extension; removed on disable.
+/// A task-owned 0700 directory holding the materialized extension and the transport
+/// module it imports; both 0600, both removed with the directory on disable.
 fn materialize_extension() -> std::io::Result<(PathBuf, PathBuf)> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let binary = std::env::current_exe()?;
@@ -80,13 +84,18 @@ fn materialize_extension() -> std::io::Result<(PathBuf, PathBuf)> {
         .ok_or_else(|| std::io::Error::other("ovrcr path is not valid UTF-8"))?;
     let dir = std::env::temp_dir().join(format!("ovrcr-pi-{}", private_identifier()?));
     std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
-    let path = dir.join(EXTENSION_FILE);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)?;
-    file.write_all(source.as_bytes())?;
+    let write = |name: &str, text: &str| -> std::io::Result<PathBuf> {
+        let path = dir.join(name);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        file.write_all(text.as_bytes())?;
+        Ok(path)
+    };
+    write(TRANSPORT_FILE, TRANSPORT_SOURCE)?;
+    let path = write(EXTENSION_FILE, &source)?;
     Ok((dir, path))
 }
 
