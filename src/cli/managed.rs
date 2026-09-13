@@ -30,7 +30,7 @@ pub(super) const OMP: Managed = Managed {
     name: "omp",
     display: "Oh My Pi",
     tested_versions: &["18.1.19"],
-    reporting: "pending #94",
+    reporting: "available",
     input_requests: "pending #95",
     recovery: "pending #96",
 };

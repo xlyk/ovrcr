@@ -124,11 +124,10 @@ fn pi_setup_prints_managed_launch_contract_and_writes_nothing() {
     assert!(!dir.path().join("registry.toml").exists());
 }
 
-#[test]
-fn pi_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
+fn helper_is_silent_without_reading_stdin(provider: &str) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
     command
-        .args(["report", "pi", "--stdin"])
+        .args(["report", provider, "--stdin"])
         .env_remove("OVRCR_AGENT_SOCKET")
         .env_remove("OVRCR_AGENT_TOKEN")
         .stdin(Stdio::piped())
@@ -141,7 +140,7 @@ fn pi_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
         if std::time::Instant::now() >= deadline {
             child.kill().unwrap();
             child.wait().unwrap();
-            panic!("unmanaged pi helper waited on stdin");
+            panic!("unmanaged {provider} helper waited on stdin");
         }
         std::thread::yield_now();
     }
@@ -149,6 +148,16 @@ fn pi_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn pi_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
+    helper_is_silent_without_reading_stdin("pi");
+}
+
+#[test]
+fn omp_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
+    helper_is_silent_without_reading_stdin("omp");
 }
 
 #[test]
@@ -211,7 +220,7 @@ fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
             "probed",
             Some("18.1.19"),
             "tested",
-            "\"pending #94\"",
+            "\"available\"",
         ),
     ];
     for (provider, executable, probe, version, status, reporting) in cases {

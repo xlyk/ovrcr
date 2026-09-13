@@ -3,6 +3,7 @@ pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
+pub mod extension;
 pub mod omp;
 pub mod pi;
 
@@ -581,6 +582,9 @@ pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
 }
 pub fn send_pi_event(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "pi", "pi-extension", deadline)
+}
+pub fn send_omp_event(input: &[u8], deadline: Instant) -> Result<()> {
+    send_payload(input, "omp", "omp-extension", deadline)
 }
 fn send_payload(
     input: &[u8],
