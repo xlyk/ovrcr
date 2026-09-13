@@ -4,10 +4,8 @@ pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
 
-use crate::protocol::{
-    AgentReport, AgentUpdate, ClientMessage, ErrorCode, Request, Response, ServerMessage,
-    read_frame, write_frame,
-};
+use crate::protocol::client;
+use crate::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response};
 use crate::session::{AgentActivity, SessionId};
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::exchange_preamble;
@@ -137,27 +135,20 @@ pub fn send_report(update: AgentUpdate, sequence: Option<u64>, deadline: Instant
         .map_err(|error| map_transport_error(&error))?;
     let mut io = DeadlineIo::new(&mut stream, deadline);
     exchange_preamble(&mut io).map_err(|error| map_transport_error(&error))?;
-    let message = ClientMessage {
-        request_id: 1,
-        request: Request::AgentReport(AgentReport {
+    let response = client::request(
+        &mut io,
+        1,
+        Request::AgentReport(AgentReport {
             session: identity.session,
             capability: identity.capability,
             sequence,
             update,
         }),
-    };
-    write_frame(&mut io, &message).map_err(|error| map_transport_error(&error))?;
-    let response =
-        read_frame::<ServerMessage>(&mut io).map_err(|error| map_transport_error(&error))?;
+    )
+    .map_err(|error| map_transport_error(&error))?;
     match response {
-        ServerMessage::Response {
-            request_id: 1,
-            response: Response::Ok,
-        } => Ok(()),
-        ServerMessage::Response {
-            request_id: 1,
-            response: Response::Error { code, .. },
-        } => Err(report_error(code, ReportFailure::Unavailable)),
+        Response::Ok => Ok(()),
+        Response::Error { code, .. } => Err(report_error(code, ReportFailure::Unavailable)),
         _ => Err(report_error(
             ErrorCode::Internal,
             ReportFailure::Unavailable,
@@ -687,21 +678,8 @@ fn agent_exchange(
     request: Request,
     deadline: Instant,
 ) -> Result<Response> {
-    let mut io = DeadlineIo::new(stream, deadline);
-    write_frame(
-        &mut io,
-        &ClientMessage {
-            request_id,
-            request,
-        },
-    )?;
-    match read_frame::<ServerMessage>(&mut io)? {
-        ServerMessage::Response {
-            request_id: received,
-            response,
-        } if received == request_id => Ok(response),
-        _ => bail!("invalid supervisor response"),
-    }
+    client::request(&mut DeadlineIo::new(stream, deadline), request_id, request)
+        .map_err(|_| anyhow::anyhow!("invalid supervisor response"))
 }
 
 #[cfg(test)]

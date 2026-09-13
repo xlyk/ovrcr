@@ -6,13 +6,12 @@ mod output;
 mod report;
 mod resources;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::Parser;
 use ovrcr::client::{connect_if_running, connect_or_start};
 use ovrcr::config::{Registry, RegistryPath, load_registry};
-use ovrcr::protocol::{
-    ClientMessage, ErrorCode, Request, Response, ServerMessage, read_frame, write_frame,
-};
+use ovrcr::protocol::client;
+use ovrcr::protocol::{ErrorCode, Request, Response};
 use ovrcr::server::{ServerPaths, run_server};
 use ovrcr::session::{SessionId, SessionSummary};
 use ovrcr::tui::run_dashboard;
@@ -239,14 +238,7 @@ fn send_request(stream: &mut UnixStream, request: Request) -> Result<Response> {
     stream
         .set_write_timeout(Some(timeout))
         .context("bound server request")?;
-    write_frame(
-        stream,
-        &ClientMessage {
-            request_id: 1,
-            request,
-        },
-    )?;
-    let message = read_frame::<ServerMessage>(stream).map_err(|error| {
+    client::request(stream, 1, request).map_err(|error| {
         let timed_out = error.chain().any(|cause| {
             cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
                 matches!(
@@ -262,11 +254,7 @@ fn send_request(stream: &mut UnixStream, request: Request) -> Result<Response> {
         } else {
             error
         }
-    })?;
-    match message {
-        ServerMessage::Response { response, .. } => Ok(response),
-        ServerMessage::Event(_) => bail!("server sent an event before the response"),
-    }
+    })
 }
 
 fn dashboard_settings_path() -> Result<PathBuf> {
