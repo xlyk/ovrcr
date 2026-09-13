@@ -71,18 +71,22 @@ pub fn run_dashboard(
             TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
         });
     if let Some(id) = first_session {
+        // The initial hello and geometry requests reserve IDs 1 and 2, so the selection is 3.
+        dashboard.next_request_id = 3;
         dashboard.select_session(id);
         let view = dashboard
-            .view_request(Rect::new(0, 0, size.cols, size.rows), 3)?
+            .request_view_at(Rect::new(0, 0, size.cols, size.rows))
             .context("create initial dashboard view")?;
-        let expected_screens = dashboard
-            .pending_view
-            .as_ref()
-            .map_or(0, |pending| pending.view.targets.len());
-        write_frame(&mut stream, &view)?;
-        read_initial_selection(&mut stream, &mut dashboard, 3, expected_screens)?;
+        let expected_screens = dashboard.pending_targets();
+        // The view above is in the drain; writing it here as well would send it twice.
+        flush(&mut stream, &mut dashboard)?;
+        read_initial_selection(
+            &mut stream,
+            &mut dashboard,
+            view.request_id,
+            expected_screens,
+        )?;
     }
-    // The initial hello, geometry, and selection requests reserve IDs 1 through 3.
     dashboard.next_request_id = 4;
     // Applied last: the handshake acknowledgements above clear the banner they do not own.
     if let Some(error) = settings_error {
@@ -187,11 +191,8 @@ fn dashboard_loop<W: Write>(
     let mut task_worker =
         crate::task_tui::TaskWorker::start(task_request).context("start task control worker")?;
     loop {
-        let (palette_redraw, palette_request) = dashboard.poll_palette();
-        pending_redraw |= palette_redraw;
-        if let Some(request) = palette_request {
-            write_frame(stream, &request)?;
-        }
+        // The palette's request rides the drain of the `emit_view_request` below.
+        pending_redraw |= dashboard.poll_palette();
         pending_redraw |= task_worker.poll(dashboard.tasks.as_mut());
         let outer = terminal.size()?;
         emit_view_request(
@@ -199,9 +200,6 @@ fn dashboard_loop<W: Write>(
             dashboard,
             Rect::new(0, 0, outer.width, outer.height),
         )?;
-        if let Some(request) = dashboard.history_request_if_needed() {
-            write_frame(stream, &request)?;
-        }
         wake.clear()?;
         pending_redraw |= next_dashboard_messages(messages, dashboard, stream)?;
         match drain_dashboard_input_then_emit(terminal, stream, dashboard, mouse_enabled)? {
@@ -246,9 +244,6 @@ fn dashboard_loop<W: Write>(
                 dashboard,
                 Rect::new(0, 0, outer.width, outer.height),
             )?;
-            if let Some(request) = dashboard.history_request_if_needed() {
-                write_frame(stream, &request)?;
-            }
             // If both are ready, process keyboard input first so output floods
             // cannot delay a user's command.
             // Raw descriptor readiness can represent an incomplete escape
@@ -273,9 +268,6 @@ fn dashboard_loop<W: Write>(
                     dashboard,
                     Rect::new(0, 0, outer.width, outer.height),
                 )?;
-                if let Some(request) = dashboard.history_request_if_needed() {
-                    write_frame(stream, &request)?;
-                }
             }
             if input_ready {
                 pending_redraw = true;
@@ -388,29 +380,26 @@ pub(super) fn next_dashboard_messages(
             break;
         };
         redraw = true;
-        let requests = dashboard.handle_server_message(message);
         // A synthetic release targets the session that is focused now; the server rejects it
-        // once the replacement SetView has moved focus, so it must lead the batch.
-        if let Some(cleanup) = dashboard.take_mouse_cleanup() {
-            write_frame(stream, &cleanup)?;
-        }
-        for request in requests {
+        // once the replacement SetView has moved focus, and the outbox keeps it leading the batch.
+        for request in dashboard.handle_server_message(message) {
             write_frame(stream, &request)?;
         }
     }
     Ok(redraw)
 }
 
-fn emit_view_request(stream: &mut UnixStream, dashboard: &mut Dashboard, area: Rect) -> Result<()> {
-    let request_id = dashboard.next_request_id();
-    let request = dashboard.view_request(area, request_id)?;
-    if let Some(cleanup) = dashboard.take_mouse_cleanup() {
-        write_frame(stream, &cleanup)?;
-    }
-    if let Some(request) = request {
-        write_frame(stream, &request)?;
+/// Sends everything the dashboard has queued, in the order it queued it.
+fn flush(stream: &mut UnixStream, dashboard: &mut Dashboard) -> Result<()> {
+    for message in dashboard.drain_outbox() {
+        write_frame(stream, &message)?;
     }
     Ok(())
+}
+
+fn emit_view_request(stream: &mut UnixStream, dashboard: &mut Dashboard, area: Rect) -> Result<()> {
+    let _ = dashboard.request_view_at(area);
+    flush(stream, dashboard)
 }
 
 pub(super) fn emit_pending_history_copy<W: Write>(
@@ -480,9 +469,7 @@ pub(super) fn drain_dashboard_input_then_emit_with<
 
     let desktop_changed = dashboard.emit_desktop_notifications();
     if emit_pending_history_copy(terminal, dashboard) {
-        if let Some(request) = dashboard.history_request_if_needed() {
-            write_frame(stream, &request)?;
-        }
+        flush(stream, dashboard)?;
         return Ok(DashboardBoundary::Work);
     }
     Ok(if desktop_changed {
@@ -547,18 +534,14 @@ fn send_dashboard_action<W: Write>(
     mouse_enabled: &mut bool,
     action: DashboardAction,
 ) -> Result<bool> {
-    if let Some(cleanup) = dashboard.take_mouse_cleanup() {
-        write_frame(stream, &cleanup)?;
-    }
+    // Whatever producing the action queued — a synthetic release, the history end a browse
+    // return owes — leads the request the action itself carries, as it did when each had its
+    // own slot written here.
+    flush(stream, dashboard)?;
     let result = match action {
         DashboardAction::None | DashboardAction::Redraw => Ok(false),
         DashboardAction::Detach => Ok(true),
-        DashboardAction::EnterBrowse => {
-            if let Some(request) = dashboard.take_pending_history_end() {
-                write_frame(stream, &request)?;
-            }
-            Ok(false)
-        }
+        DashboardAction::EnterBrowse => Ok(false),
         DashboardAction::PtyBytes(bytes) => {
             let request_id = dashboard.next_request_id();
             if let Some(request) = dashboard.input_request(bytes, request_id) {
@@ -734,22 +717,6 @@ pub(super) fn read_initial_selection(
     request_id: u64,
     expected_screens: usize,
 ) -> Result<()> {
-    let expected_targets = dashboard
-        .pending_view
-        .as_ref()
-        .filter(|pending| pending.request_id == request_id)
-        .map(|pending| {
-            (
-                pending.view.revision,
-                pending
-                    .view
-                    .targets
-                    .iter()
-                    .map(|(session, _)| *session)
-                    .collect::<HashSet<_>>(),
-            )
-        })
-        .unwrap_or_default();
     let mut screens_seen = HashSet::new();
     loop {
         let message = read_server(stream)?;
@@ -761,7 +728,10 @@ pub(super) fn read_initial_selection(
                         session, revision, ..
                     },
             } if *response_id == request_id => {
-                if *revision == expected_targets.0 && expected_targets.1.contains(session) {
+                if dashboard
+                    .handshake
+                    .snapshot_matches(request_id, *revision, *session)
+                {
                     screens_seen.insert(*session);
                 }
                 false

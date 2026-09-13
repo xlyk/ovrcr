@@ -5,6 +5,7 @@ mod event_loop;
 mod git_hints;
 mod hints;
 mod input;
+mod outbox;
 mod palette;
 pub(crate) mod picker;
 mod ready;
@@ -16,6 +17,7 @@ mod terminal_guard;
 mod tests;
 pub(crate) mod text_cursor;
 mod unread;
+mod view_handshake;
 mod whichkey;
 
 pub use agents::detect_agents;
@@ -82,8 +84,6 @@ pub(crate) struct PaneState {
     pub parser: vt100::Parser,
     pub size: TerminalSize,
     pub desired_size: TerminalSize,
-    pub snapshot_installed: bool,
-    pub ready: bool,
     pub error: Option<String>,
 }
 
@@ -94,8 +94,6 @@ impl PaneState {
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             size,
             desired_size: size,
-            snapshot_installed: false,
-            ready: false,
             error: None,
         }
     }
@@ -209,7 +207,6 @@ pub(super) struct HeldMouse {
 pub(super) struct MouseForwarding {
     pub(super) held: [Option<HeldMouse>; 3],
     pub(super) last_motion: Option<MouseEvent>,
-    pub(super) pending_cleanup: Option<ClientMessage>,
     pub(super) split_dragging: bool,
     pub(super) sidebar_dragging: bool,
 }
@@ -223,7 +220,9 @@ pub struct Dashboard {
     mode: InputMode,
     panes: Vec<PaneState>,
     focused_pane: usize,
-    view_revision: u64,
+    /// The whole view state machine: the revision, the one in-flight `SetView`, the
+    /// acknowledged view, and the marks pane readiness is derived from.
+    handshake: view_handshake::ViewHandshake,
     outer_area: Rect,
     collapsed_projects: HashSet<String>,
     collapsed_workspaces: HashSet<(String, String)>,
@@ -249,41 +248,14 @@ pub struct Dashboard {
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     history_page_error: bool,
-    history_end_after_selection: Option<ClientMessage>,
+    /// Requests waiting for the event loop's next drain.
+    outbox: outbox::Outbox,
     ignored_responses: HashSet<u64>,
     settings: settings::DashboardSettings,
     config_dir: std::path::PathBuf,
-    last_view_request_id: Option<u64>,
-    pending_view: Option<PendingView>,
-    requested_view: Option<RequestedView>,
-    /// The view the server refused, with the instant of the refusal. The same view waits out
-    /// `VIEW_RETRY_BACKOFF` before it is re-sent so a repeating failure cannot spin the loop.
-    failed_view: Option<(RequestedView, std::time::Instant)>,
-    force_view_refresh: bool,
-    /// Ids of `SetView` requests still waiting for their final `Ok` or `Error`.
-    view_request_ids: HashSet<u64>,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
-    /// Set when the user changes selection, splits, focuses, or closes a pane, and consumed by the
-    /// next `SetView` those changes produce, which then owns the error banner: a banner written
-    /// before the change describes the state the user just left. A server-driven refresh mints its
-    /// request with this clear, so its success leaves a fresh banner alone.
-    pending_user_view_change: bool,
-    pending_snapshot_sessions: HashSet<SessionId>,
-}
-
-#[derive(Clone)]
-pub(super) struct RequestedView {
-    pub revision: u64,
-    pub targets: Vec<(SessionId, TerminalSize)>,
-    pub focused: Option<SessionId>,
-}
-
-pub(super) struct PendingView {
-    pub request_id: u64,
-    pub view: RequestedView,
-    pub parser_discarded: bool,
 }
 
 thread_local! {

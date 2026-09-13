@@ -518,7 +518,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 pane.parser.screen(),
                 rect.pane_index == dashboard.focused_pane
                     && dashboard.mode == InputMode::Terminal
-                    && pane.ready
+                    && dashboard.pane_ready(pane)
                     && pane_is_running(dashboard, pane),
             );
         }
@@ -635,7 +635,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 rect.terminal,
                 pane.parser.screen(),
                 dashboard.mode == InputMode::Terminal
-                    && pane.ready
+                    && dashboard.pane_ready(pane)
                     && pane_is_running(dashboard, pane),
             );
         }
@@ -788,7 +788,7 @@ fn render_split_metadata(
     let session = pane.session.and_then(|id| find_session(dashboard, id));
     let name = session.map_or("no session", |session| session.name.as_str());
     let prefix = if focused { "> " } else { "  " };
-    let mut text = if pane.ready {
+    let mut text = if dashboard.pane_ready(pane) {
         format!(
             "{prefix}{name} {}x{}",
             rect.terminal.width, rect.terminal.height
@@ -800,7 +800,7 @@ fn render_split_metadata(
         .filter(|session| super::ready::ready(session).is_some())
         .and_then(|session| session.agent.as_ref());
     if let Some(session) = session
-        && (pane.ready || ready_agent.is_some())
+        && (dashboard.pane_ready(pane) || ready_agent.is_some())
     {
         let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
             "closed".to_string()
