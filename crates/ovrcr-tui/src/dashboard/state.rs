@@ -573,7 +573,7 @@ impl Dashboard {
             selected_container: None,
             configuration_paths: None,
             history_page_error: false,
-            history_end_after_selection: None,
+            outbox: super::outbox::Outbox::default(),
             ignored_responses: HashSet::new(),
             settings: DashboardSettings::default(),
             config_dir: std::path::PathBuf::new(),
@@ -689,9 +689,39 @@ impl Dashboard {
         self.view_revision
     }
 
+    /// Queue a request for the next drain. A synthetic mouse release must precede the
+    /// `SetView` that moves focus; every retarget calls `cancel_mouse_gesture` before
+    /// `view_request`, so push order is send order.
+    pub(super) fn push_request(&mut self, message: ClientMessage) {
+        self.outbox.push(message);
+    }
+
+    /// Everything queued since the last drain, then the next history page if one is due.
+    pub fn drain_outbox(&mut self) -> Vec<ClientMessage> {
+        let mut batch = self.outbox.drain();
+        if let Some(request) = self.history_request_if_needed() {
+            batch.push(request);
+        }
+        batch
+    }
+
+    /// The drained batch as the action a key or mouse path returns.
+    pub(super) fn drained_action(&mut self) -> DashboardAction {
+        let mut batch = self.drain_outbox();
+        match batch.len() {
+            0 => DashboardAction::Redraw,
+            1 => DashboardAction::Request(batch.remove(0)),
+            _ => DashboardAction::RequestBatch(batch),
+        }
+    }
+
     pub fn request_view_at(&mut self, area: Rect) -> Option<ClientMessage> {
         let id = self.next_request_id();
-        self.view_request(area, id).ok().flatten()
+        let request = self.view_request(area, id).ok().flatten();
+        if let Some(request) = &request {
+            self.push_request(request.clone());
+        }
+        request
     }
 
     pub fn focused_bracketed_paste(&self) -> bool {
@@ -1704,7 +1734,9 @@ impl Dashboard {
         });
         self.mode = InputMode::Browse;
         self.copy_notice = None;
-        self.history_end_after_selection = end;
+        if let Some(end) = end {
+            self.push_request(end);
+        }
         DashboardAction::EnterBrowse
     }
 
@@ -1718,7 +1750,7 @@ impl Dashboard {
         if let Some(view) = self.history.take() {
             self.mode = InputMode::Browse;
             let request_id = self.error_owning_request_id();
-            self.history_end_after_selection = Some(ClientMessage {
+            self.push_request(ClientMessage {
                 request_id,
                 request: Request::HistoryEnd {
                     session: view.opened.session,
@@ -1743,10 +1775,6 @@ impl Dashboard {
         if let Some(pending) = self.pending_view.as_mut() {
             pending.parser_discarded = true;
         }
-    }
-
-    pub(super) fn take_pending_history_end(&mut self) -> Option<ClientMessage> {
-        self.history_end_after_selection.take()
     }
 
     pub(crate) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
@@ -2011,10 +2039,6 @@ impl Dashboard {
         if let Some(history) = &mut self.history {
             history.dragging = false;
         }
-    }
-
-    pub(crate) fn take_mouse_cleanup(&mut self) -> Option<ClientMessage> {
-        self.mouse.pending_cleanup.take()
     }
 
     pub fn pane_rects(&self, area: Rect) -> Vec<super::PaneRects> {
@@ -2594,10 +2618,6 @@ impl Dashboard {
     }
 
     fn queue_held_releases(&mut self) {
-        if self.mouse.pending_cleanup.is_some() {
-            self.clear_held_mouse();
-            return;
-        }
         let mut bytes = Vec::new();
         let mut session = None;
         for held in self.mouse.held.iter_mut() {
@@ -2627,7 +2647,7 @@ impl Dashboard {
             return;
         };
         let request_id = self.next_request_id();
-        self.mouse.pending_cleanup = Some(ClientMessage {
+        self.push_request(ClientMessage {
             request_id,
             request: Request::Input { session, bytes },
         });
@@ -2653,18 +2673,8 @@ impl Dashboard {
     }
 
     pub(super) fn request_selected(&mut self) -> DashboardAction {
-        let request_id = self.next_request_id();
-        let Ok(view) = self.view_request(self.outer_area, request_id) else {
-            return DashboardAction::Redraw;
-        };
-        let Some(view) = view else {
-            return DashboardAction::Redraw;
-        };
-        if let Some(end) = self.history_end_after_selection.take() {
-            DashboardAction::RequestBatch(vec![end, view])
-        } else {
-            DashboardAction::Request(view)
-        }
+        let _ = self.request_view_at(self.outer_area);
+        self.drained_action()
     }
 
     fn pause_request(&mut self, paused: bool) -> DashboardAction {
@@ -2700,7 +2710,10 @@ impl Dashboard {
         } = &message
             && let Some(requests) = self.palette_response(*request_id, response)
         {
-            return requests;
+            for request in requests {
+                self.push_request(request);
+            }
+            return self.drain_outbox();
         }
         let (was_view_request, owns_error) = match &message {
             ServerMessage::Response {
@@ -2709,14 +2722,17 @@ impl Dashboard {
             } => self.retire_request_id(*request_id, response),
             ServerMessage::Event(_) => (false, false),
         };
-        let mut outgoing = Vec::new();
         match message {
             ServerMessage::Response {
                 request_id,
                 response,
             } => match response {
                 Response::AgentOperation(_) => {}
-                Response::Hierarchy(hierarchy) => outgoing.extend(self.update_hierarchy(hierarchy)),
+                Response::Hierarchy(hierarchy) => {
+                    for request in self.update_hierarchy(hierarchy) {
+                        self.push_request(request);
+                    }
+                }
                 Response::Screen {
                     session,
                     revision,
@@ -2769,7 +2785,7 @@ impl Dashboard {
                         self.force_view_refresh = true;
                         let next_id = self.next_request_id();
                         if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
-                            outgoing.push(request);
+                            self.push_request(request);
                         }
                         // Recorded after the refresh so the first retry is immediate and a
                         // server that keeps answering without snapshots is throttled.
@@ -2796,14 +2812,14 @@ impl Dashboard {
                             self.error_owned_by_view = false;
                         }
                         if let Some(request) = self.take_deferred_history_request() {
-                            outgoing.push(request);
+                            self.push_request(request);
                         }
                     } else {
                         self.requested_view = Some(pending.view);
                         self.force_view_refresh |= pending.parser_discarded;
                         let next_id = self.next_request_id();
                         if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
-                            outgoing.push(request);
+                            self.push_request(request);
                         }
                     }
                 }
@@ -2820,7 +2836,7 @@ impl Dashboard {
                 | Response::TerminalText { .. }
                 | Response::Task(_) => self.error = None,
                 Response::HistoryOpened(opened) => {
-                    self.accept_history_opened(request_id, opened, &mut outgoing);
+                    self.accept_history_opened(request_id, opened);
                 }
                 Response::HistoryRows(page) => {
                     let purpose = self
@@ -2838,7 +2854,7 @@ impl Dashboard {
                             self.history_page_error = false;
                             self.handle_history_page(purpose, opened, page);
                             if let Some(request) = self.history_request_if_needed() {
-                                outgoing.push(request);
+                                self.push_request(request);
                             }
                         }
                         (Some(_), Some(Ok((_opened, None)))) => {}
@@ -2899,7 +2915,7 @@ impl Dashboard {
                             if let Some(view) = self.history.take() {
                                 self.mode = InputMode::Browse;
                                 let end_request_id = self.error_owning_request_id();
-                                outgoing.push(ClientMessage {
+                                self.push_request(ClientMessage {
                                     request_id: end_request_id,
                                     request: Request::HistoryEnd {
                                         session: view.opened.session,
@@ -2929,7 +2945,9 @@ impl Dashboard {
             },
             ServerMessage::Event(event) => match event {
                 ServerEvent::HierarchyChanged(hierarchy) => {
-                    outgoing.extend(self.update_hierarchy(hierarchy));
+                    for request in self.update_hierarchy(hierarchy) {
+                        self.push_request(request);
+                    }
                 }
                 ServerEvent::Output {
                     session,
@@ -2979,7 +2997,7 @@ impl Dashboard {
                             if let Ok(Some(request)) =
                                 self.view_request(self.outer_area, request_id)
                             {
-                                outgoing.push(request);
+                                self.push_request(request);
                             }
                         }
                     }
@@ -3002,7 +3020,7 @@ impl Dashboard {
                 }
             },
         }
-        outgoing
+        self.drain_outbox()
     }
 
     fn handle_history_page(
@@ -3070,12 +3088,7 @@ impl Dashboard {
         if valid { Some(completion.text) } else { None }
     }
 
-    fn accept_history_opened(
-        &mut self,
-        request_id: u64,
-        opened: crate::protocol::HistoryOpened,
-        outgoing: &mut Vec<ClientMessage>,
-    ) {
+    fn accept_history_opened(&mut self, request_id: u64, opened: crate::protocol::HistoryOpened) {
         let Some(pending) = self.history_begin_request.as_ref() else {
             return;
         };
@@ -3088,7 +3101,7 @@ impl Dashboard {
             .expect("history begin request checked above");
         if pending.cancelled || self.focused_session() != Some(opened.session) {
             let end_request_id = self.error_owning_request_id();
-            outgoing.push(ClientMessage {
+            self.push_request(ClientMessage {
                 request_id: end_request_id,
                 request: Request::HistoryEnd {
                     session: opened.session,
@@ -3101,7 +3114,7 @@ impl Dashboard {
         let replaced = self.history.take();
         if let Some(view) = replaced {
             let end_request_id = self.error_owning_request_id();
-            outgoing.push(ClientMessage {
+            self.push_request(ClientMessage {
                 request_id: end_request_id,
                 request: Request::HistoryEnd {
                     session: view.opened.session,
@@ -3122,7 +3135,7 @@ impl Dashboard {
         self.history = Some(HistoryView::new(opened, top));
         self.mode = InputMode::History;
         if let Some(request) = self.history_request_if_needed() {
-            outgoing.push(request);
+            self.push_request(request);
         }
     }
 
@@ -3157,9 +3170,6 @@ impl Dashboard {
                 .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
             if !focused_survives {
                 self.release_for_selection_change();
-                if let Some(request) = self.take_pending_history_end() {
-                    outgoing.push(request);
-                }
                 self.invalidate_view_readiness();
                 self.mode = InputMode::Browse;
             }
@@ -3183,17 +3193,6 @@ impl Dashboard {
         self.update_mode_for_selected_phase();
         outgoing.extend(self.attach_created_workspace());
         outgoing
-    }
-
-    pub(crate) fn select_request(
-        &mut self,
-        id: SessionId,
-        request_id: u64,
-    ) -> Option<ClientMessage> {
-        self.select_session(id);
-        self.view_request(self.outer_area, request_id)
-            .ok()
-            .flatten()
     }
 
     fn mark_reviewed_request(&mut self) -> DashboardAction {

@@ -1950,3 +1950,99 @@ fn history_footer_names_escape_back_when_copy_notice_is_clear() {
     assert!(footer.contains("Esc Back"), "{footer}");
     assert!(footer.contains("y Copy"), "{footer}");
 }
+
+/// One project, one workspace, a running session per id.
+fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
+    use crate::protocol::{
+        AgentActivity, HierarchySnapshot, ProjectSummary, SessionPhase, SessionSummary,
+        WorkspaceSummary,
+    };
+    HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids
+                    .iter()
+                    .map(|id| SessionSummary {
+                        id: SessionId(*id),
+                        project: "consigint".into(),
+                        workspace: "auth".into(),
+                        name: "session".into(),
+                        label: "zsh".into(),
+                        pid: Some(100 + u32::try_from(*id).unwrap()),
+                        started_unix_ms: 0,
+                        phase: SessionPhase::Running,
+                        activity: AgentActivity::Unknown,
+                        context_usage: None,
+                        agent: None,
+                        agent_epoch: 0,
+                        unread: None,
+                    })
+                    .collect(),
+            }],
+        }],
+    }
+}
+
+#[test]
+fn history_end_survives_split_and_leave_history() {
+    // Regression: release_for_selection_change parked HistoryEnd in a slot that split/focus/close
+    // never drained and leave_history overwrote.
+    let mut dashboard = staged_history_copy_dashboard();
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    assert!(dashboard.split_pane());
+    let batch = dashboard.drain_outbox();
+    assert!(
+        batch.iter().any(|message| matches!(
+            message.request,
+            Request::HistoryEnd {
+                session: SessionId(1),
+                ..
+            }
+        )),
+        "split must release the captured history: {batch:?}"
+    );
+    assert!(dashboard.drain_outbox().is_empty(), "drained once");
+}
+
+#[test]
+fn mouse_cleanup_precedes_the_replacement_set_view() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.mouse.held[0] = Some(super::HeldMouse {
+        session: SessionId(1),
+        event: MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        },
+        mode: vt100::MouseProtocolMode::PressRelease,
+        encoding: vt100::MouseProtocolEncoding::Sgr,
+    });
+    dashboard.select_session(SessionId(2));
+    let _ = dashboard.request_view_at(area);
+    let batch = dashboard.drain_outbox();
+    let cleanup = batch
+        .iter()
+        .position(|message| matches!(message.request, Request::Input { .. }));
+    let set_view = batch
+        .iter()
+        .position(|message| matches!(message.request, Request::SetView { .. }));
+    assert!(
+        cleanup.is_some(),
+        "the held button owes a release: {batch:?}"
+    );
+    assert!(set_view.is_some(), "the retarget owes a view: {batch:?}");
+    assert!(cleanup < set_view, "{batch:?}");
+}

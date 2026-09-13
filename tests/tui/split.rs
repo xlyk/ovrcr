@@ -26,8 +26,8 @@ fn set_view(msg: &ClientMessage) -> &DashboardView {
     }
 }
 
-fn request_view(dashboard: &mut Dashboard, area: Rect, _revision: u64) -> ClientMessage {
-    dashboard.request_view_at(area).expect("expected SetView")
+fn request_view(dashboard: &mut Dashboard, area: Rect, revision: u64) -> ClientMessage {
+    try_request_view(dashboard, area, revision).expect("expected SetView")
 }
 
 fn try_request_view(
@@ -35,7 +35,11 @@ fn try_request_view(
     area: Rect,
     _revision: u64,
 ) -> Option<ClientMessage> {
-    dashboard.request_view_at(area)
+    let request = dashboard.request_view_at(area);
+    // The event loop flushes after every view request, so the fixture must not leave the
+    // same request queued for the next drain.
+    dashboard.drain_outbox();
+    request
 }
 
 fn split(dashboard: &mut Dashboard) {

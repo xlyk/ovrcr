@@ -5,6 +5,7 @@ mod event_loop;
 mod git_hints;
 mod hints;
 mod input;
+mod outbox;
 mod palette;
 pub(crate) mod picker;
 mod render;
@@ -208,7 +209,6 @@ pub(super) struct HeldMouse {
 pub(super) struct MouseForwarding {
     pub(super) held: [Option<HeldMouse>; 3],
     pub(super) last_motion: Option<MouseEvent>,
-    pub(super) pending_cleanup: Option<ClientMessage>,
     pub(super) split_dragging: bool,
     pub(super) sidebar_dragging: bool,
 }
@@ -248,7 +248,8 @@ pub struct Dashboard {
     selected_container: Option<TreeRow>,
     configuration_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
     history_page_error: bool,
-    history_end_after_selection: Option<ClientMessage>,
+    /// Requests waiting for the event loop's next drain.
+    outbox: outbox::Outbox,
     ignored_responses: HashSet<u64>,
     settings: settings::DashboardSettings,
     config_dir: std::path::PathBuf,

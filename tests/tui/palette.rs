@@ -1028,12 +1028,13 @@ fn typed_existing_branch_survives_hint_arrival() {
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let message = loop {
-        let (_, request) = dashboard.poll_palette();
+        dashboard.poll_palette();
+        let mut drained = dashboard.drain_outbox();
         let text = palette_text(&dashboard);
         // Without real branches the field would stay text and submit vacuously.
         assert!(!text.contains("enter branch/base manually"), "{text}");
-        if let Some(message) = request {
-            break message;
+        if !drained.is_empty() {
+            break drained.remove(0);
         }
         assert!(
             std::time::Instant::now() < deadline,
