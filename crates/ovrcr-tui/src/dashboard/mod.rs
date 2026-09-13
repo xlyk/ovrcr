@@ -7,6 +7,7 @@ mod hints;
 mod input;
 mod palette;
 pub(crate) mod picker;
+mod ready;
 mod render;
 mod settings;
 mod state;

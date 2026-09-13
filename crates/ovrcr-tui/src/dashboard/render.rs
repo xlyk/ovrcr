@@ -547,12 +547,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         .pid
                         .map_or_else(|| "—".to_string(), |pid| pid.to_string())
                 };
-                if session
-                    .agent
-                    .as_ref()
-                    .and_then(|agent| agent.activity.as_ref())
-                    .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
-                {
+                if super::ready::ready(session).is_some() {
                     let paused = if matches!(session.phase, SessionPhase::Paused) {
                         " paused"
                     } else {
@@ -573,11 +568,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     return Line::from(Span::styled(text, Style::default().fg(TEAL)));
                 }
                 let activity = if matches!(session.phase, SessionPhase::Exited { .. })
-                    && !session
-                        .agent
-                        .as_ref()
-                        .and_then(|agent| agent.activity.as_ref())
-                        .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
+                    && super::ready::ready(session).is_none()
                 {
                     Span::raw("")
                 } else {
@@ -805,14 +796,9 @@ fn render_split_metadata(
     } else {
         format!("{prefix}loading {name}")
     };
-    let ready_agent = session.and_then(|session| {
-        session.agent.as_ref().filter(|agent| {
-            agent
-                .activity
-                .as_ref()
-                .is_some_and(|activity| activity.state == AgentActivity::ResponseReady)
-        })
-    });
+    let ready_agent = session
+        .filter(|session| super::ready::ready(session).is_some())
+        .and_then(|session| session.agent.as_ref());
     if let Some(session) = session
         && (pane.ready || ready_agent.is_some())
     {
@@ -1123,7 +1109,7 @@ fn tree_line_text(
 
 /// Status glyph and colour for a session row. An unavailable reporter mutes the glyph.
 fn session_status_glyph(session: &SessionSummary, now_unix_ms: u64) -> (char, Color) {
-    let (glyph, color) = match (&session.phase, session.activity) {
+    let (glyph, color) = match (&session.phase, super::ready::activity(session)) {
         (SessionPhase::Exited { .. }, _) => ('·', MUTED),
         (SessionPhase::Paused, _) => ('P', SUBTEXT),
         (_, AgentActivity::Unknown) => ('-', MUTED),
@@ -1188,9 +1174,7 @@ fn provider_activity(session: &SessionSummary) -> String {
     let Some(agent) = &session.agent else {
         return String::new();
     };
-    if let Some(activity) = &agent.activity
-        && activity.state == AgentActivity::ResponseReady
-    {
+    if let Some(activity) = super::ready::ready(session) {
         let quality = match activity.quality {
             SampleQuality::Confirmed => "confirmed",
             SampleQuality::Observed => "observed",

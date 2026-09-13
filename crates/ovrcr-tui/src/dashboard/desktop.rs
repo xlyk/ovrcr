@@ -1,9 +1,9 @@
 //! Dashboard-local opt-in delivery. Queue from unread identity.
+use super::ready::delivery_live;
 use super::{Dashboard, DashboardAction};
-use ovrcr_protocol::{
-    AgentActivity, AgentProvider, HierarchySnapshot, ReadyObservation, ReporterHealth, SessionId,
-    SessionPhase, SessionSummary,
-};
+#[cfg(test)]
+use ovrcr_protocol::{AgentActivity, AgentProvider, SessionPhase};
+use ovrcr_protocol::{HierarchySnapshot, ReadyObservation, SessionId, SessionSummary};
 use std::collections::VecDeque;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -249,18 +249,6 @@ fn notification_matches_session(notification: &Notification, session: &SessionSu
                     .activity
                     .as_ref()
                     .is_some_and(|activity| activity.turn == notification.unread.turn)
-        })
-}
-
-fn delivery_live(session: &SessionSummary) -> bool {
-    session.phase == SessionPhase::Running
-        && session.agent.as_ref().is_some_and(|agent| {
-            agent.binding.provider == AgentProvider::Codex
-                && agent.health.state == ReporterHealth::Connected
-                && agent.activity.as_ref().is_some_and(|activity| {
-                    activity.state == AgentActivity::ResponseReady
-                        && activity.turn.as_ref().is_some_and(|turn| !turn.is_empty())
-                })
         })
 }
 
