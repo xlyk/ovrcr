@@ -19,3 +19,19 @@ _Avoid_: treating view, selection, or notification as review
 **Presented**:
 The Unread the Dashboard last showed.
 _Avoid_: a newer Unread as the review target
+
+**Active dashboard**:
+The server-side seat the one Dashboard connection holds: its identity, outbound queue, acknowledged view, and focused geometry.
+_Avoid_: the dashboard slot, the sink, the view subscription as separate things
+
+**View handshake**:
+The Dashboard's exchange with the server that acknowledges a view: one `SetView` in flight, snapshots matched by request, revision, and session, readiness granted by a complete final `Ok`.
+_Avoid_: pane ready as a flag anyone sets
+
+**Retarget**:
+Any change to what a pane shows: split, focus, close, select, container, cleared, resize, or server removal. Each names which releases apply.
+_Avoid_: calling the release steps individually
+
+**Outbox**:
+The Dashboard's queue of requests to send, drained once per event-loop pass in push order.
+_Avoid_: private slots that hold a request
