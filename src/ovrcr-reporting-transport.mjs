@@ -28,6 +28,7 @@ export function createReporter({
     instance: randomBytes(16).toString("hex"),
     sequence: 0,
     run: 0,
+    prompt: 0,
     open: false,
     outcome: "none",
     disabled: false,

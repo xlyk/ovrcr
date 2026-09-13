@@ -14,7 +14,9 @@ under `~/.pi` is read or written by OVRCR.
 | `agent_start` | Busy. Retries, automatic compaction and queued follow-ups stay in the same response cycle. |
 | `agent_end` | The cycle's outcome is recorded from the last assistant message (a tool error alone is not a failed run). |
 | `agent_settled` | Ready `· confirmed` for a successful cycle, Error for an assistant error, Idle for an aborted or empty cycle. One Unread per Ready. |
-| `session_shutdown` | `quit` ends reporting; replacement or reload retires the producer and the next `session_start` re-admits. |
+| `ui_prompt_start` | An input request opens: the session waits. The kind (`select`, `confirm`, `input`, `editor`, `custom`) is reported; the title is not. Pi coalesces nested prompts into one outer span, so one dialog is one request. |
+| `ui_prompt_end` | The request closes and the activity underneath it — Busy, Idle, Error or Ready — is restored. Closing is never Unread and never a review. |
+| `session_shutdown` | `quit` ends reporting; replacement or reload retires the producer and the next `session_start` re-admits. Either way the open input request is forgotten. |
 
 Payloads carry identifiers and discriminants only: never prompts, responses, tool
 arguments or results, titles or credentials.
@@ -34,7 +36,7 @@ arguments or results, titles or credentials.
 - `lifecycle.delivery` (`observed` once any activity arrived), `activity`,
   `work_seen`, `health` (`Unavailable` after transport loss or a retired producer),
   `unread`.
-- `capabilities`: `reporting` is available; `input_requests` (#90), `recovery`
+- `capabilities`: `reporting` and `input_requests` are available; `recovery`
   (#91) and `metrics` (absent by design) are stated explicitly.
 
 ## Removal
@@ -45,7 +47,9 @@ stop reporting.
 
 ## Boundaries
 
-Extension dialogs (`WaitingInput`), session switches and reporter recovery are later
-tickets. A long-running response is never declared failed because no end event has
-arrived. Native acceptance evidence is recorded in
+`WaitingInput` is extension-dialog-only: Pi exposes no other visible question surface,
+and a tool call is not an input request. OVRCR does not open dialogs of its own to
+probe for one. Session switches and reporter recovery are later tickets (#91). A
+long-running response is never declared failed because no end event has arrived.
+Native acceptance evidence is recorded in
 [agent-reporting-support.md](agent-reporting-support.md).

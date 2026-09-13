@@ -497,10 +497,7 @@ impl Session {
         summary.unread = state.reporting.unread();
         summary.agent = state.reporting.snapshot.clone();
         if let Some(agent) = &summary.agent {
-            summary.activity = agent
-                .activity
-                .as_ref()
-                .map_or(AgentActivity::Unknown, |a| a.state);
+            summary.activity = agent.effective_activity();
             summary.context_usage = agent.metrics.as_ref().map(|metrics| ContextUsageSnapshot {
                 report: ovrcr_protocol::context::ContextUsageReport {
                     source: if agent.binding.provider == ovrcr_protocol::AgentProvider::Claude {
