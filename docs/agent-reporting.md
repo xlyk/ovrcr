@@ -135,7 +135,8 @@ restart the agent session. OVRCR never installs or modifies provider settings.
 
 `ovrcr agent run pi -- pi [ARGS...]` (or picking `pi` in the Dashboard) materializes the
 owned reporting extension into a private per-invocation directory and adds `-e <path>`
-beside your own extensions; nothing under `~/.pi` changes. The extension is inert without
+beside your own extensions (Pi's documented merge rule for an explicit `-e` path; not
+exercised by an automated test); nothing under `~/.pi` changes. The extension is inert without
 the private channel and in print, JSON and RPC modes. It reports `session_start` (Idle),
 `agent_start` (Busy), and at `agent_settled` one of Ready (`response ready · confirmed`,
 because Pi settles only after retries, automatic compaction and queued continuations),

@@ -1,14 +1,20 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
+const materialized = [];
+
+after(() => {
+  for (const dir of materialized) rmSync(dir, { recursive: true, force: true });
+});
 
 function materialize({ hang = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ovrcr-pi-ext-"));
+  materialized.push(dir);
   const record = join(dir, "record.jsonl");
   const helper = join(dir, "fake-ovrcr");
   writeFileSync(
@@ -84,6 +90,25 @@ test("error and aborted outcomes come from the last assistant message; a second 
     ["agent_start", 2, "none"], ["agent_end", 2, "aborted"], ["agent_settled", 2, "aborted"],
     ["agent_start", 3, "none"], ["agent_end", 3, "none"], ["agent_settled", 3, "none"],
   ]);
+});
+
+test("continuations inside one cycle keep the run; the last end before settled decides the outcome", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "agent_end", messages: [assistant("error")] });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "agent_end", messages: [assistant("stop")] });
+  await host.emit({ type: "agent_settled" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => f.event), [
+    "agent_start", "agent_end", "agent_start", "agent_end", "agent_settled",
+  ]);
+  for (const frame of sent) assert.equal(frame.run, 1, `continuation changed the run: ${JSON.stringify(frame)}`);
+  assert.equal(sent.at(-1).outcome, "ok");
+  await host.emit({ type: "agent_start" });
+  assert.equal(frames(record).at(-1).run, 2, "a start after settled opens the next cycle");
 });
 
 test("non-tui modes never spawn a helper; shutdown reports once then disables", async () => {

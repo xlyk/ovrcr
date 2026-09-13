@@ -10182,7 +10182,31 @@ fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
             "agent_settled",
             Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
         ),
+        // One settled span can contain several start/end pairs: Pi emits agent_start at the
+        // top of both its agent loop and its continue loop, and settles once at the end.
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:error",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
     ];
+    let mut unread_after_second = None;
+    let mut continued_turn = None;
     for (step, (command, expected)) in steps.into_iter().enumerate() {
         pi_callback(&fixture, summary.id, &mut index, command);
         let current = fixture.session_summary(summary.id);
@@ -10212,9 +10236,39 @@ fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
         if step == 19 {
             let unread = current.unread.clone().expect("second Ready is unread");
             assert_ne!(
-                Some(unread),
+                Some(unread.clone()),
                 unread_after_first,
                 "a later cycle replaces the Unread identity"
+            );
+            unread_after_second = Some(unread);
+        }
+        if step == 20 {
+            continued_turn = sample.turn.clone();
+            assert!(continued_turn.is_some(), "a cycle publishes its identity");
+        }
+        // The continuation's own start carries the same run, so it is a duplicate identity:
+        // the open cycle, its Busy sample and the previous Unread all survive unchanged.
+        if (20..24).contains(&step) {
+            assert_eq!(
+                current.unread, unread_after_second,
+                "step {step}: a continuation does not acknowledge or replace the Unread"
+            );
+        }
+        if step == 22 || step == 24 {
+            assert_eq!(
+                sample.turn, continued_turn,
+                "step {step}: a continuation keeps the open cycle identity"
+            );
+        }
+        if step == 24 {
+            let unread = current
+                .unread
+                .clone()
+                .expect("the continued cycle is unread");
+            assert_ne!(
+                Some(unread),
+                unread_after_second,
+                "the continued cycle replaces the Unread identity when it settles"
             );
         }
     }
@@ -10271,7 +10325,8 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     fixture.record_process_group(&managed);
     // The real receiver materializes the owned extension and prepends only its -e path.
     fixture.wait_terminal_contains(managed.id, "PI_ARGS=-e ");
-    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs --model x/y hello world");
+    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs");
+    fixture.wait_terminal_contains(managed.id, "--model x/y hello world");
     fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
     fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
     // The fake pi exits before reporting anything, so no binding is ever established.
@@ -11578,7 +11633,7 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
         vec![
             "/bin/sh".into(),
             "-c".into(),
-            r#"export HOME="$3" PI_CODING_AGENT_DIR="$3/agent" PI_OFFLINE=1; "$1" agent run pi -- "$2" --no-session --offline; printf 'PI_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
+            r#"export HOME="$3" PI_CODING_AGENT_DIR="$3/agent" PI_OFFLINE=1; "$1" agent run pi -- "$2" --no-session --offline; IFS= read -r done"#.into(),
             "pi-native".into(),
             env!("CARGO_BIN_EXE_ovrcr").into(),
             pi,

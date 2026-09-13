@@ -232,13 +232,18 @@ impl Receiver {
                     return IGNORED.to_vec();
                 };
                 let turn = format!("{instance}:{run}");
-                // Duplicates are checked before any capacity, binding, or revision change.
+                // A repeated start for the same run is the continuation Pi emits for a retry,
+                // automatic compaction or a queued follow-up: the cycle is already open and
+                // already published, so there is nothing to add. Duplicates are checked before
+                // any capacity, binding, or revision change.
                 if self.seen.contains(&turn) {
                     return IGNORED.to_vec();
                 }
+                // A different run while a cycle is open replaces it and publishes the new
+                // identity. Permanent disablement is reserved for unresolvable identity or
+                // ordering ambiguity (#88); recovering a lost close is #91's job.
                 let charge = turn.len() + std::mem::size_of::<String>();
-                if self.current.is_some()
-                    || self.seen.len() >= MAX_IDENTITIES
+                if self.seen.len() >= MAX_IDENTITIES
                     || self.charged_bytes + charge > MAX_IDENTITY_BYTES
                 {
                     self.disable();
@@ -280,7 +285,16 @@ impl Receiver {
                 }
             }
             "session_shutdown" => {
-                if payload["reason"] == "quit" {
+                // `reason` is a bounded discriminant: compared against the known set and never
+                // retained. Anything else is unknown and retires the producer rather than
+                // disabling it.
+                let reason = payload["reason"].as_str().filter(|value| {
+                    matches!(
+                        *value,
+                        "startup" | "reload" | "new" | "resume" | "fork" | "quit" | "overflow"
+                    )
+                });
+                if reason == Some("quit") {
                     self.disable();
                 } else {
                     // Replacement or reload: Pi re-runs factories; the next session_start admits them.
@@ -340,6 +354,16 @@ impl Receiver {
             return UNAVAILABLE.to_vec();
         }
         ACCEPTED.to_vec()
+    }
+}
+
+/// The accept loop can exit, or its thread be abandoned, without a disabling callback:
+/// the materialized directory is still this receiver's to remove.
+impl Drop for Receiver {
+    fn drop(&mut self) {
+        if let Some(dir) = self.extension_dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 

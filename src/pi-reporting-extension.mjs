@@ -2,6 +2,11 @@
 // `ovrcr agent run pi` through an explicit -e path beside the user's own extensions;
 // inert without the private invocation channel. Sends bounded identifiers and
 // discriminants to a directly spawned helper, never prompts, responses or tool data.
+// One response cycle spans every continuation Pi runs — retry, automatic compaction, a
+// queued follow-up — because Pi emits `agent_start` at the top of both its agent loop and
+// its continue loop, and a single `agent_settled` only once the whole prompt is finished.
+// This extension owns that span: `run` advances on the first `agent_start` of a cycle and
+// holds until settled, so a continuation reports work without opening a new cycle.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
@@ -19,6 +24,7 @@ export default function (pi) {
     instance: randomBytes(16).toString("hex"),
     sequence: 0,
     run: 0,
+    open: false,
     outcome: "none",
     disabled: false,
   };
@@ -105,19 +111,28 @@ export default function (pi) {
 
   pi.on("session_start", (event, ctx) => {
     producer.run = 0;
+    producer.open = false;
     producer.outcome = "none";
     return report("session_start", ctx, { reason: event.reason });
   });
   pi.on("agent_start", (_event, ctx) => {
-    producer.run += 1;
-    producer.outcome = "none";
+    // A second start inside an open cycle is a continuation: same run, outcome so far kept.
+    if (!producer.open) {
+      producer.run += 1;
+      producer.open = true;
+      producer.outcome = "none";
+    }
     return report("agent_start", ctx);
   });
   pi.on("agent_end", (event, ctx) => {
     producer.outcome = outcomeOf(event.messages ?? []);
     return report("agent_end", ctx);
   });
-  pi.on("agent_settled", (_event, ctx) => report("agent_settled", ctx));
+  pi.on("agent_settled", (_event, ctx) => {
+    const sent = report("agent_settled", ctx);
+    producer.open = false; // the cycle closes here, whatever continuations it contained
+    return sent;
+  });
   pi.on("session_shutdown", (event, ctx) => {
     const sent = report("session_shutdown", ctx, { reason: event.reason });
     producer.disabled = true; // Pi re-runs factories after replacement or reload
