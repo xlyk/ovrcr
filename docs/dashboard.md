@@ -348,13 +348,16 @@ retained.
 ### Create terminal (`n`)
 
 The Agent field lists coding agents found on `PATH` in this order: `claude`,
-`codex`, `gemini`, `aider`, `opencode`, `pi`, `goose`, `amp`, `cursor-agent`.
+`codex`, `gemini`, `aider`, `opencode`, `pi`, `omp`, `goose`, `amp`, `cursor-agent`.
 `shell` (`$SHELL`, or `/bin/sh` when unset) is always last before `Custom`.
 Workspace lists `project / workspace` pairs and defaults to the selected
 session's. Name defaults to `local` when the agent is `shell` and that name is
 free in the workspace; otherwise `<agent>-1`, `<agent>-2`, and so on. `Custom`
 shows a Command field that runs through `/bin/sh -lc`. After the session starts,
-typing goes to it immediately.
+typing goes to it immediately. Detected `pi` and `omp` entries launch through
+`ovrcr agent run <name> --` so OVRCR can report their activity; an `agents`
+override for the same name replaces the command entirely. A shell command that
+runs `pi` or `omp` directly stays untracked.
 
 ### Create workspace (`w`)
 
