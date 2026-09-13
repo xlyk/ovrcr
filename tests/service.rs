@@ -342,7 +342,8 @@ fn stop_requests_graceful_server_shutdown_before_stopping_the_manager() {
 #[test]
 fn service_install_refuses_when_sessions_exist() {
     use ovrcr::protocol::{
-        AgentActivity, ErrorCode, Registry, SessionId, SessionPhase, SessionSummary,
+        AgentActivity, ErrorCode, HierarchySnapshot, ProjectSummary, SessionId, SessionPhase,
+        SessionSummary, WorkspaceSummary,
     };
     let fixture = Fixture::new(ServicePlatform::Systemd);
     fixture.install_stopped();
@@ -365,24 +366,31 @@ fn service_install_refuses_when_sessions_exist() {
                     code: ErrorCode::SessionsRemain,
                     message: "sessions remain".into(),
                 },
-                Request::List => Response::Inventory {
-                    registry: Registry::default(),
-                    sessions: vec![SessionSummary {
-                        id: SessionId(7),
-                        project: "demo".into(),
-                        workspace: "main".into(),
-                        name: "shell".into(),
-                        label: "shell".into(),
-                        pid: Some(1),
-                        started_unix_ms: 0,
-                        phase: SessionPhase::Running,
-                        activity: AgentActivity::Idle,
-                        context_usage: None,
-                        agent: None,
-                        agent_epoch: 0,
-                        unread: None,
+                Request::List => Response::Hierarchy(HierarchySnapshot {
+                    projects: vec![ProjectSummary {
+                        name: "demo".into(),
+                        workspaces: vec![WorkspaceSummary {
+                            project: "demo".into(),
+                            name: "main".into(),
+                            path: "/tmp/demo-main".into(),
+                            sessions: vec![SessionSummary {
+                                id: SessionId(7),
+                                project: "demo".into(),
+                                workspace: "main".into(),
+                                name: "shell".into(),
+                                label: "shell".into(),
+                                pid: Some(1),
+                                started_unix_ms: 0,
+                                phase: SessionPhase::Running,
+                                activity: AgentActivity::Idle,
+                                context_usage: None,
+                                agent: None,
+                                agent_epoch: 0,
+                                unread: None,
+                            }],
+                        }],
                     }],
-                },
+                }),
                 other => panic!("install sent {other:?}"),
             };
             received.push(message.request);
