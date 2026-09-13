@@ -37,7 +37,7 @@ fn managed_doctor(name: &str, executable: &std::ffi::OsStr) -> AppResult<()> {
         "probe_status": if version.is_some() { "probed" } else { "unavailable" },
         "version": version,
         "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
-        "capabilities": { "managed_launch": true, "reporting": if name == "pi" { "pending #89" } else { "pending #94" } },
+        "capabilities": { "managed_launch": true, "reporting": if name == "pi" { "available" } else { "pending #94" } },
     });
     println!(
         "{}",

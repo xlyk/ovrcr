@@ -162,3 +162,31 @@ fn pi_extension_source_embeds_the_json_escaped_binary_path() {
     assert!(!source.contains("__OVRCR_BINARY__"));
     assert!(source.contains("[\"report\", \"pi\", \"--stdin\"]"));
 }
+
+#[test]
+fn pi_and_omp_doctor_report_managed_launch_and_reporting_availability() {
+    for (provider, reporting) in [("pi", "\"available\""), ("omp", "\"pending #94\"")] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args([
+                "agent",
+                "doctor",
+                provider,
+                "--json",
+                "--executable",
+                "/nonexistent/harness",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{provider}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(report["provider"], provider);
+        assert_eq!(report["probe_status"], "unavailable");
+        assert_eq!(report["capabilities"]["managed_launch"], true);
+        assert_eq!(
+            report["capabilities"]["reporting"].to_string(),
+            reporting,
+            "{provider}"
+        );
+    }
+}

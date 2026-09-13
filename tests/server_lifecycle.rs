@@ -10301,9 +10301,13 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "pi-setup");
     let native = fixture._root.path().join("pi");
+    let extension_record = fixture._root.path().join("managed-extension-path");
     std::fs::write(
         &native,
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nprintf 'PI_ARGS=%s\\n' \"$*\"\nprintf 'PI_HOOK=[%s%s%s]\\n' \"${OVRCR_HOOK_SOCKET:-}\" \"${OVRCR_HOOK_TOKEN:-}\" \"${OVRCR_SESSION_ID:-}\"\nprintf 'PI_CHANNEL=[%s]\\n' \"${OVRCR_AGENT_SOCKET:+set}\"\nexit 17\n",
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nif [ \"$1\" = -e ]; then printf '%s' \"$2\" > '{}'; fi\nprintf 'PI_ARGS=%s\\n' \"$*\"\nprintf 'PI_HOOK=[%s%s%s]\\n' \"${{OVRCR_HOOK_SOCKET:-}}\" \"${{OVRCR_HOOK_TOKEN:-}}\" \"${{OVRCR_SESSION_ID:-}}\"\nprintf 'PI_CHANNEL=[%s]\\n' \"${{OVRCR_AGENT_SOCKET:+set}}\"\nexit 17\n",
+            extension_record.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -10331,6 +10335,26 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
     // The fake pi exits before reporting anything, so no binding is ever established.
     assert!(fixture.session_summary(managed.id).agent.is_none());
+    // The materialized extension and its private directory go away with the invocation.
+    fixture.wait_exited(managed.id);
+    let extension = std::fs::read_to_string(&extension_record).unwrap();
+    let extension = Path::new(extension.trim());
+    assert!(
+        extension.ends_with("ovrcr-pi-reporting.mjs"),
+        "{extension:?}"
+    );
+    let removed = Instant::now() + wait_deadline();
+    while extension.parent().is_some_and(|dir| dir.exists()) && Instant::now() < removed {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !extension.exists(),
+        "extension file survived the invocation: {extension:?}"
+    );
+    assert!(
+        !extension.parent().unwrap().exists(),
+        "extension directory survived: {extension:?}"
+    );
     // Ineligible mode: RPC mode runs native with reporting unavailable, no binding.
     let rpc = fixture.create_session_summary(
         "pi-rpc",
