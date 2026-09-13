@@ -4,7 +4,7 @@ use ovrcr_protocol::{
     AgentActivity, AgentProvider, HierarchySnapshot, ReadyObservation, ReporterHealth, SessionId,
     SessionPhase, SessionSummary,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::{
@@ -56,7 +56,6 @@ impl Delivery {
 #[derive(Default)]
 pub(super) struct DesktopNotifications {
     initialized: bool,
-    observed: HashMap<SessionId, ReadyObservation>,
     pending: VecDeque<Notification>,
     in_flight: Option<Delivery>,
     pub(super) wake: Option<std::os::unix::net::UnixStream>,
@@ -122,7 +121,7 @@ impl Dashboard {
             existing.insert(session.id);
             self.observe_desktop_session(session, initial);
         }
-        self.desktop.observed.retain(|id, _| existing.contains(id));
+        self.unread.retain(&existing);
     }
 
     pub(super) fn observe_desktop_update(&mut self, session: &SessionSummary) {
@@ -141,17 +140,7 @@ impl Dashboard {
         {
             delivery.cancel();
         }
-        let new_unread = session.unread.as_ref().is_some_and(|unread| {
-            self.desktop
-                .observed
-                .get(&session.id)
-                .is_none_or(|previous| {
-                    previous.binding != unread.binding || previous.turn != unread.turn
-                })
-        });
-        if let Some(unread) = &session.unread {
-            self.desktop.observed.insert(session.id, unread.clone());
-        }
+        let new_unread = self.unread.observe(session);
         // Consume unread even when disabled or visible so later enable/hide cannot replay.
         if !initial
             && self.alert_channels() != 0

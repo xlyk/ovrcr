@@ -14,6 +14,7 @@ mod terminal_guard;
 #[cfg(test)]
 mod tests;
 pub(crate) mod text_cursor;
+mod unread;
 mod whichkey;
 
 pub use agents::detect_agents;
@@ -216,8 +217,8 @@ pub struct Dashboard {
     desktop: desktop::DesktopNotifications,
     tasks: Option<TasksView>,
     hierarchy: HierarchySnapshot,
-    // Review actions name only the observation committed by the last successful draw.
-    presented_unread: Option<(SessionId, ovrcr_protocol::ReadyObservation)>,
+    // Review names Presented, not a newer Unread that arrived before the next draw.
+    unread: unread::Unread,
     mode: InputMode,
     panes: Vec<PaneState>,
     focused_pane: usize,
