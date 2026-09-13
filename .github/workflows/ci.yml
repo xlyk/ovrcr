@@ -47,8 +47,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Pi extension tests
-        run: node --test tests/pi_reporting_extension.mjs
+      - name: Extension tests
+        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs
 
   linux:
     name: linux
@@ -82,8 +82,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Pi extension tests
-        run: node --test tests/pi_reporting_extension.mjs
+      - name: Extension tests
+        run: node --test tests/pi_reporting_extension.mjs tests/omp_reporting_extension.mjs
 
   linux-capacity:
     name: linux capacity

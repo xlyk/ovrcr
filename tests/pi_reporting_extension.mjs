@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
+const TRANSPORT = resolve("src/ovrcr-reporting-transport.mjs");
 const materialized = [];
 
 after(() => {
@@ -22,6 +23,8 @@ function materialize({ hang = false } = {}) {
     `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\ncat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`,
   );
   chmodSync(helper, 0o700);
+  // The receiver materializes the shared transport beside the extension that imports it.
+  writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
   const extension = join(dir, "ovrcr-pi-reporting.mjs");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
   return { extension, record };

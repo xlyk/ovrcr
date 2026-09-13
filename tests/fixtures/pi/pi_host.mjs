@@ -1,7 +1,10 @@
-// Test host for the OVRCR Pi reporting extension. As a library it fires the real
-// registered handlers with a fake ExtensionContext (node --test). Run directly it is a
-// fake `pi` executable for the Rust lifecycle tests: it loads the `-e` extension and
-// turns stdin lines into extension events, printing PI_CALLBACK=<n> after each one.
+// Test host for the OVRCR reporting extensions. It serves both harnesses: Pi and Oh My
+// Pi share the event vocabulary, and the grammar below covers the events only one of them
+// emits (agent_settled for Pi, session_switch and a continuing agent_end for Oh My Pi).
+// As a library it fires the real registered handlers with a fake ExtensionContext
+// (node --test). Run directly it is a fake `pi` or `omp` executable for the Rust lifecycle
+// tests: it loads the `-e` extension and turns stdin lines into extension events, printing
+// PI_CALLBACK=<n> after each one.
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { writeFileSync } from "node:fs";
@@ -37,8 +40,10 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
   };
 }
 
-// stdin grammar: session_start[:<id>[:<reason>]] | agent_start | agent_end:<ok|error|aborted|none>
-//   | agent_settled | session_shutdown:<reason> | mode:<tui|rpc|print> | exit
+// stdin grammar: session_start[:<id>[:<reason>]] | agent_start
+//   | agent_end:<ok|error|aborted|none>[:continue] | agent_settled
+//   | session_switch[:<id>[:<reason>]] | session_shutdown:<reason>
+//   | mode:<tui|rpc|print> | exit
 async function main() {
   const args = process.argv.slice(2);
   const at = args.indexOf("-e");
@@ -62,7 +67,10 @@ async function main() {
       } else if (command === "agent_start") await host.emit({ type: "agent_start" });
       else if (command === "agent_end") {
         const messages = a === "none" ? [] : [assistant(a === "ok" ? "stop" : a)];
-        await host.emit({ type: "agent_end", messages });
+        await host.emit({ type: "agent_end", messages, ...(b === "continue" ? { willContinue: true } : {}) });
+      } else if (command === "session_switch") {
+        if (a) host.state.session = a;
+        await host.emit({ type: "session_switch", reason: b ?? "resume" });
       } else if (command === "agent_settled") await host.emit({ type: "agent_settled" });
       else if (command === "session_shutdown") await host.emit({ type: "session_shutdown", reason: a ?? "quit" });
     }
