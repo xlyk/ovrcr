@@ -680,6 +680,94 @@ mod tests {
         );
     }
     #[test]
+    fn desktop_pending_input_alert_dies_with_its_binding_or_its_reporter() {
+        fn input_generation(notification: &Notification) -> u64 {
+            match &notification.alert {
+                Alert::Input { binding, .. } => binding.generation,
+                Alert::Ready(_) => panic!("expected an input alert"),
+            }
+        }
+        // A rebinding invalidates the queued alert: the same request id under a new
+        // generation is a different request, so the superseded alert is dropped and only
+        // the new binding's alert survives to reach the host.
+        let mut d = dashboard();
+        let (received, _failed) = stub_host(&mut d);
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        assert_eq!(input_generation(&d.desktop.pending[0]), 1);
+        let mut rebound = snapshot_with_request(
+            3,
+            "a",
+            AgentActivity::Busy,
+            Some(request("p1", InputKind::Select)),
+        );
+        session(&mut rebound)
+            .agent
+            .as_mut()
+            .unwrap()
+            .binding
+            .generation = 2;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut rebound).clone(),
+        ))));
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "the superseded alert is dropped"
+        );
+        assert_eq!(
+            input_generation(&d.desktop.pending[0]),
+            2,
+            "only the live binding's request stays deliverable"
+        );
+        d.emit_desktop_notifications();
+        let (_, delivery) = received.try_recv().unwrap();
+        assert_eq!(input_generation(&delivery.notification), 2);
+        assert!(
+            received.try_recv().is_err(),
+            "the alert for the retired binding never reached the host"
+        );
+
+        // A lost reporter cannot vouch for the dialog: the queued alert dies with it and
+        // nothing is delivered, exactly as a Ready alert dies on health loss.
+        let mut d = dashboard();
+        let (received, _failed) = stub_host(&mut d);
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        let mut lost = snapshot_with_request(
+            3,
+            "a",
+            AgentActivity::Busy,
+            Some(request("p1", InputKind::Select)),
+        );
+        session(&mut lost).agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut lost).clone(),
+        ))));
+        assert!(
+            d.desktop.pending.is_empty(),
+            "an unavailable reporter invalidates the queued input alert"
+        );
+        d.emit_desktop_notifications();
+        assert!(received.try_recv().is_err());
+    }
+    #[test]
     fn desktop_input_request_on_the_attach_baseline_never_replays() {
         let mut d = Dashboard::new(TerminalSize {
             rows: 24,

@@ -11405,6 +11405,95 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
 }
 
 #[test]
+fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let native = fixture._root.path().join("pi");
+    let id = summary.id.0.to_string();
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",
+        "agent_start",
+        "ui_prompt_start:select",
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        waiting
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_request
+            .as_ref()
+            .unwrap()
+            .kind,
+        InputKind::Select
+    );
+    // Doctor reports the same effective activity `terminal list` does, plus the kind.
+    let doctor = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "pi",
+            "--json",
+            "--session",
+            &id,
+            "--executable",
+            native.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["lifecycle"]["activity"], "WaitingInput");
+    assert_eq!(doctor["lifecycle"]["input_request"], "Select");
+
+    // A reload retires the producer. The dialog goes with the native session, so the
+    // close is published against the binding that owned it before the producer retires:
+    // a re-admitted producer binding the same conversation reuses this snapshot.
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:reload");
+    let retired = fixture.session_summary(summary.id);
+    let agent = retired.agent.as_ref().expect("the binding is retained");
+    assert_eq!(
+        agent.input_request, None,
+        "a retiring producer must not leave a stale dialog behind"
+    );
+    assert_eq!(
+        retired.activity,
+        AgentActivity::Busy,
+        "the underlying activity sample is restored"
+    );
+    assert_eq!(
+        agent.health.state,
+        ReporterHealth::Connected,
+        "a reload is not transport loss: the lease is retained"
+    );
+    assert_eq!(retired.unread, None, "a request was never a response");
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
 fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();

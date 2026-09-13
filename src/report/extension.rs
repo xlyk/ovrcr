@@ -222,7 +222,14 @@ impl Receiver {
                 // re-announces with session_start): whatever cycle was open belongs to the
                 // conversation being left, so it is invalidated before the new binding.
                 self.current = None;
-                self.open_request = None;
+                // The runtime must see the dialog close against the binding that owned it, so
+                // the request is published closed while that binding is still current.
+                if self.open_request.take().is_some() {
+                    let closed = self.publish_observation(AgentObservation::Input(None), deadline);
+                    if closed.as_slice() == UNAVAILABLE {
+                        return closed;
+                    }
+                }
                 if !self.bind(session, deadline) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
@@ -300,10 +307,19 @@ impl Receiver {
                     self.disable();
                 } else {
                     // Replacement or reload: the harness re-runs factories; the next
-                    // session_start admits them.
+                    // session_start admits them. The lease and binding are still live here, so
+                    // a dialog left open is published closed before the producer retires:
+                    // otherwise a re-admitted producer that binds the same conversation reuses
+                    // the same snapshot and keeps a stale WaitingInput with nothing on screen.
+                    if self.open_request.take().is_some() {
+                        let closed =
+                            self.publish_observation(AgentObservation::Input(None), deadline);
+                        if closed.as_slice() == UNAVAILABLE {
+                            return closed;
+                        }
+                    }
                     self.producer = None;
                     self.current = None;
-                    self.open_request = None;
                 }
                 return IGNORED.to_vec();
             }
@@ -696,13 +712,13 @@ mod tests {
         assert!(!receiver.disabled);
     }
     #[test]
-    fn session_start_and_shutdown_forget_the_open_request() {
+    fn session_start_and_shutdown_publish_the_close_before_forgetting_the_request() {
         let mut receiver = unbound();
         receiver.producer = Some(("a".into(), 1));
-        receiver.open_request = Some("a:p1".into());
         let mut shutdown: serde_json::Value =
             serde_json::from_slice(&event("a", 2, "session_shutdown", None, "none")).unwrap();
         shutdown["payload"]["reason"] = "reload".into();
+        // Nothing open: a reload retires the producer and publishes nothing.
         assert_eq!(
             receiver.handle(
                 &serde_json::to_vec(&shutdown).unwrap(),
@@ -711,12 +727,29 @@ mod tests {
             ),
             b"admission-ignored\n"
         );
-        assert!(receiver.open_request.is_none() && !receiver.disabled);
+        assert!(receiver.producer.is_none() && receiver.open_request.is_none());
+        assert!(!receiver.disabled);
+        // An open request is published closed first; with no lease that publish cannot
+        // happen, so the receiver disables itself rather than retiring behind a stale dialog.
+        receiver.producer = Some(("a".into(), 2));
         receiver.open_request = Some("a:p1".into());
-        // No lease: session_start clears the request, fails to bind and disables honestly.
+        shutdown["payload"]["sequence"] = 3.into();
         assert_eq!(
             receiver.handle(
-                &event("a", 3, "session_start", None, "none"),
+                &serde_json::to_vec(&shutdown).unwrap(),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert!(receiver.open_request.is_none() && receiver.disabled);
+        // The same ordering on the conversation-switch path.
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.open_request = Some("a:p1".into());
+        assert_eq!(
+            receiver.handle(
+                &event("a", 2, "session_start", None, "none"),
                 true,
                 Instant::now()
             ),

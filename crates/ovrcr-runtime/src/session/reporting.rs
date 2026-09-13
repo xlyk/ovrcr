@@ -140,6 +140,10 @@ impl ReportingState {
                 }
                 snapshot.health = health.clone();
                 snapshot.health_revision = report.revision;
+                // A reporter that is gone cannot vouch for a visible dialog.
+                if health.state == ReporterHealth::Unavailable {
+                    snapshot.input_request = None;
+                }
             }
             AgentObservation::Input(request) => {
                 if report.revision <= snapshot.input_revision {
@@ -743,6 +747,59 @@ mod tests {
             "activity under an open request is recorded, not effective"
         );
         assert_eq!(reporting.unread(), Some(unread));
+    }
+
+    #[test]
+    fn an_unavailable_health_report_clears_the_open_input_request() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(&binding, 1, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(
+                &input(&binding, 2, Some(("a:p1", InputKind::Select))),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(
+                &ProviderReport {
+                    binding: binding.clone(),
+                    revision: 3,
+                    observation: AgentObservation::Health(HealthSample {
+                        state: ReporterHealth::Unavailable,
+                        reason: Some("collector_lost".into()),
+                    }),
+                },
+                true,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(snapshot.health.state, ReporterHealth::Unavailable);
+        assert_eq!(snapshot.input_request, None);
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::Busy,
+            "the underlying sample is untouched"
+        );
+        // Health coming back is not a fresh authoritative dialog event.
+        reporting
+            .apply(
+                &ProviderReport {
+                    binding,
+                    revision: 4,
+                    observation: AgentObservation::Health(HealthSample {
+                        state: ReporterHealth::Connected,
+                        reason: None,
+                    }),
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(reporting.snapshot.as_ref().unwrap().input_request, None);
     }
 
     #[test]
