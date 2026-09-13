@@ -22,7 +22,7 @@ pub(super) const PI: Managed = Managed {
     display: "Pi",
     tested_versions: &["0.85.1"],
     reporting: "available",
-    input_requests: "pending #90",
+    input_requests: "available",
     recovery: "pending #91",
 };
 

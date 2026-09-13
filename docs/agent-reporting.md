@@ -142,8 +142,12 @@ the private channel and in print, JSON and RPC modes. It reports `session_start`
 because Pi settles only after retries, automatic compaction and queued continuations),
 Error (the last assistant message stopped with an error) or Idle (aborted, or no assistant
 response). Ready creates one unread identity per response cycle; review and alerts work as
-for Codex. Payloads carry identifiers and discriminants only: never prompts, responses or
-tool data. Extension dialogs, session switches and reporter recovery are later tickets.
+for Codex. An extension dialog's outer prompt span is reported as an
+[input request](dashboard.md#input-requests): the session waits, whatever activity was
+underneath is kept and restored on close, and a background request can raise one
+**OVRCR · input needed** alert. Payloads carry identifiers and discriminants only: never
+prompts, responses, tool data or prompt titles. Session switches and reporter recovery
+are later tickets.
 See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Oh My Pi

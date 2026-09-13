@@ -10768,6 +10768,46 @@ impl DesktopAlertDashboard {
         });
     }
 
+    /// The same identity and leak assertions as `wait_named_calls`, accepting either alert
+    /// title, and returning the titles in record order.
+    fn wait_alert_titles(
+        &mut self,
+        expected: usize,
+        session: SessionId,
+        name: &str,
+    ) -> Vec<String> {
+        const TITLES: [&str; 2] = ["OVRCR · response ready", "OVRCR · input needed"];
+        let body = format!("fixture / work / {name} (#{})", session.0);
+        let record = self.record.clone();
+        self.wait_record(&record, expected, |call| {
+            assert!(call.contains(&body), "identity missing: {call}");
+            assert!(
+                TITLES.iter().any(|title| call.contains(title)),
+                "title missing: {call}"
+            );
+            assert!(
+                !call.contains("PROMPT_TITLE_SECRET"),
+                "prompt title: {call}"
+            );
+            assert!(!call.contains("CALLBACK"));
+            assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+            assert!(!call.contains("OVRCR_AGENT_TOKEN"));
+            assert!(!call.contains("root.jsonl"));
+        });
+        std::fs::read_to_string(&record)
+            .unwrap_or_default()
+            .split("END\n")
+            .filter(|call| !call.is_empty())
+            .map(|call| {
+                TITLES
+                    .iter()
+                    .find(|title| call.contains(**title))
+                    .unwrap_or_else(|| panic!("no known alert title in {call}"))
+                    .to_string()
+            })
+            .collect()
+    }
+
     fn wait_sound_calls(&mut self, expected: usize) {
         let file = if cfg!(target_os = "macos") {
             "/System/Library/Sounds/Glass.aiff"
@@ -11179,6 +11219,188 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     assert_eq!(fixture.session_summary(summary.id), second);
     // The response is visible in the focused pane: no alert for it.
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    dashboard.detach();
+}
+
+#[test]
+fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activity() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "pi-hooks",
+    );
+    // The Pi session must stay hidden for either alert to fire.
+    dashboard.select("setup", "HOOK_READY");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let mut index = 0;
+    for command in ["session_start:sess-a", "agent_start"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let busy = fixture.session_summary(summary.id);
+    assert_eq!(busy.activity, AgentActivity::Busy);
+
+    // A visible dialog: WaitingInput, with Busy still recorded underneath.
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_start:select");
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    let agent = waiting.agent.as_ref().expect("bound");
+    let first_request = agent.input_request.clone().expect("an open Input request");
+    assert_eq!(first_request.kind, InputKind::Select);
+    assert_eq!(
+        agent.activity.as_ref().unwrap().state,
+        AgentActivity::Busy,
+        "a wait never overwrites the underlying sample"
+    );
+    assert_eq!(waiting.unread, None, "a request is not a response");
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "pi-hooks"),
+        [INPUT]
+    );
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap()
+        .clone();
+    assert_eq!(row["activity"], "waiting_input");
+    assert_eq!(row["agent"]["input_request"]["kind"], "Select");
+    assert_eq!(row["unread"], serde_json::Value::Null);
+    assert!(
+        !row.to_string().contains("PROMPT_TITLE_SECRET"),
+        "the prompt title never leaves the extension: {row}"
+    );
+
+    // Answering restores what was underneath and raises no second alert.
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:select");
+    let answered = fixture.session_summary(summary.id);
+    assert_eq!(answered.activity, AgentActivity::Busy);
+    assert_eq!(answered.agent.as_ref().unwrap().input_request, None);
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "pi-hooks"),
+        [INPUT],
+        "closing a request is not an alert"
+    );
+
+    // A second outer span is a new logical request.
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_start:select");
+    let second = fixture.session_summary(summary.id);
+    let second_request = second
+        .agent
+        .as_ref()
+        .unwrap()
+        .input_request
+        .clone()
+        .unwrap();
+    assert_ne!(second_request.id, first_request.id);
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "pi-hooks"),
+        [INPUT, INPUT]
+    );
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:select");
+
+    // The response cycle finishes: Ready and Unread are the other lane entirely.
+    for command in ["agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    let unread = ready.unread.clone().expect("Confirmed Ready is unread");
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "pi-hooks"),
+        [INPUT, INPUT, READY]
+    );
+
+    // A request on top of Ready: WaitingInput, Unread untouched, restored on close.
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_start:confirm");
+    let over_ready = fixture.session_summary(summary.id);
+    assert_eq!(over_ready.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        over_ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .input_request
+            .as_ref()
+            .unwrap()
+            .kind,
+        InputKind::Confirm
+    );
+    assert_eq!(
+        over_ready
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .state,
+        AgentActivity::ResponseReady,
+        "Ready is what the wait is covering"
+    );
+    assert_eq!(over_ready.unread, Some(unread.clone()));
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "pi-hooks"),
+        [INPUT, INPUT, READY, INPUT]
+    );
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:confirm");
+    let restored = fixture.session_summary(summary.id);
+    assert_eq!(
+        restored.activity,
+        AgentActivity::ResponseReady,
+        "closing the last request restores the Ready underneath"
+    );
+    assert_eq!(restored.unread, Some(unread.clone()));
+
+    // Reattachment baselines an open request instead of replaying it.
+    dashboard.detach();
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_start:custom");
+    drop(dashboard);
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "pi-hooks",
+    );
+    dashboard.select("setup", "HOOK_READY");
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "pi-hooks"),
+        [INPUT, INPUT, READY, INPUT],
+        "a request open at reattach is a baseline, not a new opening"
+    );
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:custom");
+    pi_callback(&fixture, summary.id, &mut index, "ui_prompt_start:editor");
+    assert_eq!(
+        dashboard.wait_alert_titles(5, summary.id, "pi-hooks"),
+        [INPUT, INPUT, READY, INPUT, INPUT],
+        "a genuinely new request after reattach alerts once"
+    );
+
+    // A reporter that is gone cannot vouch for the dialog it left open; Unread survives.
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let lost = fixture.session_summary(summary.id);
+    let agent = lost
+        .agent
+        .as_ref()
+        .expect("the snapshot outlives the reporter");
+    assert_eq!(agent.health.state, ReporterHealth::Unavailable);
+    assert_eq!(agent.input_request, None);
+    assert_eq!(lost.unread, Some(unread), "reporter loss keeps Unread");
     dashboard.detach();
 }
 

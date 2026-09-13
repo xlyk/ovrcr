@@ -82,6 +82,27 @@ or server death discards it. No response queue or durable review history is kept
 Unread tracking is independent of notification preferences and needs no extra
 hook configuration.
 
+## Input requests
+
+A managed Pi terminal reports an input request while one of its extension
+dialogs is on screen: a select, confirm, input, editor or custom prompt. Pi
+coalesces nested prompts into one outer span, so one dialog is one request, and
+the request identity is scoped to the producer instance and the accepted
+binding.
+
+While a request is open the terminal's effective activity is `waiting_input`,
+whatever was underneath it — Busy, Idle, Error or Ready — stays recorded in
+`agent.activity`, and closing the request restores it. The request travels in
+the same publication as the activity sample, so the two are never seen apart.
+
+An input request is not a response. It never creates, clears or retargets an
+[unread](#unread-responses) response, and answering one is not a review. Reporter
+loss forgets the open request and keeps the unread response. Only the request
+identity and its kind leave the extension; the prompt title, question and answer
+never do.
+
+Read `agent.input_request` from a terminal's JSON row for the open request.
+
 ## Copy keys
 
 `[` freezes the focused session's current screen. Live output continues behind
@@ -187,7 +208,7 @@ own colours stay visible. A folded project shows `▸ N ws` and a folded workspa
 | `-` | No hook report accepted yet |
 | blank | Idle |
 | braille spinner (green) | Busy |
-| `?` (yellow) | Waiting for input |
+| `?` (yellow) | Waiting for input, including an open [input request](#input-requests) |
 | `!` (red) | Reported error |
 | `✓` (teal) | Response ready |
 | `P` | Paused |
@@ -196,7 +217,9 @@ own colours stay visible. A folded project shows `▸ N ws` and a folded workspa
 An unavailable reporter draws the glyph in the muted colour. The literal state,
 quality, and reporter health (`agent busy confirmed`, `response ready ·
 observed`, `unavailable`) appear on the selected session's metadata line, not
-in the sidebar.
+in the sidebar. While an input request is open the metadata line reads
+`input needed · select` (or `confirm`, `input`, `editor`, `custom`) in place of
+the activity underneath it; the question itself never appears.
 
 The selected metadata line shows `pid: closed` after the managed process exits.
 Live metadata labels the same observation as `agent unknown`, `agent idle`,
@@ -400,8 +423,8 @@ server rewrites that file and drops unknown tables. A missing file uses defaults
 and a parse error shows in the footer and also uses defaults.
 
 ```toml
-desktop_notifications = false        # opt in to background Codex Ready alerts
-ready_sound = false                  # opt in to a sound for the same responses
+desktop_notifications = false        # opt in to background Ready and input-needed alerts
+ready_sound = false                  # opt in to a sound for the same two alert kinds
 branch_prefix = "feature/"            # prefix for new workspace branches
 picker_roots = ["~/Code", "~/src", "~"]
 
@@ -422,21 +445,30 @@ Desktop notifications are off by default. Set `desktop_notifications = true` in
 disable them for the current dashboard. The toggle does not rewrite your settings
 file. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 
-An alert means a managed root response from a supported readiness provider is ready to review, not that its task
-succeeded. Delivery keys on a new [unread](#unread-responses) identity (binding and
-turn), not on activity quality. Confirmed activity without unread does not notify.
-Only project, workspace and terminal identity appear in the alert. Prompt and
-response text are never included. The accepted Codex reporting setup is still
+Two kinds of alert share these preferences, this host and this suppression.
+**OVRCR · response ready** means a managed root response from a supported
+readiness provider is ready to review, not that its task succeeded; delivery keys
+on a new [unread](#unread-responses) identity (binding and turn), not on activity
+quality, and Confirmed activity without unread does not notify.
+**OVRCR · input needed** means a managed terminal has opened a new
+[input request](#input-requests); delivery keys on the request identity, at most
+one alert per logical request, and answering it is not a review. The two lanes are
+independent: a Ready and an open request on the same cycle each get their alert and
+neither suppresses the other. Only project, workspace and terminal identity appear
+in either alert. Prompt and response text, prompt titles and answers are never
+included. The accepted Codex reporting setup is still
 required; see [Codex setup](codex-reporting-setup.md). Pi and Oh My Pi need no setup
 beyond the managed launch.
 
 The active dashboard delivers alerts only when the terminal is absent from every
 visible pane. A terminal assigned to a split hidden by a small window is eligible;
 Tasks shows no terminal panes. Visibility does not acknowledge or change Ready.
-Attachment and reconnect establish a baseline: old unread observations, including
-responses completed while disconnected, are not replayed. Enabling alerts or
-hiding a terminal does not replay a previously suppressed response. A later Busy
-or reporter loss cancels a pending or in-flight alert. Mark-reviewed does not.
+Attachment and reconnect establish a baseline: old unread observations and input
+requests already open, including ones that arrived while disconnected, are not
+replayed. Enabling alerts or hiding a terminal does not replay a previously
+suppressed response or request. A later Busy or reporter loss cancels a pending or
+in-flight Ready alert; closing or replacing an input request cancels its own.
+Mark-reviewed does not.
 No active dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
@@ -466,8 +498,9 @@ without rewriting your settings file. In terminal mode `S` remains ordinary
 terminal input; use Ctrl-g first.
 
 A sound follows exactly the same selection as a desktop alert: a new unread
-identity for one accepted managed root response outside every visible pane,
-with the same deduplication, visibility suppression and attach/reconnect baseline.
+identity for one accepted managed root response, or a new input request, outside
+every visible pane, with the same deduplication, visibility suppression and
+attach/reconnect baseline. The sound is the same for both kinds.
 Confirmed activity without unread does not play. When both channels are on, one
 response produces one alert and one sound. Nothing about the response or terminal
 is passed to the player.

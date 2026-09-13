@@ -20,6 +20,10 @@ _Avoid_: treating view, selection, or notification as review
 The Unread the Dashboard last showed.
 _Avoid_: a newer Unread as the review target
 
+**Input request**:
+An open request for a human answer from a visible provider dialog, identified by binding and request identity. While one is open the session's effective activity is WaitingInput; closing the last one restores the underlying activity.
+_Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
+
 **Active dashboard**:
 The server-side seat the one Dashboard connection holds: its identity, outbound queue, acknowledged view, and focused geometry.
 _Avoid_: the dashboard slot, the sink, the view subscription as separate things
