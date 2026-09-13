@@ -191,3 +191,65 @@ fn pi_unread_is_reviewable_with_the_same_key_and_identity() {
         }
     );
 }
+
+#[test]
+fn an_input_request_never_changes_unread_or_the_review_target() {
+    use ovrcr::protocol::{
+        ActivitySample, AgentSnapshot, HealthSample, InputKind, InputRequest, ReporterHealth,
+        SampleQuality,
+    };
+    let mut d = screen_ready_dashboard(b"VISIBLE_RESPONSE");
+    let unread = observation_for(AgentProvider::Pi, "one", 2);
+    let mut summary = focused_summary(&d);
+    summary.unread = Some(unread.clone());
+    summary.agent = Some(AgentSnapshot {
+        binding: unread.binding.clone(),
+        activity: Some(ActivitySample {
+            state: AgentActivity::ResponseReady,
+            quality: SampleQuality::Confirmed,
+            turn: Some("one".into()),
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 2,
+        metrics_revision: 0,
+        health_revision: 0,
+        input_request: Some(InputRequest {
+            id: "i:p1".into(),
+            kind: InputKind::Select,
+        }),
+        input_revision: 3,
+    });
+    publish_session(&mut d, summary.clone());
+    draw(&mut d, 120, 30);
+    let id = d.focused_session().unwrap();
+    let DashboardAction::Request(message) = d.key(KeyCode::Char('R')) else {
+        panic!("an open Input request must not hide the presented unread");
+    };
+    assert_eq!(
+        message.request,
+        Request::MarkReviewed {
+            session: id,
+            expected: unread.clone(),
+        },
+        "answering is not reviewing: R still targets the presented Ready"
+    );
+    let mut closed = summary.clone();
+    closed.agent.as_mut().unwrap().input_request = None;
+    publish_session(&mut d, closed);
+    draw(&mut d, 120, 30);
+    let DashboardAction::Request(after) = d.key(KeyCode::Char('R')) else {
+        panic!("closing a request must not clear the unread");
+    };
+    assert_eq!(
+        after.request,
+        Request::MarkReviewed {
+            session: id,
+            expected: unread,
+        },
+        "an open and close cycle leaves Unread and the review target alone"
+    );
+}
