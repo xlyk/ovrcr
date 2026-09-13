@@ -13,9 +13,9 @@ thread_local! {
 /// early exit leaked the slot and every later dashboard was refused. Dropping
 /// this guard releases the slot whether the handler returns, breaks, or
 /// unwinds.
-struct DashboardOwnership {
-    state: Arc<ServerState>,
-    identity: Arc<()>,
+pub(super) struct DashboardOwnership {
+    pub(super) state: Arc<ServerState>,
+    pub(super) identity: Arc<()>,
 }
 
 impl Drop for DashboardOwnership {

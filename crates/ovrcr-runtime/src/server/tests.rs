@@ -1,4 +1,4 @@
-use super::connections::lifecycle_response_with_partial_hierarchy;
+use super::connections::{DashboardOwnership, lifecycle_response_with_partial_hierarchy};
 use super::dispatch::resize_view_targets;
 use super::startup::resolve_bound_socket;
 use super::*;
@@ -782,7 +782,7 @@ fn resize_is_rejected_for_a_split_view() {
     assert_eq!(view.revision, 9);
     assert_eq!(view.panes.len(), 2);
     assert!(sink.queue.lock().unwrap().messages.is_empty());
-    assert!(state.dashboard.is_claimed());
+    assert!(state.dashboard.owns(&owner));
     cleanup_test_session(&second, second_events).unwrap();
     cleanup_test_session(&first, first_events).unwrap();
 }
@@ -3380,11 +3380,41 @@ fn dashboard_overflow_does_not_clear_replacement_slot() {
     let new_identity = Arc::new(());
     state
         .dashboard
-        .claim_with_identity(new_sink, new_identity, new_server);
+        .claim_with_identity(new_sink, Arc::clone(&new_identity), new_server);
     state.dashboard.disconnect(old_snapshot);
 
-    assert!(state.dashboard.is_claimed());
+    assert!(state.dashboard.owns(&new_identity));
     assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
+}
+
+/// The connection guard and the writer's disconnect are the same teardown:
+/// dropping ownership must leave the slot, the view, and the geometry exactly
+/// as [`ActiveDashboard::disconnect`] does.
+#[test]
+fn dropped_ownership_and_writer_disconnect_leave_identical_state() {
+    let (client, server) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let state = test_state(None, None);
+    let owner = state.dashboard.claim(Arc::clone(&sink), server).unwrap();
+    state.dashboard.install_view_for_test(Some(DashboardView {
+        revision: 1,
+        panes: Vec::new(),
+        focused: None,
+    }));
+    assert!(
+        state
+            .dashboard
+            .set_geometry(&owner, TerminalSize { rows: 24, cols: 80 })
+    );
+    drop(DashboardOwnership {
+        state: Arc::clone(&state),
+        identity: Arc::clone(&owner),
+    });
+    assert!(!state.dashboard.is_claimed());
+    assert!(state.dashboard.view().is_none());
+    assert!(state.dashboard.geometry().is_none());
+    assert!(!state.dashboard.owns(&owner));
+    drop(client);
 }
 
 #[test]
