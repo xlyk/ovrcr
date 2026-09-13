@@ -131,6 +131,20 @@ later callback can report that execution continued.
 To uninstall, remove only these handlers from the existing settings file and
 restart the agent session. OVRCR never installs or modifies provider settings.
 
+## Pi
+
+`ovrcr agent run pi -- pi [ARGS...]` (or picking `pi` in the Dashboard) materializes the
+owned reporting extension into a private per-invocation directory and adds `-e <path>`
+beside your own extensions (Pi's documented merge rule for an explicit `-e` path; not
+exercised by an automated test); nothing under `~/.pi` changes. The extension is inert without
+the private channel and in print, JSON and RPC modes. It reports `session_start` (Idle),
+`agent_start` (Busy), and at `agent_settled` one of Ready (`response ready · confirmed`,
+because Pi settles only after retries, automatic compaction and queued continuations),
+Error (the last assistant message stopped with an error) or Idle (aborted, or no assistant
+response). Ready creates one unread identity per response cycle; review and alerts work as
+for Codex. Payloads carry identifiers and discriminants only: never prompts, responses or
+tool data. Extension dialogs, session switches and reporter recovery are later tickets.
+
 ## Context usage
 
 A context report completely replaces the stored context sample. Every accepted

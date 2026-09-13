@@ -123,3 +123,42 @@ fn pi_setup_prints_managed_launch_contract_and_writes_nothing() {
     assert!(!dir.path().join("socket").exists());
     assert!(!dir.path().join("registry.toml").exists());
 }
+
+#[test]
+fn pi_helper_outside_managed_invocation_is_silent_without_reading_stdin() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ovrcr"));
+    command
+        .args(["report", "pi", "--stdin"])
+        .env_remove("OVRCR_AGENT_SOCKET")
+        .env_remove("OVRCR_AGENT_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    let _held_stdin = child.stdin.take().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("unmanaged pi helper waited on stdin");
+        }
+        std::thread::yield_now();
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn pi_extension_source_embeds_the_json_escaped_binary_path() {
+    let source =
+        ovrcr::report::pi::extension_source(std::path::Path::new("/opt/o v r/\"ovrcr\"")).unwrap();
+    assert!(
+        source.contains(r#"const OVRCR_BINARY = "/opt/o v r/\"ovrcr\"";"#),
+        "{source}"
+    );
+    assert!(!source.contains("__OVRCR_BINARY__"));
+    assert!(source.contains("[\"report\", \"pi\", \"--stdin\"]"));
+}
