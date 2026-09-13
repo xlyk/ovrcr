@@ -265,8 +265,8 @@ fn run_server_inner(
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
-    if let Some(snapshot) = dashboard_snapshot(&state) {
-        disconnect_dashboard(&state, snapshot);
+    if let Some(snapshot) = state.dashboard.snapshot() {
+        state.dashboard.disconnect(snapshot);
     }
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher

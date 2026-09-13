@@ -219,21 +219,33 @@ impl ActiveDashboard {
             .map(|pane| pane.size);
         *self.view.lock().unwrap() = Some(published);
         if let Some(size) = focused_size {
-            self.set_geometry(owner, size);
+            self.record_geometry(owner, size);
         }
         true
     }
 
-    /// Record the geometry `owner` reported. The caller proves ownership; a
-    /// dashboard that reports its pane size has not published a view yet.
-    pub(super) fn set_geometry(&self, owner: &Arc<()>, size: TerminalSize) {
+    /// Record the geometry `owner` reported, when it still holds the dashboard.
+    /// A stale owner changes nothing: a request that waited out a mutation must
+    /// not resize a replacement owner's panes.
+    pub(super) fn set_geometry(&self, owner: &Arc<()>, size: TerminalSize) -> bool {
+        let slot = self.slot.lock().unwrap();
+        let owned = slot.as_ref().is_some_and(|current| {
+            Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing()
+        });
+        if owned {
+            self.record_geometry(owner, size);
+        }
+        owned
+    }
+
+    fn record_geometry(&self, owner: &Arc<()>, size: TerminalSize) {
         *self.geometry.lock().unwrap() = Some(Geometry {
             owner: Arc::clone(owner),
             size,
         });
     }
 
-    pub(super) fn clear_view(&self, fallback_revision: Option<u64>) {
+    fn clear_view(&self, fallback_revision: Option<u64>) {
         let mut view = self.view.lock().unwrap();
         match view.as_mut() {
             Some(current) => {
@@ -474,6 +486,22 @@ mod tests {
         dashboard.release(&old);
         assert!(dashboard.owns(&new));
         assert_eq!(dashboard.view().map(|view| view.revision), Some(3));
+    }
+
+    #[test]
+    fn set_geometry_by_a_stale_owner_leaves_the_replacement_size() {
+        let dashboard = ActiveDashboard::default();
+        let (_a, stream_a) = pair();
+        let old = dashboard.claim(DashboardSink::new(), stream_a).unwrap();
+        dashboard.release(&old);
+        let (_b, stream_b) = pair();
+        let new = dashboard.claim(DashboardSink::new(), stream_b).unwrap();
+        assert!(dashboard.set_geometry(&new, TerminalSize { rows: 24, cols: 80 }));
+        assert!(!dashboard.set_geometry(&old, TerminalSize { rows: 5, cols: 5 }));
+        assert_eq!(
+            dashboard.geometry(),
+            Some(TerminalSize { rows: 24, cols: 80 })
+        );
     }
 
     #[test]

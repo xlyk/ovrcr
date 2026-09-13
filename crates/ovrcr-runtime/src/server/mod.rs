@@ -36,15 +36,11 @@ use connections::{
     handle_connection, handle_request_with_id, input_error_code, requested_kill_grace,
     response_message,
 };
-pub use dashboard::ActiveDashboard;
-use dashboard::{DashboardSnapshot, spawn_writer};
+pub(crate) use dashboard::ActiveDashboard;
+use dashboard::spawn_writer;
 use dispatch::bridge_events;
 pub use dispatch::{DispatchCompletion, DispatchMessage, HistoryRequest, run_dispatcher};
-use outbound::{
-    DashboardDelivery, Enqueue, dashboard_owner_matches, dashboard_send, dashboard_send_owner,
-    dashboard_send_owner_terminal, dashboard_send_owner_with_completion, dashboard_snapshot,
-    dashboard_try_send, disconnect_dashboard,
-};
+use outbound::{DashboardDelivery, Enqueue};
 pub use outbound::{DashboardOutbound, DashboardSink};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
@@ -570,8 +566,8 @@ impl ServerState {
             Err(mpsc::TrySendError::Full(_)) => "dispatcher queue is full",
             Err(mpsc::TrySendError::Disconnected(_)) => "dispatcher is unavailable",
         };
-        if let Some(snapshot) = dashboard_snapshot(self) {
-            disconnect_dashboard(self, snapshot);
+        if let Some(snapshot) = self.dashboard.snapshot() {
+            self.dashboard.disconnect(snapshot);
         }
         bail!("{error}")
     }

@@ -1040,9 +1040,14 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink), Some((owner.clone(), server_stream)));
     state.sessions.lock().unwrap().insert(id, session.clone());
-    let snapshot = dashboard_snapshot(&state).expect("owner snapshot before dispatch");
-    let delayed_snapshot =
-        dashboard_snapshot(&state).expect("second owner snapshot before dispatch");
+    let snapshot = state
+        .dashboard
+        .snapshot()
+        .expect("owner snapshot before dispatch");
+    let delayed_snapshot = state
+        .dashboard
+        .snapshot()
+        .expect("second owner snapshot before dispatch");
     let (start_cleanup, start_cleanup_result) = mpsc::sync_channel(1);
     let (cleanup_started, cleanup_started_result) = mpsc::sync_channel(1);
     let (cleanup_done, cleanup_done_result) = mpsc::sync_channel(1);
@@ -1065,7 +1070,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
     let cleanup_thread = thread::spawn(move || {
         start_cleanup_result.recv().unwrap();
         cleanup_started.send(()).unwrap();
-        disconnect_dashboard(&cleanup_state, snapshot);
+        cleanup_state.dashboard.disconnect(snapshot);
         cleanup_state.dashboard.claim_with_identity(
             cleanup_sink.clone(),
             cleanup_owner,
@@ -1120,7 +1125,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
         .recv_timeout(Duration::from_secs(2))
         .expect("cleanup completed after publication released the slot lock");
     cleanup_thread.join().unwrap();
-    disconnect_dashboard(&state, delayed_snapshot);
+    state.dashboard.disconnect(delayed_snapshot);
     let replacement_slot = state
         .dashboard
         .slot_for_test()
@@ -1132,8 +1137,8 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
     assert_eq!(final_view, Some(replacement_view));
     assert_eq!(final_geometry, Some(TerminalSize { rows: 27, cols: 83 }));
     assert!(slot_blocked.load(std::sync::atomic::Ordering::Acquire));
-    if let Some(snapshot) = dashboard_snapshot(&state) {
-        disconnect_dashboard(&state, snapshot);
+    if let Some(snapshot) = state.dashboard.snapshot() {
+        state.dashboard.disconnect(snapshot);
     }
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
@@ -1684,8 +1689,8 @@ fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
         let call = resize_calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if call == 0 {
             session.resize(size)?;
-            let snapshot = dashboard_snapshot(&hook_state).expect("old owner snapshot");
-            disconnect_dashboard(&hook_state, snapshot);
+            let snapshot = hook_state.dashboard.snapshot().expect("old owner snapshot");
+            hook_state.dashboard.disconnect(snapshot);
             hook_state.dashboard.claim_with_identity(
                 hook_sink.clone(),
                 hook_owner.clone(),
@@ -1766,8 +1771,8 @@ fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
     );
     assert_eq!(state.dashboard.view().as_ref().unwrap().panes.len(), 1);
 
-    if let Some(snapshot) = dashboard_snapshot(&state) {
-        disconnect_dashboard(&state, snapshot);
+    if let Some(snapshot) = state.dashboard.snapshot() {
+        state.dashboard.disconnect(snapshot);
     }
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
@@ -2108,10 +2113,13 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
     // The lifecycle event must be dropped while the sink drains. Treating it as
     // a disconnect shuts the socket down before the writer flushes the
     // terminal frame, and the client sees a bare EOF instead of the error.
-    assert!(!dashboard_try_send(
-        &state,
-        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-    ));
+    assert!(
+        !state
+            .dashboard
+            .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                state.hierarchy()
+            )))
+    );
     assert!(state.dashboard.is_claimed());
     client_stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -3290,13 +3298,12 @@ fn dashboard_overflow_closes_affected_connection() {
     }
     let identity = Arc::new(());
     let state = test_state(Some(sink), Some((identity, server_stream)));
-    dashboard_try_send(
-        &state,
-        ServerMessage::Event(ServerEvent::ScreenDirty {
+    state
+        .dashboard
+        .try_send(ServerMessage::Event(ServerEvent::ScreenDirty {
             session: SessionId(2),
             revision: 0,
-        }),
-    );
+        }));
     let mut byte = [0_u8; 1];
     assert_eq!(client_stream.read(&mut byte).unwrap(), 0);
     assert!(!state.dashboard.is_claimed());
@@ -3366,7 +3373,7 @@ fn dashboard_overflow_does_not_clear_replacement_slot() {
     let old_sink = DashboardSink::new();
     let old_identity = Arc::new(());
     let state = test_state(Some(old_sink), Some((old_identity, old_server)));
-    let old_snapshot = dashboard_snapshot(&state).unwrap();
+    let old_snapshot = state.dashboard.snapshot().unwrap();
 
     let (new_server, _new_client) = UnixStream::pair().unwrap();
     let new_sink = DashboardSink::new();
@@ -3374,7 +3381,7 @@ fn dashboard_overflow_does_not_clear_replacement_slot() {
     state
         .dashboard
         .claim_with_identity(new_sink, new_identity, new_server);
-    disconnect_dashboard(&state, old_snapshot);
+    state.dashboard.disconnect(old_snapshot);
 
     assert!(state.dashboard.is_claimed());
     assert!(matches!(old_client.read(&mut [0_u8; 1]), Ok(0)));
@@ -3402,7 +3409,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
             response: Response::Hierarchy(_),
         }
     ));
-    let first_snapshot = dashboard_snapshot(&state).expect("first dashboard slot");
+    let first_snapshot = state.dashboard.snapshot().expect("first dashboard slot");
     // The report handler blocks until the dispatcher answers, and this test is
     // the dispatcher, so the response cannot be written before the slot changes.
     write_frame(
@@ -3428,7 +3435,7 @@ fn late_response_does_not_reach_a_replacement_dashboard() {
     else {
         panic!("expected an agent report dispatch");
     };
-    disconnect_dashboard(&state, first_snapshot);
+    state.dashboard.disconnect(first_snapshot);
     let (second_server, mut second_client) = UnixStream::pair().unwrap();
     let second_state = Arc::clone(&state);
     let second_handler = thread::spawn(move || handle_connection(second_state, second_server));
