@@ -2,6 +2,7 @@ mod agent;
 mod agent_setup;
 mod args;
 mod codex_setup;
+mod managed;
 mod output;
 mod report;
 mod resources;

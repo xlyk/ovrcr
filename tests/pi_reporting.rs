@@ -163,30 +163,94 @@ fn pi_extension_source_embeds_the_json_escaped_binary_path() {
     assert!(source.contains("[\"report\", \"pi\", \"--stdin\"]"));
 }
 
+fn fake_harness(dir: &std::path::Path, name: &str, version_line: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version_line}\\n'; exit; fi\nexit 3\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
+
 #[test]
-fn pi_and_omp_doctor_report_managed_launch_and_reporting_availability() {
-    for (provider, reporting) in [("pi", "\"available\""), ("omp", "\"pending #94\"")] {
+fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "pi",
+            fake_harness(dir.path(), "pi-tested", "0.85.1"),
+            "probed",
+            Some("0.85.1"),
+            "tested",
+            "\"available\"",
+        ),
+        (
+            "pi",
+            fake_harness(dir.path(), "pi-newer", "0.86.0"),
+            "probed",
+            Some("0.86.0"),
+            "unverified_compatible_until_proven_otherwise",
+            "\"available\"",
+        ),
+        (
+            "pi",
+            std::path::PathBuf::from("/nonexistent/harness"),
+            "unavailable",
+            None,
+            "unknown",
+            "\"available\"",
+        ),
+        (
+            "omp",
+            fake_harness(dir.path(), "omp-tested", "omp/18.1.19"),
+            "probed",
+            Some("18.1.19"),
+            "tested",
+            "\"pending #94\"",
+        ),
+    ];
+    for (provider, executable, probe, version, status, reporting) in cases {
         let output = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
-            .args([
-                "agent",
-                "doctor",
-                provider,
-                "--json",
-                "--executable",
-                "/nonexistent/harness",
-            ])
+            .args(["agent", "doctor", provider, "--json", "--executable"])
+            .arg(&executable)
+            .env("OVRCR_CONFIG", dir.path().join("registry.toml"))
+            .env("OVRCR_SOCKET", dir.path().join("socket"))
+            .env_remove("OVRCR_SESSION_ID")
             .output()
             .unwrap();
-        assert!(output.status.success(), "{provider}");
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(output.status.success(), "{provider} {executable:?}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["provider"], provider);
-        assert_eq!(report["probe_status"], "unavailable");
-        assert_eq!(report["capabilities"]["managed_launch"], true);
+        assert_eq!(report["probe_status"], probe, "{executable:?}");
         assert_eq!(
-            report["capabilities"]["reporting"].to_string(),
-            reporting,
-            "{provider}"
+            report["version"],
+            version.map_or(serde_json::Value::Null, |v| v.into())
+        );
+        assert_eq!(report["version_status"], status, "{executable:?}");
+        assert_eq!(report["capabilities"]["managed_launch"], true);
+        assert_eq!(report["capabilities"]["reporting"].to_string(), reporting);
+        assert_eq!(report["capabilities"]["metrics"], "absent");
+        assert_eq!(report["session_status"], "not_requested");
+        assert!(
+            report["tested_versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v
+                    == if provider == "pi" {
+                        "0.85.1"
+                    } else {
+                        "18.1.19"
+                    })
+        );
+        assert!(
+            !dir.path().join("socket").exists(),
+            "doctor must not start a server"
         );
     }
 }

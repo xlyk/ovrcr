@@ -144,6 +144,7 @@ Error (the last assistant message stopped with an error) or Idle (aborted, or no
 response). Ready creates one unread identity per response cycle; review and alerts work as
 for Codex. Payloads carry identifiers and discriminants only: never prompts, responses or
 tool data. Extension dialogs, session switches and reporter recovery are later tickets.
+See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Context usage
 
