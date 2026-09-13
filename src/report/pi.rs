@@ -413,7 +413,8 @@ mod tests {
             receiver.handle(&serde_json::to_vec(&rpc).unwrap(), true, Instant::now()),
             b"admission-ignored\n"
         );
-        let codex = br#"{"provider":"codex","origin":"codex-hook","payload":{"hook_event_name":"Stop"}}"#;
+        let codex =
+            br#"{"provider":"codex","origin":"codex-hook","payload":{"hook_event_name":"Stop"}}"#;
         assert_eq!(
             receiver.handle(codex, true, Instant::now()),
             b"admission-ignored\n"

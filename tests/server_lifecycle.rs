@@ -10108,26 +10108,80 @@ fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
     let mut index = 0;
     let mut unread_after_first = None;
     let steps: Vec<(&str, Option<(AgentActivity, SampleQuality)>)> = vec![
-        ("session_start:sess-a", Some((AgentActivity::Idle, SampleQuality::Observed))),
-        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_end:ok", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
-        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
-        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_end:error", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_settled", Some((AgentActivity::Error, SampleQuality::Observed))),
-        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_end:aborted", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_settled", Some((AgentActivity::Idle, SampleQuality::Observed))),
-        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_end:none", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_settled", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        (
+            "session_start:sess-a",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:error",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Error, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:aborted",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:none",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
         ("mode:rpc", None),
-        ("agent_start", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        (
+            "agent_start",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
         ("mode:tui", None),
-        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_end:ok", Some((AgentActivity::Busy, SampleQuality::Observed))),
-        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
     ];
     for (step, (command, expected)) in steps.into_iter().enumerate() {
         pi_callback(&fixture, summary.id, &mut index, command);
@@ -10959,13 +11013,23 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     let bin = env!("CARGO_BIN_EXE_ovrcr");
     let config = fixture._root.path().join("config.toml");
     let mut index = 0;
-    for command in ["session_start:sess-a", "agent_start", "agent_end:ok", "agent_settled"] {
+    for command in [
+        "session_start:sess-a",
+        "agent_start",
+        "agent_end:ok",
+        "agent_settled",
+    ] {
         pi_callback(&fixture, summary.id, &mut index, command);
     }
     dashboard.wait_named_calls(1, summary.id, "pi-hooks");
     let first = fixture.session_summary(summary.id);
     let first_unread = first.unread.clone().expect("Confirmed Ready is unread");
-    let listed = cli_with_output(bin, &config, &fixture.socket, &["terminal", "list", "--json"]);
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
     assert!(listed.status.success());
     let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
     let row = listed
@@ -11495,4 +11559,68 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     dashboard.detach();
     assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
+}
+
+#[test]
+#[ignore = "requires OVRCR_TEST_PI_EXECUTABLE (installed pi) and an isolated PI_CODING_AGENT_DIR"]
+fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
+    let _guard = env_lock();
+    use ovrcr::protocol::AgentActivity;
+    let pi = std::env::var_os("OVRCR_TEST_PI_EXECUTABLE").expect("OVRCR_TEST_PI_EXECUTABLE");
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    // HOME and PI_CODING_AGENT_DIR both point inside the fixture: the user's live ~/.pi is
+    // neither read nor written, so this check cannot depend on or disturb real settings.
+    let agent_dir = fixture._root.path().join("pi-home");
+    std::fs::create_dir_all(agent_dir.join("agent")).unwrap();
+    let summary = fixture.create_session_summary(
+        "pi-native",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"export HOME="$3" PI_CODING_AGENT_DIR="$3/agent" PI_OFFLINE=1; "$1" agent run pi -- "$2" --no-session --offline; printf 'PI_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
+            "pi-native".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            pi,
+            agent_dir.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let current = fixture.session_summary(summary.id);
+        if let Some(agent) = &current.agent
+            && agent
+                .activity
+                .as_ref()
+                .is_some_and(|s| s.state == AgentActivity::Idle)
+        {
+            assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+            assert!(!agent.binding.conversation.is_empty());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "real Pi never reported session_start: {current:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Pi 0.85.1 exits on the ctrl+d *key* (its docs/keybindings.md: `app.exit`), and has no
+    // `/exit` command. A keystroke cannot be delivered here: `SendTerminal` encodes through
+    // `encode_paste`, which brackets the bytes while Pi has bracketed paste enabled, so
+    // control bytes arrive as pasted editor text. End the supervised native Pi through the
+    // product's own termination path instead and require a real exit.
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("inventory unavailable")
+    };
+    assert!(
+        !sessions.iter().any(|session| session.id == summary.id),
+        "supervised native Pi session remains after termination"
+    );
 }

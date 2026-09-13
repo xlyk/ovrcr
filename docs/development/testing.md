@@ -21,7 +21,10 @@ cargo test -p ovrcr --test tui
 cargo check --workspace --all-targets --all-features
 cargo fmt --all -- --check
 git diff --check
+node --test tests/pi_reporting_extension.mjs
 ```
+
+Node 22; the Pi extension and its host run outside cargo.
 
 At the feature acceptance checkpoint, run the assigned gates and the workspace regression/lint checks; do not repeat them after every edit:
 

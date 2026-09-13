@@ -35,6 +35,11 @@ jobs:
         run: |
           git config --global user.name "OVRCR CI"
           git config --global user.email "ci@ovrcr.invalid"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pi extension tests
+        run: node --test tests/pi_reporting_extension.mjs
       - name: Format
         run: cargo fmt --all -- --check
       # Clippy covers compilation too; a preceding cargo check duplicates work.
@@ -66,6 +71,11 @@ jobs:
         run: |
           git config --global user.name "OVRCR CI"
           git config --global user.email "ci@ovrcr.invalid"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pi extension tests
+        run: node --test tests/pi_reporting_extension.mjs
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint

@@ -248,3 +248,27 @@ The [broader source contract](../research/codex-reporting-acceptance/source-cont
 Initial resume/picker/fork and broad transitions remain disabled for reporting. Missing ending hooks or API errors cannot imply Ready and may leave Busy; a new prompt while an old turn remains open disables reporting. WaitingInput, context, usage and cost are unavailable in this milestone. No Linux native GUI acceptance or concurrent provider-launch throughput is claimed. Ordinary native Codex behavior is preserved. Existing Claude acceptance does not cover Codex.
 
 The [macOS native acceptance](../research/codex-response-ready-acceptance/native-final/README.md) verified the actual setup output, background Ready, same-process reconnect, repeated turns, root/child separation, next-prompt backtrack rebinding and retained Ready with Unavailable health after exit at 50 columns. Metrics remained null; unchanged interruption behavior retains Task 2 evidence. The [final verification record](../research/codex-response-ready-acceptance/final/README.md) records all four hosted CI jobs passing in run `34570470022`: 663 macOS and 637 Linux tests, 14 intentional ignores per platform, plus separate passing capacity and memory gates. Linux coverage is automated. Local full-suite failures and the failed native input attempt remain retained; neither is presented as a pass. The accepted native retry and complete task-owned process/socket/temporary-data cleanup are recorded separately.
+
+## Pi 0.85.1 evidence, 2026-09-13
+
+Pi 0.85.1 was installed locally and its extension declarations were the research anchor for
+this slice: the in-process extension host, the `session_start` / `agent_start` / `agent_end`
+/ `agent_settled` / `session_shutdown` events, and the session manager's session identity.
+Tested versions are evidence, not an allowlist; the managed launch probes the executable but
+does not pin a release, so ordinary Pi upgrades stay enabled.
+
+Ready quality is `Confirmed` because `agent_settled` has a single emission point after
+retries, automatic compaction and queued continuations have finished, so it marks the real
+end of a response cycle rather than one leg of it. `agent_end` carries only the cycle
+outcome discriminant and never creates Ready.
+
+The automated proof is the Node event host (`tests/fixtures/pi/pi_host.mjs`, exercised by
+`node --test tests/pi_reporting_extension.mjs`) and the managed lifecycle test
+`pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers`, which drives the
+real extension through the real CLI, PTY, private socket and receiver. The Dashboard slice is
+covered by `pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented`.
+
+Native acceptance against an installed Pi is not claimed here and is tracked by #92. The
+opt-in `installed_pi_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
+and requires `OVRCR_TEST_PI_EXECUTABLE` plus an isolated `PI_CODING_AGENT_DIR`; it never
+touches the user's `~/.pi`.
