@@ -25,6 +25,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 mod connections;
+mod dashboard;
 mod dispatch;
 mod outbound;
 mod reporting_queue;
@@ -35,15 +36,11 @@ use connections::{
     handle_connection, handle_request_with_id, input_error_code, requested_kill_grace,
     response_message,
 };
+pub(crate) use dashboard::ActiveDashboard;
+use dashboard::spawn_writer;
+use dispatch::bridge_events;
 pub use dispatch::{DispatchCompletion, DispatchMessage, HistoryRequest, run_dispatcher};
-use dispatch::{
-    bridge_events, clear_dashboard_geometry, clear_view_subscription, set_dashboard_geometry,
-};
-use outbound::{
-    DashboardDelivery, DashboardSlot, DashboardSnapshot, dashboard_owner_matches, dashboard_send,
-    dashboard_send_owner, dashboard_send_owner_terminal, dashboard_send_owner_with_completion,
-    dashboard_snapshot, dashboard_try_send, disconnect_dashboard,
-};
+use outbound::{DashboardDelivery, Enqueue};
 pub use outbound::{DashboardOutbound, DashboardSink};
 #[cfg(feature = "acceptance-diagnostics")]
 pub use outbound::{DashboardQueueMonitor, DashboardQueueSnapshot};
@@ -54,8 +51,6 @@ use startup::{generate_hook_capability, validate_bound_socket, wake_accept};
 
 #[cfg(test)]
 use connections::handle_shutdown;
-#[cfg(test)]
-use outbound::Enqueue;
 
 #[derive(Debug)]
 struct LifecycleFailure {
@@ -176,14 +171,12 @@ pub struct ServerState {
     pub registry_path: PathBuf,
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
-    pub view: Mutex<Option<DashboardView>>,
-    pub dashboard: Mutex<Option<Arc<DashboardSink>>>,
+    pub(super) dashboard: ActiveDashboard,
     pub next_session_id: AtomicU64,
     pub mutation_lock: Mutex<()>,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
     pub stopping: AtomicBool,
-    pub dashboard_size: Mutex<Option<DashboardGeometry>>,
     pub events: Mutex<Option<ReportingSender<SessionEvent>>>,
     #[cfg(test)]
     pub(super) resize_hook: Mutex<Option<ResizeHook>>,
@@ -194,14 +187,8 @@ pub struct ServerState {
     /// instead of guessing how long that takes.
     #[cfg(test)]
     pub(super) before_dashboard_write_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
-    dashboard_slot: Mutex<Option<DashboardSlot>>,
     #[cfg(feature = "acceptance-diagnostics")]
     dashboard_monitor: Option<DashboardQueueMonitor>,
-}
-
-pub struct DashboardGeometry {
-    owner: Arc<()>,
-    size: TerminalSize,
 }
 
 impl ServerState {
@@ -385,13 +372,10 @@ impl ServerState {
                 capability: generate_hook_capability()?,
             }),
         };
-        let size = self.dashboard_size.lock().unwrap().as_ref().map_or(
-            TerminalSize {
-                rows: 40,
-                cols: 120,
-            },
-            |geometry| geometry.size,
-        );
+        let size = self.dashboard.geometry().unwrap_or(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
         let events = self
             .events
             .lock()
@@ -453,24 +437,7 @@ impl ServerState {
         }
         session.revoke_hook_capability();
         self.sessions.lock().unwrap().remove(&id);
-        if let Some(slot) = self.dashboard_slot.lock().unwrap().as_mut()
-            && slot
-                .history
-                .as_ref()
-                .is_some_and(|history| history.opened().session == id)
-        {
-            slot.history.take();
-        }
-        let mut view = self.view.lock().unwrap();
-        if view
-            .as_ref()
-            .is_some_and(|current| current.focused == Some(id))
-        {
-            drop(view);
-            clear_view_subscription(self, None);
-        } else if let Some(current) = view.as_mut() {
-            current.panes.retain(|pane| pane.session != id);
-        }
+        self.dashboard.forget_session(id);
         Ok(())
     }
 
@@ -487,21 +454,18 @@ impl ServerState {
             registry_path,
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
-            view: Mutex::new(None),
-            dashboard: Mutex::new(None),
+            dashboard: ActiveDashboard::default(),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
             dispatch: dispatch.into(),
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            dashboard_size: Mutex::new(None),
             events: Mutex::new(Some(events.into())),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),
             #[cfg(feature = "acceptance-diagnostics")]
             dashboard_monitor: None,
-            dashboard_slot: Mutex::new(None),
         })
     }
     pub fn request_shutdown(&self, kill: bool) -> Response {
@@ -602,8 +566,8 @@ impl ServerState {
             Err(mpsc::TrySendError::Full(_)) => "dispatcher queue is full",
             Err(mpsc::TrySendError::Disconnected(_)) => "dispatcher is unavailable",
         };
-        if let Some(snapshot) = dashboard_snapshot(self) {
-            disconnect_dashboard(self, snapshot);
+        if let Some(snapshot) = self.dashboard.snapshot() {
+            self.dashboard.disconnect(snapshot);
         }
         bail!("{error}")
     }
