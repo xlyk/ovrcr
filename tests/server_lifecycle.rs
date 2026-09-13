@@ -10029,6 +10029,163 @@ fn codex_session_named(
     (summary, probe)
 }
 
+fn pi_session_named(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
+    let native = fixture._root.path().join("pi");
+    std::fs::write(
+        &native,
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join(format!("{name}-channel"));
+    let summary = fixture.create_session_summary(name, vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$3.capability"; export OVRCR_TEST_PROBE="$3" OVRCR_HOOK_SOCKET="$4"; "$1" agent run pi -- "$2"; printf 'PI_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
+        "pi-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "PI_NATIVE_READY",
+        Instant::now() + Duration::from_secs(10),
+    );
+    let terminal = fixture.request(Request::ReadTerminal {
+        session: summary.id,
+        max_lines: None,
+    });
+    assert!(
+        !matches!(&terminal, Response::TerminalText {text,..} if text.contains("reporting unavailable")),
+        "unexpected initial admission gate: {terminal:?}"
+    );
+    (summary, probe)
+}
+
+fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, command: &str) {
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: command.into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, &format!("PI_CALLBACK={index}"));
+    *index += 1;
+}
+
+#[test]
+fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth, SampleQuality};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let channel = std::fs::read_to_string(&probe).unwrap();
+    let channel: Vec<_> = channel.lines().collect();
+    // A helper with the right token but a foreign OS parent cannot bind.
+    {
+        use std::io::Write;
+        let mut foreign = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["report", "pi", "--stdin"])
+            .env("OVRCR_AGENT_SOCKET", channel[0])
+            .env("OVRCR_AGENT_TOKEN", channel[1])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        foreign.stdin.take().unwrap().write_all(br#"{"schema":1,"event":"session_start","mode":"tui","owner_pid":1,"instance":"ffffffffffffffffffffffffffffffff","sequence":1,"session_id":"foreign","run":null,"outcome":"none","reason":"startup"}"#).unwrap();
+        let output = foreign.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(fixture.session_summary(summary.id).agent.is_none());
+    }
+    let mut index = 0;
+    let mut unread_after_first = None;
+    let steps: Vec<(&str, Option<(AgentActivity, SampleQuality)>)> = vec![
+        ("session_start:sess-a", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_end:ok", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
+        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
+        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_end:error", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_settled", Some((AgentActivity::Error, SampleQuality::Observed))),
+        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_end:aborted", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_settled", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_end:none", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_settled", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        ("mode:rpc", None),
+        ("agent_start", Some((AgentActivity::Idle, SampleQuality::Observed))),
+        ("mode:tui", None),
+        ("agent_start", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_end:ok", Some((AgentActivity::Busy, SampleQuality::Observed))),
+        ("agent_settled", Some((AgentActivity::ResponseReady, SampleQuality::Confirmed))),
+    ];
+    for (step, (command, expected)) in steps.into_iter().enumerate() {
+        pi_callback(&fixture, summary.id, &mut index, command);
+        let current = fixture.session_summary(summary.id);
+        let Some((state, quality)) = expected else {
+            continue;
+        };
+        let agent = current.agent.clone().expect(command);
+        let sample = agent.activity.clone().expect(command);
+        assert_eq!(
+            (sample.state, sample.quality),
+            (state, quality),
+            "step {step}: {command}"
+        );
+        assert_eq!(agent.binding.conversation, "sess-a");
+        assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+        if step == 3 {
+            let unread = current.unread.clone().expect("first Ready is unread");
+            assert_eq!(unread.turn.as_deref(), sample.turn.as_deref());
+            unread_after_first = Some(unread);
+        }
+        if (4..19).contains(&step) {
+            assert_eq!(
+                current.unread, unread_after_first,
+                "step {step}: error, cancel and new Busy keep the first Unread"
+            );
+        }
+        if step == 19 {
+            let unread = current.unread.clone().expect("second Ready is unread");
+            assert_ne!(
+                Some(unread),
+                unread_after_first,
+                "a later cycle replaces the Unread identity"
+            );
+        }
+    }
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let after = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(
+        after.health.state,
+        ReporterHealth::Unavailable,
+        "quit releases the lease"
+    );
+    assert!(
+        fixture.session_summary(summary.id).unread.is_some(),
+        "reporter loss keeps Unread"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
 #[test]
 fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_untracked() {
     let _guard = env_lock();
