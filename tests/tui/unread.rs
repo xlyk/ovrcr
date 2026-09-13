@@ -3,9 +3,13 @@ use ovrcr::protocol::{AgentBinding, AgentProvider, ReadyObservation};
 use ovrcr::tui::DashboardAction;
 
 fn observation(turn: &str, revision: u64) -> ReadyObservation {
+    observation_for(AgentProvider::Codex, turn, revision)
+}
+
+fn observation_for(provider: AgentProvider, turn: &str, revision: u64) -> ReadyObservation {
     ReadyObservation {
         binding: AgentBinding {
-            provider: AgentProvider::Codex,
+            provider,
             invocation: "private-invocation".into(),
             conversation: "private-conversation".into(),
             generation: 1,
@@ -167,4 +171,23 @@ fn unread_review_action_is_discoverable_in_palette_and_terminal_keys() {
             ..
         })
     ));
+}
+
+#[test]
+fn pi_unread_is_reviewable_with_the_same_key_and_identity() {
+    let mut dashboard = dashboard_fixture();
+    let mut summary = focused_summary(&dashboard);
+    summary.unread = Some(observation_for(AgentProvider::Pi, "cycle-1", 3));
+    publish_session(&mut dashboard, summary.clone());
+    draw(&mut dashboard, 120, 30);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Char('R')) else {
+        panic!("R did not mint a request");
+    };
+    assert_eq!(
+        message.request,
+        Request::MarkReviewed {
+            session: summary.id,
+            expected: summary.unread.clone().unwrap()
+        }
+    );
 }

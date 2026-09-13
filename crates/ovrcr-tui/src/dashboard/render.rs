@@ -1291,6 +1291,8 @@ fn label_color(label: &str) -> Color {
         GREEN
     } else if explicit_label.eq_ignore_ascii_case("pi") {
         MAUVE
+    } else if explicit_label.eq_ignore_ascii_case("omp") {
+        SKY
     } else if explicit_label.eq_ignore_ascii_case("grok") {
         BLUE
     } else if explicit_label.eq_ignore_ascii_case("terminal") {

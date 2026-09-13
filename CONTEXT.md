@@ -9,8 +9,8 @@ The one active TUI for live sessions: the hierarchy, the panes, and browse / ter
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
 
 **Ready**:
-The accepted Codex root observation of a completed turn, identified by binding, turn, and activity revision.
-_Avoid_: Confirmed activity, Claude observations, a desktop alert
+The accepted root observation of a completed response cycle from a supported readiness provider (Codex, Pi, Oh My Pi), identified by binding, cycle identity (the `turn` field), and activity revision.
+_Avoid_: Confirmed activity as a success claim, Claude observations, a desktop alert
 
 **Unread**:
 The current Ready observation that has not been marked reviewed.

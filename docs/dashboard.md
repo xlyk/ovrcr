@@ -50,7 +50,7 @@ history request that has not opened yet.
 
 ## Unread responses
 
-A managed Codex terminal keeps one unread indicator for its latest unreviewed
+A managed Codex, Pi or Oh My Pi terminal keeps one unread indicator for its latest unreviewed
 root Ready response. The indicator is separate from its activity glyph: a new
 Busy report does not clear an earlier unread response. Selecting a terminal,
 viewing its output or receiving a notification does not acknowledge it.
@@ -419,7 +419,7 @@ Desktop notifications are off by default. Set `desktop_notifications = true` in
 disable them for the current dashboard. The toggle does not rewrite your settings
 file. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 
-An alert means a managed Codex root response is ready to review, not that its task
+An alert means a managed root response from a supported readiness provider is ready to review, not that its task
 succeeded. Delivery keys on a new [unread](#unread-responses) identity (binding and
 turn), not on activity quality. Confirmed activity without unread does not notify.
 Only project, workspace and terminal identity appear in the alert. Prompt and
@@ -462,7 +462,7 @@ without rewriting your settings file. In terminal mode `S` remains ordinary
 terminal input; use Ctrl-g first.
 
 A sound follows exactly the same selection as a desktop alert: a new unread
-identity for one accepted managed Codex root response outside every visible pane,
+identity for one accepted managed root response outside every visible pane,
 with the same deduplication, visibility suppression and attach/reconnect baseline.
 Confirmed activity without unread does not play. When both channels are on, one
 response produces one alert and one sound. Nothing about the response or terminal
