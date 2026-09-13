@@ -205,7 +205,12 @@ fn initial_selection_completes_zero_target_view_on_ok() {
         .unwrap();
     });
     super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 0).unwrap();
-    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !dashboard.pane_ready(pane))
+    );
 }
 
 #[test]
@@ -277,8 +282,13 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
             .unwrap()
     );
-    assert!(dashboard.pending_view.is_some());
-    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(dashboard.pending_targets() > 0);
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !dashboard.pane_ready(pane))
+    );
     assert!(
         dashboard.panes[0]
             .parser
@@ -312,8 +322,13 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
             .unwrap()
     );
-    assert!(dashboard.pending_view.is_none());
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert_eq!(dashboard.pending_targets(), 0);
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
     assert!(
         dashboard.panes[0]
             .parser
@@ -338,7 +353,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
         .view_request(Rect::new(0, 0, 40, 8), 4)
         .unwrap()
         .expect("view should request a snapshot");
-    let revision = dashboard.view_revision;
+    let revision = dashboard.view_revision();
     let size = dashboard.panes[0].desired_size;
     let (mut receiver, mut sender) = UnixStream::pair().unwrap();
     thread::spawn(move || {
@@ -365,7 +380,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
         result.is_err(),
         "wrong Screen followed by Ok must not complete startup"
     );
-    assert!(!dashboard.panes[0].ready);
+    assert!(!dashboard.pane_ready(&dashboard.panes[0]));
 }
 
 #[test]
@@ -376,7 +391,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
         .view_request(Rect::new(0, 0, 40, 8), 3)
         .unwrap()
         .expect("view should request a snapshot");
-    let revision = dashboard.view_revision;
+    let revision = dashboard.view_revision();
     let size = dashboard.panes[0].desired_size;
     let (mut receiver, mut sender) = UnixStream::pair().unwrap();
     receiver
@@ -437,8 +452,8 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
         }
     });
     super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 1).unwrap();
-    assert!(dashboard.requested_view.is_some());
-    assert!(dashboard.panes[0].ready);
+    assert!(dashboard.handshake.acknowledged().is_some());
+    assert!(dashboard.pane_ready(&dashboard.panes[0]));
     assert!(
         !dashboard.panes[0]
             .parser
@@ -697,8 +712,7 @@ fn staged_history_copy_dashboard() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
     dashboard.select_session(SessionId(1));
     dashboard.mode = InputMode::History;
-    dashboard.panes[dashboard.focused_pane].snapshot_installed = true;
-    dashboard.panes[dashboard.focused_pane].ready = true;
+    dashboard.install_screen(SessionId(1), &[]);
     let opened = HistoryOpened {
         session: SessionId(1),
         snapshot: HistorySnapshotId(7),
@@ -1020,7 +1034,12 @@ fn mouse_release_precedes_the_replacement_view_request() {
         request_id,
         response: Response::Ok,
     });
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
 
     dashboard.mode = InputMode::Terminal;
     dashboard.panes[0].parser.process(b"\x1b[?1002h\x1b[?1006h");
@@ -1143,7 +1162,12 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         request_id,
         response: Response::Ok,
     });
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
 
     let unfocused = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
         .into_iter()
@@ -1529,8 +1553,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                         ReporterHealth::Connected
                     };
                 }
-                for pane in &mut dashboard.panes {
-                    pane.ready = true;
+                for session in [SessionId(1), SessionId(2)] {
+                    dashboard.install_screen(session, &[]);
                 }
                 let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
                 terminal

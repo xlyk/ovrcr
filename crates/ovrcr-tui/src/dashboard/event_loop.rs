@@ -77,10 +77,7 @@ pub fn run_dashboard(
         let view = dashboard
             .request_view_at(Rect::new(0, 0, size.cols, size.rows))
             .context("create initial dashboard view")?;
-        let expected_screens = dashboard
-            .pending_view
-            .as_ref()
-            .map_or(0, |pending| pending.view.targets.len());
+        let expected_screens = dashboard.pending_targets();
         // The view above is in the drain; writing it here as well would send it twice.
         flush(&mut stream, &mut dashboard)?;
         read_initial_selection(
@@ -720,22 +717,6 @@ pub(super) fn read_initial_selection(
     request_id: u64,
     expected_screens: usize,
 ) -> Result<()> {
-    let expected_targets = dashboard
-        .pending_view
-        .as_ref()
-        .filter(|pending| pending.request_id == request_id)
-        .map(|pending| {
-            (
-                pending.view.revision,
-                pending
-                    .view
-                    .targets
-                    .iter()
-                    .map(|(session, _)| *session)
-                    .collect::<HashSet<_>>(),
-            )
-        })
-        .unwrap_or_default();
     let mut screens_seen = HashSet::new();
     loop {
         let message = read_server(stream)?;
@@ -747,7 +728,10 @@ pub(super) fn read_initial_selection(
                         session, revision, ..
                     },
             } if *response_id == request_id => {
-                if *revision == expected_targets.0 && expected_targets.1.contains(session) {
+                if dashboard
+                    .handshake
+                    .snapshot_matches(request_id, *revision, *session)
+                {
                     screens_seen.insert(*session);
                 }
                 false

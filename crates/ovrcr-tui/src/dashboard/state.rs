@@ -8,16 +8,14 @@ use super::render::{
     METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_start,
 };
 use super::settings::DashboardSettings;
-use super::{
-    Dashboard, DashboardAction, InputMode, KeyEncoding, RequestedView, TreeRow, history_view_size,
-};
+use super::view_handshake::{Acknowledged, Desire, RequestedView};
+use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
-    ClientMessage, DashboardView, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows,
-    HistorySnapshotId, PaneTarget, Request, Response, ServerEvent, ServerMessage,
+    ClientMessage, ErrorCode, HierarchySnapshot, HistoryOpened, HistoryRows, HistorySnapshotId,
+    Request, Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
 use crate::task_tui::TasksView;
-use anyhow::anyhow;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -27,9 +25,6 @@ use ratatui::layout::Rect;
 use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
-
-/// How long a refused view waits before the same view is sent again.
-const VIEW_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingHistoryBegin {
@@ -570,7 +565,7 @@ impl Dashboard {
             mode: InputMode::Browse,
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
-            view_revision: 0,
+            handshake: Default::default(),
             outer_area: Rect::new(0, 0, size.cols, size.rows),
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
@@ -596,15 +591,7 @@ impl Dashboard {
             ignored_responses: HashSet::new(),
             settings: DashboardSettings::default(),
             config_dir: std::path::PathBuf::new(),
-            last_view_request_id: None,
-            pending_view: None,
-            requested_view: None,
-            failed_view: None,
-            force_view_refresh: false,
-            view_request_ids: HashSet::new(),
             error_owning_requests: HashSet::new(),
-            pending_user_view_change: false,
-            pending_snapshot_sessions: HashSet::new(),
         }
     }
 
@@ -639,14 +626,7 @@ impl Dashboard {
     }
 
     pub fn install_unready(&mut self, session: SessionId) {
-        if let Some(pane) = self
-            .panes
-            .iter_mut()
-            .find(|pane| pane.session == Some(session))
-        {
-            pane.ready = false;
-            pane.snapshot_installed = false;
-        }
+        self.handshake.mark_stale(session);
     }
 
     pub fn install_screen(&mut self, session: SessionId, bytes: &[u8]) {
@@ -685,16 +665,14 @@ impl Dashboard {
         pane.desired_size = size;
         pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
         pane.parser.process(bytes);
-        pane.snapshot_installed = true;
-        pane.ready = true;
         pane.error = None;
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
         if self.focused_session() == Some(session) {
             self.reconcile_mouse_protocol();
         }
-        self.pending_user_view_change = false;
-        self.requested_view = Some(self.desired_view());
+        let desired = self.desired_view();
+        self.handshake.install_acknowledged(desired);
     }
 
     /// Shows `message` in the error banner. A refused view is the only writer whose banner a
@@ -705,7 +683,19 @@ impl Dashboard {
     }
 
     pub fn view_revision(&self) -> u64 {
-        self.view_revision
+        self.handshake.revision()
+    }
+
+    /// A pane is ready when its session is in the acknowledged view with no request in
+    /// flight and no `ScreenDirty` since. Never written, only derived.
+    pub(super) fn pane_ready(&self, pane: &super::PaneState) -> bool {
+        pane.session
+            .is_some_and(|session| self.handshake.is_ready(session))
+    }
+
+    /// How many panes the in-flight view expects snapshots for.
+    pub fn pending_targets(&self) -> usize {
+        self.handshake.pending_targets()
     }
 
     /// Queue a request for the next drain. A synthetic mouse release must precede the
@@ -859,34 +849,15 @@ impl Dashboard {
             .focused_session()
             .filter(|session| targets.iter().any(|(id, _)| id == session));
         RequestedView {
-            revision: self.view_revision,
+            revision: self.handshake.revision(),
             targets,
             focused,
         }
     }
 
-    fn same_view(left: &RequestedView, right: &RequestedView) -> bool {
-        left.targets == right.targets && left.focused == right.focused
-    }
-
     /// The instant a refused view may be sent again, so the event loop can wake for the retry.
     pub(super) fn view_retry_deadline(&self) -> Option<Instant> {
-        self.failed_view
-            .as_ref()
-            .map(|(_, refused_at)| *refused_at + VIEW_RETRY_BACKOFF)
-    }
-
-    /// Whether the desired view is the one the server just refused and is still inside its
-    /// backoff. A repeating refusal would otherwise re-send `SetView` on every loop pass.
-    fn view_retry_is_waiting(&mut self, desired: &RequestedView) -> bool {
-        let Some((refused, refused_at)) = self.failed_view.as_ref() else {
-            return false;
-        };
-        if Self::same_view(refused, desired) && refused_at.elapsed() < VIEW_RETRY_BACKOFF {
-            return true;
-        }
-        self.failed_view = None;
-        false
+        self.handshake.retry_deadline()
     }
 
     pub(crate) fn view_request(
@@ -903,131 +874,57 @@ impl Dashboard {
         }
         self.outer_area = area;
         let desired = self.desired_view();
-        if self.view_retry_is_waiting(&desired) {
-            // A true no-op for the waiting view: readiness, pane errors, and the recorded
-            // failure all survive until the backoff deadline the event loop wakes for.
-            return Ok(None);
-        }
-        let pending_same = self
-            .pending_view
-            .as_ref()
-            .is_some_and(|pending| Self::same_view(&pending.view, &desired));
-        let unchanged = self.pending_view.is_none()
-            && !self.force_view_refresh
-            && self
-                .requested_view
-                .as_ref()
-                .is_some_and(|requested| Self::same_view(requested, &desired));
-        let rects = self.pane_rects(area);
-        let desired_sessions = desired
-            .targets
-            .iter()
-            .map(|(session, _)| *session)
-            .collect::<HashSet<_>>();
-        if !unchanged && (self.pending_view.is_none() || !pending_same) {
-            for pane in &mut self.panes {
-                if pane
-                    .session
-                    .is_none_or(|session| !desired_sessions.contains(&session))
-                {
-                    pane.ready = false;
-                    pane.snapshot_installed = false;
-                }
-            }
-        }
-        for rect in &rects {
+        for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
                     rows: rect.terminal.height,
                     cols: rect.terminal.width,
                 };
-                if unchanged {
-                    continue;
-                } else if self.pending_view.is_some() {
-                    if !pending_same {
-                        pane.ready = false;
-                        pane.snapshot_installed = false;
-                    }
-                } else if !pending_same {
-                    pane.ready = false;
-                    pane.snapshot_installed = false;
-                    pane.error = None;
-                }
             }
         }
-        if self.pending_view.is_some() {
-            // The change the user asked for is coalesced into the request this pending view's
-            // completion sends, so its banner ownership waits here rather than being dropped.
-            return Ok(None);
-        }
-        if unchanged {
-            // A true no-op completes nothing, so it must not hand a pending user change's banner
-            // ownership to whichever request the server asks for next.
-            self.pending_user_view_change = false;
-            return Ok(None);
-        }
-        let revision = self
-            .view_revision
-            .checked_add(1)
-            .ok_or_else(|| anyhow!("dashboard view revision exhausted"))?;
-        self.view_revision = revision;
-        let mut view = desired;
-        view.revision = revision;
-        for (session, size) in &view.targets {
-            if let Some(pane) = self
-                .panes
-                .iter_mut()
-                .find(|pane| pane.session == Some(*session))
-            {
-                pane.desired_size = *size;
-                pane.ready = false;
-                pane.snapshot_installed = false;
-                pane.error = None;
-            }
-        }
-        self.force_view_refresh = false;
-        self.last_view_request_id = Some(request_id);
-        self.view_request_ids.insert(request_id);
-        if std::mem::take(&mut self.pending_user_view_change) {
-            self.error_owning_requests.insert(request_id);
-        }
-        self.pending_snapshot_sessions.clear();
-        self.pending_view = Some(super::PendingView {
-            request_id,
-            view: view.clone(),
-            parser_discarded: false,
-        });
-        Ok(Some(ClientMessage {
-            request_id,
-            request: Request::SetView {
-                view: DashboardView {
-                    revision,
-                    panes: view
-                        .targets
+        match self.handshake.desire(desired, request_id, Instant::now())? {
+            Desire::Send {
+                request,
+                owns_error,
+            } => {
+                let sessions = match &request.request {
+                    Request::SetView { view } => view
+                        .panes
                         .iter()
-                        .map(|(session, size)| PaneTarget {
-                            session: *session,
-                            size: *size,
-                        })
-                        .collect(),
-                    focused: view.focused,
-                },
-            },
-        }))
+                        .map(|pane| pane.session)
+                        .collect::<HashSet<_>>(),
+                    _ => HashSet::new(),
+                };
+                for pane in &mut self.panes {
+                    if pane
+                        .session
+                        .is_some_and(|session| sessions.contains(&session))
+                    {
+                        pane.error = None;
+                    }
+                }
+                if owns_error {
+                    self.error_owning_requests.insert(request_id);
+                }
+                Ok(Some(request))
+            }
+            // Coalesced into the pending view, unchanged, or waiting out a refusal: readiness
+            // and pane errors are the handshake's to keep.
+            Desire::Coalesced | Desire::Unchanged | Desire::Waiting => Ok(None),
+        }
     }
 
     pub(crate) fn apply_screen(
         &mut self,
+        request_id: u64,
         revision: u64,
         session: SessionId,
         size: TerminalSize,
         bytes: &[u8],
     ) {
-        if revision != self.view_revision
-            || !self.pending_view.as_ref().is_some_and(|pending| {
-                pending.view.revision == revision
-                    && pending.view.targets.iter().any(|(id, _)| *id == session)
-            })
+        if !self
+            .handshake
+            .snapshot_matches(request_id, revision, session)
         {
             return;
         }
@@ -1036,15 +933,14 @@ impl Dashboard {
             .iter_mut()
             .find(|pane| pane.session == Some(session))
         else {
-            self.pending_snapshot_sessions.insert(session);
+            self.handshake.record_snapshot(session);
             return;
         };
         pane.size = size;
         pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
         pane.parser.process(bytes);
-        pane.snapshot_installed = true;
         pane.error = None;
-        self.pending_snapshot_sessions.insert(session);
+        self.handshake.record_snapshot(session);
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
         if self.focused_session() == Some(session) {
@@ -1126,8 +1022,6 @@ impl Dashboard {
             self.retarget(PaneChange::Cleared);
             if let Some(pane) = self.focused_pane_mut() {
                 pane.session = None;
-                pane.ready = false;
-                pane.snapshot_installed = false;
             }
             return;
         }
@@ -1155,8 +1049,6 @@ impl Dashboard {
                 pane.parser = vt100::Parser::new(size.rows, size.cols, 0);
                 pane.size = size;
                 pane.desired_size = size;
-                pane.snapshot_installed = false;
-                pane.ready = false;
                 pane.error = None;
             }
         }
@@ -1327,7 +1219,9 @@ impl Dashboard {
             self.set_error("Waiting for terminal screen");
             return DashboardAction::Redraw;
         };
-        if !self.focused_pane().is_some_and(|pane| pane.ready)
+        if !self
+            .focused_pane()
+            .is_some_and(|pane| self.pane_ready(pane))
             || find_session(self, session).is_none()
         {
             self.set_error("Waiting for terminal screen");
@@ -1463,7 +1357,10 @@ impl Dashboard {
             return DashboardAction::Redraw;
         }
         // A coalesced focus change would invalidate a capture opened before SetView.
-        if !self.focused_pane().is_some_and(|pane| pane.ready) {
+        if !self
+            .focused_pane()
+            .is_some_and(|pane| self.pane_ready(pane))
+        {
             self.set_error("Pane is loading; retry history");
             return DashboardAction::Redraw;
         }
@@ -1783,7 +1680,7 @@ impl Dashboard {
             self.release_for_selection_change();
         }
         if user_change {
-            self.pending_user_view_change = true;
+            self.handshake.note_user_change();
         }
         if invalidate {
             self.invalidate_view_readiness();
@@ -1817,17 +1714,11 @@ impl Dashboard {
         // Every caller changes selection, assignment, or geometry, so a wheel tick parked
         // against the previous selection is no longer the one the user asked for.
         self.deferred_history_at_tail = None;
-        self.requested_view = None;
-        for pane in &mut self.panes {
-            pane.ready = false;
-            pane.snapshot_installed = false;
-        }
+        self.handshake.invalidate();
     }
 
     fn mark_pending_parser_discarded(&mut self) {
-        if let Some(pending) = self.pending_view.as_mut() {
-            pending.parser_discarded = true;
-        }
+        self.handshake.mark_parser_discarded();
     }
 
     pub(crate) fn history_request_if_needed(&mut self) -> Option<ClientMessage> {
@@ -2464,7 +2355,11 @@ impl Dashboard {
     /// Opens the history a wheel tick asked for once its pane became ready and stayed focused.
     pub(super) fn take_deferred_history_request(&mut self) -> Option<ClientMessage> {
         let index = self.deferred_history_at_tail.take()?;
-        if index != self.focused_pane || !self.focused_pane().is_some_and(|pane| pane.ready) {
+        if index != self.focused_pane
+            || !self
+                .focused_pane()
+                .is_some_and(|pane| self.pane_ready(pane))
+        {
             return None;
         }
         match self.begin_history_request(true) {
@@ -2787,96 +2682,56 @@ impl Dashboard {
                     size,
                     bytes,
                 } => {
-                    let matched_screen = self.pending_view.as_ref().is_some_and(|pending| {
-                        pending.request_id == request_id
-                            && pending.view.revision == revision
-                            && pending.view.targets.iter().any(|(id, _)| *id == session)
-                    });
-                    if matched_screen {
-                        self.apply_screen(revision, session, size, &bytes);
-                        if let Some(view) = self.history.as_mut()
-                            && view.opened.session == session
-                        {
-                            view.new_output = true;
-                        }
-                    }
-                }
-                Response::Ok
-                    if self
-                        .pending_view
-                        .as_ref()
-                        .is_some_and(|pending| pending.request_id == request_id) =>
-                {
-                    let pending = self.pending_view.take().expect("matching view request");
-                    let desired_now = self.desired_view();
-                    let desired_matches =
-                        !self.force_view_refresh && Self::same_view(&pending.view, &desired_now);
-                    let complete = pending
-                        .view
-                        .targets
-                        .iter()
-                        .all(|(session, _)| self.pending_snapshot_sessions.contains(session));
-                    self.pending_snapshot_sessions.clear();
-                    if !complete {
-                        // `Ok` is final and every snapshot precedes it, so a missing one is a
-                        // failed view rather than one still arriving.
-                        for (session, _) in &pending.view.targets {
-                            if let Some(pane) = self
-                                .panes
-                                .iter_mut()
-                                .find(|pane| pane.session == Some(*session))
-                            {
-                                pane.ready = false;
-                                pane.snapshot_installed = false;
-                            }
-                        }
-                        self.force_view_refresh = true;
-                        let next_id = self.next_request_id();
-                        if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
-                            self.push_request(request);
-                        }
-                        // Recorded after the refresh so the first retry is immediate and a
-                        // server that keeps answering without snapshots is throttled.
-                        self.failed_view = Some((pending.view, Instant::now()));
-                    } else if desired_matches && !pending.parser_discarded {
-                        for (session, _) in &pending.view.targets {
-                            if let Some(pane) = self
-                                .panes
-                                .iter_mut()
-                                .find(|pane| pane.session == Some(*session))
-                            {
-                                pane.snapshot_installed = true;
-                                pane.ready = true;
-                            }
-                        }
-                        self.requested_view = Some(pending.view);
-                        self.failed_view = None;
-                        // A server-driven refresh completes the same way a user's selection does,
-                        // so the banner is cleared only when a refused view wrote it or when this
-                        // view is the one the user's own selection, split, focus, or pane close
-                        // asked for.
-                        if self.error_owned_by_view || owns_error {
-                            self.error = None;
-                            self.error_owned_by_view = false;
-                        }
-                        if let Some(request) = self.take_deferred_history_request() {
-                            self.push_request(request);
-                        }
-                    } else {
-                        self.requested_view = Some(pending.view);
-                        self.force_view_refresh |= pending.parser_discarded;
-                        let next_id = self.next_request_id();
-                        if let Ok(Some(request)) = self.view_request(self.outer_area, next_id) {
-                            self.push_request(request);
-                        }
+                    let matched_screen = self
+                        .handshake
+                        .snapshot_matches(request_id, revision, session);
+                    self.apply_screen(request_id, revision, session, size, &bytes);
+                    if matched_screen
+                        && let Some(view) = self.history.as_mut()
+                        && view.opened.session == session
+                    {
+                        view.new_output = true;
                     }
                 }
                 Response::Ok => {
-                    // Only a request the user asked for owns the banner; a view ack, the geometry
-                    // handshake, and a synthetic mouse release leave a fresh error in place.
-                    if owns_error && !self.history_page_error {
-                        self.error = None;
-                        self.error_owned_by_view = false;
+                    let desired_now = self.desired_view();
+                    match self
+                        .handshake
+                        .acknowledge(request_id, &desired_now, Instant::now())
+                    {
+                        Some(Acknowledged::Granted) => {
+                            // A server-driven refresh completes the same way a user's selection
+                            // does, so the banner is cleared only when a refused view wrote it or
+                            // when this view is the one the user's own selection, split, focus, or
+                            // pane close asked for.
+                            if self.error_owned_by_view || owns_error {
+                                self.error = None;
+                                self.error_owned_by_view = false;
+                            }
+                            if let Some(request) = self.take_deferred_history_request() {
+                                self.push_request(request);
+                            }
+                        }
+                        Some(Acknowledged::Incomplete { view }) => {
+                            // The first retry is immediate; the one after it waits out the
+                            // backoff, so a server that keeps answering without snapshots is
+                            // throttled.
+                            self.handshake.clear_failed();
+                            let _ = self.request_view_at(self.outer_area);
+                            self.handshake.record_failure(view);
+                        }
+                        Some(Acknowledged::Refresh) => {
+                            let _ = self.request_view_at(self.outer_area);
+                        }
+                        None => {
+                            // Only a request the user asked for owns the banner; a view ack, the
+                            // geometry handshake, and a synthetic mouse release leave a fresh
+                            // error in place.
+                            if owns_error && !self.history_page_error {
+                                self.error = None;
+                                self.error_owned_by_view = false;
+                            }
+                        }
                     }
                 }
                 Response::CreatedSession(_)
@@ -2925,29 +2780,21 @@ impl Dashboard {
                         .and_then(|view| view.pending.as_ref())
                         .filter(|pending| pending.request_id == request_id)
                         .cloned();
-                    let matched_view = self
-                        .pending_view
-                        .as_ref()
-                        .is_some_and(|pending| pending.request_id == request_id);
-                    if matched_view {
-                        let pending = self.pending_view.take().expect("matching view request");
-                        self.pending_snapshot_sessions.clear();
-                        for (session, _) in &pending.view.targets {
+                    // No view is acknowledged any more, so input stays revoked and the refused
+                    // view is recorded for one backoff-delayed retry.
+                    let refused = self.handshake.refuse(request_id, Instant::now());
+                    if let Some(view) = &refused {
+                        for (session, _) in &view.targets {
                             if let Some(pane) = self
                                 .panes
                                 .iter_mut()
                                 .find(|pane| pane.session == Some(*session))
                             {
-                                pane.ready = false;
-                                pane.snapshot_installed = false;
                                 pane.error = Some(message.clone());
                             }
                         }
-                        // No view is acknowledged any more, so input stays revoked and the
-                        // refused view is recorded for one backoff-delayed retry.
-                        self.requested_view = None;
-                        self.failed_view = Some((pending.view, Instant::now()));
                     }
+                    let matched_view = refused.is_some();
                     if self
                         .history_begin_request
                         .as_ref()
@@ -3002,16 +2849,11 @@ impl Dashboard {
                     revision,
                     bytes,
                 } => {
-                    if revision == self.view_revision
-                        && self
-                            .panes
-                            .iter()
-                            .any(|pane| pane.session == Some(session) && pane.ready)
-                    {
+                    if revision == self.handshake.revision() && self.handshake.is_ready(session) {
                         if let Some(pane) = self
                             .panes
                             .iter_mut()
-                            .find(|pane| pane.session == Some(session) && pane.ready)
+                            .find(|pane| pane.session == Some(session))
                         {
                             pane.parser.process(&bytes);
                         }
@@ -3026,27 +2868,17 @@ impl Dashboard {
                     }
                 }
                 ServerEvent::ScreenDirty { session, revision } => {
-                    if revision == self.view_revision
-                        && let Some(pane) = self
-                            .panes
-                            .iter_mut()
-                            .find(|pane| pane.session == Some(session))
+                    if revision == self.handshake.revision()
+                        && self.panes.iter().any(|pane| pane.session == Some(session))
                     {
-                        pane.ready = false;
-                        pane.snapshot_installed = false;
-                        self.force_view_refresh = true;
+                        self.handshake.mark_stale(session);
                         if let Some(view) = self.history.as_mut()
                             && view.opened.session == session
                         {
                             view.new_output = true;
                         }
-                        if self.pending_view.is_none() {
-                            let request_id = self.next_request_id();
-                            if let Ok(Some(request)) =
-                                self.view_request(self.outer_area, request_id)
-                            {
-                                self.push_request(request);
-                            }
+                        if !self.handshake.in_flight() {
+                            let _ = self.request_view_at(self.outer_area);
                         }
                     }
                 }
@@ -3277,11 +3109,11 @@ impl Dashboard {
             return false;
         };
         matches!(self.selected_phase(), Some(SessionPhase::Running))
-            && self.focused_pane().is_some_and(|pane| pane.ready)
-            && self.requested_view.as_ref().is_some_and(|view| {
-                view.focused == Some(session)
-                    && view.targets.iter().any(|(target, _)| *target == session)
-            })
+            && self.handshake.is_ready(session)
+            && self
+                .handshake
+                .acknowledged()
+                .is_some_and(|view| view.focused == Some(session))
     }
 
     fn refuse_input(&mut self) -> DashboardAction {
@@ -3289,7 +3121,11 @@ impl Dashboard {
             Some(SessionPhase::Paused) => "Session paused; press r to resume".into(),
             Some(SessionPhase::Exited { .. }) => "Session exited".into(),
             None => "No session selected".into(),
-            Some(SessionPhase::Running) if !self.focused_pane().is_some_and(|pane| pane.ready) => {
+            Some(SessionPhase::Running)
+                if !self
+                    .focused_pane()
+                    .is_some_and(|pane| self.pane_ready(pane)) =>
+            {
                 "Pane is loading; retry input".into()
             }
             Some(SessionPhase::Running) => return DashboardAction::None,
@@ -3340,10 +3176,10 @@ impl Dashboard {
     /// final, so every other response releases the id; both sets would otherwise grow for the
     /// life of the dashboard.
     fn retire_request_id(&mut self, request_id: u64, response: &Response) -> (bool, bool) {
-        let was_view_request = self.view_request_ids.contains(&request_id);
+        let was_view_request = self.handshake.was_view_request(request_id);
         let owns_error = self.error_owning_requests.contains(&request_id);
         if !matches!(response, Response::Screen { .. }) {
-            self.view_request_ids.remove(&request_id);
+            self.handshake.retire(request_id);
             self.error_owning_requests.remove(&request_id);
         }
         (was_view_request, owns_error)
