@@ -10029,6 +10029,361 @@ fn codex_session_named(
     (summary, probe)
 }
 
+fn pi_session_named(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
+    let native = fixture._root.path().join("pi");
+    std::fs::write(
+        &native,
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let probe = fixture._root.path().join(format!("{name}-channel"));
+    let summary = fixture.create_session_summary(name, vec![
+        "/bin/sh".into(), "-c".into(),
+        r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$3.capability"; export OVRCR_TEST_PROBE="$3" OVRCR_HOOK_SOCKET="$4"; "$1" agent run pi -- "$2"; printf 'PI_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
+        "pi-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
+    ]);
+    fixture.record_process_group(&summary);
+    fixture.wait_terminal_contains_until(
+        summary.id,
+        "PI_NATIVE_READY",
+        Instant::now() + Duration::from_secs(10),
+    );
+    let terminal = fixture.request(Request::ReadTerminal {
+        session: summary.id,
+        max_lines: None,
+    });
+    assert!(
+        !matches!(&terminal, Response::TerminalText {text,..} if text.contains("reporting unavailable")),
+        "unexpected initial admission gate: {terminal:?}"
+    );
+    (summary, probe)
+}
+
+fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, command: &str) {
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session,
+            text: command.into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(session, &format!("PI_CALLBACK={index}"));
+    *index += 1;
+}
+
+#[test]
+fn pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth, SampleQuality};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let channel = std::fs::read_to_string(&probe).unwrap();
+    let channel: Vec<_> = channel.lines().collect();
+    // A helper with the right token but a foreign OS parent cannot bind.
+    {
+        use std::io::Write;
+        let mut foreign = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+            .args(["report", "pi", "--stdin"])
+            .env("OVRCR_AGENT_SOCKET", channel[0])
+            .env("OVRCR_AGENT_TOKEN", channel[1])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        foreign.stdin.take().unwrap().write_all(br#"{"schema":1,"event":"session_start","mode":"tui","owner_pid":1,"instance":"ffffffffffffffffffffffffffffffff","sequence":1,"session_id":"foreign","run":null,"outcome":"none","reason":"startup"}"#).unwrap();
+        let output = foreign.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(fixture.session_summary(summary.id).agent.is_none());
+    }
+    let mut index = 0;
+    let mut unread_after_first = None;
+    let steps: Vec<(&str, Option<(AgentActivity, SampleQuality)>)> = vec![
+        (
+            "session_start:sess-a",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:error",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Error, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:aborted",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:none",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        ("mode:rpc", None),
+        (
+            "agent_start",
+            Some((AgentActivity::Idle, SampleQuality::Observed)),
+        ),
+        ("mode:tui", None),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+        // One settled span can contain several start/end pairs: Pi emits agent_start at the
+        // top of both its agent loop and its continue loop, and settles once at the end.
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:error",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_start",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_end:ok",
+            Some((AgentActivity::Busy, SampleQuality::Observed)),
+        ),
+        (
+            "agent_settled",
+            Some((AgentActivity::ResponseReady, SampleQuality::Confirmed)),
+        ),
+    ];
+    let mut unread_after_second = None;
+    let mut continued_turn = None;
+    for (step, (command, expected)) in steps.into_iter().enumerate() {
+        pi_callback(&fixture, summary.id, &mut index, command);
+        let current = fixture.session_summary(summary.id);
+        let Some((state, quality)) = expected else {
+            continue;
+        };
+        let agent = current.agent.clone().expect(command);
+        let sample = agent.activity.clone().expect(command);
+        assert_eq!(
+            (sample.state, sample.quality),
+            (state, quality),
+            "step {step}: {command}"
+        );
+        assert_eq!(agent.binding.conversation, "sess-a");
+        assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+        if step == 3 {
+            let unread = current.unread.clone().expect("first Ready is unread");
+            assert_eq!(unread.turn.as_deref(), sample.turn.as_deref());
+            unread_after_first = Some(unread);
+        }
+        if (4..19).contains(&step) {
+            assert_eq!(
+                current.unread, unread_after_first,
+                "step {step}: error, cancel and new Busy keep the first Unread"
+            );
+        }
+        if step == 19 {
+            let unread = current.unread.clone().expect("second Ready is unread");
+            assert_ne!(
+                Some(unread.clone()),
+                unread_after_first,
+                "a later cycle replaces the Unread identity"
+            );
+            unread_after_second = Some(unread);
+        }
+        if step == 20 {
+            continued_turn = sample.turn.clone();
+            assert!(continued_turn.is_some(), "a cycle publishes its identity");
+        }
+        // The continuation's own start carries the same run, so it is a duplicate identity:
+        // the open cycle, its Busy sample and the previous Unread all survive unchanged.
+        if (20..24).contains(&step) {
+            assert_eq!(
+                current.unread, unread_after_second,
+                "step {step}: a continuation does not acknowledge or replace the Unread"
+            );
+        }
+        if step == 22 || step == 24 {
+            assert_eq!(
+                sample.turn, continued_turn,
+                "step {step}: a continuation keeps the open cycle identity"
+            );
+        }
+        if step == 24 {
+            let unread = current
+                .unread
+                .clone()
+                .expect("the continued cycle is unread");
+            assert_ne!(
+                Some(unread),
+                unread_after_second,
+                "the continued cycle replaces the Unread identity when it settles"
+            );
+        }
+    }
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let after = fixture.session_summary(summary.id).agent.unwrap();
+    assert_eq!(
+        after.health.state,
+        ReporterHealth::Unavailable,
+        "quit releases the lease"
+    );
+    assert!(
+        fixture.session_summary(summary.id).unread.is_some(),
+        "reporter loss keeps Unread"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
+fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_untracked() {
+    let _guard = env_lock();
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let native = fixture._root.path().join("pi");
+    let extension_record = fixture._root.path().join("managed-extension-path");
+    std::fs::write(
+        &native,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nif [ \"$1\" = -e ]; then printf '%s' \"$2\" > '{}'; fi\nprintf 'PI_ARGS=%s\\n' \"$*\"\nprintf 'PI_HOOK=[%s%s%s]\\n' \"${{OVRCR_HOOK_SOCKET:-}}\" \"${{OVRCR_HOOK_TOKEN:-}}\" \"${{OVRCR_SESSION_ID:-}}\"\nprintf 'PI_CHANNEL=[%s]\\n' \"${{OVRCR_AGENT_SOCKET:+set}}\"\nexit 17\n",
+            extension_record.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Managed: the picker's argv shape.
+    let managed = fixture.create_session_summary(
+        "pi-managed",
+        vec![
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            "agent".into(),
+            "run".into(),
+            "pi".into(),
+            "--".into(),
+            native.clone().into_os_string(),
+            "--model".into(),
+            "x/y".into(),
+            "hello world".into(),
+        ],
+    );
+    fixture.record_process_group(&managed);
+    // The real receiver materializes the owned extension and prepends only its -e path.
+    fixture.wait_terminal_contains(managed.id, "PI_ARGS=-e ");
+    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs");
+    fixture.wait_terminal_contains(managed.id, "--model x/y hello world");
+    fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
+    fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
+    // The fake pi exits before reporting anything, so no binding is ever established.
+    assert!(fixture.session_summary(managed.id).agent.is_none());
+    // The materialized extension and its private directory go away with the invocation.
+    fixture.wait_exited(managed.id);
+    let extension = std::fs::read_to_string(&extension_record).unwrap();
+    let extension = Path::new(extension.trim());
+    assert!(
+        extension.ends_with("ovrcr-pi-reporting.mjs"),
+        "{extension:?}"
+    );
+    let removed = Instant::now() + wait_deadline();
+    while extension.parent().is_some_and(|dir| dir.exists()) && Instant::now() < removed {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        !extension.exists(),
+        "extension file survived the invocation: {extension:?}"
+    );
+    assert!(
+        !extension.parent().unwrap().exists(),
+        "extension directory survived: {extension:?}"
+    );
+    // Ineligible mode: RPC mode runs native with reporting unavailable, no binding.
+    let rpc = fixture.create_session_summary(
+        "pi-rpc",
+        vec![
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            "agent".into(),
+            "run".into(),
+            "pi".into(),
+            "--".into(),
+            native.clone().into_os_string(),
+            "--mode".into(),
+            "rpc".into(),
+        ],
+    );
+    fixture.record_process_group(&rpc);
+    fixture.wait_terminal_contains(rpc.id, "PI_ARGS=--mode rpc");
+    fixture.wait_terminal_contains(rpc.id, "PI_HOOK=[]");
+    fixture.wait_terminal_contains(rpc.id, "PI_CHANNEL=[set]");
+    fixture.wait_terminal_contains(rpc.id, "reporting unavailable");
+    assert!(fixture.session_summary(rpc.id).agent.is_none());
+    // Plain launch: no supervision, no channel, no binding.
+    let plain =
+        fixture.create_session_summary("pi-plain", vec![native.into_os_string(), "hi".into()]);
+    fixture.record_process_group(&plain);
+    fixture.wait_terminal_contains(plain.id, "PI_ARGS=hi");
+    fixture.wait_terminal_contains(plain.id, "PI_CHANNEL=[]");
+    assert!(fixture.session_summary(plain.id).agent.is_none());
+}
+
 #[test]
 fn codex_managed_lost_bind_receipt_recovers_before_busy() {
     // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
@@ -10225,6 +10580,10 @@ struct DesktopAlertDashboard {
 
 impl DesktopAlertDashboard {
     fn start(fixture: &ControlFixture, settings: Option<&str>) -> Self {
+        Self::start_for(fixture, settings, "codex-hooks")
+    }
+
+    fn start_for(fixture: &ControlFixture, settings: Option<&str>, sidebar: &str) -> Self {
         let directory = fixture._root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
@@ -10296,7 +10655,7 @@ impl DesktopAlertDashboard {
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             record,
         };
-        dashboard.wait_screen(|screen| screen.contains("codex-hooks"));
+        dashboard.wait_screen(|screen| screen.contains(sidebar));
         dashboard
     }
 
@@ -10370,7 +10729,11 @@ impl DesktopAlertDashboard {
     }
 
     fn wait_calls(&mut self, expected: usize, session: SessionId) {
-        let body = format!("fixture / work / codex-hooks (#{})", session.0);
+        self.wait_named_calls(expected, session, "codex-hooks")
+    }
+
+    fn wait_named_calls(&mut self, expected: usize, session: SessionId, name: &str) {
+        let body = format!("fixture / work / {name} (#{})", session.0);
         let record = self.record.clone();
         self.wait_record(&record, expected, |call| {
             assert!(call.contains(&body), "identity missing: {call}");
@@ -10378,8 +10741,9 @@ impl DesktopAlertDashboard {
                 call.contains("OVRCR · response ready"),
                 "title missing: {call}"
             );
-            assert!(!call.contains("CODEX_CALLBACK"));
+            assert!(!call.contains("CALLBACK"));
             assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+            assert!(!call.contains("OVRCR_AGENT_TOKEN"));
             assert!(!call.contains("root.jsonl"));
         });
     }
@@ -10709,6 +11073,93 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         sessions.is_empty(),
         "new server cannot resurrect live terminals or unread results from saved configuration"
     );
+}
+
+#[test]
+fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "pi-hooks",
+    );
+    // The Pi session must stay hidden for the alert to fire: focus the other real managed
+    // session first, exactly as the managed-completion visibility test does.
+    dashboard.select("setup", "HOOK_READY");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",
+        "agent_start",
+        "agent_end:ok",
+        "agent_settled",
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    let first = fixture.session_summary(summary.id);
+    let first_unread = first.unread.clone().expect("Confirmed Ready is unread");
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
+    // Duplicate settled: no second alert, no new Unread.
+    pi_callback(&fixture, summary.id, &mut index, "agent_settled");
+    assert_eq!(fixture.session_summary(summary.id), first);
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    // Opening the pane does not acknowledge; R reviews exactly the presented identity.
+    dashboard.select("pi-hooks", "PI_CALLBACK=4");
+    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        first,
+        "viewing does not acknowledge"
+    );
+    dashboard.send(b"\x07R");
+    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    let mut reviewed = first.clone();
+    reviewed.unread = None;
+    assert_eq!(fixture.session_summary(summary.id), reviewed);
+    // A stale acknowledgement cannot clear a newer response.
+    for command in ["agent_start", "agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let second = fixture.session_summary(summary.id);
+    let second_unread = second.unread.clone().expect("second cycle is unread");
+    assert_ne!(second_unread, first_unread);
+    let stale = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &[
+            "terminal",
+            "mark-reviewed",
+            &summary.id.0.to_string(),
+            "--expected",
+            &serde_json::to_string(&first_unread).unwrap(),
+        ],
+    );
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("Ready observation changed"));
+    assert_eq!(fixture.session_summary(summary.id), second);
+    // The response is visible in the focused pane: no alert for it.
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    dashboard.detach();
 }
 
 #[test]
@@ -11187,4 +11638,68 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     dashboard.detach();
     assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
+}
+
+#[test]
+#[ignore = "requires OVRCR_TEST_PI_EXECUTABLE (installed pi) and an isolated PI_CODING_AGENT_DIR"]
+fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
+    let _guard = env_lock();
+    use ovrcr::protocol::AgentActivity;
+    let pi = std::env::var_os("OVRCR_TEST_PI_EXECUTABLE").expect("OVRCR_TEST_PI_EXECUTABLE");
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    // HOME and PI_CODING_AGENT_DIR both point inside the fixture: the user's live ~/.pi is
+    // neither read nor written, so this check cannot depend on or disturb real settings.
+    let agent_dir = fixture._root.path().join("pi-home");
+    std::fs::create_dir_all(agent_dir.join("agent")).unwrap();
+    let summary = fixture.create_session_summary(
+        "pi-native",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"export HOME="$3" PI_CODING_AGENT_DIR="$3/agent" PI_OFFLINE=1; "$1" agent run pi -- "$2" --no-session --offline; IFS= read -r done"#.into(),
+            "pi-native".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            pi,
+            agent_dir.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let current = fixture.session_summary(summary.id);
+        if let Some(agent) = &current.agent
+            && agent
+                .activity
+                .as_ref()
+                .is_some_and(|s| s.state == AgentActivity::Idle)
+        {
+            assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+            assert!(!agent.binding.conversation.is_empty());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "real Pi never reported session_start: {current:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Pi 0.85.1 exits on the ctrl+d *key* (its docs/keybindings.md: `app.exit`), and has no
+    // `/exit` command. A keystroke cannot be delivered here: `SendTerminal` encodes through
+    // `encode_paste`, which brackets the bytes while Pi has bracketed paste enabled, so
+    // control bytes arrive as pasted editor text. End the supervised native Pi through the
+    // product's own termination path instead and require a real exit.
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("inventory unavailable")
+    };
+    assert!(
+        !sessions.iter().any(|session| session.id == summary.id),
+        "supervised native Pi session remains after termination"
+    );
 }

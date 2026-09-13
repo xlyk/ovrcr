@@ -73,17 +73,17 @@ including with `--json`. OVRCR retains the last accepted report in memory and
 exposes that observation across dashboard detach and reconnect.
 
 `response-ready` means the last observed root turn has finished responding. Managed
-reporters display `response ready · observed` on the selected session's metadata
-line, with a `✓` glyph in the sidebar, and retain it until the next activity
+reporters display `response ready · observed` or `· confirmed`, by sample quality,
+on the selected session's metadata line, with a `✓` glyph in the sidebar, and retain it until the next activity
 report, including across reconnects. Reporter health and process exit remain
 separate; Ready does not acknowledge unread output or imply known usage or cost.
 
-Managed Codex also retains one unread identity for its latest root Ready
-observation. [Mark-reviewed](dashboard.md#unread-responses) is explicit and checks
-that identity before clearing it. Selecting or viewing a terminal, new Busy
-activity, and reporter loss do not clear unread state. The server retains it
-through dashboard reconnect but does not persist it across server death. Manual
-activity reports and other providers do not create Codex unread observations.
+Managed sessions of a supported readiness provider (Codex, Pi, Oh My Pi) retain one
+unread identity for its latest root Ready observation. [Mark-reviewed](dashboard.md#unread-responses)
+is explicit and checks that identity before clearing it. Selecting or viewing a
+terminal, new Busy activity, and reporter loss do not clear unread state. The server
+retains it through dashboard reconnect but does not persist it across server death.
+Manual activity reports and other providers do not create unread observations.
 
 Reports without `--sequence` are accepted in arrival order; the first such report
 selects receipt mode for the whole PTY lifetime. Supplying `--sequence` selects
@@ -130,6 +130,20 @@ later callback can report that execution continued.
 
 To uninstall, remove only these handlers from the existing settings file and
 restart the agent session. OVRCR never installs or modifies provider settings.
+
+## Pi
+
+`ovrcr agent run pi -- pi [ARGS...]` (or picking `pi` in the Dashboard) materializes the
+owned reporting extension into a private per-invocation directory and adds `-e <path>`
+beside your own extensions (Pi's documented merge rule for an explicit `-e` path; not
+exercised by an automated test); nothing under `~/.pi` changes. The extension is inert without
+the private channel and in print, JSON and RPC modes. It reports `session_start` (Idle),
+`agent_start` (Busy), and at `agent_settled` one of Ready (`response ready · confirmed`,
+because Pi settles only after retries, automatic compaction and queued continuations),
+Error (the last assistant message stopped with an error) or Idle (aborted, or no assistant
+response). Ready creates one unread identity per response cycle; review and alerts work as
+for Codex. Payloads carry identifiers and discriminants only: never prompts, responses or
+tool data. Extension dialogs, session switches and reporter recovery are later tickets.
 
 ## Context usage
 

@@ -3,17 +3,21 @@ use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-const KNOWN_AGENTS: [&str; 9] = [
+const KNOWN_AGENTS: [&str; 10] = [
     "claude",
     "codex",
     "gemini",
     "aider",
     "opencode",
     "pi",
+    "omp",
     "goose",
     "amp",
     "cursor-agent",
 ];
+/// Detected agents OVRCR launches through `agent run <name> --` so the owned reporting
+/// extension loads beside the user's own. Codex and Claude keep their explicit routes.
+pub const MANAGED_AGENTS: [&str; 2] = ["pi", "omp"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentSource {
@@ -29,14 +33,29 @@ pub struct AgentEntry {
     pub source: AgentSource,
 }
 
-pub fn detect_agents(path: &OsStr, shell: Option<&OsStr>) -> Vec<AgentEntry> {
+pub fn detect_agents(
+    path: &OsStr,
+    shell: Option<&OsStr>,
+    launcher: Option<&Path>,
+) -> Vec<AgentEntry> {
     let mut entries = Vec::new();
     let dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
     for name in KNOWN_AGENTS {
         if let Some(found) = dirs.iter().find_map(|dir| executable_in(dir, name)) {
+            let argv = match launcher {
+                Some(launcher) if MANAGED_AGENTS.contains(&name) => vec![
+                    launcher.as_os_str().to_owned(),
+                    "agent".into(),
+                    "run".into(),
+                    name.into(),
+                    "--".into(),
+                    found.into(),
+                ],
+                _ => vec![found.into()],
+            };
             entries.push(AgentEntry {
                 name: name.into(),
-                argv: vec![found.into()],
+                argv,
                 source: AgentSource::Detected,
             });
         }
@@ -139,7 +158,7 @@ mod tests {
         let shell = dir.path().join("zsh");
         write_stub(dir.path(), "zsh", 0o755);
 
-        let agents = detect_agents(dir.path().as_os_str(), Some(shell.as_os_str()));
+        let agents = detect_agents(dir.path().as_os_str(), Some(shell.as_os_str()), None);
         assert_eq!(
             agents
                 .iter()
@@ -180,7 +199,7 @@ mod tests {
     #[test]
     fn custom_override_replaces_the_custom_entry() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = detect_agents(dir.path().as_os_str(), None);
+        let agents = detect_agents(dir.path().as_os_str(), None, None);
 
         let overridden = apply_overrides(
             agents,
@@ -204,6 +223,58 @@ mod tests {
             !overridden
                 .iter()
                 .any(|entry| entry.name == "Custom" && entry.source == AgentSource::Detected)
+        );
+    }
+
+    #[test]
+    fn managed_agents_launch_through_the_agent_run_route() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["pi", "omp", "codex"] {
+            write_stub(dir.path(), name, 0o755);
+        }
+        let launcher = Path::new("/opt/ovrcr/bin/ovrcr");
+        let entries = detect_agents(dir.path().as_os_str(), None, Some(launcher));
+        let argv = |name: &str| {
+            entries
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap()
+                .argv
+                .clone()
+        };
+        for name in MANAGED_AGENTS {
+            assert_eq!(
+                argv(name),
+                vec![
+                    OsString::from(launcher),
+                    "agent".into(),
+                    "run".into(),
+                    name.into(),
+                    "--".into(),
+                    dir.path().join(name).into_os_string(),
+                ],
+                "{name}"
+            );
+        }
+        assert_eq!(
+            argv("codex"),
+            vec![dir.path().join("codex").into_os_string()]
+        );
+        let bare = detect_agents(dir.path().as_os_str(), None, None);
+        assert_eq!(
+            bare.iter().find(|e| e.name == "pi").unwrap().argv,
+            vec![dir.path().join("pi").into_os_string()]
+        );
+        let overridden = apply_overrides(
+            entries,
+            &[AgentOverride {
+                name: "pi".into(),
+                argv: vec!["/custom/pi".into()],
+            }],
+        );
+        assert_eq!(
+            overridden.iter().find(|e| e.name == "pi").unwrap().argv,
+            vec![OsString::from("/custom/pi")]
         );
     }
 }

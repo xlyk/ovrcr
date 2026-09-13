@@ -749,6 +749,18 @@ mod wire_snapshot {
             .iter()
             .map(|state| (format!("AgentActivity::{state:?}"), encode(state))),
         );
+        all.extend(
+            [
+                crate::AgentProvider::Claude,
+                crate::AgentProvider::Codex,
+                crate::AgentProvider::Grok,
+                crate::AgentProvider::Pi,
+                crate::AgentProvider::Hermes,
+                crate::AgentProvider::Omp,
+            ]
+            .iter()
+            .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
+        );
         all
     }
 
@@ -871,6 +883,12 @@ mod wire_snapshot {
         ("AgentActivity::WaitingInput", "03"),
         ("AgentActivity::Error", "04"),
         ("AgentActivity::ResponseReady", "05"),
+        ("AgentProvider::Claude", "00"),
+        ("AgentProvider::Codex", "01"),
+        ("AgentProvider::Grok", "02"),
+        ("AgentProvider::Pi", "03"),
+        ("AgentProvider::Hermes", "04"),
+        ("AgentProvider::Omp", "05"),
     ];
 
     #[test]

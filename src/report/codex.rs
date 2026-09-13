@@ -1,8 +1,7 @@
 //! Authenticated synchronous Codex hooks. No transcript or completion inference.
 use super::InvocationLease;
 use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentCommand, AgentObservation, AgentOperationResult,
-    ProviderReport, Response, SampleQuality,
+    ActivitySample, AgentActivity, AgentObservation, ProviderReport, SampleQuality,
 };
 use ovrcr_runtime::agent_runner::{HookEvent, HookHandler};
 use std::{
@@ -249,37 +248,13 @@ impl Receiver {
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        if lease
-            .binding
-            .as_ref()
-            .is_some_and(|b| b.conversation == conversation)
-        {
-            return true;
-        }
-        let Ok(operation) = ovrcr_runtime::agent_runner::private_identifier() else {
-            return false;
-        };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let response = lease.command(
-            operation.clone(),
-            AgentCommand::Bind {
-                expected_binding: lease.binding.clone(),
-                conversation: conversation.to_owned(),
-            },
-            Instant::now() + remaining / 2,
-        );
-        let response = response.or_else(|_| lease.operation_status(operation, deadline));
-        if let Ok(Response::AgentOperation(AgentOperationResult::Bound(binding))) = response {
-            if binding.conversation != conversation
-                || binding.provider != ovrcr_protocol::AgentProvider::Codex
-            {
-                return false;
+        match lease.bind(ovrcr_protocol::AgentProvider::Codex, conversation, deadline) {
+            Some(true) => {
+                self.revision = 0;
+                true
             }
-            lease.binding = Some(binding);
-            self.revision = 0;
-            true
-        } else {
-            false
+            Some(false) => true,
+            None => false,
         }
     }
 }

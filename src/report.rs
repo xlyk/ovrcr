@@ -3,6 +3,8 @@ pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
+pub mod omp;
+pub mod pi;
 
 use crate::protocol::client;
 use crate::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response};
@@ -503,6 +505,45 @@ impl InvocationLease {
             deadline,
         )
     }
+    /// Bind this reservation to `conversation` for `provider`. `Some(true)`: newly bound
+    /// (callers reset their revision); `Some(false)`: already bound to it; `None`: refused
+    /// or unreachable. Half the remaining budget goes to the command, the rest to the
+    /// receipt re-read that recovers a lost reply.
+    pub(crate) fn bind(
+        &mut self,
+        provider: ovrcr_protocol::AgentProvider,
+        conversation: &str,
+        deadline: Instant,
+    ) -> Option<bool> {
+        use ovrcr_protocol::{AgentCommand, AgentOperationResult};
+        if self
+            .binding
+            .as_ref()
+            .is_some_and(|b| b.conversation == conversation)
+        {
+            return Some(false);
+        }
+        let operation = ovrcr_runtime::agent_runner::private_identifier().ok()?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = self.command(
+            operation.clone(),
+            AgentCommand::Bind {
+                expected_binding: self.binding.clone(),
+                conversation: conversation.to_owned(),
+            },
+            Instant::now() + remaining / 2,
+        );
+        let response = response.or_else(|_| self.operation_status(operation, deadline));
+        match response {
+            Ok(Response::AgentOperation(AgentOperationResult::Bound(binding)))
+                if binding.conversation == conversation && binding.provider == provider =>
+            {
+                self.binding = Some(binding);
+                Some(true)
+            }
+            _ => None,
+        }
+    }
     fn operation_status(&mut self, operation: String, deadline: Instant) -> Result<Response> {
         let mut stream = connect_deadline(&self.socket, deadline)?;
         exchange_preamble(&mut DeadlineIo::new(&mut stream, deadline))?;
@@ -537,6 +578,9 @@ pub fn send_claude_statusline(input: &[u8], deadline: Instant) -> Result<()> {
 }
 pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "codex", "codex-hook", deadline)
+}
+pub fn send_pi_event(input: &[u8], deadline: Instant) -> Result<()> {
+    send_payload(input, "pi", "pi-extension", deadline)
 }
 fn send_payload(
     input: &[u8],
@@ -670,6 +714,21 @@ pub fn reserve_invocation_for(
         Err(_) => Ok(None),
         result => result,
     }
+}
+
+/// A provider whose reporting cannot run for this invocation: release the reservation
+/// immediately, tell the operator once on stderr, and answer every callback unavailable.
+pub fn unavailable_receiver(
+    lease: Option<InvocationLease>,
+    provider: &str,
+    reason: &str,
+) -> ovrcr_runtime::agent_runner::HookHandler {
+    if let Some(lease) = lease {
+        let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+        drop(lease);
+    }
+    eprintln!("{provider} reporting unavailable ({reason}); running native command");
+    Box::new(|_| b"admission-unavailable\n".to_vec())
 }
 
 fn agent_exchange(

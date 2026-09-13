@@ -44,6 +44,11 @@ jobs:
         run: cargo test --workspace --all-targets --all-features
       - name: Doc tests
         run: cargo test --workspace --doc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pi extension tests
+        run: node --test tests/pi_reporting_extension.mjs
 
   linux:
     name: linux
@@ -74,6 +79,11 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Doc tests
         run: cargo test --workspace --doc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pi extension tests
+        run: node --test tests/pi_reporting_extension.mjs
 
   linux-capacity:
     name: linux capacity

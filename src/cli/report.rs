@@ -20,6 +20,16 @@ pub(super) fn run_report(command: ReportCommand) -> AppResult<()> {
             }
             Ok(())
         }
+        ReportCommand::Pi { stdin: _ } => {
+            if std::env::var_os("OVRCR_AGENT_SOCKET").is_none() {
+                return Ok(());
+            }
+            let deadline = Instant::now() + Duration::from_secs(1);
+            if let Ok(input) = app_report::read_hook_stdin(deadline) {
+                let _ = app_report::send_pi_event(&input, deadline);
+            }
+            Ok(())
+        }
         ReportCommand::Activity { state, sequence } => {
             let deadline = Instant::now() + Duration::from_secs(1);
             app_report::send_report(AgentUpdate::Activity(state), sequence, deadline)
