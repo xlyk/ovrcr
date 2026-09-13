@@ -420,17 +420,20 @@ disable them for the current dashboard. The toggle does not rewrite your setting
 file. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 
 An alert means a managed Codex root response is ready to review, not that its task
-succeeded. Only project, workspace and terminal identity appear in the alert.
-Prompt and response text are never included. The accepted Codex reporting setup
-is still required; see [Codex setup](codex-reporting-setup.md).
+succeeded. Delivery keys on a new [unread](#unread-responses) identity (binding and
+turn), not on activity quality. Confirmed activity without unread does not notify.
+Only project, workspace and terminal identity appear in the alert. Prompt and
+response text are never included. The accepted Codex reporting setup is still
+required; see [Codex setup](codex-reporting-setup.md).
 
 The active dashboard delivers alerts only when the terminal is absent from every
 visible pane. A terminal assigned to a split hidden by a small window is eligible;
 Tasks shows no terminal panes. Visibility does not acknowledge or change Ready.
-Attachment and reconnect establish a baseline: old Ready observations, including
+Attachment and reconnect establish a baseline: old unread observations, including
 responses completed while disconnected, are not replayed. Enabling alerts or
-hiding a terminal does not replay a previously suppressed response. No active
-dashboard means no delivery.
+hiding a terminal does not replay a previously suppressed response. A later Busy
+or reporter loss cancels a pending or in-flight alert. Mark-reviewed does not.
+No active dashboard means no delivery.
 
 Host submission runs outside the input loop with bounded queues and a two-second
 subprocess deadline. Disabling the last enabled alert channel (notifications or the
@@ -458,11 +461,12 @@ command palette for **ready sound**, to toggle it for the current dashboard
 without rewriting your settings file. In terminal mode `S` remains ordinary
 terminal input; use Ctrl-g first.
 
-A sound follows exactly the same selection as a desktop alert: one accepted
-managed Codex root response becoming Ready outside every visible pane, with the
-same deduplication, visibility suppression and attach/reconnect baseline. When
-both are on, one response produces one alert and one sound. Nothing about the
-response or terminal is passed to the player.
+A sound follows exactly the same selection as a desktop alert: a new unread
+identity for one accepted managed Codex root response outside every visible pane,
+with the same deduplication, visibility suppression and attach/reconnect baseline.
+Confirmed activity without unread does not play. When both channels are on, one
+response produces one alert and one sound. Nothing about the response or terminal
+is passed to the player.
 
 macOS plays `/System/Library/Sounds/Glass.aiff` with `afplay` at the current
 output volume. Linux plays the freedesktop sound theme's
