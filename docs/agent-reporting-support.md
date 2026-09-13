@@ -275,3 +275,41 @@ Native acceptance against an installed Pi is not claimed here and is tracked by 
 opt-in `installed_pi_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
 and requires `OVRCR_TEST_PI_EXECUTABLE` plus an isolated `PI_CODING_AGENT_DIR`; it never
 touches the user's `~/.pi`.
+
+## Oh My Pi 18.1.19 evidence, 2026-09-13
+
+Oh My Pi 18.1.19 is a Bun-compiled binary; the bundled sources were inspected directly
+because no extension type declarations survive compilation. The extension loader imports
+`.mjs` with relative sibling imports, which is why the shared delivery module
+(`ovrcr-reporting-transport.mjs`) is materialized beside the provider extension, and an
+explicit `-e <path>` merges with discovered extensions (`--no-extensions` is never passed).
+Tested versions are evidence, not an allowlist; the managed launch probes the executable but
+does not pin a release.
+
+The lifecycle differs from Pi in three ways, and the extension normalizes all three onto Pi's
+vocabulary rather than changing the receiver: there is no settled event, so an `agent_end`
+whose `willContinue` flag is absent is followed by a synthetic `agent_settled`; a
+`session_switch` (`new` / `resume` / `fork`) happens in place on the same extension instance,
+so it re-announces the conversation with `session_start`; and `ctx.mode` is `"tui"` only for
+the interactive terminal UI, so task and advisor children, which run in this same process
+with mode `"print"`, are inert. Ready quality is `Observed`, never `Confirmed`: the
+`session_stop` hook may continue after a clean end, so the end notification does not exclude
+every late continuation. Cycle numbering is per extension instance rather than per
+conversation, because an in-place switch would otherwise repeat an `<instance>:<run>` cycle
+identity the receiver has already published.
+
+Ordinary handlers are awaited sequentially under a 30 s budget and shutdown handlers in
+parallel under a 2 s budget, both far above the transport's 900 ms per-event deadline.
+
+Approvals and questions are not observable: Oh My Pi exports no extension event for them
+(`tools/ask.ts` and `modes/controllers/extension-ui-controller.ts` own the native dialog).
+That gap is #95 and is reported by doctor as a capability gap; it does not disable response
+reporting.
+
+The automated proof is `node --test tests/omp_reporting_extension.mjs` over the shared Node
+event host and the managed lifecycle test
+`omp_managed_extension_reports_observed_ready_continuations_switches_and_child_inertness`,
+which drives the real extension through the real CLI, PTY, private socket and receiver.
+The Dashboard slice is covered by `omp_ready_alerts_once_and_creates_unread`, and the launch
+shape and per-invocation cleanup by `omp_managed_launch_inserts_its_extension_and_removes_it`.
+Native acceptance against an installed Oh My Pi is not claimed here.
