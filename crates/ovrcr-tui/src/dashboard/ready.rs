@@ -130,7 +130,15 @@ mod tests {
                 false,
             ),
             (Running, Pi, Connected, ResponseReady, Some("t"), true, true),
-            (Running, Omp, Connected, ResponseReady, Some("t"), true, true),
+            (
+                Running,
+                Omp,
+                Connected,
+                ResponseReady,
+                Some("t"),
+                true,
+                true,
+            ),
             (
                 Running,
                 Grok,

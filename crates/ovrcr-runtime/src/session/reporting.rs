@@ -92,7 +92,10 @@ impl ReportingState {
                 }
                 if report.binding.provider.supports_readiness()
                     && activity.state == AgentActivity::ResponseReady
-                    && matches!(activity.quality, SampleQuality::Observed | SampleQuality::Confirmed)
+                    && matches!(
+                        activity.quality,
+                        SampleQuality::Observed | SampleQuality::Confirmed
+                    )
                     && activity.turn.is_some()
                     && snapshot.health.state == ReporterHealth::Connected
                     && self.ready.as_ref().is_none_or(|(ready, _)| {

@@ -18,7 +18,10 @@ impl AgentProvider {
     /// The providers whose root response cycles may become Ready, Unread, a review
     /// target, and an alert. One owner for what used to be four Codex-pinned checks.
     pub const fn supports_readiness(self) -> bool {
-        matches!(self, AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp)
+        matches!(
+            self,
+            AgentProvider::Codex | AgentProvider::Pi | AgentProvider::Omp
+        )
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,18 +425,31 @@ pub(crate) mod tests {
         };
         for provider in [AgentProvider::Codex, AgentProvider::Pi, AgentProvider::Omp] {
             let ready = ReadyObservation {
-                binding: AgentBinding { provider, ..base.binding.clone() },
+                binding: AgentBinding {
+                    provider,
+                    ..base.binding.clone()
+                },
                 ..base.clone()
             };
             ready.validate().unwrap();
         }
-        for provider in [AgentProvider::Claude, AgentProvider::Grok, AgentProvider::Hermes] {
+        for provider in [
+            AgentProvider::Claude,
+            AgentProvider::Grok,
+            AgentProvider::Hermes,
+        ] {
             let ready = ReadyObservation {
-                binding: AgentBinding { provider, ..base.binding.clone() },
+                binding: AgentBinding {
+                    provider,
+                    ..base.binding.clone()
+                },
                 ..base.clone()
             };
             let error = ready.validate().unwrap_err().to_string();
-            assert!(error.contains("supported readiness provider"), "{provider:?}: {error}");
+            assert!(
+                error.contains("supported readiness provider"),
+                "{provider:?}: {error}"
+            );
         }
     }
 
