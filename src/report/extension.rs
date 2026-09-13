@@ -6,8 +6,8 @@
 //! because a stop hook may still continue after a clean end.
 use super::{HOOK_INPUT_LIMIT, InvocationLease};
 use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentObservation, AgentProvider, ProviderReport, SampleQuality,
-    validate_agent_id,
+    ActivitySample, AgentActivity, AgentObservation, AgentProvider, InputKind, InputRequest,
+    ProviderReport, SampleQuality, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::{HookEvent, HookHandler, private_identifier};
 use std::{
@@ -135,6 +135,9 @@ struct Receiver {
     producer: Option<(String, u64)>,
     /// The open response cycle: the harness run counter and the identity published as `turn`.
     current: Option<(u64, String)>,
+    /// The active Input request, by identity. Bound: one slot, exact for Pi's coalesced
+    /// outer prompt span (#95's Oh My Pi approvals need a set).
+    open_request: Option<String>,
     seen: HashSet<String>,
     charged_bytes: usize,
     revision: u64,
@@ -149,6 +152,7 @@ impl Receiver {
             extension_dir: None,
             producer: None,
             current: None,
+            open_request: None,
             seen: HashSet::new(),
             charged_bytes: 0,
             revision: 0,
@@ -157,6 +161,7 @@ impl Receiver {
     fn disable(&mut self) {
         self.disabled = true;
         self.current = None;
+        self.open_request = None;
         if let Some(lease) = self.lease.take() {
             let _ = lease.stream.shutdown(std::net::Shutdown::Both);
             drop(lease);
@@ -217,6 +222,7 @@ impl Receiver {
                 // re-announces with session_start): whatever cycle was open belongs to the
                 // conversation being left, so it is invalidated before the new binding.
                 self.current = None;
+                self.open_request = None;
                 if !self.bind(session, deadline) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
@@ -297,8 +303,42 @@ impl Receiver {
                     // session_start admits them.
                     self.producer = None;
                     self.current = None;
+                    self.open_request = None;
                 }
                 return IGNORED.to_vec();
+            }
+            "input_open" => {
+                let (Some(id), Some(kind)) = (
+                    payload["request_id"]
+                        .as_str()
+                        .filter(|s| validate_agent_id(s).is_ok()),
+                    input_kind(payload["kind"].as_str()),
+                ) else {
+                    return IGNORED.to_vec();
+                };
+                if self.open_request.as_deref() == Some(id) {
+                    return IGNORED.to_vec();
+                }
+                // Pi coalesces nested prompts into one span; a different id while one is open
+                // is a replacement, published as such. Bound: one slot (#95's approvals need a set).
+                self.open_request = Some(id.to_owned());
+                return self.publish_observation(
+                    AgentObservation::Input(Some(InputRequest {
+                        id: id.to_owned(),
+                        kind,
+                    })),
+                    deadline,
+                );
+            }
+            "input_close" => {
+                let Some(id) = payload["request_id"].as_str() else {
+                    return IGNORED.to_vec();
+                };
+                if self.open_request.as_deref() != Some(id) {
+                    return IGNORED.to_vec();
+                }
+                self.open_request = None;
+                return self.publish_observation(AgentObservation::Input(None), deadline);
             }
             "unavailable" => {
                 self.disable();
@@ -329,6 +369,16 @@ impl Receiver {
         turn: Option<String>,
         deadline: Instant,
     ) -> Vec<u8> {
+        self.publish_observation(
+            AgentObservation::Activity(ActivitySample {
+                state,
+                quality,
+                turn,
+            }),
+            deadline,
+        )
+    }
+    fn publish_observation(&mut self, observation: AgentObservation, deadline: Instant) -> Vec<u8> {
         let Some(lease) = &self.lease else {
             self.disable();
             return UNAVAILABLE.to_vec();
@@ -341,11 +391,7 @@ impl Receiver {
         let report = ProviderReport {
             binding,
             revision: self.revision,
-            observation: AgentObservation::Activity(ActivitySample {
-                state,
-                quality,
-                turn,
-            }),
+            observation,
         };
         if lease.publish_observation(report, deadline).is_err() {
             self.disable();
@@ -353,6 +399,17 @@ impl Receiver {
         }
         ACCEPTED.to_vec()
     }
+}
+
+fn input_kind(value: Option<&str>) -> Option<InputKind> {
+    Some(match value? {
+        "select" => InputKind::Select,
+        "confirm" => InputKind::Confirm,
+        "input" => InputKind::Input,
+        "editor" => InputKind::Editor,
+        "custom" => InputKind::Custom,
+        _ => return None,
+    })
 }
 
 /// The accept loop can exit, or its thread be abandoned, without a disabling callback:
@@ -553,6 +610,119 @@ mod tests {
             Instant::now(),
         );
         assert!(receiver.disabled);
+    }
+    fn input_event(
+        instance: &str,
+        sequence: u64,
+        name: &str,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&event(instance, sequence, name, None, "none")).unwrap();
+        value["payload"]["request_id"] = request_id.into();
+        if let Some(kind) = kind {
+            value["payload"]["kind"] = kind.into();
+        }
+        serde_json::to_vec(&value).unwrap()
+    }
+    #[test]
+    fn input_close_for_an_unknown_or_stale_request_is_ignored() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        assert_eq!(
+            receiver.handle(
+                &input_event("a", 2, "input_close", "a:p1", None),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n",
+            "no request is open"
+        );
+        assert!(receiver.open_request.is_none());
+        receiver.open_request = Some("a:p1".into());
+        assert_eq!(
+            receiver.handle(
+                &input_event("a", 3, "input_close", "a:p2", None),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n",
+            "a close only closes its own request"
+        );
+        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(receiver.revision, 0);
+        assert!(!receiver.disabled);
+    }
+    #[test]
+    fn input_open_requires_a_known_kind_and_valid_identity() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        for (sequence, id, kind) in [
+            (2, "a:p1", Some("dialog")),
+            (3, "a:p1", None),
+            (4, "a:\u{1b}p1", Some("select")),
+            (5, "", Some("select")),
+        ] {
+            assert_eq!(
+                receiver.handle(
+                    &input_event("a", sequence, "input_open", id, kind),
+                    true,
+                    Instant::now()
+                ),
+                b"admission-ignored\n",
+                "{id:?} {kind:?}"
+            );
+        }
+        assert!(receiver.open_request.is_none());
+        assert_eq!(receiver.revision, 0);
+        assert!(!receiver.disabled);
+    }
+    #[test]
+    fn a_repeated_open_for_the_same_request_is_ignored_before_any_mutation() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.open_request = Some("a:p1".into());
+        assert_eq!(
+            receiver.handle(
+                &input_event("a", 2, "input_open", "a:p1", Some("select")),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n"
+        );
+        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(receiver.revision, 0);
+        assert!(!receiver.disabled);
+    }
+    #[test]
+    fn session_start_and_shutdown_forget_the_open_request() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.open_request = Some("a:p1".into());
+        let mut shutdown: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "session_shutdown", None, "none")).unwrap();
+        shutdown["payload"]["reason"] = "reload".into();
+        assert_eq!(
+            receiver.handle(
+                &serde_json::to_vec(&shutdown).unwrap(),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n"
+        );
+        assert!(receiver.open_request.is_none() && !receiver.disabled);
+        receiver.open_request = Some("a:p1".into());
+        // No lease: session_start clears the request, fails to bind and disables honestly.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 3, "session_start", None, "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert!(receiver.open_request.is_none() && receiver.disabled);
     }
     #[test]
     fn a_re_announced_conversation_invalidates_the_open_cycle() {
