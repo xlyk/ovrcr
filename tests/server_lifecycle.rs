@@ -8,7 +8,7 @@ use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, DashboardView,
     ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES,
     PAGE_BYTES, PAGE_COLS, PAGE_ROWS, PaneTarget, Request, Response, ServerEvent, ServerMessage,
-    connect_server, read_frame, write_frame,
+    client, connect_server, read_frame, write_frame,
 };
 use ovrcr::server::{ServerPaths, connect_if_running, connect_or_start, run_server};
 use ovrcr::session::{SessionId, SessionPhase};
@@ -206,15 +206,11 @@ impl ServerFixture {
 
     fn request(&self, request: Request) -> ServerMessage {
         let mut stream = connect_server(&self.paths.socket).unwrap();
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request,
-            },
-        )
-        .unwrap();
-        read_frame::<ServerMessage>(&mut stream).unwrap()
+        let response = client::request(&mut stream, 1, request).unwrap();
+        ServerMessage::Response {
+            request_id: 1,
+            response,
+        }
     }
 
     fn stop(&mut self) {
@@ -2580,18 +2576,7 @@ fn request_with_timeout(
     let mut stream = connect_server(socket).ok()?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
-    write_frame(
-        &mut stream,
-        &ClientMessage {
-            request_id,
-            request,
-        },
-    )
-    .ok()?;
-    match read_frame::<ServerMessage>(&mut stream).ok()? {
-        ServerMessage::Response { response, .. } => Some(response),
-        ServerMessage::Event(_) => None,
-    }
+    client::request(&mut stream, request_id, request).ok()
 }
 
 fn dashboard_for_session(socket: &Path, session: SessionId) -> (UnixStream, Vec<u8>) {
@@ -2648,23 +2633,7 @@ fn dashboard_select(stream: &mut UnixStream, request_id: u64, session: SessionId
 }
 
 fn dashboard_request(stream: &mut UnixStream, request_id: u64, request: Request) -> Response {
-    write_frame(
-        stream,
-        &ClientMessage {
-            request_id,
-            request,
-        },
-    )
-    .unwrap();
-    loop {
-        match read_frame::<ServerMessage>(stream).unwrap() {
-            ServerMessage::Response {
-                request_id: id,
-                response,
-            } if id == request_id => return response,
-            _ => {}
-        }
-    }
+    client::request(stream, request_id, request).unwrap()
 }
 
 struct HistoryDashboardParser {
@@ -3760,18 +3729,7 @@ fn request_on_stream(
 ) -> Response {
     stream.set_read_timeout(Some(timeout)).unwrap();
     stream.set_write_timeout(Some(timeout)).unwrap();
-    write_frame(
-        stream,
-        &ClientMessage {
-            request_id,
-            request,
-        },
-    )
-    .unwrap();
-    match read_frame::<ServerMessage>(stream).unwrap() {
-        ServerMessage::Response { response, .. } => response,
-        ServerMessage::Event(event) => panic!("unexpected race event: {event:?}"),
-    }
+    client::request(stream, request_id, request).unwrap()
 }
 
 #[test]
@@ -5335,18 +5293,7 @@ impl ControlFixture {
             stream.set_read_timeout(Some(timeout)).unwrap();
             stream.set_write_timeout(Some(timeout)).unwrap();
         }
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request,
-            },
-        )
-        .unwrap();
-        match read_frame::<ServerMessage>(&mut stream).unwrap() {
-            ServerMessage::Response { response, .. } => response,
-            ServerMessage::Event(_) => panic!("unexpected event"),
-        }
+        client::request(&mut stream, 1, request).unwrap()
     }
     fn create_session_summary(
         &self,
