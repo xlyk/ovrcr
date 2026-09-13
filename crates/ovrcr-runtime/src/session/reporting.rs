@@ -69,6 +69,9 @@ impl ReportingState {
             if let Some(metrics) = &mut snapshot.metrics {
                 metrics.sample.usage.value.coverage = UsageCoverage::Partial;
             }
+            // A reporter that is gone cannot vouch for a visible dialog; the request is
+            // unknown until a fresh authoritative event.
+            snapshot.input_request = None;
         }
     }
     pub fn lost(&mut self, reason: &str) {
@@ -591,6 +594,199 @@ mod tests {
                 "{provider:?} {quality:?} {turn:?} {health:?}"
             );
         }
+    }
+
+    fn pi_state() -> (ReportingState, AgentBinding) {
+        let binding = AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "conv".into(),
+            generation: 1,
+        };
+        let reporting = ReportingState {
+            lease: Some(AgentSecret([1; 32])),
+            snapshot: Some(AgentSnapshot {
+                binding: binding.clone(),
+                activity: None,
+                metrics: None,
+                health: HealthSample {
+                    state: ReporterHealth::Connected,
+                    reason: None,
+                },
+                activity_revision: 0,
+                metrics_revision: 0,
+                health_revision: 0,
+                input_request: None,
+                input_revision: 0,
+            }),
+            ..Default::default()
+        };
+        (reporting, binding)
+    }
+    fn activity(
+        binding: &AgentBinding,
+        revision: u64,
+        state: AgentActivity,
+        quality: SampleQuality,
+    ) -> ProviderReport {
+        ProviderReport {
+            binding: binding.clone(),
+            revision,
+            observation: AgentObservation::Activity(ActivitySample {
+                state,
+                quality,
+                turn: Some("one".into()),
+            }),
+        }
+    }
+    fn input(
+        binding: &AgentBinding,
+        revision: u64,
+        request: Option<(&str, InputKind)>,
+    ) -> ProviderReport {
+        ProviderReport {
+            binding: binding.clone(),
+            revision,
+            observation: AgentObservation::Input(request.map(|(id, kind)| InputRequest {
+                id: id.into(),
+                kind,
+            })),
+        }
+    }
+
+    #[test]
+    fn input_request_opens_and_closes_atomically_without_touching_activity_or_unread() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(&binding, 1, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(
+                &activity(
+                    &binding,
+                    2,
+                    AgentActivity::ResponseReady,
+                    SampleQuality::Confirmed,
+                ),
+                false,
+            )
+            .unwrap();
+        let unread = reporting.unread().expect("Confirmed Ready is unread");
+
+        reporting
+            .apply(
+                &input(&binding, 3, Some(("a:p1", InputKind::Select))),
+                false,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot.input_request,
+            Some(InputRequest {
+                id: "a:p1".into(),
+                kind: InputKind::Select,
+            })
+        );
+        assert_eq!(
+            snapshot.activity.as_ref().unwrap().state,
+            AgentActivity::ResponseReady,
+            "a wait never overwrites the underlying activity sample"
+        );
+        assert_eq!(snapshot.activity_revision, 2);
+        assert_eq!(snapshot.input_revision, 3);
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+        assert_eq!(reporting.unread(), Some(unread.clone()));
+
+        let before = reporting.snapshot.clone();
+        let stale = reporting
+            .apply(
+                &input(&binding, 3, Some(("a:p1", InputKind::Select))),
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(stale.to_string(), "stale input revision");
+        assert_eq!(reporting.snapshot, before, "a stale open changes nothing");
+
+        reporting.apply(&input(&binding, 4, None), false).unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(snapshot.input_request, None);
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::ResponseReady,
+            "closing the last request restores what was underneath"
+        );
+        assert_eq!(reporting.unread(), Some(unread.clone()));
+
+        reporting
+            .apply(
+                &input(&binding, 5, Some(("a:p2", InputKind::Editor))),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(
+                &activity(&binding, 3, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot.activity.as_ref().unwrap().state,
+            AgentActivity::Busy
+        );
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::WaitingInput,
+            "activity under an open request is recorded, not effective"
+        );
+        assert_eq!(reporting.unread(), Some(unread));
+    }
+
+    #[test]
+    fn reporter_loss_clears_the_open_input_request() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(
+                    &binding,
+                    1,
+                    AgentActivity::ResponseReady,
+                    SampleQuality::Confirmed,
+                ),
+                false,
+            )
+            .unwrap();
+        let unread = reporting.unread().expect("Confirmed Ready is unread");
+        reporting
+            .apply(
+                &input(&binding, 2, Some(("a:p1", InputKind::Confirm))),
+                false,
+            )
+            .unwrap();
+        reporting.lost("supervisor_disconnected");
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(snapshot.health.state, ReporterHealth::Unavailable);
+        assert_eq!(
+            snapshot.health.reason.as_deref(),
+            Some("supervisor_disconnected")
+        );
+        assert_eq!(
+            snapshot.input_request, None,
+            "a reporter that is gone cannot vouch for a visible dialog"
+        );
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::ResponseReady,
+            "loss does not rewrite the activity sample"
+        );
+        assert_eq!(
+            reporting.unread(),
+            Some(unread),
+            "reporter loss keeps Unread"
+        );
     }
 
     #[test]
