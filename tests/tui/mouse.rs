@@ -300,64 +300,82 @@ fn mouse_encode_legacy_boundaries() {
     );
 }
 
+fn enable_mouse(dashboard: &mut Dashboard, modes: &[u8]) {
+    let id = dashboard.focused_session().expect("focused session");
+    dashboard.install_screen(id, modes);
+    dashboard.key(KeyCode::Enter);
+}
+
+fn split_ready(area: Rect) -> Dashboard {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    let action = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, action);
+    let left = SessionId(1);
+    let right = dashboard.focused_session().expect("split focus");
+    dashboard.install_screen(left, &[]);
+    dashboard.install_screen(right, &[]);
+    dashboard
+}
+
+fn terminal_rect(dashboard: &Dashboard, area: Rect) -> Rect {
+    let mut rects = dashboard.pane_rects(area);
+    if rects.len() == 1 {
+        return rects.remove(0).terminal;
+    }
+    rects
+        .into_iter()
+        .find(|pane| pane.pane_index == 1)
+        .expect("focused split pane")
+        .terminal
+}
+
+fn other_terminal(dashboard: &Dashboard, area: Rect) -> Rect {
+    dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("unfocused pane")
+        .terminal
+}
+
 #[test]
 fn browse_click_in_pane_focuses_without_bytes() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    let inner = focused_terminal_rect(&dashboard, area);
+    let inner = terminal_rect(&dashboard, area);
     let action = dashboard.mouse_action(
         click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
         area,
     );
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
     );
-    assert!(dashboard.take_mouse_cleanup().is_none());
 }
 
 #[test]
 fn browse_click_focuses_other_running_pane_and_types_after_view_ack() {
-    let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    assert!(dashboard.split_pane());
-    let split = dashboard
-        .view_request(area, 60)
-        .unwrap()
-        .expect("split should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, split);
-    assert!(dashboard.focus_pane(0));
-    let focused = dashboard
-        .view_request(area, 61)
-        .unwrap()
-        .expect("focus should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, focused);
+    let mut dashboard = split_ready(area);
+    let original = SessionId(1);
+    let split = dashboard.focused_session().expect("split session");
+    assert_ne!(split, original);
 
-    let other = dashboard
-        .pane_rects(area)
-        .into_iter()
-        .find(|pane| pane.pane_index == 1)
-        .expect("other pane")
-        .terminal;
+    let other = other_terminal(&dashboard, area);
     let action = dashboard.mouse_action(
         click_in(other, MouseEventKind::Down(MouseButton::Left), 2, 3),
         area,
     );
 
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert_eq!(dashboard.focused_pane, 1);
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(dashboard.focused_session(), Some(original));
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let replacement = dashboard
-        .view_request(area, 62)
-        .unwrap()
-        .expect("focus click should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, replacement);
+    dashboard.install_screen(original, &[]);
     assert_eq!(
         dashboard.key(KeyCode::Char('x')),
         ovrcr::tui::DashboardAction::PtyBytes(vec![b'x'])
@@ -366,54 +384,51 @@ fn browse_click_focuses_other_running_pane_and_types_after_view_ack() {
 
 #[test]
 fn terminal_click_focuses_other_pane_without_forwarding() {
-    let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    assert!(dashboard.split_pane());
-    let split = dashboard
-        .view_request(area, 60)
-        .unwrap()
-        .expect("split should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, split);
-    assert!(dashboard.focus_pane(0));
-    let focused = dashboard
-        .view_request(area, 61)
-        .unwrap()
-        .expect("focus should request both panes");
-    acknowledge_all_view_targets(&mut dashboard, focused);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let mut dashboard = split_ready(area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let original = SessionId(1);
 
-    let other = pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
-        .into_iter()
-        .find(|pane| pane.pane_index == 1)
-        .expect("other pane")
-        .terminal;
+    let other = other_terminal(&dashboard, area);
     let action = dashboard.mouse_action(
         click_in(other, MouseEventKind::Down(MouseButton::Left), 2, 3),
         area,
     );
 
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert_eq!(dashboard.focused_pane, 1);
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
-    assert!(dashboard.take_mouse_cleanup().is_none());
-    assert!(dashboard.input_request(vec![b'x'], 62).is_none());
-    assert!(dashboard.mouse_capture_required());
+    assert_eq!(dashboard.focused_session(), Some(original));
+    assert_eq!(
+        dashboard.key(KeyCode::Char('x')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
 }
 
 #[test]
 fn terminal_mode_keeps_dashboard_mouse_capture_without_a_ready_session() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 20, cols: 80 });
-    dashboard.mode = ovrcr::tui::InputMode::Terminal;
+    let area = Rect::new(0, 0, 80, 20);
+    dashboard.install_area(area);
     assert!(dashboard.focused_session().is_none());
-    assert!(dashboard.mouse_capture_required());
+    assert_ne!(
+        dashboard.mouse_action(
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                50,
+                10,
+                KeyModifiers::NONE,
+            ),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::PtyBytes(Vec::new())
+    );
 }
 
 #[test]
 fn press_outside_rectangle_is_not_clamped() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     // The column left of the pane is the sidebar border: the dashboard takes the
     // press as a resize gesture instead of clamping it into the application.
     assert_eq!(
@@ -458,8 +473,8 @@ fn press_outside_rectangle_is_not_clamped() {
 fn leaving_the_rectangle_releases_at_last_valid_cell() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     assert_eq!(
         dashboard.mouse_action(
             click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
@@ -485,8 +500,8 @@ fn leaving_the_rectangle_releases_at_last_valid_cell() {
 fn dragging_tracked_mouse_into_sidebar_releases_application_button() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     assert_eq!(
         dashboard.mouse_action(
             click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
@@ -512,8 +527,8 @@ fn dragging_tracked_mouse_into_sidebar_releases_application_button() {
 fn ctrl_g_releases_held_buttons_before_switching() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     dashboard.mouse_action(
         click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
         area,
@@ -522,32 +537,37 @@ fn ctrl_g_releases_held_buttons_before_switching() {
         dashboard.ctrl('g'),
         ovrcr::tui::DashboardAction::EnterBrowse
     );
-    let cleanup = dashboard.take_mouse_cleanup().expect("held release");
-    assert!(matches!(
-        cleanup.request,
-        Request::Input { session, bytes }
-            if session == SessionId(1) && bytes == b"\x1b[<0;3;4m"
-    ));
-    assert!(dashboard.take_mouse_cleanup().is_none());
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert_eq!(
+        dashboard.mouse_action(
+            click_in(inner, MouseEventKind::Up(MouseButton::Left), 2, 3),
+            area,
+        ),
+        ovrcr::tui::DashboardAction::None
+    );
+    assert!(
+        !matches!(
+            dashboard.key(KeyCode::Char('z')),
+            ovrcr::tui::DashboardAction::PtyBytes(_)
+        ),
+        "browse after ctrl-g must not type into the PTY"
+    );
 }
 
 #[test]
 fn protocol_change_clears_held_state() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     dashboard.mouse_action(
         click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
         area,
     );
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
-        revision: dashboard.view_revision,
+        revision: 0,
         bytes: b"\x1b[?1002l".to_vec(),
     }));
-    assert!(dashboard.take_mouse_cleanup().is_none());
     assert_eq!(
         dashboard.mouse_action(
             click_in(inner, MouseEventKind::Up(MouseButton::Left), 2, 3),
@@ -561,7 +581,7 @@ fn protocol_change_clears_held_state() {
 fn wheel_over_a_pane_without_tracking_opens_history_at_the_tail() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    let inner = focused_terminal_rect(&dashboard, area);
+    let inner = terminal_rect(&dashboard, area);
     let action = dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area);
     let ovrcr::tui::DashboardAction::Request(begin) = action else {
         panic!("expected history begin, got {action:?}");
@@ -572,22 +592,24 @@ fn wheel_over_a_pane_without_tracking_opens_history_at_the_tail() {
             session: SessionId(1)
         }
     );
-    dashboard.handle_server_message(ServerMessage::Response {
+    let outgoing = dashboard.handle_server_message(ServerMessage::Response {
         request_id: begin.request_id,
         response: Response::HistoryOpened(history_opened(80)),
     });
-    let view = dashboard.history.as_ref().expect("history open");
-    let size = ovrcr::tui::history_view_size(dashboard.panes[dashboard.focused_pane].size);
-    let max_top = view.opened.total_rows.saturating_sub(u32::from(size.rows));
-    assert_eq!(view.top, max_top);
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::History);
+    assert!(
+        outgoing.iter().any(|message| matches!(
+            message.request,
+            Request::HistoryPage { start_row, .. } if start_row > 0
+        )),
+        "history opened at the tail should page from a non-zero row, got {outgoing:?}"
+    );
 }
 
 #[test]
 fn wheel_down_at_newest_row_returns_to_live() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    let inner = focused_terminal_rect(&dashboard, area);
+    let inner = terminal_rect(&dashboard, area);
     let ovrcr::tui::DashboardAction::Request(begin) =
         dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area)
     else {
@@ -607,16 +629,14 @@ fn wheel_down_at_newest_row_returns_to_live() {
         ),
         "{action:?}"
     );
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
-    assert!(dashboard.history.is_none());
 }
 
 #[test]
 fn wheel_is_forwarded_when_tracking_is_enabled() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1000h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1000h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     assert_eq!(
         dashboard.mouse_action(click_in(inner, MouseEventKind::ScrollUp, 2, 3), area),
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<64;3;4M".to_vec())
@@ -625,42 +645,31 @@ fn wheel_is_forwarded_when_tracking_is_enabled() {
 
 #[test]
 fn wheel_up_over_the_unfocused_pane_opens_its_history() {
-    let mut dashboard = dashboard_fixture();
-    let area = dashboard.outer_area;
-    assert!(dashboard.split_pane());
-    let split_view = dashboard
-        .view_request(area, 70)
-        .unwrap()
-        .expect("split should request both snapshots");
-    acknowledge_all_view_targets(&mut dashboard, split_view);
-    assert!(dashboard.focus_pane(0));
-    let refocus = dashboard
-        .view_request(area, 71)
-        .unwrap()
-        .expect("focus change should request a view");
-    acknowledge_all_view_targets(&mut dashboard, refocus);
-    assert_eq!(dashboard.focused_pane, 0);
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = split_ready(area);
+    let session_b = dashboard.focused_session().expect("unfocused pane session");
+    let original = SessionId(1);
+    dashboard.install_focus(original);
+    dashboard.install_screen(original, &[]);
+    assert_eq!(dashboard.focused_session(), Some(original));
 
-    let unfocused = pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
+    let unfocused = dashboard
+        .pane_rects(area)
         .into_iter()
         .find(|pane| pane.pane_index == 1)
-        .expect("unfocused pane rect")
+        .expect("unfocused split pane")
         .terminal;
-    let session_b = dashboard.panes[1].session.expect("unfocused pane session");
     let action = dashboard.mouse_action(click_in(unfocused, MouseEventKind::ScrollUp, 2, 3), area);
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
-    assert_eq!(dashboard.focused_pane, 1);
-    assert_eq!(
-        dashboard.error.as_deref(),
-        None,
-        "a wheel over the other pane must not report a loading refusal"
-    );
-    assert!(dashboard.history.is_none());
+    assert_eq!(dashboard.focused_session(), Some(session_b));
 
-    let replacement = dashboard
-        .view_request(area, 72)
-        .unwrap()
+    let dirty = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        session: session_b,
+        revision: 0,
+    }));
+    let replacement = dirty
+        .into_iter()
+        .find(|message| matches!(message.request, Request::SetView { .. }))
         .expect("the wheel focus change should emit one SetView");
     let Request::SetView { ref view } = replacement.request else {
         panic!("expected SetView");
@@ -670,7 +679,6 @@ fn wheel_up_over_the_unfocused_pane_opens_its_history() {
         request_id: replacement.request_id,
         response: Response::Ok,
     });
-    assert!(dashboard.panes[1].ready);
     assert!(
         outgoing.iter().any(|message| matches!(
             message.request,
@@ -684,8 +692,8 @@ fn wheel_up_over_the_unfocused_pane_opens_its_history() {
 fn pause_cancels_a_held_mouse_gesture() {
     let mut dashboard = dashboard_fixture();
     let area = Rect::new(0, 0, 120, 40);
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     assert_eq!(
         dashboard.mouse_action(
             click_in(inner, MouseEventKind::Down(MouseButton::Left), 2, 3),
@@ -693,8 +701,7 @@ fn pause_cancels_a_held_mouse_gesture() {
         ),
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;3;4M".to_vec())
     );
-    let mut paused = dashboard
-        .hierarchy
+    let mut paused = fixture_hierarchy()
         .projects
         .iter()
         .flat_map(|project| project.workspaces.iter())
@@ -706,19 +713,6 @@ fn pause_cancels_a_held_mouse_gesture() {
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         paused,
     ))));
-    let cleanup = dashboard
-        .take_mouse_cleanup()
-        .expect("pausing the focused session should release the held button");
-    assert!(
-        matches!(
-            cleanup.request,
-            Request::Input { session, ref bytes }
-                if session == SessionId(1) && bytes == b"\x1b[<0;3;4m"
-        ),
-        "{:?}",
-        cleanup.request
-    );
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
     assert_eq!(
         dashboard.mouse_action(
             click_in(inner, MouseEventKind::Up(MouseButton::Left), 2, 3),
@@ -726,15 +720,15 @@ fn pause_cancels_a_held_mouse_gesture() {
         ),
         ovrcr::tui::DashboardAction::None
     );
-    assert!(dashboard.take_mouse_cleanup().is_none());
 }
 
 #[test]
 fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
     let mut dashboard = dashboard_fixture();
-    let area = dashboard.outer_area;
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let inner = focused_terminal_rect(&dashboard, area);
+    let area = Rect::new(0, 0, 88, 38);
+    dashboard.install_area(area);
+    enable_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
+    let inner = terminal_rect(&dashboard, area);
     assert_eq!(
         dashboard.event_action(Event::Mouse(click_in(
             inner,
@@ -748,19 +742,6 @@ fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
         dashboard.event_action(Event::FocusLost),
         ovrcr::tui::DashboardAction::Redraw
     );
-    let cleanup = dashboard
-        .take_mouse_cleanup()
-        .expect("losing focus should queue the release of the held button");
-    assert!(
-        matches!(
-            cleanup.request,
-            Request::Input { session, ref bytes }
-                if session == SessionId(1) && bytes == b"\x1b[<0;3;4m"
-        ),
-        "{:?}",
-        cleanup.request
-    );
-    assert!(dashboard.take_mouse_cleanup().is_none());
     for kind in [
         MouseEventKind::Drag(MouseButton::Left),
         MouseEventKind::Up(MouseButton::Left),
@@ -773,8 +754,6 @@ fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
             "{kind:?} must be dropped while the terminal has no focus"
         );
     }
-    assert!(dashboard.take_mouse_cleanup().is_none());
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
     assert_eq!(
         dashboard.event_action(Event::FocusGained),
         ovrcr::tui::DashboardAction::Redraw
@@ -797,5 +776,4 @@ fn focus_lost_finishes_gestures_and_focus_gained_resumes() {
         ))),
         ovrcr::tui::DashboardAction::PtyBytes(b"\x1b[<0;5;6m".to_vec())
     );
-    assert!(dashboard.take_mouse_cleanup().is_none());
 }

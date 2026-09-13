@@ -6,16 +6,47 @@ use ovrcr::service::{
     start_if_installed_with,
 };
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
 struct Fixture {
     root: TempDir,
     config: ServiceConfig,
     log: PathBuf,
+}
+
+fn write_executable(path: &Path, contents: &str) {
+    let temporary = path.with_extension("tmp");
+    {
+        let mut file = fs::File::create(&temporary).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.sync_all().unwrap();
+    }
+    let mut permissions = fs::metadata(&temporary).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&temporary, permissions).unwrap();
+    fs::rename(&temporary, path).unwrap();
+}
+
+fn await_executable(path: &Path) {
+    // Linux overlayfs and scanners can still hold a just-written executable,
+    // so execve returns ETXTBSY (26). Wait until this inode can run.
+    for _ in 0..50 {
+        match Command::new(path).arg("__ovrcr_fixture_probe").output() {
+            Ok(_) => return,
+            Err(error) if error.raw_os_error() == Some(26) => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("probe {}: {error}", path.display()),
+        }
+    }
+    panic!("executable stayed busy: {}", path.display());
 }
 
 impl Fixture {
@@ -27,9 +58,9 @@ impl Fixture {
         let log = root.path().join("manager.log");
         let active = root.path().join("manager.active");
         let manager = root.path().join("fake-manager");
-        fs::write(
+        write_executable(
             &manager,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n\
                  if [ \"$1\" = print ]; then [ -f '{active}' ] || exit 1; printf '\\tpid = '; cat '{active}'; exit 0; fi\n\
                  if [ \"$2\" = show ]; then cat '{active}'; exit $?; fi\n\
@@ -44,11 +75,9 @@ impl Fixture {
                 active.display(),
                 active = active.display()
             ),
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&manager).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&manager, permissions).unwrap();
+        );
+        await_executable(&manager);
+        let _ = fs::remove_file(&log);
         let definition_path = match platform {
             ServicePlatform::Launchd => root.path().join("LaunchAgents/com.ovrcr.server.plist"),
             ServicePlatform::Systemd => root.path().join("systemd/user/ovrcr.service"),

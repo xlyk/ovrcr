@@ -1,6 +1,6 @@
 use super::*;
 use ovrcr::protocol::{AgentBinding, AgentProvider, ReadyObservation};
-use ovrcr::tui::{DashboardAction, InputMode};
+use ovrcr::tui::DashboardAction;
 
 fn observation(turn: &str, revision: u64) -> ReadyObservation {
     ReadyObservation {
@@ -15,36 +15,44 @@ fn observation(turn: &str, revision: u64) -> ReadyObservation {
     }
 }
 
-fn selected(d: &mut Dashboard) -> &mut SessionSummary {
+fn focused_summary(d: &Dashboard) -> SessionSummary {
     let id = d.focused_session().unwrap();
-    d.hierarchy
+    fixture_hierarchy()
         .projects
-        .iter_mut()
-        .flat_map(|p| &mut p.workspaces)
-        .flat_map(|w| &mut w.sessions)
-        .find(|s| s.id == id)
-        .unwrap()
+        .into_iter()
+        .flat_map(|project| project.workspaces)
+        .flat_map(|workspace| workspace.sessions)
+        .find(|session| session.id == id)
+        .expect("focused fixture session")
+}
+
+fn publish_session(d: &mut Dashboard, summary: SessionSummary) {
+    d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+        summary,
+    ))));
+}
+
+fn draw(d: &mut Dashboard, width: u16, height: u16) {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    d.draw(&mut terminal).unwrap();
 }
 
 #[test]
 fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
     let mut d = screen_ready_dashboard(b"VISIBLE_RESPONSE");
     let unread = observation("one", 2);
-    selected(&mut d).unread = Some(unread.clone());
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    d.draw(&mut terminal).unwrap();
-    let original = selected(&mut d).clone();
-    let id = original.id;
-    // Selection and terminal entry leave review state alone.
-    d.select_session(id);
+    let mut summary = focused_summary(&d);
+    summary.unread = Some(unread.clone());
+    publish_session(&mut d, summary);
+    draw(&mut d, 120, 30);
+    let id = d.focused_session().unwrap();
+    d.install_focus(id);
     d.key(KeyCode::Enter);
     assert_eq!(
         d.key(KeyCode::Char('R')),
         DashboardAction::PtyBytes(b"R".to_vec())
     );
-    assert_eq!(selected(&mut d), &original);
     d.ctrl('g');
-    assert_eq!(d.mode, InputMode::Browse);
     for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
         assert!(!matches!(
             d.key_action(KeyEvent::new_with_kind(
@@ -65,19 +73,23 @@ fn unread_review_key_captures_visible_observation_without_optimistic_clear() {
             expected: unread
         }
     );
-    assert_eq!(
-        selected(&mut d),
-        &original,
-        "only server publication clears unread"
-    );
-    selected(&mut d).unread = Some(observation("two", 4));
+    let mut newer = focused_summary(&d);
+    newer.unread = Some(observation("two", 4));
+    publish_session(&mut d, newer);
     d.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,
         response: Response::Ok,
     });
+    draw(&mut d, 120, 30);
+    let DashboardAction::Request(later) = d.key(KeyCode::Char('R')) else {
+        panic!("new unread must stay reviewable after a late ack");
+    };
     assert_eq!(
-        selected(&mut d).unread,
-        Some(observation("two", 4)),
+        later.request,
+        Request::MarkReviewed {
+            session: id,
+            expected: observation("two", 4),
+        },
         "late acknowledgement cannot clear new snapshot"
     );
     d.key(KeyCode::Char(':'));
@@ -98,15 +110,16 @@ fn unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes() {
     for width in [80, 100, 160] {
         for split in [false, true] {
             let mut d = dashboard_fixture();
-            let session = selected(&mut d);
+            let mut session = focused_summary(&d);
             session.unread = Some(observation("one", 2));
             session.activity = AgentActivity::Busy;
             session.name = "very-long-session-name-for-clipping".into();
-            // No current agent snapshot after a legacy shell report; unread still survives.
             session.agent = None;
+            publish_session(&mut d, session);
             if split {
                 d.split_pane();
-                d.focus_pane(0);
+                let _ = d.ctrl('g');
+                d.key(KeyCode::Tab);
             }
             let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
             terminal.draw(|f| draw_dashboard_at(f, &d, 0)).unwrap();
@@ -128,9 +141,10 @@ fn unread_and_unavailable_remain_visible_in_narrow_single_and_split_panes() {
 #[test]
 fn unread_review_action_is_discoverable_in_palette_and_terminal_keys() {
     let mut d = screen_ready_dashboard(b"REVIEWABLE");
-    selected(&mut d).unread = Some(observation("one", 2));
-    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    d.draw(&mut terminal).unwrap();
+    let mut summary = focused_summary(&d);
+    summary.unread = Some(observation("one", 2));
+    publish_session(&mut d, summary);
+    draw(&mut d, 120, 30);
     d.key(KeyCode::Char(':'));
     for ch in "Mark reviewed".chars() {
         d.key(KeyCode::Char(ch));

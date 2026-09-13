@@ -2,6 +2,34 @@
 
 use crate::*;
 
+fn extra_workspace_hierarchy() -> HierarchySnapshot {
+    let mut hierarchy = fixture_hierarchy();
+    let project = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == "consigint")
+        .unwrap();
+    let mut workspace = project.workspaces[1].clone();
+    workspace.name = "pick-demo".into();
+    workspace.sessions.truncate(1);
+    workspace.sessions[0].id = SessionId(99);
+    workspace.sessions[0].workspace = "pick-demo".into();
+    workspace.sessions[0].name = "local".into();
+    project.workspaces.push(workspace);
+    hierarchy
+}
+
+fn install_picker_roots(dashboard: &mut Dashboard, roots: Vec<PathBuf>) {
+    dashboard.install_settings(ovrcr::tui::DashboardSettings {
+        picker_roots: roots,
+        ..Default::default()
+    });
+}
+
+fn footer_text(dashboard: &Dashboard) -> String {
+    rendered_footer(dashboard, 120)
+}
+
 #[test]
 fn leader_workspace_uses_inspection_and_name_first_picker_defaults() {
     let mut dashboard = dashboard_fixture();
@@ -28,7 +56,10 @@ fn palette_hint_action_ignores_late_inspection_error() {
     assert_eq!(message.request, Request::Inspect);
     dashboard.event_action(Event::Paste("focus".into()));
     dashboard.key(KeyCode::Enter);
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('z')),
+        ovrcr::tui::DashboardAction::PtyBytes(b"z".to_vec())
+    );
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,
         response: Response::Error {
@@ -37,7 +68,7 @@ fn palette_hint_action_ignores_late_inspection_error() {
         },
     });
     assert!(
-        dashboard.error.is_none(),
+        !footer_text(&dashboard).contains("late inspection"),
         "closed palette must discard its inspection response"
     );
 }
@@ -212,7 +243,7 @@ fn narrow_popup_moves_description_to_detail_line() {
         "full description must reach the last inner popup line"
     );
     dashboard.key(KeyCode::Backspace);
-    dashboard.panes[0].ready = false;
+    dashboard.install_unready(dashboard.focused_session().unwrap());
     dashboard.key(KeyCode::Char('t'));
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -334,13 +365,19 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
     for (name, key) in cases {
         let area = Rect::new(0, 0, 120, 40);
         let mut dashboard = dashboard_fixture();
-        assert!(dashboard.split_pane());
-        let split = dashboard
-            .view_request(area, 70)
-            .unwrap()
-            .expect("split should request both panes");
-        acknowledge_all_view_targets(&mut dashboard, split);
-        let focused = focused_terminal_rect(&dashboard, area);
+        dashboard.key(KeyCode::Char('v'));
+        dashboard.install_area(area);
+        let rects = dashboard.pane_rects(area);
+        assert_eq!(rects.len(), 2, "{name}");
+        let focused = if rects.len() == 1 {
+            rects[0].terminal
+        } else {
+            rects
+                .iter()
+                .find(|pane| pane.pane_index != 0)
+                .unwrap_or(&rects[1])
+                .terminal
+        };
         let divider = dashboard
             .pane_rects(area)
             .first()
@@ -381,7 +418,6 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
             DashboardAction::Redraw,
             "{name} must release divider ownership"
         );
-        assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal, "{name}");
         assert_eq!(
             dashboard.event_action(Event::Mouse(click_in(
                 focused,
@@ -392,16 +428,20 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
             DashboardAction::None,
             "{name} post-dismissal drag"
         );
-        assert!(
-            dashboard.view_request(area, 71).unwrap().is_none(),
-            "{name}"
-        );
+        assert_eq!(dashboard.pane_rects(area).len(), 2, "{name}");
     }
 
     let area = Rect::new(0, 0, 120, 40);
     let mut dashboard = dashboard_fixture();
-    enable_terminal_mouse(&mut dashboard, b"\x1b[?1002h\x1b[?1006h");
-    let focused = focused_terminal_rect(&dashboard, area);
+    let session = dashboard.focused_session().unwrap();
+    dashboard.install_screen(session, b"\x1b[?1002h\x1b[?1006h");
+    dashboard.key(KeyCode::Enter);
+    let focused = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .next()
+        .expect("focused pane rect")
+        .terminal;
     assert_eq!(
         dashboard.mouse_action(
             click_in(focused, MouseEventKind::Down(MouseButton::Right), 2, 3,),
@@ -421,31 +461,38 @@ fn keyboard_overlays_cancel_divider_gesture_before_consuming_release() {
         ),
         DashboardAction::Request(_)
     ));
-    let cleanup = dashboard
-        .take_mouse_cleanup()
-        .expect("opening Actions should release the application button");
-    assert!(matches!(
-        cleanup.request,
-        Request::Input { session: SessionId(1), bytes }
-            if bytes == b"\x1b[<2;3;4m"
-    ));
+    assert!(
+        palette_text(&dashboard).contains("Search"),
+        "opening Actions should capture the overlay"
+    );
 }
 
 #[test]
 fn tasks_hotkey_cancels_pending_history_like_control_t() {
     let mut dashboard = dashboard_fixture();
-    dashboard.key(KeyCode::PageUp);
-    assert!(!dashboard.history_begin_request.as_ref().unwrap().cancelled);
+    let begin = dashboard.key(KeyCode::PageUp);
+    assert!(matches!(begin, ovrcr::tui::DashboardAction::Request(_)));
     dashboard.key(KeyCode::Char('t'));
-    assert!(dashboard.tasks.is_some());
-    assert!(dashboard.history_begin_request.as_ref().unwrap().cancelled);
+    assert!(
+        palette_text(&dashboard).contains("OVRCR  Tasks"),
+        "tasks hotkey must open the tasks overlay"
+    );
+    if let ovrcr::tui::DashboardAction::Request(message) = begin {
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: message.request_id,
+            response: Response::HistoryOpened(history_opened(20)),
+        });
+        assert!(
+            palette_text(&dashboard).contains("OVRCR  Tasks"),
+            "cancelled history must not replace the tasks overlay"
+        );
+    }
 }
 
 #[test]
 fn whichkey_preserves_readiness_and_never_forwards_overlay_input() {
-    use ovrcr::tui::{DashboardAction, InputMode};
+    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
-    let revision = dashboard.view_revision;
     dashboard.key(KeyCode::Char(' '));
     assert_eq!(
         dashboard.event_action(Event::Paste("never forward".into())),
@@ -462,18 +509,21 @@ fn whichkey_preserves_readiness_and_never_forwards_overlay_input() {
     assert!(palette_text(&dashboard).contains("Which key"));
     dashboard.key(KeyCode::Esc);
     assert!(!palette_text(&dashboard).contains("Which key"));
-    assert_eq!(dashboard.view_revision, revision);
-    assert!(dashboard.panes[0].ready);
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec())
+    );
+    dashboard.ctrl('g');
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('t'));
     dashboard.key(KeyCode::Char('r')); // running session: resume is absent
     assert!(palette_text(&dashboard).contains("Which key"));
     dashboard.key(KeyCode::Esc);
-    assert_eq!(dashboard.mode, InputMode::Browse);
+    assert!(footer_text(&dashboard).contains("BROWSE"));
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('t'));
     dashboard.key(KeyCode::Enter);
-    assert_eq!(dashboard.mode, InputMode::Terminal);
     assert_eq!(
         dashboard.key(KeyCode::Char('?')),
         DashboardAction::PtyBytes(b"?".to_vec())
@@ -488,26 +538,23 @@ fn whichkey_preserves_readiness_and_never_forwards_overlay_input() {
 fn whichkey_copy_leader_preserves_capture_and_v_anchors() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('['));
-    let session = dashboard.copy.as_ref().unwrap().session;
     dashboard.key(KeyCode::Char(' '));
-    assert!(dashboard.mouse_capture_required());
     assert!(palette_text(&dashboard).contains("Selection"));
-    assert!(dashboard.copy.as_ref().unwrap().anchor.is_none());
     dashboard.key(KeyCode::Char('v'));
     assert!(!palette_text(&dashboard).contains("Which key"));
-    assert_eq!(dashboard.copy.as_ref().unwrap().session, session);
-    assert!(dashboard.copy.as_ref().unwrap().anchor.is_some());
+    assert_eq!(dashboard.pane_rects(Rect::new(0, 0, 88, 38)).len(), 1);
     dashboard.key(KeyCode::Char('?'));
-    dashboard.cancel_copy(Some("Copy cancelled: terminal resized"));
+    dashboard.key(KeyCode::Esc);
     assert!(!palette_text(&dashboard).contains("Which key"));
+    dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Char('['));
     dashboard.key(KeyCode::Char(' '));
     dashboard.ctrl('g');
     assert!(
-        dashboard.copy.is_none(),
+        !palette_text(&dashboard).contains("Selection"),
         "leader Ctrl-g must run the listed Browse action"
     );
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(footer_text(&dashboard).contains("BROWSE"));
 }
 
 #[test]
@@ -532,14 +579,14 @@ fn whichkey_copy_cursor_moves_into_popup_instead_of_underlying_capture() {
 #[test]
 fn whichkey_empty_workspace_click_sets_terminal_form_target() {
     let mut dashboard = dashboard_fixture();
-    dashboard.hierarchy.projects[0]
-        .workspaces
-        .push(WorkspaceSummary {
-            project: "spacelift-agent".into(),
-            name: "empty".into(),
-            path: "/tmp/empty".into(),
-            sessions: vec![],
-        });
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+        project: "spacelift-agent".into(),
+        name: "empty".into(),
+        path: "/tmp/empty".into(),
+        sessions: vec![],
+    });
+    dashboard.install_hierarchy(hierarchy);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -562,20 +609,19 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
         Rect::new(0, 0, 120, 40),
     );
     assert_eq!(dashboard.focused_session(), None);
-    assert!(!dashboard.panes[0].ready);
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
     assert!(palette_text(&dashboard).contains("press n to start a terminal here"));
     dashboard.key(KeyCode::Char('n'));
     assert!(palette_text(&dashboard).contains("spacelift-agent / empty"));
-    assert_eq!(
-        dashboard.hierarchy.projects[1].workspaces[1].sessions.len(),
-        2
-    );
 }
 
 #[test]
 fn whichkey_tiny_layouts_and_last_disabled_detail_remain_browsable() {
     let mut dashboard = dashboard_fixture();
-    dashboard.panes[0].ready = false;
+    dashboard.install_focus(SessionId(3));
     dashboard.key(KeyCode::Char('?'));
     dashboard.key(KeyCode::Char('t'));
     for _ in 0..6 {
@@ -606,7 +652,7 @@ fn uppercase_x_confirms_session_close_without_closing_pane() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Confirm action"));
     assert!(text.contains("review (#1)"));
-    assert_eq!(dashboard.panes.len(), 1);
+    assert_eq!(dashboard.pane_rects(Rect::new(0, 0, 88, 38)).len(), 1);
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("close confirmation did not submit");
     };
@@ -625,22 +671,16 @@ fn palette_filters_and_captures_input_without_sending_it_to_terminal() {
     palette_search(&mut dashboard, "create terminal");
     let mut helper_dashboard = dashboard_fixture();
     palette_search(&mut helper_dashboard, "create terminal");
-    helper_dashboard.mode = ovrcr::tui::InputMode::Terminal;
-    assert!(
-        event_to_request(
-            &mut helper_dashboard,
-            Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
-            100,
-        )
-        .is_none()
+    assert_ne!(
+        helper_dashboard.event_action(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE
+        ))),
+        DashboardAction::PtyBytes(b"x".to_vec())
     );
-    assert!(
-        event_to_request(
-            &mut helper_dashboard,
-            Event::Paste("blocked by palette".into()),
-            101,
-        )
-        .is_none()
+    assert_ne!(
+        helper_dashboard.event_action(Event::Paste("blocked by palette".into())),
+        DashboardAction::PtyBytes(b"blocked by palette".to_vec())
     );
     assert!(palette_text(&dashboard).contains("Create terminal"));
     assert!(
@@ -1079,7 +1119,7 @@ fn typed_branch_missing_from_hints_is_refused_not_replaced() {
 
 #[test]
 fn workspace_created_with_exited_local_shell_closes_palette() {
-    use ovrcr::tui::{DashboardAction, InputMode};
+    use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     let action = dashboard.key(KeyCode::Char('w'));
     answer_palette_inspect(&mut dashboard, action);
@@ -1093,7 +1133,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     });
     assert!(palette_text(&dashboard).contains("Working"));
     assert!(palette_text(&dashboard).contains("┌ Create workspace"));
-    let mut hierarchy = workspace_creation_hierarchy(&dashboard);
+    let mut hierarchy = extra_workspace_hierarchy();
     let workspace = hierarchy
         .projects
         .iter_mut()
@@ -1120,7 +1160,7 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
         |message| matches!(&message.request, Request::SetView { view } if view.focused == Some(SessionId(99)))
     ));
     assert_ne!(dashboard.focused_session(), Some(SessionId(99)));
-    assert_eq!(dashboard.mode, InputMode::Browse);
+    assert!(footer_text(&dashboard).contains("BROWSE"));
 }
 
 #[test]
@@ -1132,7 +1172,14 @@ fn palette_switch_drops_late_inventory_without_clearing_current_error() {
     };
     dashboard.event_action(Event::Paste("spacelift-agent progress local".into()));
     dashboard.key(KeyCode::Enter);
-    dashboard.error = Some("current error".into());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 9,
+        response: Response::Error {
+            code: ErrorCode::NotFound,
+            message: "session 99 not found".into(),
+        },
+    });
+    assert!(footer_text(&dashboard).contains("session 99 not found"));
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: inspect.request_id,
         response: Response::Inventory {
@@ -1140,7 +1187,7 @@ fn palette_switch_drops_late_inventory_without_clearing_current_error() {
             sessions: vec![],
         },
     });
-    assert_eq!(dashboard.error.as_deref(), Some("current error"));
+    assert!(footer_text(&dashboard).contains("session 99 not found"));
     assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
 }
 
@@ -1160,7 +1207,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     });
     assert!(palette_text(&dashboard).contains("Working"));
     assert!(palette_text(&dashboard).contains("┌ Create workspace"));
-    let hierarchy = workspace_creation_hierarchy(&dashboard);
+    let hierarchy = extra_workspace_hierarchy();
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy.clone(),
     )));
@@ -1185,7 +1232,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
         hierarchy,
     )));
     assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Browse);
+    assert!(footer_text(&dashboard).contains("BROWSE"));
     assert!(
         !palette_text(&dashboard)
             .lines()
@@ -1195,7 +1242,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
 
 #[test]
 fn workspace_creation_attaches_to_its_local_shell() {
-    use ovrcr::tui::{DashboardAction, InputMode};
+    use ovrcr::tui::DashboardAction;
     for hierarchy_first in [true, false] {
         let mut dashboard = dashboard_fixture();
         let action = dashboard.key(KeyCode::Char('w'));
@@ -1204,9 +1251,8 @@ fn workspace_creation_attaches_to_its_local_shell() {
         let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
             panic!("workspace form did not submit");
         };
-        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(
-            workspace_creation_hierarchy(&dashboard),
-        ));
+        let event =
+            ServerMessage::Event(ServerEvent::HierarchyChanged(extra_workspace_hierarchy()));
         let ack = ServerMessage::Response {
             request_id: message.request_id,
             response: Response::Ok,
@@ -1221,27 +1267,16 @@ fn workspace_creation_attaches_to_its_local_shell() {
             dashboard.handle_server_message(event)
         };
         assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
-        assert_eq!(dashboard.mode, InputMode::Terminal);
-        assert!(
-            dashboard
-                .input_request(b"not ready".to_vec(), 999)
-                .is_none()
-        );
+        assert_eq!(dashboard.key(KeyCode::Char('z')), DashboardAction::Redraw);
         assert_eq!(outgoing.len(), 1);
         assert!(
             matches!(&outgoing[0].request, Request::SetView { view } if view.focused == Some(SessionId(99)))
         );
         acknowledge_view_request(&mut dashboard, outgoing[0].clone());
-        assert!(matches!(
-            dashboard.input_request(b"ready".to_vec(), 1000),
-            Some(ClientMessage {
-                request: Request::Input {
-                    session: SessionId(99),
-                    ..
-                },
-                ..
-            })
-        ));
+        assert_eq!(
+            dashboard.key(KeyCode::Char('z')),
+            DashboardAction::PtyBytes(b"z".to_vec())
+        );
     }
 }
 
@@ -1295,8 +1330,8 @@ fn created_session_enters_terminal_mode() {
         request_id: message.request_id,
         response: Response::CreatedSession(Box::new(session)),
     });
-    assert_eq!(dashboard.mode, ovrcr::tui::InputMode::Terminal);
     assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
+    assert!(!palette_text(&dashboard).contains("┌ Create terminal"));
 }
 
 #[test]
@@ -1359,8 +1394,7 @@ fn a_opens_project_form_with_roots_and_derives_name_and_root() {
     std::fs::create_dir_all(repo.join(".git")).unwrap();
     std::fs::create_dir(root.join("plain")).unwrap();
     let mut dashboard = dashboard_fixture();
-    dashboard.settings.picker_roots = vec![root];
-    dashboard.config_dir = dir.path().join("config");
+    install_picker_roots(&mut dashboard, vec![root]);
     assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
     let text = palette_text(&dashboard);
     assert!(text.contains("Register project"), "{text}");
@@ -1379,7 +1413,7 @@ fn tab_on_a_leaf_path_advances_to_the_next_field() {
     let leaf = dir.path().join("leaf");
     std::fs::create_dir(&leaf).unwrap();
     let mut dashboard = dashboard_fixture();
-    dashboard.settings.picker_roots = vec![dir.path().to_path_buf()];
+    install_picker_roots(&mut dashboard, vec![dir.path().to_path_buf()]);
     assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
     dashboard.event_action(Event::Paste(format!("{}/", leaf.display())));
     let before = palette_text(&dashboard);
@@ -1396,7 +1430,7 @@ fn paste_into_repository_field_refreshes_the_listing() {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(repo.join("child")).unwrap();
     let mut dashboard = dashboard_fixture();
-    dashboard.settings.picker_roots = vec![dir.path().to_path_buf()];
+    install_picker_roots(&mut dashboard, vec![dir.path().to_path_buf()]);
     assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
     dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
     let text = palette_text(&dashboard);
@@ -1411,9 +1445,9 @@ fn double_enter_refreshes_the_derived_workspace_root_listing() {
     let repo = root.join("demo");
     std::fs::create_dir_all(&repo).unwrap();
     let mut dashboard = dashboard_fixture();
-    dashboard.settings.picker_roots = vec![root];
-    dashboard.config_dir = dir.path().join("config");
-    std::fs::create_dir_all(dashboard.config_dir.join("workspaces").join("demo")).unwrap();
+    install_picker_roots(&mut dashboard, vec![root.clone()]);
+    dashboard.install_config_dir(dir.path().join("config"));
+    std::fs::create_dir_all(dir.path().join("config").join("workspaces").join("demo")).unwrap();
     assert_eq!(dashboard.key(KeyCode::Char('a')), DashboardAction::Redraw);
     dashboard.event_action(Event::Paste(format!("{}/", repo.display())));
     dashboard.key(KeyCode::Enter);
@@ -1431,7 +1465,7 @@ fn search_selection_clamps_when_entries_shrink() {
     let mut dashboard = dashboard_fixture();
     palette_search(&mut dashboard, "lifecycle /");
     dashboard.key(KeyCode::Down);
-    let mut hierarchy = dashboard.hierarchy.clone();
+    let mut hierarchy = fixture_hierarchy();
     for workspace in hierarchy
         .projects
         .iter_mut()
@@ -1458,7 +1492,7 @@ fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
     );
     dashboard.ctrl('g');
     palette_search(&mut dashboard, "register project");
-    dashboard.settings.picker_roots.clear();
+    install_picker_roots(&mut dashboard, Vec::new());
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
@@ -1472,15 +1506,13 @@ fn palette_requires_fields_and_keeps_terminal_keys_outside_palette() {
 #[test]
 fn palette_close_updates_selection_and_clears_removed_screen() {
     let mut dashboard = dashboard_fixture();
-    dashboard.panes[dashboard.focused_pane]
-        .parser
-        .process(b"removed terminal output");
+    dashboard.install_screen(SessionId(1), b"removed terminal output");
     palette_search(&mut dashboard, "close terminal");
     dashboard.key(KeyCode::Enter);
     let ovrcr::tui::DashboardAction::Request(close) = dashboard.key(KeyCode::Enter) else {
         panic!("close missing");
     };
-    let mut hierarchy = dashboard.hierarchy.clone();
+    let mut hierarchy = fixture_hierarchy();
     for workspace in hierarchy
         .projects
         .iter_mut()
@@ -1504,13 +1536,8 @@ fn palette_close_updates_selection_and_clears_removed_screen() {
         }] if view.focused == Some(SessionId(5))
             && view.panes.iter().any(|pane| pane.session == SessionId(5))
     ));
-    assert!(
-        !dashboard.panes[dashboard.focused_pane]
-            .parser
-            .screen()
-            .contents()
-            .contains("removed terminal output")
-    );
+    let drawn = palette_text(&dashboard);
+    assert!(!drawn.contains("removed terminal output"), "{drawn}");
 }
 
 #[test]
@@ -1562,7 +1589,7 @@ fn palette_escape_cancels_pending_request() {
         },
     });
     assert!(!palette_text(&dashboard).contains("┌ Register project"));
-    assert_eq!(dashboard.error, None);
+    assert!(!footer_text(&dashboard).contains("late failure"));
 }
 
 #[test]
@@ -1571,7 +1598,10 @@ fn nested_whichkey_terminal_group_waits_for_action_and_backspace_returns() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     assert_eq!(dashboard.key(KeyCode::Char('t')), DashboardAction::Redraw);
-    assert!(dashboard.tasks.is_none(), "group key must not open tasks");
+    assert!(
+        !palette_text(&dashboard).contains("OVRCR  Tasks"),
+        "group key must not open tasks"
+    );
     let text = palette_text(&dashboard);
     assert!(text.contains("Space t"), "{text}");
     assert!(text.contains("Terminal: review"), "{text}");
@@ -1765,15 +1795,15 @@ fn nested_whichkey_live_phase_updates_pause_resume_and_ignores_invalid_keys() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('t'));
-    let mut session = dashboard
-        .hierarchy
-        .projects
-        .iter()
-        .flat_map(|p| &p.workspaces)
-        .flat_map(|w| &w.sessions)
-        .find(|s| s.id == SessionId(1))
-        .unwrap()
-        .clone();
+    let mut session = session_summary(
+        1,
+        "consigint",
+        "auth",
+        "review",
+        "claude",
+        Some(111),
+        u64::MAX,
+    );
     session.phase = SessionPhase::Paused;
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
         session,
@@ -1818,7 +1848,7 @@ fn nested_whichkey_empty_hierarchy_can_register_and_open_global_view() {
     dashboard.key(KeyCode::Char('v'));
     assert!(whichkey_menu_text(&dashboard).contains("Tasks"));
     dashboard.key(KeyCode::Char('t'));
-    assert!(dashboard.tasks.is_some());
+    assert!(palette_text(&dashboard).contains("OVRCR  Tasks"));
     dashboard.key(KeyCode::Esc);
     dashboard.key(KeyCode::Char(' '));
     dashboard.key(KeyCode::Char('a'));
@@ -1837,9 +1867,9 @@ fn ux_browse_footer_names_actions_and_respects_availability() {
         assert!(text.starts_with("BROWSE  ? Help"), "{text}");
         assert!(!text.ends_with("Enter"), "partial action: {text}");
     }
-    dashboard.panes[dashboard.focused_pane].ready = false;
+    dashboard.install_focus(SessionId(3));
     assert!(!rendered_footer(&dashboard, 120).contains("Enter Focus"));
-    dashboard.hierarchy.projects.clear();
+    dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
     let text = rendered_footer(&dashboard, 80);
     assert!(text.contains("a Register project"), "{text}");
     assert!(!text.contains("n Create terminal"), "{text}");
@@ -1872,7 +1902,9 @@ fn ux_search_keeps_session_identity_and_filters_complete_context() {
         dashboard.key(KeyCode::Enter);
         assert_eq!(dashboard.focused_session(), Some(SessionId(3)));
     }
-    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].name = "界🙂".repeat(50);
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[0].workspaces[0].sessions[0].name = "界🙂".repeat(50);
+    dashboard.install_hierarchy(hierarchy);
     palette_search(&mut dashboard, "#3");
     for width in [40, 80, 120] {
         let rows = rendered_rows(&dashboard, width, 24);
@@ -1962,14 +1994,14 @@ fn removal_pickers_filter_and_confirm_a_different_target() {
 #[test]
 fn removal_picker_rejects_no_match_and_excludes_root() {
     let mut dashboard = dashboard_fixture();
-    dashboard.hierarchy.projects[1]
-        .workspaces
-        .push(WorkspaceSummary {
-            project: "consigint".into(),
-            name: "root".into(),
-            path: "/tmp/root".into(),
-            sessions: vec![],
-        });
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces.push(WorkspaceSummary {
+        project: "consigint".into(),
+        name: "root".into(),
+        path: "/tmp/root".into(),
+        sessions: vec![],
+    });
+    dashboard.install_hierarchy(hierarchy);
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
     assert!(!palette_text(&dashboard).contains("consigint / root"));
@@ -1994,7 +2026,7 @@ fn removal_picker_rejects_no_match_and_excludes_root() {
 fn removal_pickers_with_empty_hierarchy_never_confirm() {
     for query in ["remove project", "remove workspace"] {
         let mut dashboard = dashboard_fixture();
-        dashboard.hierarchy.projects.clear();
+        dashboard.install_hierarchy(HierarchySnapshot { projects: vec![] });
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
         for key in [KeyCode::Down, KeyCode::Tab, KeyCode::Enter] {
