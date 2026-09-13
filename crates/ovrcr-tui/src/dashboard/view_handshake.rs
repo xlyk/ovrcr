@@ -236,7 +236,6 @@ impl ViewHandshake {
         &mut self,
         request_id: u64,
         desired_now: &RequestedView,
-        now: Instant,
     ) -> Option<Acknowledged> {
         if self.pending.as_ref()?.request_id != request_id {
             return None;
@@ -250,11 +249,11 @@ impl ViewHandshake {
         self.snapshots.clear();
         if !complete {
             // `Ok` is final and every snapshot precedes it, so a missing one is a failed view
-            // rather than one still arriving. The caller clears this record for its immediate
-            // retry and records it again, so a server that keeps answering without snapshots
-            // is throttled.
+            // rather than one still arriving. The failure is the caller's to record, after its
+            // immediate re-request: `failed` is clear whenever a request is in flight, so
+            // recording it here would let that re-request through and spin one `SetView` per
+            // snapshot-less `Ok`.
             self.force_refresh = true;
-            self.failed = Some((pending.view.clone(), now));
             return Some(Acknowledged::Incomplete { view: pending.view });
         }
         if !self.force_refresh && pending.view.same(desired_now) && !pending.parser_discarded {
@@ -282,12 +281,9 @@ impl ViewHandshake {
         Some(pending.view)
     }
 
-    /// Lets the immediate retry after an `Incomplete` through the backoff.
-    pub(super) fn clear_failed(&mut self) {
-        self.failed = None;
-    }
-
-    /// Throttles the retry after the immediate one.
+    /// Records a view whose `Ok` arrived without every snapshot, after the caller has
+    /// re-requested it. The re-request is immediate because nothing was recorded yet; the one
+    /// after it finds this record and waits out the backoff.
     pub(super) fn record_failure(&mut self, view: RequestedView) {
         self.failed = Some((view, Instant::now()));
     }
@@ -352,22 +348,16 @@ mod tests {
             "wrong session"
         );
         h.record_snapshot(SessionId(1));
-        let Some(Acknowledged::Incomplete { view: incomplete }) =
-            h.acknowledge(10, &v, Instant::now())
-        else {
+        let Some(Acknowledged::Incomplete { view: incomplete }) = h.acknowledge(10, &v) else {
             panic!("a missing snapshot must not complete the view");
         };
         assert!(!h.is_ready(SessionId(1)));
         // The caller's immediate retry, then the throttle for the one after it.
-        h.clear_failed();
         let revision = send(&mut h, &v, 12);
         h.record_failure(incomplete);
         h.record_snapshot(SessionId(1));
         h.record_snapshot(SessionId(2));
-        assert!(matches!(
-            h.acknowledge(12, &v, Instant::now()),
-            Some(Acknowledged::Granted)
-        ));
+        assert!(matches!(h.acknowledge(12, &v), Some(Acknowledged::Granted)));
         assert!(h.is_ready(SessionId(1)) && h.is_ready(SessionId(2)));
         assert_eq!(h.revision(), revision);
         assert!(matches!(
@@ -386,26 +376,57 @@ mod tests {
         let v = view(&[1]);
         send(&mut h, &v, 1);
         h.record_snapshot(SessionId(1));
-        assert!(matches!(
-            h.acknowledge(1, &v, Instant::now()),
-            Some(Acknowledged::Granted)
-        ));
+        assert!(matches!(h.acknowledge(1, &v), Some(Acknowledged::Granted)));
         h.invalidate();
         assert!(!h.is_ready(SessionId(1)));
         let other = view(&[2]);
         send(&mut h, &other, 2);
         assert!(
-            h.acknowledge(1, &other, Instant::now()).is_none(),
+            h.acknowledge(1, &other).is_none(),
             "late Ok for a retired request"
         );
         assert!(h.refuse(1, Instant::now()).is_none());
         h.record_snapshot(SessionId(2));
         assert!(matches!(
-            h.acknowledge(2, &other, Instant::now()),
+            h.acknowledge(2, &other),
             Some(Acknowledged::Granted)
         ));
         h.mark_stale(SessionId(2));
         assert!(!h.is_ready(SessionId(2)));
+    }
+
+    #[test]
+    fn repeated_snapshotless_acknowledgements_wait_out_the_backoff() {
+        let mut h = ViewHandshake::default();
+        let v = view(&[1]);
+        send(&mut h, &v, 1);
+        // No snapshot: the `Ok` is incomplete and the caller re-requests at once.
+        let Some(Acknowledged::Incomplete { view: first }) = h.acknowledge(1, &v) else {
+            panic!("a missing snapshot must not complete the view");
+        };
+        let retry = h.desire(v.clone(), 2, Instant::now()).unwrap();
+        assert!(
+            matches!(retry, Desire::Send { .. }),
+            "first retry is immediate"
+        );
+        h.record_failure(first);
+        // The server answers the retry without a snapshot too: this one has to wait.
+        let Some(Acknowledged::Incomplete { view: second }) = h.acknowledge(2, &v) else {
+            panic!("a missing snapshot must not complete the view");
+        };
+        assert!(
+            matches!(
+                h.desire(v.clone(), 3, Instant::now()).unwrap(),
+                Desire::Waiting
+            ),
+            "a repeating snapshot-less Ok must not spin one SetView per acknowledgement"
+        );
+        h.record_failure(second);
+        let later = Instant::now() + VIEW_RETRY_BACKOFF + std::time::Duration::from_millis(1);
+        assert!(matches!(
+            h.desire(v.clone(), 4, later).unwrap(),
+            Desire::Send { .. }
+        ));
     }
 
     #[test]
@@ -438,7 +459,7 @@ mod tests {
             }
         ));
         h.record_snapshot(SessionId(1));
-        h.acknowledge(1, &v, Instant::now());
+        h.acknowledge(1, &v);
         h.mark_stale(SessionId(1));
         assert!(matches!(
             h.desire(v.clone(), 2, Instant::now()).unwrap(),

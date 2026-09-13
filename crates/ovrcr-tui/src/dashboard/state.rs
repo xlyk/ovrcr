@@ -2695,10 +2695,7 @@ impl Dashboard {
                 }
                 Response::Ok => {
                     let desired_now = self.desired_view();
-                    match self
-                        .handshake
-                        .acknowledge(request_id, &desired_now, Instant::now())
-                    {
+                    match self.handshake.acknowledge(request_id, &desired_now) {
                         Some(Acknowledged::Granted) => {
                             // A server-driven refresh completes the same way a user's selection
                             // does, so the banner is cleared only when a refused view wrote it or
@@ -2713,10 +2710,10 @@ impl Dashboard {
                             }
                         }
                         Some(Acknowledged::Incomplete { view }) => {
-                            // The first retry is immediate; the one after it waits out the
-                            // backoff, so a server that keeps answering without snapshots is
-                            // throttled.
-                            self.handshake.clear_failed();
+                            // The first retry is immediate, because no failure is recorded while
+                            // a request is in flight; recording it after that re-request makes
+                            // the next snapshot-less `Ok` wait out the backoff instead of
+                            // spinning one `SetView` per acknowledgement.
                             let _ = self.request_view_at(self.outer_area);
                             self.handshake.record_failure(view);
                         }
