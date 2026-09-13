@@ -539,6 +539,25 @@ fn held_index(button: MouseButton) -> usize {
     }
 }
 
+/// Every way a pane change can move: which release rules apply is decided by
+/// the variant, not the caller. See `Dashboard::retarget`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneChange {
+    Split,
+    Focus,
+    Close,
+    Select,
+    Container,
+    /// The tree has no sessions; the focused pane is being emptied.
+    Cleared,
+    /// Drawn pane geometry changed (split drag, sidebar drag). History keeps its frozen cells.
+    Resize,
+    /// The server removed a session shown in a pane.
+    ServerRemoved {
+        focused_survives: bool,
+    },
+}
+
 impl Dashboard {
     pub fn new(size: TerminalSize) -> Self {
         Self {
@@ -785,16 +804,12 @@ impl Dashboard {
             self.set_error("No other visible session to split");
             return false;
         };
-        self.mark_pending_parser_discarded();
-        self.release_for_selection_change();
+        self.retarget(PaneChange::Split);
         let size = self.focused_size();
         let mut pane = super::PaneState::new(size);
         pane.session = Some(session);
         self.panes.push(pane);
         self.focused_pane = 1;
-        self.mode = InputMode::Browse;
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
         true
     }
 
@@ -802,12 +817,9 @@ impl Dashboard {
         if index >= self.panes.len() || index == self.focused_pane {
             return false;
         }
-        self.release_for_selection_change();
+        self.retarget(PaneChange::Focus);
         self.focused_pane = index;
         self.selected_container = None;
-        self.mode = InputMode::Browse;
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
         true
     }
 
@@ -815,14 +827,10 @@ impl Dashboard {
         if self.panes.len() < 2 {
             return false;
         }
-        self.mark_pending_parser_discarded();
-        self.release_for_selection_change();
+        self.retarget(PaneChange::Close);
         self.panes.remove(self.focused_pane);
         self.selected_container = None;
         self.focused_pane = self.focused_pane.min(self.panes.len().saturating_sub(1));
-        self.mode = InputMode::Browse;
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
         true
     }
 
@@ -1115,7 +1123,7 @@ impl Dashboard {
             })
             .collect::<Vec<_>>();
         if ids.is_empty() {
-            self.mark_pending_parser_discarded();
+            self.retarget(PaneChange::Cleared);
             if let Some(pane) = self.focused_pane_mut() {
                 pane.session = None;
                 pane.ready = false;
@@ -1140,8 +1148,7 @@ impl Dashboard {
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
             self.focus_pane(index);
         } else if self.focused_session() != Some(id) {
-            self.mark_pending_parser_discarded();
-            self.release_for_selection_change();
+            self.retarget(PaneChange::Select);
             let size = self.focused_size();
             if let Some(pane) = self.focused_pane_mut() {
                 pane.session = Some(id);
@@ -1152,9 +1159,6 @@ impl Dashboard {
                 pane.ready = false;
                 pane.error = None;
             }
-            self.pending_user_view_change = true;
-            self.invalidate_view_readiness();
-            self.mode = InputMode::Browse;
         }
         let rows = self.visible_rows();
         self.ensure_selection_visible(&rows);
@@ -1740,6 +1744,55 @@ impl Dashboard {
         DashboardAction::EnterBrowse
     }
 
+    /// Every path that changes what a pane shows comes through here. The variant decides
+    /// which releases apply, so a reader can tell "deliberate" from "forgotten" in one
+    /// place instead of eight.
+    pub(super) fn retarget(&mut self, change: PaneChange) {
+        use PaneChange::*;
+        let discard_pending_parser = !matches!(change, Focus | Resize);
+        let release_capture = !matches!(
+            change,
+            Resize
+                | ServerRemoved {
+                    focused_survives: true
+                }
+        );
+        let user_change = !matches!(change, ServerRemoved { .. } | Cleared);
+        let invalidate = !matches!(
+            change,
+            ServerRemoved {
+                focused_survives: true
+            }
+        );
+        let browse = !matches!(
+            change,
+            Resize
+                | ServerRemoved {
+                    focused_survives: true
+                }
+        );
+        if discard_pending_parser {
+            self.mark_pending_parser_discarded();
+        }
+        if matches!(change, ServerRemoved { .. }) {
+            // `retain` shifts pane indices, so a parked wheel deferral no longer names the
+            // pane the user scrolled, even when the focused session survives.
+            self.deferred_history_at_tail = None;
+        }
+        if release_capture {
+            self.release_for_selection_change();
+        }
+        if user_change {
+            self.pending_user_view_change = true;
+        }
+        if invalidate {
+            self.invalidate_view_readiness();
+        }
+        if browse {
+            self.mode = InputMode::Browse;
+        }
+    }
+
     fn release_for_selection_change(&mut self) {
         self.whichkey = None;
         self.cancel_mouse_gesture();
@@ -2226,8 +2279,7 @@ impl Dashboard {
             }
         }
         self.queue_held_releases();
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
+        self.retarget(PaneChange::Resize);
     }
 
     fn resize_split(&mut self, area: Rect, column: u16) -> bool {
@@ -2256,8 +2308,7 @@ impl Dashboard {
         if self.selected_container.as_ref() == Some(&row) {
             return;
         }
-        self.mark_pending_parser_discarded();
-        self.release_for_selection_change();
+        self.retarget(PaneChange::Container);
         let size = self.focused_size();
         if let Some(pane) = self.focused_pane_mut() {
             *pane = super::PaneState::new(size);
@@ -2266,9 +2317,6 @@ impl Dashboard {
             self.focused_pane = index;
         }
         self.selected_container = Some(row);
-        self.mode = InputMode::Browse;
-        self.pending_user_view_change = true;
-        self.invalidate_view_readiness();
     }
 
     fn terminal_mouse_action(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
@@ -3159,20 +3207,13 @@ impl Dashboard {
             .iter()
             .any(|pane| pane.session.is_some_and(|id| !existing.contains(&id)));
         if removed {
-            self.mark_pending_parser_discarded();
-            // `retain` below shifts pane indices and `focused_pane` follows them, so a parked
-            // wheel deferral no longer names the pane the user scrolled. A surviving focused
-            // session skips `invalidate_view_readiness`, so clear it here rather than leaning on
-            // the downstream focus guard.
-            self.deferred_history_at_tail = None;
             let focused_survives = focused_before.is_some_and(|id| existing.contains(&id));
+            self.retarget(PaneChange::ServerRemoved { focused_survives });
+            // `retain` below shifts pane indices and `focused_pane` follows them, so a parked
+            // wheel deferral no longer names the pane the user scrolled; `retarget` already
+            // cleared it above.
             self.panes
                 .retain(|pane| pane.session.is_some_and(|id| existing.contains(&id)));
-            if !focused_survives {
-                self.release_for_selection_change();
-                self.invalidate_view_readiness();
-                self.mode = InputMode::Browse;
-            }
             if self.panes.is_empty() {
                 self.panes.push(super::PaneState::new(self.focused_size()));
             }

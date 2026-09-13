@@ -2009,6 +2009,28 @@ fn history_end_survives_split_and_leave_history() {
 }
 
 #[test]
+fn emptying_the_tree_releases_the_captured_history() {
+    // Regression: move_selection's empty-tree branch cleared the pane without releasing the
+    // History/Copy capture bound to the vanished session. staged_history_copy_dashboard leaves
+    // the hierarchy empty (it never assigns one), so `visible_rows()` is already empty here and
+    // move_selection takes the empty-ids branch directly.
+    let mut dashboard = staged_history_copy_dashboard(); // history open on session 1
+    dashboard.move_selection(1);
+    let batch = dashboard.drain_outbox();
+    assert!(
+        batch.iter().any(|m| matches!(
+            m.request,
+            Request::HistoryEnd {
+                session: SessionId(1),
+                ..
+            }
+        )),
+        "{batch:?}"
+    );
+    assert_eq!(dashboard.mode, InputMode::Browse);
+}
+
+#[test]
 fn mouse_cleanup_precedes_the_replacement_set_view() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let area = Rect::new(0, 0, 120, 40);
