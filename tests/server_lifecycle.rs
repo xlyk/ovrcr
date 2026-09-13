@@ -11163,6 +11163,74 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
 }
 
 #[test]
+fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let id = summary.id.0.to_string();
+    let native = fixture._root.path().join("pi");
+    let doctor = |fixture: &ControlFixture| -> serde_json::Value {
+        let output = cli_with_output(
+            bin,
+            &config,
+            &fixture.socket,
+            &[
+                "agent",
+                "doctor",
+                "pi",
+                "--json",
+                "--session",
+                &id,
+                "--executable",
+                native.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let before = doctor(&fixture);
+    assert_eq!(before["session_status"], "unbound");
+    assert!(before["remediation"].to_string().contains("agent run pi"));
+    let mut index = 0;
+    pi_callback(&fixture, summary.id, &mut index, "session_start:sess-a");
+    let bound = doctor(&fixture);
+    assert_eq!(bound["session_status"], "bound");
+    assert_eq!(bound["binding"]["provider"], "Pi");
+    assert_eq!(bound["lifecycle"]["extension"], "loaded_and_bound");
+    assert_eq!(bound["lifecycle"]["delivery"], "observed");
+    assert_eq!(bound["lifecycle"]["activity"], "Idle");
+    assert_eq!(bound["lifecycle"]["health"], "Connected");
+    assert_eq!(bound["lifecycle"]["unread"], false);
+    assert_eq!(bound["version_status"], "tested");
+    for command in ["agent_start", "agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready = doctor(&fixture);
+    assert_eq!(ready["lifecycle"]["activity"], "ResponseReady");
+    assert_eq!(ready["lifecycle"]["unread"], true);
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let lost = doctor(&fixture);
+    assert_eq!(lost["lifecycle"]["health"], "Unavailable");
+    assert!(
+        lost["remediation"]
+            .to_string()
+            .contains("fresh managed launch"),
+        "{lost}"
+    );
+    assert_eq!(
+        lost["lifecycle"]["unread"], true,
+        "reporter loss keeps Unread"
+    );
+}
+
+#[test]
 fn desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility() {
     let _guard = env_lock();
     let fixture = ControlFixture::new_bounded();
