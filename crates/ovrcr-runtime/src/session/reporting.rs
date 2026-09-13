@@ -90,9 +90,9 @@ impl ReportingState {
                 if report.revision <= snapshot.activity_revision {
                     bail!("stale activity revision");
                 }
-                if report.binding.provider == AgentProvider::Codex
+                if report.binding.provider.supports_readiness()
                     && activity.state == AgentActivity::ResponseReady
-                    && activity.quality == SampleQuality::Observed
+                    && matches!(activity.quality, SampleQuality::Observed | SampleQuality::Confirmed)
                     && activity.turn.is_some()
                     && snapshot.health.state == ReporterHealth::Connected
                     && self.ready.as_ref().is_none_or(|(ready, _)| {
@@ -455,7 +455,7 @@ impl Session {
 mod tests {
     use super::*;
     #[test]
-    fn unread_requires_observed_codex_ready_with_identified_turn() {
+    fn unread_requires_supported_provider_ready_with_identified_turn() {
         for (provider, quality, turn, health, expected) in [
             (
                 AgentProvider::Codex,
@@ -476,7 +476,7 @@ mod tests {
                 SampleQuality::Confirmed,
                 Some("one"),
                 ReporterHealth::Connected,
-                false,
+                true,
             ),
             (
                 AgentProvider::Codex,
@@ -497,6 +497,41 @@ mod tests {
                 SampleQuality::Observed,
                 Some("one"),
                 ReporterHealth::Unavailable,
+                false,
+            ),
+            (
+                AgentProvider::Pi,
+                SampleQuality::Confirmed,
+                Some("one"),
+                ReporterHealth::Connected,
+                true,
+            ),
+            (
+                AgentProvider::Pi,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                true,
+            ),
+            (
+                AgentProvider::Omp,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                true,
+            ),
+            (
+                AgentProvider::Grok,
+                SampleQuality::Observed,
+                Some("one"),
+                ReporterHealth::Connected,
+                false,
+            ),
+            (
+                AgentProvider::Hermes,
+                SampleQuality::Confirmed,
+                Some("one"),
+                ReporterHealth::Connected,
                 false,
             ),
         ] {
