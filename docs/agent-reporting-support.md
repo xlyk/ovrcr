@@ -268,6 +268,9 @@ The automated proof is the Node event host (`tests/fixtures/pi/pi_host.mjs`, exe
 real extension through the real CLI, PTY, private socket and receiver. The Dashboard slice is
 covered by `pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented`.
 
+Tested versions: 0.85.1 (opt-in installed-Pi test, 2026-09-13). Doctor vocabulary is defined
+in [pi-reporting-setup.md](pi-reporting-setup.md).
+
 Native acceptance against an installed Pi is not claimed here and is tracked by #92. The
 opt-in `installed_pi_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
 and requires `OVRCR_TEST_PI_EXECUTABLE` plus an isolated `PI_CODING_AGENT_DIR`; it never
