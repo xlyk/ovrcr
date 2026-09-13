@@ -10080,6 +10080,8 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     );
     fixture.record_process_group(&rpc);
     fixture.wait_terminal_contains(rpc.id, "PI_ARGS=--mode rpc");
+    fixture.wait_terminal_contains(rpc.id, "PI_HOOK=[]");
+    fixture.wait_terminal_contains(rpc.id, "PI_CHANNEL=[set]");
     fixture.wait_terminal_contains(rpc.id, "reporting unavailable");
     assert!(fixture.session_summary(rpc.id).agent.is_none());
     // Plain launch: no supervision, no channel, no binding.

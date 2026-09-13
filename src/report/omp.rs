@@ -6,7 +6,10 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
     if argv.first().and_then(|s| Path::new(s).file_name()) != Some(OsStr::new("omp")) {
         return false;
     }
-    argv[1..].iter().all(|arg| {
+    let Some(rest) = argv.get(1..) else {
+        return false;
+    };
+    rest.iter().all(|arg| {
         let Some(arg) = arg.to_str() else {
             return false;
         };
