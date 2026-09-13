@@ -1,8 +1,8 @@
-//! Dashboard-local opt-in delivery. Only accepted root activity identities enter this module.
+//! Dashboard-local opt-in delivery. Queue from unread identity.
 use super::{Dashboard, DashboardAction};
 use ovrcr_protocol::{
-    AgentActivity, AgentBinding, AgentProvider, HierarchySnapshot, ReporterHealth, SampleQuality,
-    SessionId, SessionPhase, SessionSummary,
+    AgentActivity, AgentProvider, HierarchySnapshot, ReadyObservation, ReporterHealth, SessionId,
+    SessionPhase, SessionSummary,
 };
 use std::collections::{HashMap, VecDeque};
 use std::os::unix::process::CommandExt;
@@ -25,17 +25,9 @@ const CHANNEL_SOUND: u8 = 2;
 const HOST_POLL: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
-struct Observed {
-    epoch: u64,
-    binding: AgentBinding,
-    revision: u64,
-    ready_turn: Option<String>,
-}
-
-#[derive(Clone)]
 struct Notification {
     session: SessionId,
-    observed: Observed,
+    unread: ReadyObservation,
     title: &'static str,
     body: String,
 }
@@ -64,7 +56,7 @@ impl Delivery {
 #[derive(Default)]
 pub(super) struct DesktopNotifications {
     initialized: bool,
-    observed: HashMap<SessionId, Observed>,
+    observed: HashMap<SessionId, ReadyObservation>,
     pending: VecDeque<Notification>,
     in_flight: Option<Delivery>,
     pub(super) wake: Option<std::os::unix::net::UnixStream>,
@@ -142,61 +134,35 @@ impl Dashboard {
             notification.session != session.id
                 || notification_matches_session(notification, session)
         });
-        // Health and lifecycle changes do not necessarily advance the activity revision.
+        // Health and lifecycle changes do not necessarily advance activity.
         if let Some(delivery) = &self.desktop.in_flight
             && delivery.notification.session == session.id
             && !notification_matches_session(&delivery.notification, session)
         {
             delivery.cancel();
         }
-        let Some(agent) = &session.agent else {
-            return;
-        };
-        if agent.binding.provider != AgentProvider::Codex {
-            return;
-        }
-        let previous = self.desktop.observed.get(&session.id);
-        let same_binding = previous.is_some_and(|previous| {
-            previous.epoch == session.agent_epoch && previous.binding == agent.binding
+        let new_unread = session.unread.as_ref().is_some_and(|unread| {
+            self.desktop
+                .observed
+                .get(&session.id)
+                .is_none_or(|previous| {
+                    previous.binding != unread.binding || previous.turn != unread.turn
+                })
         });
-        if let Some(previous) = previous
-            && (session.agent_epoch < previous.epoch
-                || (session.agent_epoch == previous.epoch
-                    && (!same_binding
-                        && (previous.binding.invocation != agent.binding.invocation
-                            || agent.binding.generation <= previous.binding.generation)))
-                || (same_binding && agent.activity_revision <= previous.revision))
-        {
-            return;
+        if let Some(unread) = &session.unread {
+            self.desktop.observed.insert(session.id, unread.clone());
         }
-        let prior_turn = previous
-            .filter(|_| same_binding)
-            .and_then(|previous| previous.ready_turn.clone());
-        let turn = agent
-            .activity
-            .as_ref()
-            .filter(|activity| activity.state == AgentActivity::ResponseReady)
-            .and_then(|activity| activity.turn.clone());
-        let new_ready = turn.is_some() && turn != prior_turn;
-        let observed = Observed {
-            epoch: session.agent_epoch,
-            binding: agent.binding.clone(),
-            revision: agent.activity_revision,
-            ready_turn: turn.clone().or(prior_turn),
-        };
-        self.desktop.observed.insert(session.id, observed.clone());
-        // Consume all accepted revisions, including disabled and visible responses. Visibility
-        // and settings changes never rescan old Ready state for later delivery.
+        // Consume unread even when disabled or visible so later enable/hide cannot replay.
         if !initial
             && self.alert_channels() != 0
-            && new_ready
-            && ready_session(session)
+            && new_unread
+            && delivery_live(session)
             && !self.desktop_session_visible(session.id)
             && self.desktop.pending.len() < QUEUE_CAPACITY
         {
             self.desktop.pending.push_back(Notification {
                 session: session.id,
-                observed,
+                unread: session.unread.clone().unwrap(),
                 title: "OVRCR · response ready",
                 body: format!(
                     "{} / {} / {} (#{})",
@@ -287,26 +253,23 @@ impl Dashboard {
 }
 
 fn notification_matches_session(notification: &Notification, session: &SessionSummary) -> bool {
-    ready_session(session)
-        && session.agent_epoch == notification.observed.epoch
+    delivery_live(session)
         && session.agent.as_ref().is_some_and(|agent| {
-            agent.binding == notification.observed.binding
-                && agent.activity_revision == notification.observed.revision
+            agent.binding == notification.unread.binding
+                && agent
+                    .activity
+                    .as_ref()
+                    .is_some_and(|activity| activity.turn == notification.unread.turn)
         })
 }
 
-fn ready_session(session: &SessionSummary) -> bool {
+fn delivery_live(session: &SessionSummary) -> bool {
     session.phase == SessionPhase::Running
         && session.agent.as_ref().is_some_and(|agent| {
             agent.binding.provider == AgentProvider::Codex
                 && agent.health.state == ReporterHealth::Connected
-                && agent.activity_revision > 0
                 && agent.activity.as_ref().is_some_and(|activity| {
                     activity.state == AgentActivity::ResponseReady
-                        && matches!(
-                            activity.quality,
-                            SampleQuality::Observed | SampleQuality::Confirmed
-                        )
                         && activity.turn.as_ref().is_some_and(|turn| !turn.is_empty())
                 })
         })
@@ -496,14 +459,26 @@ mod tests {
     use super::*;
     use crate::dashboard::{DashboardAction, InputMode};
     use crate::protocol::{
-        ActivitySample, AgentSnapshot, ClientMessage, HealthSample, ProjectSummary, ReporterHealth,
-        Response, ServerEvent, ServerMessage, WorkspaceSummary,
+        ActivitySample, AgentBinding, AgentSnapshot, ClientMessage, HealthSample, ProjectSummary,
+        ReadyObservation, ReporterHealth, Response, SampleQuality, ServerEvent, ServerMessage,
+        WorkspaceSummary,
     };
     use crossterm::event::KeyCode;
     use ovrcr_protocol::TerminalSize;
     use ratatui::layout::Rect;
 
     fn snapshot(revision: u64, turn: &str, state: AgentActivity) -> HierarchySnapshot {
+        let binding = AgentBinding {
+            provider: AgentProvider::Codex,
+            invocation: "PRIVATE_INVOCATION".into(),
+            conversation: "PRIVATE_CONVERSATION".into(),
+            generation: 1,
+        };
+        let unread = (state == AgentActivity::ResponseReady).then(|| ReadyObservation {
+            binding: binding.clone(),
+            turn: Some(turn.into()),
+            activity_revision: revision,
+        });
         HierarchySnapshot {
             projects: vec![ProjectSummary {
                 name: "project".into(),
@@ -523,14 +498,9 @@ mod tests {
                         activity: state,
                         context_usage: None,
                         agent_epoch: 1,
-                        unread: None,
+                        unread,
                         agent: Some(AgentSnapshot {
-                            binding: AgentBinding {
-                                provider: AgentProvider::Codex,
-                                invocation: "PRIVATE_INVOCATION".into(),
-                                conversation: "PRIVATE_CONVERSATION".into(),
-                                generation: 1,
-                            },
+                            binding,
                             activity: Some(ActivitySample {
                                 state,
                                 quality: SampleQuality::Observed,
@@ -574,6 +544,7 @@ mod tests {
         other.id = SessionId(2);
         other.name = "queued".into();
         other.agent.as_mut().unwrap().binding.invocation = "second-invocation".into();
+        other.unread.as_mut().unwrap().binding.invocation = "second-invocation".into();
         hierarchy.projects[0].workspaces[0].sessions.push(other);
         deliver(&mut d, hierarchy);
         d.desktop.in_flight = Some(Delivery {
@@ -746,6 +717,33 @@ mod tests {
         assert_eq!(d.desktop.pending.len(), 1);
     }
     #[test]
+    fn desktop_does_not_queue_when_unread_is_absent() {
+        let mut d = dashboard();
+        let mut ready = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut ready).unread = None;
+        deliver(&mut d, ready);
+        assert!(
+            d.desktop.pending.is_empty(),
+            "activity Ready without unread must not queue"
+        );
+    }
+    #[test]
+    fn desktop_confirmed_without_unread_does_not_queue() {
+        let mut d = dashboard();
+        let mut ready = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut ready)
+            .agent
+            .as_mut()
+            .unwrap()
+            .activity
+            .as_mut()
+            .unwrap()
+            .quality = SampleQuality::Confirmed;
+        session(&mut ready).unread = None;
+        deliver(&mut d, ready);
+        assert!(d.desktop.pending.is_empty(), "Confirmed is not Ready");
+    }
+    #[test]
     fn desktop_tasks_view_has_no_visible_terminal_panes() {
         let mut d = dashboard();
         d.select_session(SessionId(1));
@@ -772,11 +770,10 @@ mod tests {
             .unwrap()
             .health_revision = 99;
         deliver(&mut d, duplicate);
-        deliver(&mut d, snapshot(1, "old", AgentActivity::ResponseReady));
         deliver(&mut d, snapshot(3, "a", AgentActivity::ResponseReady));
         assert!(
             d.desktop.pending.is_empty(),
-            "duplicate turn and stale revision"
+            "same unread turn does not requeue"
         );
         deliver(&mut d, snapshot(4, "b", AgentActivity::Busy));
         deliver(&mut d, snapshot(5, "b", AgentActivity::Idle));
@@ -797,7 +794,8 @@ mod tests {
                 "missing-turn" => s.agent.as_mut().unwrap().activity.as_mut().unwrap().turn = None,
                 "estimated" => {
                     s.agent.as_mut().unwrap().activity.as_mut().unwrap().quality =
-                        SampleQuality::Estimated
+                        SampleQuality::Estimated;
+                    s.unread = None;
                 }
                 _ => {
                     s.phase = SessionPhase::Exited {
@@ -884,73 +882,57 @@ mod tests {
         );
     }
     #[test]
-    fn desktop_rebind_and_supervisor_restart_reject_prior_identity() {
+    fn desktop_new_unread_queues_and_epoch_bump_does_not_renotify() {
         let mut d = dashboard();
-        let mut current = snapshot(2, "a", AgentActivity::ResponseReady);
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .generation = 2;
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .conversation = "B".into();
-        deliver(&mut d, current.clone());
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
         assert_eq!(d.desktop.pending.len(), 1);
         d.desktop.pending.clear();
-        deliver(&mut d, snapshot(100, "stale", AgentActivity::ResponseReady));
-        assert!(d.desktop.pending.is_empty());
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .generation = 3;
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .conversation = "PRIVATE_CONVERSATION".into();
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .activity_revision = 3;
-        deliver(&mut d, current.clone());
+        let mut restarted = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut restarted).agent_epoch = 2;
+        deliver(&mut d, restarted);
+        assert!(
+            d.desktop.pending.is_empty(),
+            "epoch bump does not make the same unread new"
+        );
+        let mut rebound = snapshot(3, "a", AgentActivity::ResponseReady);
+        let session = session(&mut rebound);
+        session.agent.as_mut().unwrap().binding.generation = 2;
+        session.unread.as_mut().unwrap().binding.generation = 2;
+        deliver(&mut d, rebound);
+        assert_eq!(d.desktop.pending.len(), 1, "new unread binding queues");
+        d.desktop.pending.clear();
+        deliver(&mut d, snapshot(4, "b", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1, "new unread turn queues");
+    }
+    #[test]
+    fn desktop_busy_cancels_pending_while_unread_remains() {
+        let mut d = dashboard();
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+        let unread = d.hierarchy.projects[0].workspaces[0].sessions[0]
+            .unread
+            .clone();
+        let mut busy = snapshot(3, "a", AgentActivity::Busy);
+        session(&mut busy).unread = unread;
+        deliver(&mut d, busy);
+        assert!(
+            d.desktop.pending.is_empty(),
+            "Busy cancels delivery while unread remains"
+        );
+    }
+    #[test]
+    fn desktop_mark_reviewed_does_not_cancel_pending() {
+        let mut d = dashboard();
+        deliver(&mut d, snapshot(2, "a", AgentActivity::ResponseReady));
+        assert_eq!(d.desktop.pending.len(), 1);
+        let mut reviewed = snapshot(2, "a", AgentActivity::ResponseReady);
+        session(&mut reviewed).unread = None;
+        deliver(&mut d, reviewed);
         assert_eq!(
             d.desktop.pending.len(),
             1,
-            "A to B to A is a new generation"
+            "mark-reviewed must not cancel a queued alert"
         );
-        d.desktop.pending.clear();
-        session(&mut current).agent_epoch = 2;
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .invocation = "new-invocation".into();
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .binding
-            .generation = 1;
-        session(&mut current)
-            .agent
-            .as_mut()
-            .unwrap()
-            .activity_revision = 1;
-        deliver(&mut d, current);
-        assert_eq!(d.desktop.pending.len(), 1);
-        d.desktop.pending.clear();
-        deliver(&mut d, snapshot(500, "late", AgentActivity::ResponseReady));
-        assert!(d.desktop.pending.is_empty());
     }
     #[test]
     fn desktop_pending_candidates_are_bounded_and_identity_text_is_not_code() {
@@ -963,7 +945,9 @@ mod tests {
                 session.id = SessionId(id);
                 session.name = "name\nwith\u{1b}controls <b> & \"$(secret)\"".into();
                 if id > 1 {
-                    session.agent.as_mut().unwrap().binding.invocation = format!("invocation-{id}");
+                    let invocation = format!("invocation-{id}");
+                    session.agent.as_mut().unwrap().binding.invocation = invocation.clone();
+                    session.unread.as_mut().unwrap().binding.invocation = invocation;
                 }
                 session
             })
@@ -976,7 +960,10 @@ mod tests {
             let mut session = d.hierarchy.projects[0].workspaces[0].sessions[0].clone();
             let agent = session.agent.as_mut().unwrap();
             agent.activity_revision = revision;
-            agent.activity.as_mut().unwrap().turn = Some(format!("turn-{revision}"));
+            let turn = format!("turn-{revision}");
+            agent.activity.as_mut().unwrap().turn = Some(turn.clone());
+            session.unread.as_mut().unwrap().turn = Some(turn);
+            session.unread.as_mut().unwrap().activity_revision = revision;
             d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
                 session,
             ))));
