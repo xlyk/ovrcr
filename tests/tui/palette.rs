@@ -1291,7 +1291,7 @@ fn n_opens_terminal_form_prefilled_for_selected_workspace() {
     assert!(text.contains("consigint / auth"));
     let path = std::env::var_os("PATH").unwrap_or_default();
     let shell = std::env::var_os("SHELL");
-    let first = ovrcr::tui::detect_agents(&path, shell.as_deref())
+    let first = ovrcr::tui::detect_agents(&path, shell.as_deref(), None)
         .into_iter()
         .next()
         .expect("shell is always detected")

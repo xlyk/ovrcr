@@ -1104,8 +1104,9 @@ impl Dashboard {
     fn detected_agents(&self) -> Vec<super::agents::AgentEntry> {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let shell = std::env::var_os("SHELL");
+        let launcher = std::env::current_exe().ok();
         apply_overrides(
-            detect_agents(&path, shell.as_deref()),
+            detect_agents(&path, shell.as_deref(), launcher.as_deref()),
             &self.settings.agents,
         )
     }

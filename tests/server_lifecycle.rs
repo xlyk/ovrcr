@@ -10030,6 +10030,70 @@ fn codex_session_named(
 }
 
 #[test]
+fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_untracked() {
+    let _guard = env_lock();
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let native = fixture._root.path().join("pi");
+    std::fs::write(
+        &native,
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '0.85.1\\n'; exit; fi\nprintf 'PI_ARGS=%s\\n' \"$*\"\nprintf 'PI_HOOK=[%s%s%s]\\n' \"${OVRCR_HOOK_SOCKET:-}\" \"${OVRCR_HOOK_TOKEN:-}\" \"${OVRCR_SESSION_ID:-}\"\nprintf 'PI_CHANNEL=[%s]\\n' \"${OVRCR_AGENT_SOCKET:+set}\"\nexit 17\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Managed: the picker's argv shape.
+    let managed = fixture.create_session_summary(
+        "pi-managed",
+        vec![
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            "agent".into(),
+            "run".into(),
+            "pi".into(),
+            "--".into(),
+            native.clone().into_os_string(),
+            "--model".into(),
+            "x/y".into(),
+            "hello world".into(),
+        ],
+    );
+    fixture.record_process_group(&managed);
+    fixture.wait_terminal_contains(managed.id, "PI_ARGS=--model x/y hello world");
+    fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
+    fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
+    // Reporting is not implemented yet in this ticket: the supervisor says so once and runs native.
+    fixture.wait_terminal_contains(managed.id, "reporting unavailable");
+    assert!(fixture.session_summary(managed.id).agent.is_none());
+    // Ineligible mode: RPC mode runs native with reporting unavailable, no binding.
+    let rpc = fixture.create_session_summary(
+        "pi-rpc",
+        vec![
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            "agent".into(),
+            "run".into(),
+            "pi".into(),
+            "--".into(),
+            native.clone().into_os_string(),
+            "--mode".into(),
+            "rpc".into(),
+        ],
+    );
+    fixture.record_process_group(&rpc);
+    fixture.wait_terminal_contains(rpc.id, "PI_ARGS=--mode rpc");
+    fixture.wait_terminal_contains(rpc.id, "PI_HOOK=[]");
+    fixture.wait_terminal_contains(rpc.id, "PI_CHANNEL=[set]");
+    fixture.wait_terminal_contains(rpc.id, "reporting unavailable");
+    assert!(fixture.session_summary(rpc.id).agent.is_none());
+    // Plain launch: no supervision, no channel, no binding.
+    let plain =
+        fixture.create_session_summary("pi-plain", vec![native.into_os_string(), "hi".into()]);
+    fixture.record_process_group(&plain);
+    fixture.wait_terminal_contains(plain.id, "PI_ARGS=hi");
+    fixture.wait_terminal_contains(plain.id, "PI_CHANNEL=[]");
+    assert!(fixture.session_summary(plain.id).agent.is_none());
+}
+
+#[test]
 fn codex_managed_lost_bind_receipt_recovers_before_busy() {
     // Lifecycle/correlation gate; concurrent executable startup can exhaust the fixed probe budget.
     let _guard = env_lock();

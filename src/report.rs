@@ -3,6 +3,8 @@ pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
+pub mod omp;
+pub mod pi;
 
 use crate::protocol::client;
 use crate::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response};
@@ -670,6 +672,21 @@ pub fn reserve_invocation_for(
         Err(_) => Ok(None),
         result => result,
     }
+}
+
+/// A provider whose reporting cannot run for this invocation: release the reservation
+/// immediately, tell the operator once on stderr, and answer every callback unavailable.
+pub fn unavailable_receiver(
+    lease: Option<InvocationLease>,
+    provider: &str,
+    reason: &str,
+) -> ovrcr_runtime::agent_runner::HookHandler {
+    if let Some(lease) = lease {
+        let _ = lease.stream.shutdown(std::net::Shutdown::Both);
+        drop(lease);
+    }
+    eprintln!("{provider} reporting unavailable ({reason}); running native command");
+    Box::new(|_| b"admission-unavailable\n".to_vec())
 }
 
 fn agent_exchange(
