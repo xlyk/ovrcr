@@ -10447,6 +10447,10 @@ struct DesktopAlertDashboard {
 
 impl DesktopAlertDashboard {
     fn start(fixture: &ControlFixture, settings: Option<&str>) -> Self {
+        Self::start_for(fixture, settings, "codex-hooks")
+    }
+
+    fn start_for(fixture: &ControlFixture, settings: Option<&str>, sidebar: &str) -> Self {
         let directory = fixture._root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
@@ -10518,7 +10522,7 @@ impl DesktopAlertDashboard {
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             record,
         };
-        dashboard.wait_screen(|screen| screen.contains("codex-hooks"));
+        dashboard.wait_screen(|screen| screen.contains(sidebar));
         dashboard
     }
 
@@ -10592,7 +10596,11 @@ impl DesktopAlertDashboard {
     }
 
     fn wait_calls(&mut self, expected: usize, session: SessionId) {
-        let body = format!("fixture / work / codex-hooks (#{})", session.0);
+        self.wait_named_calls(expected, session, "codex-hooks")
+    }
+
+    fn wait_named_calls(&mut self, expected: usize, session: SessionId, name: &str) {
+        let body = format!("fixture / work / {name} (#{})", session.0);
         let record = self.record.clone();
         self.wait_record(&record, expected, |call| {
             assert!(call.contains(&body), "identity missing: {call}");
@@ -10600,8 +10608,9 @@ impl DesktopAlertDashboard {
                 call.contains("OVRCR · response ready"),
                 "title missing: {call}"
             );
-            assert!(!call.contains("CODEX_CALLBACK"));
+            assert!(!call.contains("CALLBACK"));
             assert!(!call.contains("OVRCR_HOOK_TOKEN"));
+            assert!(!call.contains("OVRCR_AGENT_TOKEN"));
             assert!(!call.contains("root.jsonl"));
         });
     }
@@ -10931,6 +10940,83 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         sessions.is_empty(),
         "new server cannot resurrect live terminals or unread results from saved configuration"
     );
+}
+
+#[test]
+fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "pi-hooks",
+    );
+    // The Pi session must stay hidden for the alert to fire: focus the other real managed
+    // session first, exactly as the managed-completion visibility test does.
+    dashboard.select("setup", "HOOK_READY");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let mut index = 0;
+    for command in ["session_start:sess-a", "agent_start", "agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    let first = fixture.session_summary(summary.id);
+    let first_unread = first.unread.clone().expect("Confirmed Ready is unread");
+    let listed = cli_with_output(bin, &config, &fixture.socket, &["terminal", "list", "--json"]);
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap();
+    assert_eq!(row["unread"], serde_json::to_value(&first_unread).unwrap());
+    // Duplicate settled: no second alert, no new Unread.
+    pi_callback(&fixture, summary.id, &mut index, "agent_settled");
+    assert_eq!(fixture.session_summary(summary.id), first);
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    // Opening the pane does not acknowledge; R reviews exactly the presented identity.
+    dashboard.select("pi-hooks", "PI_CALLBACK=4");
+    dashboard.wait_screen(|screen| screen.contains("Unread"));
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        first,
+        "viewing does not acknowledge"
+    );
+    dashboard.send(b"\x07R");
+    dashboard.wait_screen(|screen| !screen.contains("Unread") && screen.contains("response ready"));
+    let mut reviewed = first.clone();
+    reviewed.unread = None;
+    assert_eq!(fixture.session_summary(summary.id), reviewed);
+    // A stale acknowledgement cannot clear a newer response.
+    for command in ["agent_start", "agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let second = fixture.session_summary(summary.id);
+    let second_unread = second.unread.clone().expect("second cycle is unread");
+    assert_ne!(second_unread, first_unread);
+    let stale = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &[
+            "terminal",
+            "mark-reviewed",
+            &summary.id.0.to_string(),
+            "--expected",
+            &serde_json::to_string(&first_unread).unwrap(),
+        ],
+    );
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("Ready observation changed"));
+    assert_eq!(fixture.session_summary(summary.id), second);
+    // The response is visible in the focused pane: no alert for it.
+    dashboard.wait_named_calls(1, summary.id, "pi-hooks");
+    dashboard.detach();
 }
 
 #[test]
