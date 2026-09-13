@@ -105,11 +105,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         }
         Some(match name.as_str() {
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
-            "pi" => ovrcr::report::unavailable_receiver(
-                lease,
-                "Pi",
-                "provider reporting not implemented yet",
-            ),
+            "pi" => ovrcr::report::pi::receiver(lease, native_argv),
             "omp" => ovrcr::report::unavailable_receiver(
                 lease,
                 "Oh My Pi",

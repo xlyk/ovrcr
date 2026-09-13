@@ -123,6 +123,10 @@ pub(super) enum ReportCommand {
         #[arg(long, required = true)]
         stdin: bool,
     },
+    Pi {
+        #[arg(long, required = true)]
+        stdin: bool,
+    },
     ClaudeContext {
         #[arg(long)]
         stdin_json: bool,

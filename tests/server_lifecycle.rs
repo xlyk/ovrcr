@@ -10058,11 +10058,12 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
         ],
     );
     fixture.record_process_group(&managed);
-    fixture.wait_terminal_contains(managed.id, "PI_ARGS=--model x/y hello world");
+    // The real receiver materializes the owned extension and prepends only its -e path.
+    fixture.wait_terminal_contains(managed.id, "PI_ARGS=-e ");
+    fixture.wait_terminal_contains(managed.id, "ovrcr-pi-reporting.mjs --model x/y hello world");
     fixture.wait_terminal_contains(managed.id, "PI_HOOK=[]");
     fixture.wait_terminal_contains(managed.id, "PI_CHANNEL=[set]");
-    // Reporting is not implemented yet in this ticket: the supervisor says so once and runs native.
-    fixture.wait_terminal_contains(managed.id, "reporting unavailable");
+    // The fake pi exits before reporting anything, so no binding is ever established.
     assert!(fixture.session_summary(managed.id).agent.is_none());
     // Ineligible mode: RPC mode runs native with reporting unavailable, no binding.
     let rpc = fixture.create_session_summary(
