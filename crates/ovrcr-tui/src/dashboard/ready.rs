@@ -1,10 +1,8 @@
-//! Ready (CONTEXT.md): the accepted Codex root observation of a completed turn. This is the
-//! only place the Dashboard decides whether a session is ready and whether that readiness
-//! may be delivered as an alert. The sidebar glyph, the metadata line, and desktop delivery
-//! all ask here, so they cannot disagree.
-use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentProvider, ReporterHealth, SessionPhase, SessionSummary,
-};
+//! Ready (CONTEXT.md): the accepted root observation of a completed response cycle from a
+//! supported readiness provider. This is the only place the Dashboard decides whether a
+//! session is ready and whether that readiness may be delivered as an alert. The sidebar
+//! glyph, the metadata line, and desktop delivery all ask here, so they cannot disagree.
+use ovrcr_protocol::{ActivitySample, AgentActivity, ReporterHealth, SessionPhase, SessionSummary};
 
 pub(super) fn activity(session: &SessionSummary) -> AgentActivity {
     session
@@ -26,7 +24,7 @@ pub(super) fn ready(session: &SessionSummary) -> Option<&ActivitySample> {
 pub(super) fn delivery_live(session: &SessionSummary) -> bool {
     session.phase == SessionPhase::Running
         && session.agent.as_ref().is_some_and(|agent| {
-            agent.binding.provider == AgentProvider::Codex
+            agent.binding.provider.supports_readiness()
                 && agent.health.state == ReporterHealth::Connected
         })
         && ready(session)
@@ -126,6 +124,26 @@ mod tests {
                 Running,
                 Claude,
                 Connected,
+                ResponseReady,
+                Some("t"),
+                true,
+                false,
+            ),
+            (Running, Pi, Connected, ResponseReady, Some("t"), true, true),
+            (Running, Omp, Connected, ResponseReady, Some("t"), true, true),
+            (
+                Running,
+                Grok,
+                Connected,
+                ResponseReady,
+                Some("t"),
+                true,
+                false,
+            ),
+            (
+                Running,
+                Pi,
+                Unavailable,
                 ResponseReady,
                 Some("t"),
                 true,
