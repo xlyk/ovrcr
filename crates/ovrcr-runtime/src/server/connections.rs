@@ -13,25 +13,14 @@ thread_local! {
 /// early exit leaked the slot and every later dashboard was refused. Dropping
 /// this guard releases the slot whether the handler returns, breaks, or
 /// unwinds.
-struct DashboardOwnership {
-    state: Arc<ServerState>,
-    identity: Arc<()>,
+pub(super) struct DashboardOwnership {
+    pub(super) state: Arc<ServerState>,
+    pub(super) identity: Arc<()>,
 }
 
 impl Drop for DashboardOwnership {
     fn drop(&mut self) {
-        let mut slot = self.state.dashboard_slot.lock().unwrap();
-        let owns_dashboard = slot
-            .as_ref()
-            .is_some_and(|current| Arc::ptr_eq(&current.identity, &self.identity));
-        if owns_dashboard {
-            if let Some(current) = slot.take() {
-                current.sink.close();
-            }
-            *self.state.dashboard.lock().unwrap() = None;
-            *self.state.view.lock().unwrap() = None;
-            clear_dashboard_geometry(&self.state, &self.identity);
-        }
+        self.state.dashboard.release(&self.identity);
     }
 }
 
@@ -150,8 +139,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             if writer.is_some() {
                 let (completion, result) = mpsc::sync_channel(1);
                 let queued = ownership.as_ref().is_some_and(|owned| {
-                    dashboard_send_owner_with_completion(
-                        &state,
+                    state.dashboard.send_owner_with_completion(
                         &owned.identity,
                         response_message(
                             message.request_id,
@@ -168,13 +156,16 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 }
                 break;
             }
-            let identity = Arc::new(());
             let Ok(close_stream) = stream.try_clone() else {
                 break;
             };
-            let mut slot = state.dashboard_slot.lock().unwrap();
-            if slot.is_some() {
-                drop(slot);
+            let Ok(writer_stream) = stream.try_clone() else {
+                break;
+            };
+            let Some(identity) = state
+                .dashboard
+                .claim(Arc::clone(&dashboard_sink), close_stream)
+            else {
                 let _ = send_direct(
                     &mut stream,
                     message.request_id,
@@ -184,20 +175,11 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     ),
                 );
                 break;
-            }
-            *slot = Some(DashboardSlot {
-                sink: Arc::clone(&dashboard_sink),
-                identity: identity.clone(),
-                stream: close_stream,
-                history: None,
-                next_history_id: 1,
-            });
+            };
             #[cfg(feature = "acceptance-diagnostics")]
             if let Some(monitor) = &state.dashboard_monitor {
                 monitor.register(&dashboard_sink);
             }
-            drop(slot);
-            *state.dashboard.lock().unwrap() = Some(Arc::clone(&dashboard_sink));
             ownership = Some(DashboardOwnership {
                 state: Arc::clone(&state),
                 identity: Arc::clone(&identity),
@@ -207,78 +189,17 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                 panic!("injected panic after dashboard registration");
             }
             role = ClientRole::Dashboard;
-            let mut output = stream.try_clone().ok();
-            let writer_sink = Arc::clone(&dashboard_sink);
-            let writer_state = Arc::clone(&state);
-            let writer_identity = Arc::clone(&identity);
-            let Ok(writer_close_stream) = stream.try_clone() else {
-                break;
-            };
-            let spawned = thread::Builder::new()
-                .name("ovrcr-dashboard-writer".into())
-                .spawn(move || {
-                    while let Some(delivery) = writer_sink.next() {
-                        let (message, completion, dirty, terminal) = match delivery {
-                            DashboardDelivery::Message(outbound) => {
-                                (outbound.message, outbound.completion, None, false)
-                            }
-                            DashboardDelivery::Terminal(outbound) => {
-                                (outbound.message, outbound.completion, None, true)
-                            }
-                            DashboardDelivery::Dirty { revision, session } => (
-                                ServerMessage::Event(ServerEvent::ScreenDirty {
-                                    session,
-                                    revision,
-                                }),
-                                None,
-                                Some((revision, session)),
-                                false,
-                            ),
-                        };
-                        #[cfg(test)]
-                        if let Some(hook) = writer_state
-                            .before_dashboard_write_hook
-                            .lock()
-                            .unwrap()
-                            .clone()
-                        {
-                            hook();
-                        }
-                        let result = match output.as_mut() {
-                            Some(stream) => {
-                                write_frame(stream, &message).map_err(|error| error.to_string())
-                            }
-                            None => Err("dashboard writer stream unavailable".into()),
-                        };
-                        if result.is_ok()
-                            && let Some((revision, session)) = dirty
-                        {
-                            writer_sink.dirty_sent(revision, session);
-                        }
-                        if let Some(completion) = completion {
-                            let _ = completion.send(result.clone());
-                        }
-                        if result.is_err() || terminal {
-                            writer_sink.close();
-                            let _ = writer_close_stream.shutdown(std::net::Shutdown::Both);
-                            disconnect_dashboard(
-                                &writer_state,
-                                DashboardSnapshot {
-                                    sink: writer_sink,
-                                    identity: writer_identity,
-                                    stream: writer_close_stream,
-                                },
-                            );
-                            break;
-                        }
-                    }
-                });
+            let spawned = spawn_writer(
+                Arc::clone(&state),
+                Arc::clone(&dashboard_sink),
+                Arc::clone(&identity),
+                writer_stream,
+            );
             match spawned {
                 Ok(handle) => writer = Some(handle),
                 Err(_) => break,
             }
-            dashboard_send_owner(
-                &state,
+            state.dashboard.send_owner(
                 &identity,
                 response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
             );
@@ -312,8 +233,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                         (true, false)
                     } else {
                         let delivered = ownership.as_ref().is_some_and(|owned| {
-                            dashboard_send_owner(
-                                &state,
+                            state.dashboard.send_owner(
                                 &owned.identity,
                                 response_message(message.request_id, response),
                             )
@@ -324,8 +244,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     if successful_shutdown {
                         let (completion, result) = mpsc::sync_channel(1);
                         let queued = ownership.as_ref().is_some_and(|owned| {
-                            dashboard_send_owner_with_completion(
-                                &state,
+                            state.dashboard.send_owner_with_completion(
                                 &owned.identity,
                                 response_message(message.request_id, response),
                                 Some(completion),
@@ -339,8 +258,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                         // replacement owner must never receive an evicted
                         // connection's late answer under its own request id.
                         let delivered = ownership.as_ref().is_some_and(|owned| {
-                            dashboard_send_owner(
-                                &state,
+                            state.dashboard.send_owner(
                                 &owned.identity,
                                 response_message(message.request_id, response),
                             )
@@ -351,8 +269,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
                     (true, false)
                 } else {
                     let delivered = ownership.as_ref().is_some_and(|owned| {
-                        dashboard_send_owner(
-                            &state,
+                        state.dashboard.send_owner(
                             &owned.identity,
                             response_message(message.request_id, response),
                         )
@@ -369,10 +286,9 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
         }
         if dashboard_sink.is_closing() {
             if let Some(owned) = ownership.as_ref()
-                && let Some(snapshot) = dashboard_snapshot(&state)
-                    .filter(|snapshot| Arc::ptr_eq(&snapshot.identity, &owned.identity))
+                && let Some(snapshot) = state.dashboard.snapshot_owned(&owned.identity)
             {
-                disconnect_dashboard(&state, snapshot);
+                state.dashboard.disconnect(snapshot);
             }
             break;
         }
@@ -429,10 +345,11 @@ pub(super) fn handle_request_with_id(
         Request::CloseTerminal { session } => state
             .close_terminal(session, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
                 Response::Ok
             }),
         request @ (Request::ReserveAgent(_)
@@ -490,12 +407,7 @@ pub(super) fn handle_request_with_id(
             let Some(owner) = owner else {
                 return error_response(ErrorCode::Conflict, "dashboard is disconnected");
             };
-            let revision = state
-                .view
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map_or(1, |view| view.revision.saturating_add(1));
+            let revision = state.dashboard.next_revision();
             let (sender, receiver) = mpsc::sync_channel(1);
             if state
                 .dispatch
@@ -552,14 +464,8 @@ pub(super) fn handle_request_with_id(
         ),
         Request::Input { session, bytes } => {
             if !dashboard
-                || owner.is_none_or(|owner| !dashboard_owner_matches(state, owner))
-                || state
-                    .view
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .and_then(|view| view.focused)
-                    != Some(session)
+                || owner.is_none_or(|owner| !state.dashboard.owns(owner))
+                || state.dashboard.view().and_then(|view| view.focused) != Some(session)
             {
                 return error_response(
                     ErrorCode::InvalidRequest,
@@ -588,7 +494,7 @@ pub(super) fn handle_request_with_id(
             let Some(owner) = owner else {
                 return error_response(ErrorCode::Conflict, "dashboard is disconnected");
             };
-            let Some(current) = state.view.lock().unwrap().clone() else {
+            let Some(current) = state.dashboard.view() else {
                 return error_response(
                     ErrorCode::InvalidRequest,
                     "resize is only accepted for a singleton dashboard view",
@@ -632,20 +538,22 @@ pub(super) fn handle_request_with_id(
         } => state
             .add_project(name, repo, workspace_root)
             .map_or_else(error_for_lifecycle, |_| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
                 Response::Ok
             }),
         Request::RemoveProject { name } => {
             state
                 .remove_project(&name)
                 .map_or_else(error_for_lifecycle, |_| {
-                    dashboard_try_send_arc(
-                        state,
-                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                    );
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
                     Response::Ok
                 })
         }
@@ -656,10 +564,11 @@ pub(super) fn handle_request_with_id(
         } => state.create_workspace(project, name, branch).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
             |_| {
-                dashboard_try_send_arc(
-                    state,
-                    ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                );
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
                 Response::Ok
             },
         ),
@@ -667,10 +576,11 @@ pub(super) fn handle_request_with_id(
             state.remove_workspace(&project, &name).map_or_else(
                 |error| lifecycle_response_with_partial_hierarchy(state, error),
                 |_| {
-                    dashboard_try_send_arc(
-                        state,
-                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                    );
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
                     Response::Ok
                 },
             )
@@ -679,10 +589,11 @@ pub(super) fn handle_request_with_id(
             state
                 .create_session(request)
                 .map_or_else(error_for_lifecycle, |summary| {
-                    dashboard_try_send_arc(
-                        state,
-                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                    );
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
                     Response::CreatedSession(Box::new(summary))
                 })
         }
@@ -693,10 +604,11 @@ pub(super) fn handle_request_with_id(
             state
                 .remove_session(session)
                 .map_or_else(error_for_lifecycle, |_| {
-                    dashboard_try_send_arc(
-                        state,
-                        ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-                    );
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
                     Response::Ok
                 })
         }
@@ -718,8 +630,7 @@ pub(super) fn handle_request_with_id(
             // Geometry belongs to the dashboard that reported it. A request
             // that waited out a mutation must not resize a replacement owner's
             // panes, or the next session spawns with the wrong size.
-            if dashboard_owner_matches(state, owner) {
-                set_dashboard_geometry(state, owner, size);
+            if state.dashboard.set_geometry(owner, size) {
                 Response::Ok
             } else {
                 error_response(ErrorCode::Conflict, "dashboard is disconnected")
@@ -866,16 +777,13 @@ pub(super) fn lifecycle_response_with_partial_hierarchy(
         .is_some_and(|failure| failure.publish_hierarchy);
     let response = error_for_lifecycle(error);
     if publish_hierarchy {
-        dashboard_try_send_arc(
-            state,
-            ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy())),
-        );
+        state
+            .dashboard
+            .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                state.hierarchy(),
+            )));
     }
     response
-}
-
-fn dashboard_try_send_arc(state: &ServerState, message: ServerMessage) -> bool {
-    dashboard_send(state, message, None)
 }
 
 #[cfg(test)]

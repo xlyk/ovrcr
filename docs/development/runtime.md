@@ -7,3 +7,5 @@
 - Signal only process groups whose ownership the current runtime or fixture established. A discovered or remembered PID is not ownership proof. Never use broad process-name cleanup.
 - Live PTYs and screens belong to the running server. Detach/reattach and explicit relaunch after server loss are different operations; do not infer crash recovery from successful reattachment.
 - Preserve atomic persistence and failure boundaries. A failed write must not be reported as committed, and a partial external side effect must not be described as rolled back.
+
+The active dashboard (identity, queue, view, geometry) lives in `server/dashboard.rs`. Prove ownership with `ActiveDashboard::owns`; never compare identities inline.

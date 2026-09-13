@@ -205,7 +205,12 @@ fn initial_selection_completes_zero_target_view_on_ok() {
         .unwrap();
     });
     super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 0).unwrap();
-    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !dashboard.pane_ready(pane))
+    );
 }
 
 #[test]
@@ -277,8 +282,13 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
             .unwrap()
     );
-    assert!(dashboard.pending_view.is_some());
-    assert!(dashboard.panes.iter().all(|pane| !pane.ready));
+    assert!(dashboard.pending_targets() > 0);
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| !dashboard.pane_ready(pane))
+    );
     assert!(
         dashboard.panes[0]
             .parser
@@ -312,8 +322,13 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         super::event_loop::next_dashboard_messages(&receiver, &mut dashboard, &mut stream,)
             .unwrap()
     );
-    assert!(dashboard.pending_view.is_none());
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert_eq!(dashboard.pending_targets(), 0);
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
     assert!(
         dashboard.panes[0]
             .parser
@@ -338,7 +353,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
         .view_request(Rect::new(0, 0, 40, 8), 4)
         .unwrap()
         .expect("view should request a snapshot");
-    let revision = dashboard.view_revision;
+    let revision = dashboard.view_revision();
     let size = dashboard.panes[0].desired_size;
     let (mut receiver, mut sender) = UnixStream::pair().unwrap();
     thread::spawn(move || {
@@ -365,7 +380,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
         result.is_err(),
         "wrong Screen followed by Ok must not complete startup"
     );
-    assert!(!dashboard.panes[0].ready);
+    assert!(!dashboard.pane_ready(&dashboard.panes[0]));
 }
 
 #[test]
@@ -376,7 +391,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
         .view_request(Rect::new(0, 0, 40, 8), 3)
         .unwrap()
         .expect("view should request a snapshot");
-    let revision = dashboard.view_revision;
+    let revision = dashboard.view_revision();
     let size = dashboard.panes[0].desired_size;
     let (mut receiver, mut sender) = UnixStream::pair().unwrap();
     receiver
@@ -437,8 +452,8 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
         }
     });
     super::event_loop::read_initial_selection(&mut receiver, &mut dashboard, 3, 1).unwrap();
-    assert!(dashboard.requested_view.is_some());
-    assert!(dashboard.panes[0].ready);
+    assert!(dashboard.handshake.acknowledged().is_some());
+    assert!(dashboard.pane_ready(&dashboard.panes[0]));
     assert!(
         !dashboard.panes[0]
             .parser
@@ -697,8 +712,7 @@ fn staged_history_copy_dashboard() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
     dashboard.select_session(SessionId(1));
     dashboard.mode = InputMode::History;
-    dashboard.panes[dashboard.focused_pane].snapshot_installed = true;
-    dashboard.panes[dashboard.focused_pane].ready = true;
+    dashboard.install_screen(SessionId(1), &[]);
     let opened = HistoryOpened {
         session: SessionId(1),
         snapshot: HistorySnapshotId(7),
@@ -1020,7 +1034,12 @@ fn mouse_release_precedes_the_replacement_view_request() {
         request_id,
         response: Response::Ok,
     });
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
 
     dashboard.mode = InputMode::Terminal;
     dashboard.panes[0].parser.process(b"\x1b[?1002h\x1b[?1006h");
@@ -1143,7 +1162,12 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         request_id,
         response: Response::Ok,
     });
-    assert!(dashboard.panes.iter().all(|pane| pane.ready));
+    assert!(
+        dashboard
+            .panes
+            .iter()
+            .all(|pane| dashboard.pane_ready(pane))
+    );
 
     let unfocused = super::pane_rects(area, dashboard.panes.len(), dashboard.focused_pane)
         .into_iter()
@@ -1529,8 +1553,8 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                         ReporterHealth::Connected
                     };
                 }
-                for pane in &mut dashboard.panes {
-                    pane.ready = true;
+                for session in [SessionId(1), SessionId(2)] {
+                    dashboard.install_screen(session, &[]);
                 }
                 let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
                 terminal
@@ -1949,4 +1973,147 @@ fn history_footer_names_escape_back_when_copy_notice_is_clear() {
         .collect();
     assert!(footer.contains("Esc Back"), "{footer}");
     assert!(footer.contains("y Copy"), "{footer}");
+}
+
+/// One project, one workspace, a running session per id.
+fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
+    use crate::protocol::{
+        AgentActivity, HierarchySnapshot, ProjectSummary, SessionPhase, SessionSummary,
+        WorkspaceSummary,
+    };
+    HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "consigint".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "consigint".into(),
+                name: "auth".into(),
+                path: "/tmp/auth".into(),
+                sessions: ids
+                    .iter()
+                    .map(|id| SessionSummary {
+                        id: SessionId(*id),
+                        project: "consigint".into(),
+                        workspace: "auth".into(),
+                        name: "session".into(),
+                        label: "zsh".into(),
+                        pid: Some(100 + u32::try_from(*id).unwrap()),
+                        started_unix_ms: 0,
+                        phase: SessionPhase::Running,
+                        activity: AgentActivity::Unknown,
+                        context_usage: None,
+                        agent: None,
+                        agent_epoch: 0,
+                        unread: None,
+                    })
+                    .collect(),
+            }],
+        }],
+    }
+}
+
+#[test]
+fn history_end_survives_split_and_leave_history() {
+    // Regression: release_for_selection_change parked HistoryEnd in a slot that split/focus/close
+    // never drained and leave_history overwrote.
+    let mut dashboard = staged_history_copy_dashboard();
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    assert!(dashboard.split_pane());
+    // Deliberately undrained: re-open history on the new pane and leave it, so the split's
+    // release and `leave_history`'s end compete for the one slot the old code parked in.
+    dashboard.mode = InputMode::History;
+    dashboard.history = Some(HistoryView::new(
+        HistoryOpened {
+            session: SessionId(2),
+            snapshot: HistorySnapshotId(9),
+            revision: 1,
+            size: TerminalSize { rows: 4, cols: 20 },
+            history_rows: 0,
+            total_rows: 1,
+        },
+        0,
+    ));
+    assert!(matches!(
+        dashboard.key_action(KeyEvent::new_with_kind(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        super::DashboardAction::EnterBrowse
+    ));
+    let batch = dashboard.drain_outbox();
+    let ends: Vec<SessionId> = batch
+        .iter()
+        .filter_map(|message| match message.request {
+            Request::HistoryEnd { session, .. } => Some(session),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ends,
+        vec![SessionId(1), SessionId(2)],
+        "the split's release and the later leave must both survive: {batch:?}"
+    );
+    assert!(dashboard.drain_outbox().is_empty(), "drained once");
+    assert_eq!(dashboard.mode, InputMode::Browse);
+}
+
+#[test]
+fn emptying_the_tree_releases_the_captured_history() {
+    // Regression: move_selection's empty-tree branch cleared the pane without releasing the
+    // History/Copy capture bound to the vanished session. staged_history_copy_dashboard leaves
+    // the hierarchy empty (it never assigns one), so `visible_rows()` is already empty here and
+    // move_selection takes the empty-ids branch directly.
+    let mut dashboard = staged_history_copy_dashboard(); // history open on session 1
+    dashboard.move_selection(1);
+    let batch = dashboard.drain_outbox();
+    assert!(
+        batch.iter().any(|m| matches!(
+            m.request,
+            Request::HistoryEnd {
+                session: SessionId(1),
+                ..
+            }
+        )),
+        "{batch:?}"
+    );
+    assert_eq!(dashboard.mode, InputMode::Browse);
+}
+
+#[test]
+fn mouse_cleanup_precedes_the_replacement_set_view() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.outer_area = area;
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.mouse.held[0] = Some(super::HeldMouse {
+        session: SessionId(1),
+        event: MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        },
+        mode: vt100::MouseProtocolMode::PressRelease,
+        encoding: vt100::MouseProtocolEncoding::Sgr,
+    });
+    dashboard.select_session(SessionId(2));
+    let _ = dashboard.request_view_at(area);
+    let batch = dashboard.drain_outbox();
+    let cleanup = batch
+        .iter()
+        .position(|message| matches!(message.request, Request::Input { .. }));
+    let set_view = batch
+        .iter()
+        .position(|message| matches!(message.request, Request::SetView { .. }));
+    assert!(
+        cleanup.is_some(),
+        "the held button owes a release: {batch:?}"
+    );
+    assert!(set_view.is_some(), "the retarget owes a view: {batch:?}");
+    assert!(cleanup < set_view, "{batch:?}");
 }

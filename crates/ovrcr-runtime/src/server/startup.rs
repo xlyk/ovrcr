@@ -188,14 +188,12 @@ fn run_server_inner(
         registry_path,
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
-        view: Mutex::new(None),
-        dashboard: Mutex::new(None),
+        dashboard: ActiveDashboard::default(),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
-        dashboard_size: Mutex::new(None),
         events: Mutex::new(Some(events)),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
@@ -203,7 +201,6 @@ fn run_server_inner(
         before_view_publish_hook: Mutex::new(None),
         #[cfg(test)]
         before_dashboard_write_hook: Mutex::new(None),
-        dashboard_slot: Mutex::new(None),
         #[cfg(feature = "acceptance-diagnostics")]
         dashboard_monitor,
     });
@@ -268,8 +265,8 @@ fn run_server_inner(
     signal_handle.close();
     let _ = signal_thread.join();
     let task_shutdown = task_manager.stop();
-    if let Some(snapshot) = dashboard_snapshot(&state) {
-        disconnect_dashboard(&state, snapshot);
+    if let Some(snapshot) = state.dashboard.snapshot() {
+        state.dashboard.disconnect(snapshot);
     }
     let _ = dispatch.send(DispatchMessage::Stop);
     dispatcher

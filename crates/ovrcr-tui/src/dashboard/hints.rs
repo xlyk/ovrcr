@@ -415,8 +415,8 @@ pub(super) fn key_hints(dashboard: &Dashboard) -> Vec<HintGroup> {
             hint("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r')).unless(missing.or_else(|| (!paused).then_some("not paused"))),
             hint("R", "Mark reviewed", format!("Mark the displayed unread Codex response from {target} reviewed; activity and reporting health stay unchanged"), Char('R')).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))),
             hint("X", "Close terminal", format!("Stop {target} and remove its record. Asks for confirmation."), Char('X')).unless(missing),
-            hint("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('[')).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| p.ready)).then_some("waiting for acknowledged screen"))),
-            hint("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| p.ready)).then_some("waiting for acknowledged screen"))),
+            hint("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('[')).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some("waiting for acknowledged screen"))),
+            hint("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some("waiting for acknowledged screen"))),
         ] },
         HintGroup { title: "View".into(), hints: view },
         HintGroup { title: "Dashboard".into(), hints: vec![

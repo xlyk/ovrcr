@@ -136,12 +136,9 @@ pub fn run_dispatcher(
                             Ok(response) => {
                                 let after = session.summary();
                                 if after != before {
-                                    dashboard_try_send(
-                                        &state,
-                                        ServerMessage::Event(ServerEvent::SessionChanged(
-                                            Box::new(after),
-                                        )),
-                                    );
+                                    state.dashboard.try_send(ServerMessage::Event(
+                                        ServerEvent::SessionChanged(Box::new(after)),
+                                    ));
                                 }
                                 response
                             }
@@ -156,12 +153,11 @@ pub fn run_dispatcher(
                 if let Some(session) = state.sessions.lock().unwrap().get(&session).cloned()
                     && session.agent_supervisor_disconnected(&owner)
                 {
-                    dashboard_try_send(
-                        &state,
-                        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
                             session.summary(),
-                        ))),
-                    );
+                        ))));
                 }
             }
             DispatchMessage::Stop => break,
@@ -196,25 +192,18 @@ fn dispatch_history(
 }
 
 fn dispatch_history_begin(state: &ServerState, owner: &Arc<()>, request_id: u64, id: SessionId) {
-    if !dashboard_owner_matches(state, owner) {
+    if !state.dashboard.owns(owner) {
         return;
     }
-    let snapshot = {
-        let mut slot = state.dashboard_slot.lock().unwrap();
-        let Some(current) = slot.as_ref() else { return };
-        if !Arc::ptr_eq(&current.identity, owner) {
-            return;
-        }
-        match current.next_history_id.checked_add(1) {
-            Some(next) => {
-                let current = slot.as_mut().unwrap();
-                let snapshot = HistorySnapshotId(current.next_history_id);
-                current.next_history_id = next;
-                current.history.take();
-                Some(snapshot)
-            }
-            None => None,
-        }
+    let Some(snapshot) = state.dashboard.with_owned(owner, |current| {
+        current.next_history_id.checked_add(1).map(|next| {
+            let snapshot = HistorySnapshotId(current.next_history_id);
+            current.next_history_id = next;
+            current.history.take();
+            snapshot
+        })
+    }) else {
+        return;
     };
     let Some(snapshot) = snapshot else {
         send_history_response(
@@ -262,21 +251,15 @@ fn dispatch_history_begin(state: &ServerState, owner: &Arc<()>, request_id: u64,
         {
             Err(())
         } else {
-            let mut slot = state.dashboard_slot.lock().unwrap();
-            if slot
-                .as_ref()
-                .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
-            {
-                slot.as_mut().unwrap().history = Some(history);
-                Ok(())
-            } else {
-                Err(())
-            }
+            state
+                .dashboard
+                .with_owned(owner, |current| current.history = Some(history))
+                .ok_or(())
         }
     };
     match install {
         Ok(()) => send_history_response(state, owner, request_id, Response::HistoryOpened(opened)),
-        Err(()) if dashboard_owner_matches(state, owner) => send_history_response(
+        Err(()) if state.dashboard.owns(owner) => send_history_response(
             state,
             owner,
             request_id,
@@ -319,13 +302,9 @@ fn dispatch_history_page(
         );
         return;
     }
-    let response = {
-        let mut slot = state.dashboard_slot.lock().unwrap();
-        let Some(current) = slot.as_mut() else { return };
-        if !Arc::ptr_eq(&current.identity, owner) {
-            return;
-        }
-        match current.history.as_mut() {
+    let response = state
+        .dashboard
+        .with_owned(owner, |current| match current.history.as_mut() {
             None => error_response(ErrorCode::NotFound, "history snapshot not found"),
             Some(history)
                 if history.opened().session != session || history.opened().snapshot != snapshot =>
@@ -340,8 +319,8 @@ fn dispatch_history_page(
                 Ok(page) => Response::HistoryRows(page),
                 Err(error) => error_response(ErrorCode::InvalidRequest, error.to_string()),
             },
-        }
-    };
+        });
+    let Some(response) = response else { return };
     send_history_response(state, owner, request_id, response);
 }
 
@@ -352,17 +331,19 @@ fn dispatch_history_end(
     session: SessionId,
     snapshot: HistorySnapshotId,
 ) {
-    let mut slot = state.dashboard_slot.lock().unwrap();
-    let Some(current) = slot.as_mut() else { return };
-    if !Arc::ptr_eq(&current.identity, owner) {
+    if state
+        .dashboard
+        .with_owned(owner, |current| {
+            if current.history.as_ref().is_some_and(|history| {
+                history.opened().session == session && history.opened().snapshot == snapshot
+            }) {
+                current.history.take();
+            }
+        })
+        .is_none()
+    {
         return;
     }
-    if current.history.as_ref().is_some_and(|history| {
-        history.opened().session == session && history.opened().snapshot == snapshot
-    }) {
-        current.history.take();
-    }
-    drop(slot);
     send_history_response(state, owner, request_id, Response::Ok);
 }
 
@@ -372,7 +353,9 @@ fn send_history_response(
     request_id: u64,
     response: Response,
 ) {
-    let _ = dashboard_send_owner(state, owner, response_message(request_id, response));
+    let _ = state
+        .dashboard
+        .send_owner(owner, response_message(request_id, response));
 }
 
 fn dispatch_agent_report(
@@ -381,23 +364,21 @@ fn dispatch_agent_report(
     completion: SyncSender<Response>,
 ) {
     let session = state.sessions.lock().unwrap().get(&report.session).cloned();
-    let response = match session {
-        Some(session) => match session.apply_agent_report(&report) {
-            Ok(changed) => {
-                if changed {
-                    dashboard_try_send(
-                        state,
-                        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
-                            session.summary(),
-                        ))),
-                    );
+    let response =
+        match session {
+            Some(session) => match session.apply_agent_report(&report) {
+                Ok(changed) => {
+                    if changed {
+                        state.dashboard.try_send(ServerMessage::Event(
+                            ServerEvent::SessionChanged(Box::new(session.summary())),
+                        ));
+                    }
+                    Response::Ok
                 }
-                Response::Ok
-            }
-            Err(error) => error_for_lifecycle(error),
-        },
-        None => error_response(ErrorCode::NotFound, "session not found"),
-    };
+                Err(error) => error_for_lifecycle(error),
+            },
+            None => error_response(ErrorCode::NotFound, "session not found"),
+        };
     let _ = completion.send(response);
 }
 
@@ -414,41 +395,41 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
     session.apply_event(event);
     if let Some(bytes) = output {
         let revision = state
-            .view
-            .lock()
-            .unwrap()
-            .as_ref()
+            .dashboard
+            .view()
             .filter(|view| view.panes.iter().any(|pane| pane.session == id))
             .map(|view| view.revision);
         if let Some(revision) = revision {
-            dashboard_try_send(
-                state,
-                ServerMessage::Event(ServerEvent::Output {
+            state
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::Output {
                     session: id,
                     revision,
                     bytes,
-                }),
-            );
+                }));
         }
     } else {
-        dashboard_try_send(
-            state,
-            ServerMessage::Event(ServerEvent::SessionChanged(Box::new(session.summary()))),
-        );
-        dashboard_try_send(
-            state,
-            ServerMessage::Event(ServerEvent::HierarchyChanged(snapshot(state))),
-        );
+        state
+            .dashboard
+            .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                session.summary(),
+            ))));
+        state
+            .dashboard
+            .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                snapshot(state),
+            )));
     }
 }
 
 fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else { return };
-    dashboard_try_send(
-        state,
-        ServerMessage::Event(ServerEvent::SessionChanged(Box::new(session.summary()))),
-    );
+    state
+        .dashboard
+        .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session.summary(),
+        ))));
 }
 
 fn dispatch_select(
@@ -458,16 +439,11 @@ fn dispatch_select(
     size: TerminalSize,
     completion: SyncSender<DispatchCompletion>,
 ) {
-    let Some(snapshot) = dashboard_snapshot(state) else {
+    let Some(snapshot) = state.dashboard.snapshot() else {
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     };
-    let revision = state
-        .view
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map_or(1, |view| view.revision.saturating_add(1));
+    let revision = state.dashboard.next_revision();
     dispatch_set_view(
         state,
         &snapshot.identity,
@@ -488,8 +464,7 @@ fn view_error(
     code: ErrorCode,
     message: impl Into<String>,
 ) {
-    let _ = dashboard_send_owner(
-        state,
+    let _ = state.dashboard.send_owner(
         owner,
         response_message(
             request_id,
@@ -538,7 +513,7 @@ fn dispatch_set_view_with_resize(
     completion: SyncSender<DispatchCompletion>,
     mut resize: impl FnMut(&Session, TerminalSize) -> anyhow::Result<()>,
 ) {
-    if !dashboard_owner_matches(state, owner) {
+    if !state.dashboard.owns(owner) {
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     }
@@ -547,7 +522,7 @@ fn dispatch_set_view_with_resize(
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     }
-    let previous = state.view.lock().unwrap().clone();
+    let previous = state.dashboard.view();
     if previous
         .as_ref()
         .is_some_and(|current| view.revision <= current.revision)
@@ -606,14 +581,11 @@ fn dispatch_set_view_with_resize(
     });
     if let Err(error) = resize_result {
         if resized > 0 {
-            clear_view_subscription_for_owner(
-                state,
-                owner,
-                previous.as_ref().map(|view| view.revision),
-            );
+            state
+                .dashboard
+                .clear_view_for(owner, previous.as_ref().map(|view| view.revision));
             let (terminal_sender, terminal_receiver) = mpsc::sync_channel(1);
-            let queued = dashboard_send_owner_terminal(
-                state,
+            let queued = state.dashboard.send_owner_terminal(
                 owner,
                 response_message(
                     request_id,
@@ -641,9 +613,7 @@ fn dispatch_set_view_with_resize(
         }
         return;
     }
-    let Some(snapshot) =
-        dashboard_snapshot(state).filter(|snapshot| Arc::ptr_eq(&snapshot.identity, owner))
-    else {
+    let Some(snapshot) = state.dashboard.snapshot_owned(owner) else {
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     };
@@ -680,83 +650,25 @@ fn dispatch_set_view_with_resize(
         .panes
         .retain(|pane| registered.contains_key(&pane.session));
     if !snapshot.sink.replace_view(&view, request_id, screens) {
-        disconnect_dashboard(state, snapshot);
+        state.dashboard.disconnect(snapshot);
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     }
     let focus_changed = previous.as_ref().and_then(|old| old.focused) != view.focused;
-    let mut slot = state.dashboard_slot.lock().unwrap();
-    let Some(current) = slot
-        .as_mut()
-        .filter(|current| Arc::ptr_eq(&current.identity, owner) && !current.sink.is_closing())
-    else {
+    if !state
+        .dashboard
+        .publish_view(owner, published, focus_changed, || {
+            #[cfg(test)]
+            if let Some(hook) = state.before_view_publish_hook.lock().unwrap().clone() {
+                hook();
+            }
+        })
+    {
         let _ = completion.send(DispatchCompletion::Complete);
         return;
-    };
-    #[cfg(test)]
-    if let Some(hook) = state.before_view_publish_hook.lock().unwrap().clone() {
-        hook();
-    }
-    if focus_changed {
-        current.history.take();
-    }
-    *state.view.lock().unwrap() = Some(published.clone());
-    if let Some(focused) = published.focused
-        && let Some(pane) = published.panes.iter().find(|pane| pane.session == focused)
-    {
-        set_dashboard_geometry(state, owner, pane.size);
     }
     drop(registered);
     let _ = completion.send(DispatchCompletion::Complete);
-}
-
-pub(super) fn clear_view_subscription(state: &ServerState, fallback_revision: Option<u64>) {
-    let mut view = state.view.lock().unwrap();
-    match view.as_mut() {
-        Some(current) => {
-            current.panes.clear();
-            current.focused = None;
-        }
-        None => {
-            if let Some(revision) = fallback_revision {
-                *view = Some(DashboardView {
-                    revision,
-                    panes: Vec::new(),
-                    focused: None,
-                });
-            }
-        }
-    }
-}
-
-fn clear_view_subscription_for_owner(
-    state: &ServerState,
-    owner: &Arc<()>,
-    fallback_revision: Option<u64>,
-) {
-    let slot = state.dashboard_slot.lock().unwrap();
-    if !slot
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.identity, owner))
-    {
-        return;
-    }
-    let mut view = state.view.lock().unwrap();
-    match view.as_mut() {
-        Some(current) => {
-            current.panes.clear();
-            current.focused = None;
-        }
-        None => {
-            if let Some(revision) = fallback_revision {
-                *view = Some(DashboardView {
-                    revision,
-                    panes: Vec::new(),
-                    focused: None,
-                });
-            }
-        }
-    }
 }
 
 pub(super) fn resize_view_targets(
@@ -767,21 +679,4 @@ pub(super) fn resize_view_targets(
         resize(session, *size)?;
     }
     Ok(())
-}
-
-pub(super) fn set_dashboard_geometry(state: &ServerState, owner: &Arc<()>, size: TerminalSize) {
-    *state.dashboard_size.lock().unwrap() = Some(DashboardGeometry {
-        owner: Arc::clone(owner),
-        size,
-    });
-}
-
-pub(super) fn clear_dashboard_geometry(state: &ServerState, owner: &Arc<()>) {
-    let mut geometry = state.dashboard_size.lock().unwrap();
-    if geometry
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(&current.owner, owner))
-    {
-        *geometry = None;
-    }
 }

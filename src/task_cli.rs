@@ -1,5 +1,6 @@
 use crate::config::RegistryPath;
-use crate::protocol::{ClientMessage, Request, Response, ServerMessage, read_frame, write_frame};
+use crate::protocol::client;
+use crate::protocol::{Request, Response};
 use crate::server::{ServerPaths, connect_if_running, connect_or_start};
 use crate::task_manager::{TaskManager, TaskRequest, TaskResponse};
 use crate::tasks::*;
@@ -291,22 +292,9 @@ fn request_raw(req: TaskRequest) -> Result<TaskResponse> {
     };
     connection.set_read_timeout(Some(Duration::from_secs(30)))?;
     connection.set_write_timeout(Some(Duration::from_secs(30)))?;
-    write_frame(
-        &mut connection,
-        &ClientMessage {
-            request_id: 1,
-            request: Request::Task(Box::new(req)),
-        },
-    )?;
-    match read_frame::<ServerMessage>(&mut connection)? {
-        ServerMessage::Response {
-            response: Response::Task(value),
-            ..
-        } => Ok(*value),
-        ServerMessage::Response {
-            response: Response::Error { code, message },
-            ..
-        } => bail!("{code:?}: {message}"),
+    match client::request(&mut connection, 1, Request::Task(Box::new(req)))? {
+        Response::Task(value) => Ok(*value),
+        Response::Error { code, message } => bail!("{code:?}: {message}"),
         _ => bail!("unexpected task response; update and restart the OVRCR server"),
     }
 }

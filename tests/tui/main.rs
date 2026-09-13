@@ -356,8 +356,8 @@ fn type_existing_branch_and_submit(dashboard: &mut Dashboard, name: &str, branch
 fn poll_until_deferred_submit_refused(dashboard: &mut Dashboard, why: &str) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let (_, request) = dashboard.poll_palette();
-        assert!(request.is_none(), "{why}");
+        dashboard.poll_palette();
+        assert!(dashboard.drain_outbox().is_empty(), "{why}");
         let text = palette_text(dashboard);
         // Without real branches the field would stay text and submit anyway.
         assert!(!text.contains("enter branch/base manually"), "{text}");

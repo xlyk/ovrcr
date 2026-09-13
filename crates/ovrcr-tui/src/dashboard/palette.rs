@@ -412,9 +412,9 @@ impl Dashboard {
     }
 
     // Called by the real client loop, even when there is no keyboard/server input.
-    pub fn poll_palette(&mut self) -> (bool, Option<ClientMessage>) {
+    pub fn poll_palette(&mut self) -> bool {
         let Some(mut palette) = self.palette.take() else {
-            return (false, None);
+            return false;
         };
         let was_loading = palette.suggestions.in_flight.is_some();
         self.refresh_workspace_form(&mut palette);
@@ -439,18 +439,15 @@ impl Dashboard {
             }
         }
         self.palette = Some(palette);
-        let request = if let Some(submit_all) = submit {
-            match self.palette_key_with_submit(
+        if let Some(submit_all) = submit
+            && let DashboardAction::Request(request) = self.palette_key_with_submit(
                 KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
                 submit_all,
-            ) {
-                DashboardAction::Request(request) => Some(request),
-                _ => None,
-            }
-        } else {
-            None
-        };
-        (was_loading || submit.is_some() || refused, request)
+            )
+        {
+            self.push_request(request);
+        }
+        was_loading || submit.is_some() || refused
     }
 
     pub(super) fn open_register_project(&mut self) -> DashboardAction {
@@ -1411,9 +1408,12 @@ impl Dashboard {
                 self.palette = None;
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
+                    self.select_session(session.id);
                     let request_id = self.next_request_id();
                     let outgoing = self
-                        .select_request(session.id, request_id)
+                        .view_request(self.outer_area, request_id)
+                        .ok()
+                        .flatten()
                         .into_iter()
                         .collect();
                     self.mode = InputMode::Terminal;
@@ -1467,9 +1467,12 @@ impl Dashboard {
         let Some(session) = session else {
             return Vec::new();
         };
+        self.select_session(session);
         let request_id = self.next_request_id();
         let outgoing = self
-            .select_request(session, request_id)
+            .view_request(self.outer_area, request_id)
+            .ok()
+            .flatten()
             .into_iter()
             .collect();
         self.mode = InputMode::Terminal;
@@ -2123,7 +2126,8 @@ mod mouse_tests {
             click(&mut d, "[Submit]", 1, 100, 30),
             DashboardAction::Request(_)
         ));
-        assert!(d.poll_palette().1.is_none(), "inspection is still pending");
+        d.poll_palette();
+        assert!(d.drain_outbox().is_empty(), "inspection is still pending");
         // Supply the awaited suggestion result deterministically; exercise the
         // production idle-poll replay, without a timing-dependent Git worker.
         let palette = d.palette.as_mut().unwrap();
@@ -2135,14 +2139,20 @@ mod mouse_tests {
             }),
         );
         palette.suggestions.inspect = None;
-        let (_, request) = d.poll_palette();
-        let message =
-            request.expect("explicit Submit must survive the suggestion wait from Project");
+        d.poll_palette();
+        let mut drained = d.drain_outbox();
+        assert_eq!(
+            drained.len(),
+            1,
+            "explicit Submit must survive the suggestion wait from Project"
+        );
+        let message = drained.remove(0);
         assert!(
             matches!(message.request, Request::CreateWorkspace { project, name, branch: BranchRequest::New { base, .. } } if project == "demo" && name == "deferred" && base == "develop")
         );
+        d.poll_palette();
         assert!(
-            d.poll_palette().1.is_none(),
+            d.drain_outbox().is_empty(),
             "later polls cannot repeat the request"
         );
         assert!(
