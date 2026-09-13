@@ -43,15 +43,17 @@ export default function (omp) {
     }
     return report("agent_start", ctx);
   });
-  omp.on("agent_end", async (event, ctx) => {
+  omp.on("agent_end", (event, ctx) => {
     producer.outcome = outcomeOf(event.messages ?? []);
     const willContinue = Boolean(event.willContinue);
     const end = report("agent_end", ctx, { will_continue: willContinue });
     if (willContinue) return end;
-    await end;
+    // Oh My Pi does not await this emit, so the next agent_start can arrive while a helper
+    // is in flight: frame the settled event and close the cycle in this same tick. The
+    // transport FIFO keeps the end before the settled on the wire.
     const settled = report("agent_settled", ctx);
     producer.open = false;
-    return settled;
+    return Promise.all([end, settled]).then(([, sent]) => sent);
   });
   omp.on("session_shutdown", (_event, ctx) => {
     const sent = report("session_shutdown", ctx, { reason: "quit" });

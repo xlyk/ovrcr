@@ -72,15 +72,26 @@ pub(super) fn doctor(
     session: Option<u64>,
     executable: &OsStr,
 ) -> AppResult<()> {
-    let version =
-        ovrcr::report::admission::probe_version(executable).and_then(|raw| version_of(&raw));
-    let (probe_status, version_status) = match &version {
-        None => ("unavailable", "unknown"),
-        Some(found) if provider.tested_versions.contains(&found.as_str()) => ("probed", "tested"),
-        Some(_) => ("probed", "unverified_compatible_until_proven_otherwise"),
+    let raw = ovrcr::report::admission::probe_version(executable);
+    let version = raw.as_deref().and_then(version_of);
+    let probe_status = if raw.is_some() {
+        "probed"
+    } else {
+        "unavailable"
+    };
+    let version_status = match &version {
+        None => "unknown",
+        Some(found) if provider.tested_versions.contains(&found.as_str()) => "tested",
+        Some(_) => "unverified_compatible_until_proven_otherwise",
     };
     let mut remediation = Vec::<String>::new();
-    if version.is_none() {
+    if raw.is_some() && version.is_none() {
+        remediation.push(format!(
+            "{} printed no recognizable version for --version; reporting stays enabled, but the release cannot be recorded as evidence.",
+            executable.to_string_lossy()
+        ));
+    }
+    if raw.is_none() {
         remediation.push(format!(
             "The bounded --version probe of {} failed; check the executable path, then rerun doctor.",
             executable.to_string_lossy()
@@ -157,4 +168,31 @@ pub(super) fn doctor(
         serde_json::to_string_pretty(&report).map_err(RuntimeError::internal)?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_of;
+
+    #[test]
+    fn version_of_accepts_harness_formats_and_rejects_everything_else() {
+        assert_eq!(version_of(b"0.85.1\n").as_deref(), Some("0.85.1"));
+        assert_eq!(version_of(b"omp/18.1.19\n").as_deref(), Some("18.1.19"));
+        assert_eq!(
+            version_of(b"1.2.3-beta+build\nsecond line\n").as_deref(),
+            Some("1.2.3-beta+build")
+        );
+        for garbage in [
+            &b""[..],
+            b"\n",
+            b"/opt/homebrew/bin/pi\n",
+            b"pi version unknown\n",
+            b"v0.85.1\n",
+            b"0.85.1; rm -rf /\n",
+        ] {
+            assert_eq!(version_of(garbage), None, "{garbage:?}");
+        }
+        let long = format!("{}\n", "9".repeat(65));
+        assert_eq!(version_of(long.as_bytes()), None);
+    }
 }

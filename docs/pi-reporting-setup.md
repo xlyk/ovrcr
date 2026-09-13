@@ -27,8 +27,10 @@ arguments or results, titles or credentials.
   has exercised (`tested_versions`), `unverified_compatible_until_proven_otherwise`
   for any other release, `unknown` when the bounded `--version` probe fails.
   Ordinary upgrades stay enabled; there is no allowlist.
-- `session_status`: `unbound` until the extension delivered `session_start`;
-  `bound` afterwards with `binding` and `lifecycle`.
+- `session_status`: `not_requested` without `--session` (or an inherited
+  `OVRCR_SESSION_ID`); `inspection_unavailable` when the server cannot be reached;
+  `session_not_found` for a stale id; `unbound` until the extension delivered
+  `session_start`; `bound` afterwards with `binding` and `lifecycle`.
 - `lifecycle.delivery` (`observed` once any activity arrived), `activity`,
   `work_seen`, `health` (`Unavailable` after transport loss or a retired producer),
   `unread`.

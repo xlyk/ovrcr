@@ -165,3 +165,22 @@ test("shutdown reports once with reason quit and disables", async () => {
   await host.emit({ type: "agent_end", messages: [assistant("stop")] });
   assert.deepEqual(frames(record).map((f) => [f.event, f.reason]), [["session_shutdown", "quit"]]);
 });
+
+test("a next start racing an un-awaited end opens a new cycle; the settled end keeps run 1", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({ type: "agent_start" });
+  // Oh My Pi fires agent_end without awaiting it; the next prompt's agent_start can land
+  // while the end's helper is still in flight.
+  const end = host.emit({ type: "agent_end", messages: [assistant("stop")] });
+  await host.emit({ type: "agent_start" });
+  await end;
+  const sent = frames(record).map((f) => [f.event, f.run]);
+  assert.deepEqual(sent, [
+    ["agent_start", 1],
+    ["agent_end", 1],
+    ["agent_settled", 1],
+    ["agent_start", 2],
+  ]);
+});
