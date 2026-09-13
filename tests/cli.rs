@@ -2201,7 +2201,7 @@ fn codex_setup_and_doctor_help_expose_provider_dispatch() {
             .unwrap();
         assert!(output.status.success());
         let help = String::from_utf8(output.stdout).unwrap();
-        assert!(help.contains("claude, codex"), "{help}");
+        assert!(help.contains("claude, codex, pi, omp"), "{help}");
         if action == "doctor" {
             assert!(!help.contains("[default: claude]"));
         }
