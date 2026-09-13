@@ -167,8 +167,10 @@ re-announces the conversation with `session_start` carrying the switch reason, w
 and invalidates any cycle left open by the conversation being left. An existing unread
 response survives the switch until it is reviewed. Payloads carry identifiers and
 discriminants only — the one field added for Oh My Pi is the boolean continuation flag —
-never prompts, responses or tool data. Approvals and questions (Oh My Pi exports no event
-for them) and reporter recovery are later tickets.
+never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
+process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
+the invocation unreported until the next managed launch (reporter recovery is #96).
+Approvals and questions (Oh My Pi exports no event for them, #95) are a later ticket.
 
 ## Context usage
 

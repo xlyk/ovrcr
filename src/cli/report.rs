@@ -20,23 +20,20 @@ pub(super) fn run_report(command: ReportCommand) -> AppResult<()> {
             }
             Ok(())
         }
-        ReportCommand::Pi { stdin: _ } => {
+        // Both extension harnesses speak the same envelope; only the provider differs.
+        ReportCommand::Pi { .. } | ReportCommand::Omp { .. } => {
+            let send: fn(&[u8], Instant) -> anyhow::Result<()> =
+                if matches!(command, ReportCommand::Pi { .. }) {
+                    app_report::send_pi_event
+                } else {
+                    app_report::send_omp_event
+                };
             if std::env::var_os("OVRCR_AGENT_SOCKET").is_none() {
                 return Ok(());
             }
             let deadline = Instant::now() + Duration::from_secs(1);
             if let Ok(input) = app_report::read_hook_stdin(deadline) {
-                let _ = app_report::send_pi_event(&input, deadline);
-            }
-            Ok(())
-        }
-        ReportCommand::Omp { stdin: _ } => {
-            if std::env::var_os("OVRCR_AGENT_SOCKET").is_none() {
-                return Ok(());
-            }
-            let deadline = Instant::now() + Duration::from_secs(1);
-            if let Ok(input) = app_report::read_hook_stdin(deadline) {
-                let _ = app_report::send_omp_event(&input, deadline);
+                let _ = send(&input, deadline);
             }
             Ok(())
         }

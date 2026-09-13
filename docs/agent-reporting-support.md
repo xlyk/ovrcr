@@ -312,4 +312,7 @@ event host and the managed lifecycle test
 which drives the real extension through the real CLI, PTY, private socket and receiver.
 The Dashboard slice is covered by `omp_ready_alerts_once_and_creates_unread`, and the launch
 shape and per-invocation cleanup by `omp_managed_launch_inserts_its_extension_and_removes_it`.
-Native acceptance against an installed Oh My Pi is not claimed here.
+Native acceptance against an installed Oh My Pi is tracked by #97. The opt-in
+`installed_omp_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
+and requires `OVRCR_TEST_OMP_EXECUTABLE` plus an isolated `HOME`; it never writes to the
+user's `~/.omp`.

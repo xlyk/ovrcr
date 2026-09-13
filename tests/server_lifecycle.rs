@@ -11971,6 +11971,79 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
 }
 
 #[test]
+#[ignore = "requires OVRCR_TEST_OMP_EXECUTABLE (installed omp) and isolated HOME"]
+fn installed_omp_managed_launch_binds_the_real_session_and_stays_idle() {
+    let _guard = env_lock();
+    use ovrcr::protocol::AgentActivity;
+    let omp = std::env::var_os("OVRCR_TEST_OMP_EXECUTABLE").expect("OVRCR_TEST_OMP_EXECUTABLE");
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "omp-setup");
+    // HOME points inside the fixture, so Oh My Pi's own agent directory (`$HOME/.omp/agent`)
+    // is the fixture's: the user's live ~/.omp is neither read nor written.
+    let home = fixture._root.path().join("omp-home");
+    let agent_dir = home.join(".omp/agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    // Nothing is copied in: Oh My Pi opens its terminal UI, loads extensions and announces
+    // the session before it needs a model or credentials, so the user's ~/.omp is never read.
+    let summary = fixture.create_session_summary(
+        "omp-native",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"export HOME="$3"; "$1" agent run omp -- "$2" --no-session --no-tools --no-lsp --no-pty --no-skills --no-rules; IFS= read -r done"#.into(),
+            "omp-native".into(),
+            env!("CARGO_BIN_EXE_ovrcr").into(),
+            omp,
+            home.into_os_string(),
+        ],
+    );
+    fixture.record_process_group(&summary);
+    // The real loader has to resolve the sibling `./ovrcr-reporting-transport.mjs` import
+    // out of the materialized 0700 directory, register the extension, and deliver a real
+    // session_start carrying the interactive session manager's conversation id.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let current = fixture.session_summary(summary.id);
+        if let Some(agent) = &current.agent
+            && agent
+                .activity
+                .as_ref()
+                .is_some_and(|s| s.state == AgentActivity::Idle)
+        {
+            assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Omp);
+            assert!(!agent.binding.conversation.is_empty());
+            break;
+        }
+        if Instant::now() >= deadline {
+            let screen = match fixture.request(Request::ReadTerminal {
+                session: summary.id,
+                max_lines: None,
+            }) {
+                Response::TerminalText { text, .. } => text,
+                other => format!("{other:?}"),
+            };
+            panic!("real Oh My Pi never reported session_start: {current:?}\nscreen:\n{screen}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // End the supervised native harness through the product's own termination path: a
+    // keystroke cannot be delivered here (SendTerminal brackets its bytes as pasted text).
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: summary.id
+        }),
+        Response::Ok
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("inventory unavailable")
+    };
+    assert!(
+        !sessions.iter().any(|session| session.id == summary.id),
+        "supervised native Oh My Pi session remains after termination"
+    );
+}
+
+#[test]
 #[ignore = "requires OVRCR_TEST_PI_EXECUTABLE (installed pi) and an isolated PI_CODING_AGENT_DIR"]
 fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
     let _guard = env_lock();
