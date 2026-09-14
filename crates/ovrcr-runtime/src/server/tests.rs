@@ -6,7 +6,7 @@ use ovrcr_protocol::AgentReport;
 use ovrcr_protocol::exchange_preamble;
 use std::time::Instant;
 
-use crate::session::AgentActivity;
+use crate::session::{AgentActivity, NO_REGISTER};
 use ovrcr_protocol::{
     DashboardView, HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, PaneTarget, Response,
     ServerEvent, ServerMessage,
@@ -2499,7 +2499,7 @@ fn spawn_live_test_session_with_hook(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     (cwd, session, receiver)
@@ -2527,7 +2527,7 @@ fn spawn_exiting_test_session(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     (cwd, session, receiver)
@@ -2651,6 +2651,35 @@ fn queued_dashboard_message(sink: &Arc<DashboardSink>) -> ServerMessage {
     }
 }
 
+/// Put one Dashboard request through the connection entry point under the
+/// same bound the other dispatcher fixtures use. The dispatcher answers view
+/// requests on its own thread and `await_view_completion` waits without a
+/// deadline, so a stalled dispatcher has to fail this test rather than hang
+/// the suite.
+fn dashboard_request_bounded(
+    state: &Arc<ServerState>,
+    owner: &Arc<()>,
+    request_id: u64,
+    request: Request,
+) -> Response {
+    let (response, result) = mpsc::sync_channel(1);
+    let state = Arc::clone(state);
+    let owner = Arc::clone(owner);
+    thread::spawn(move || {
+        let mut role = ClientRole::Dashboard;
+        let _ = response.send(handle_request_with_id(
+            &state,
+            &mut role,
+            request,
+            request_id,
+            Some(&owner),
+        ));
+    });
+    result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("dashboard request completion")
+}
+
 fn send_history_command(
     state: &Arc<ServerState>,
     owner: &Arc<()>,
@@ -2717,17 +2746,21 @@ fn history_owner_and_token_isolation() {
         }],
         focused: Some(id),
     }));
-    let mut dashboard_role = ClientRole::Dashboard;
     assert!(matches!(
-        handle_request_with_id(
+        dashboard_request_bounded(
             &state,
-            &mut dashboard_role,
-            Request::Select {
-                session: id,
-                size: TerminalSize { rows: 24, cols: 80 },
-            },
+            &old_owner,
             8,
-            Some(&old_owner),
+            Request::SetView {
+                view: DashboardView {
+                    revision: 2,
+                    panes: vec![PaneTarget {
+                        session: id,
+                        size: TerminalSize { rows: 24, cols: 80 },
+                    }],
+                    focused: Some(id),
+                },
+            },
         ),
         Response::Ok
     ));
@@ -2766,15 +2799,20 @@ fn history_owner_and_token_isolation() {
         }
     ));
     assert!(matches!(
-        handle_request_with_id(
+        dashboard_request_bounded(
             &state,
-            &mut dashboard_role,
-            Request::Select {
-                session: switched_id,
-                size: TerminalSize { rows: 24, cols: 80 },
-            },
+            &old_owner,
             10,
-            Some(&old_owner),
+            Request::SetView {
+                view: DashboardView {
+                    revision: 3,
+                    panes: vec![PaneTarget {
+                        session: switched_id,
+                        size: TerminalSize { rows: 24, cols: 80 },
+                    }],
+                    focused: Some(switched_id),
+                },
+            },
         ),
         Response::Ok
     ));
@@ -3875,7 +3913,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
-            &|_| {},
+            NO_REGISTER,
         )
         .unwrap();
         (cwd, session, receiver)
@@ -4223,7 +4261,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4491,7 +4529,7 @@ fn shutdown_without_kill_rejects_paused_session() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4540,7 +4578,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
@@ -4827,7 +4865,7 @@ fn session_output_flows_while_another_session_spawns() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events.clone(),
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let state = Arc::new(ServerState {
