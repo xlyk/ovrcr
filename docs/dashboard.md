@@ -110,7 +110,8 @@ An input request is not a response. It never creates, clears or retargets an
 [unread](#unread-responses) response, and answering one is not a review. Reporter
 loss — and a reporter paused because what it delivered is no longer certain —
 forgets every open request and keeps the unread response; a recovered reporter
-starts with none and replays no alert for what was open before. Only the request
+starts with none and replays no alert for what was open before. This holds for Oh
+My Pi's approvals and questions exactly as it does for Pi's prompts. Only the request
 identity, its namespace and its kind leave the extension; the prompt title, the
 approval reason, the question and the answer never do.
 

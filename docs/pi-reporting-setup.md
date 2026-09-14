@@ -47,7 +47,7 @@ arguments or results, titles or credentials.
   `unavailable_no_provider_surface` for Pi, which has no question surface beyond
   its dialogs, and `available_tool_lifetime` for Oh My Pi, whose question request
   spans the ask tool's execution rather than the dialog's visibility; `recovery`
-  is available for Pi (a source boundary or `/ovrcr-reattach`) and `metrics` is
+  is available for both (a source boundary or `/ovrcr-reattach`) and `metrics` is
   absent by design.
 
 ## Removal

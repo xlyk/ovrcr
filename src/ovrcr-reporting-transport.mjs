@@ -17,6 +17,17 @@ export function outcomeOf(messages) {
   return "none";
 }
 
+/**
+ * The conversation a transition left, as its identity alone. Both harnesses name a session
+ * file `<timestamp>_<session id>.jsonl` while binding the bare session id, so this takes the
+ * trailing id and nothing else — never the timestamp, never the directory, never anything
+ * inside the file. Anchored, so a name no bounded id can be read out of yields null (no
+ * expectation) instead of a truncation that would contradict a healthy binding.
+ */
+export function idOf(file) {
+  return file?.match(/(?:^|[/_])([A-Za-z0-9][A-Za-z0-9.-]{0,63})\.jsonl$/)?.[1] ?? null;
+}
+
 export function createReporter({
   binary,
   helperArgs,
