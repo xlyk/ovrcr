@@ -2702,19 +2702,20 @@ fn history_owner_and_token_isolation() {
         }],
         focused: Some(id),
     }));
-    let (select_completion, select_result) = mpsc::sync_channel(1);
-    state
-        .dispatch
-        .send(DispatchMessage::Select {
-            request_id: 8,
-            session: id,
-            size: TerminalSize { rows: 24, cols: 80 },
-            completion: select_completion,
-        })
-        .unwrap();
-    select_result
-        .recv_timeout(Duration::from_secs(2))
-        .expect("same-session select completion");
+    let mut dashboard_role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut dashboard_role,
+            Request::Select {
+                session: id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            8,
+            Some(&old_owner),
+        ),
+        Response::Ok
+    ));
     assert!(matches!(
         queued_dashboard_message(&old_sink),
         ServerMessage::Response {
@@ -2749,19 +2750,19 @@ fn history_owner_and_token_isolation() {
             response: Response::HistoryRows(_),
         }
     ));
-    let (switch_completion, switch_result) = mpsc::sync_channel(1);
-    state
-        .dispatch
-        .send(DispatchMessage::Select {
-            request_id: 10,
-            session: switched_id,
-            size: TerminalSize { rows: 24, cols: 80 },
-            completion: switch_completion,
-        })
-        .unwrap();
-    switch_result
-        .recv_timeout(Duration::from_secs(2))
-        .expect("switch select completion");
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut dashboard_role,
+            Request::Select {
+                session: switched_id,
+                size: TerminalSize { rows: 24, cols: 80 },
+            },
+            10,
+            Some(&old_owner),
+        ),
+        Response::Ok
+    ));
     assert!(matches!(
         queued_dashboard_message(&old_sink),
         ServerMessage::Response {
