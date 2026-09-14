@@ -4,7 +4,7 @@ mod live;
 mod mouse_app;
 
 use anyhow::{Context, Result, bail};
-use live::{Live, group_exists, wait_deadline};
+use live::{Live, Stop, group_exists, wait_deadline};
 use ovrcr::protocol::{HierarchySnapshot, Request, Response};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
@@ -17,19 +17,28 @@ use std::time::{Duration, Instant};
 
 /// A live server hosted by the compiled `ovrcr` binary, plus the CLI and
 /// terminal helpers this suite drives it with.
-struct AcceptanceFixture(Live);
+struct AcceptanceFixture {
+    live: Live,
+    /// The session groups seen at the last look. Replaced, not accumulated: a
+    /// group whose session is long gone must not decide whether this fixture
+    /// cleaned up after itself.
+    managed_pgids: Vec<libc::pid_t>,
+}
 
 impl std::ops::Deref for AcceptanceFixture {
     type Target = Live;
 
     fn deref(&self) -> &Live {
-        &self.0
+        &self.live
     }
 }
 
 impl AcceptanceFixture {
     fn new() -> Result<Self> {
-        Ok(Self(Live::binary()))
+        Ok(Self {
+            live: Live::binary(),
+            managed_pgids: Vec::new(),
+        })
     }
 
     fn cli(&self, args: &[&str]) -> Result<std::process::Output> {
@@ -86,7 +95,7 @@ impl AcceptanceFixture {
             "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *PAUSE_RESUME_TOKEN*) printf PAUSE_RESUME_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
-        self.session_pgids()?;
+        self.managed_pgids = self.session_pgids()?;
         let output = self.cli(&[
             "new",
             "--project",
@@ -101,7 +110,7 @@ impl AcceptanceFixture {
             "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "mouse session")?;
-        self.session_pgids()?;
+        self.managed_pgids = self.session_pgids()?;
         Ok(())
     }
 
@@ -123,12 +132,12 @@ impl AcceptanceFixture {
             "--nocapture",
         ])?;
         require_success(output, "mouse-protocol session")?;
-        self.session_pgids()?;
+        self.managed_pgids = self.session_pgids()?;
         Ok(())
     }
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
-        Ok(self.own_sessions())
+        Ok(self.session_groups())
     }
 
     fn list(&self) -> Result<HierarchySnapshot> {
@@ -150,10 +159,14 @@ impl AcceptanceFixture {
 
     fn shutdown(&mut self) -> Result<()> {
         let pgids = self.session_pgids()?;
+        self.managed_pgids = pgids.clone();
         let output = self.cli_timeout(&["shutdown", "--kill"], Duration::from_secs(12))?;
         require_success(output, "shutdown --kill")?;
-        if !self.join_within(wait_deadline()) {
-            bail!("isolated server did not exit successfully");
+        match self.join_within(wait_deadline()) {
+            Stop::Finished => {}
+            Stop::Exited(status) => bail!("isolated server exited unsuccessfully: {status:?}"),
+            Stop::Panicked(message) => bail!("isolated server panicked: {message}"),
+            Stop::TimedOut => bail!("isolated server did not stop within {:?}", wait_deadline()),
         }
         if !live::wait_for_absent(&self.socket, wait_deadline()) {
             bail!("server socket did not disappear: {}", self.socket.display());
@@ -167,7 +180,7 @@ impl AcceptanceFixture {
     }
 
     fn terminate_managed_groups(&self) {
-        for pgid in self.owned_groups() {
+        for &pgid in &self.managed_pgids {
             if group_exists(pgid) {
                 unsafe {
                     libc::kill(-pgid, libc::SIGTERM);
@@ -175,10 +188,12 @@ impl AcceptanceFixture {
             }
         }
         let grace_deadline = Instant::now() + Duration::from_millis(500);
-        while Instant::now() < grace_deadline && self.owned_groups().into_iter().any(group_exists) {
+        while Instant::now() < grace_deadline
+            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
+        {
             thread::park_timeout(Duration::from_millis(5));
         }
-        for pgid in self.owned_groups() {
+        for &pgid in &self.managed_pgids {
             if group_exists(pgid) {
                 unsafe {
                     libc::kill(-pgid, libc::SIGKILL);
@@ -186,7 +201,9 @@ impl AcceptanceFixture {
             }
         }
         let kill_deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < kill_deadline && self.owned_groups().into_iter().any(group_exists) {
+        while Instant::now() < kill_deadline
+            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
+        {
             thread::park_timeout(Duration::from_millis(5));
         }
     }
@@ -620,8 +637,8 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         },
         Duration::from_secs(5),
     )?;
-    let owned_pgids = fixture.session_pgids()?;
-    eprintln!("workspace fixture owned PGIDs: {owned_pgids:?}");
+    fixture.managed_pgids = fixture.session_pgids()?;
+    eprintln!("workspace fixture owned PGIDs: {:?}", fixture.managed_pgids);
     let hierarchy = fixture.list()?;
     let workspace = hierarchy
         .projects
@@ -913,7 +930,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         .context("history session id")?
         .id
         .0;
-    fixture.session_pgids()?;
+    fixture.managed_pgids = fixture.session_pgids()?;
     let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
         thread::yield_now();
@@ -1095,14 +1112,14 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         .find(|session| session.name == "history-copy")
         .context("historical copy session id")?
         .id;
-    fixture.session_pgids()?;
+    fixture.managed_pgids = fixture.session_pgids()?;
     let server_pid = fixture.server_pid();
     let server_pgid = server_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!(
         "historical copy fixture root: {} server pid/pgid: {server_pid:?}/{server_pgid:?} session id: {:?} groups: {:?}",
         fixture.root.path().display(),
         history_id,
-        fixture.owned_groups(),
+        fixture.managed_pgids,
     );
     let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
@@ -1449,7 +1466,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     );
     eprintln!(
         "copy acceptance fixture session process groups while alive: {:?}",
-        fixture.owned_groups()
+        fixture.managed_pgids
     );
     let waiting_id = fixture
         .list()?
@@ -1548,7 +1565,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     detach_result?;
     eprintln!(
         "copy acceptance fixture process groups after first detach: {:?}",
-        fixture.owned_groups()
+        fixture.managed_pgids
     );
 
     let mut reattached = OuterDashboard::start(

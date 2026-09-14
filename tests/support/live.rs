@@ -7,7 +7,7 @@
 //!
 //! Two adapters sit at one seam — how the server is hosted:
 //!
-//! * [`Live::thread`] runs [`run_server`] on a thread of the test process, so
+//! * [`Live::thread`] runs `run_server` on a thread of the test process, so
 //!   a test can reach into server state and a panic carries the server down
 //!   with it.
 //! * [`Live::binary`] spawns the compiled `ovrcr` binary, so a test can prove
@@ -15,12 +15,13 @@
 //!   server it did not start.
 //!
 //! Everything above the seam is shared: repository and registry construction,
-//! the wait for the socket, timed control requests through
+//! the wait for the socket, control requests through
 //! [`ovrcr::protocol::client`], "project and workspace ready", the process
 //! groups the fixture owns, and the cleanup that runs from [`Drop`].
 
-// Eight test binaries include this module; each uses its own subset.
-#![allow(dead_code, unused_imports)]
+// Eight test binaries compile this module and each drives a different part
+// of it, so what one suite never calls is not dead.
+#![allow(dead_code)]
 
 #[path = "deadline.rs"]
 mod deadline;
@@ -29,18 +30,21 @@ pub use deadline::wait_deadline;
 
 use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::{BranchRequest, Request, Response, client, connect_server};
+use ovrcr::server::ServerPaths;
 #[cfg(feature = "acceptance-diagnostics")]
 use ovrcr::server::ServerQueueDiagnostics;
-use ovrcr::server::{ServerPaths, run_server};
+#[cfg(not(feature = "acceptance-diagnostics"))]
+use ovrcr::server::run_server;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-/// The project every `ready` fixture registers.
+/// The project [`Live::ready`] registers.
 pub const PROJECT: &str = "fixture";
-/// The workspace every `ready` fixture creates in [`PROJECT`].
+/// The workspace [`Live::ready`] creates in [`PROJECT`].
 pub const WORKSPACE: &str = "work";
 
 /// The seam: who hosts the server this fixture drives.
@@ -48,6 +52,26 @@ enum Host {
     Idle,
     Thread(JoinHandle<()>),
     Binary(Child),
+}
+
+/// How a hosted server stopped. A test that waited for a clean stop needs to
+/// tell "it is still running" from "it stopped, badly".
+#[derive(Debug)]
+pub enum Stop {
+    /// The thread returned, or the child exited successfully.
+    Finished,
+    /// The child exited, unsuccessfully, with this status.
+    Exited(ExitStatus),
+    /// The server thread panicked. Its message, so the panic is not swallowed.
+    Panicked(String),
+    /// Still running when the budget ran out.
+    TimedOut,
+}
+
+impl Stop {
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Stop::Finished)
+    }
 }
 
 pub struct Live {
@@ -59,7 +83,7 @@ pub struct Live {
     pub executable: PathBuf,
     host: Mutex<Host>,
     pgids: Mutex<Vec<libc::pid_t>>,
-    ready: Mutex<bool>,
+    ready: Mutex<Option<String>>,
     timeout: Option<Duration>,
     #[cfg(feature = "acceptance-diagnostics")]
     diagnostics: ServerQueueDiagnostics,
@@ -92,7 +116,7 @@ impl Live {
             executable: PathBuf::from(env!("CARGO_BIN_EXE_ovrcr")),
             host: Mutex::new(Host::Idle),
             pgids: Mutex::new(Vec::new()),
-            ready: Mutex::new(false),
+            ready: Mutex::new(None),
             timeout: None,
             #[cfg(feature = "acceptance-diagnostics")]
             diagnostics: ServerQueueDiagnostics::default(),
@@ -180,22 +204,26 @@ impl Live {
     }
 
     /// One control request over a fresh connection.
+    ///
+    /// It blocks until the server answers unless this fixture was made
+    /// [`bounded`](Self::bounded), which [`binary`](Self::binary) fixtures are.
     pub fn request(&self, request: Request) -> Response {
-        let mut stream = connect_server(&self.socket).unwrap();
-        if let Some(timeout) = self.timeout {
-            stream.set_read_timeout(Some(timeout)).unwrap();
-            stream.set_write_timeout(Some(timeout)).unwrap();
-        }
+        let mut stream = connect_with(&self.socket, self.timeout).unwrap();
         client::request(&mut stream, 1, request).unwrap()
     }
 
     /// Register [`PROJECT`] and create [`WORKSPACE`] on a new `branch`.
     ///
-    /// Idempotent: the first caller pays for it and later callers see the same
-    /// workspace, so a fixture can make itself ready lazily.
+    /// Idempotent, so a fixture can make itself ready lazily; the workspace
+    /// exists on one branch, and asking for a second is a test's mistake
+    /// rather than a silent no-op.
     pub fn ready(&self, branch: &str) {
         let mut ready = self.ready.lock().unwrap();
-        if *ready {
+        if let Some(existing) = ready.as_deref() {
+            assert_eq!(
+                existing, branch,
+                "the fixture workspace already exists on another branch"
+            );
             return;
         }
         assert_eq!(
@@ -217,22 +245,22 @@ impl Live {
             }),
             Response::Ok
         );
-        *ready = true;
+        *ready = Some(branch.to_owned());
     }
 
-    /// Record the process group of `pid` as one this fixture must reap.
-    pub fn own(&self, pid: u32) {
-        self.own_group(unsafe { libc::getpgid(pid as libc::pid_t) });
-    }
-
-    /// Record a process group directly, for a group the test learned about
-    /// from the child rather than from the server.
+    /// Record a process group this fixture must reap.
+    ///
+    /// A session leader owns its own group, so a group id the caller could not
+    /// resolve means the fixture has lost track of a child it is responsible
+    /// for: fail here rather than quietly own nothing.
     pub fn own_group(&self, pgid: libc::pid_t) {
-        if pgid > 1 {
-            let mut pgids = self.pgids.lock().unwrap();
-            if !pgids.contains(&pgid) {
-                pgids.push(pgid);
-            }
+        assert!(
+            pgid > 1,
+            "fixture child has no process group to own: {pgid}"
+        );
+        let mut pgids = self.pgids.lock().unwrap();
+        if !pgids.contains(&pgid) {
+            pgids.push(pgid);
         }
     }
 
@@ -241,34 +269,37 @@ impl Live {
         self.pgids.lock().unwrap().clone()
     }
 
-    /// Record every live session's process group, and return them.
-    pub fn own_sessions(&self) -> Vec<libc::pid_t> {
+    /// The process groups of the sessions the server lists right now.
+    ///
+    /// A read, not a claim: the caller decides which of these it owns. A
+    /// session that exits between the list and the lookup has no group left to
+    /// reap, so it drops out here.
+    pub fn session_groups(&self) -> Vec<libc::pid_t> {
         let Response::Hierarchy(snapshot) = self.request(Request::List) else {
             panic!("server list did not return a hierarchy");
         };
-        let pids: Vec<u32> = snapshot
+        snapshot
             .projects
             .into_iter()
             .flat_map(|project| project.workspaces)
             .flat_map(|workspace| workspace.sessions)
             .filter_map(|session| session.pid)
-            .collect();
-        for pid in pids {
-            self.own(pid);
-        }
-        self.owned_groups()
+            .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
+            .filter(|pgid| *pgid > 1)
+            .collect()
     }
 
     /// Wait for the hosted server to finish, however it is hosted.
     pub fn join(&self) {
+        let stop = self.join_within(Duration::from_secs(30));
         assert!(
-            self.join_within(Duration::from_secs(30)),
-            "fixture server did not finish"
+            stop.is_finished(),
+            "fixture server did not finish: {stop:?}"
         );
     }
 
-    /// The same wait, bounded; `false` if the server outlived the budget.
-    pub fn join_within(&self, timeout: Duration) -> bool {
+    /// The same wait, bounded, reporting how the server stopped.
+    pub fn join_within(&self, timeout: Duration) -> Stop {
         let deadline = Instant::now() + timeout;
         loop {
             // One lock per turn: the guard must be gone before the next wait.
@@ -280,16 +311,22 @@ impl Live {
             };
             if finished {
                 return match std::mem::replace(&mut *host, Host::Idle) {
-                    Host::Idle => true,
-                    Host::Thread(handle) => handle.join().is_ok(),
+                    Host::Idle => Stop::Finished,
+                    Host::Thread(handle) => match handle.join() {
+                        Ok(()) => Stop::Finished,
+                        Err(panic) => Stop::Panicked(panic_message(panic)),
+                    },
                     Host::Binary(mut child) => {
-                        child.wait().map(|status| status.success()).unwrap_or(false)
+                        match child.wait().expect("wait for fixture server child") {
+                            status if status.success() => Stop::Finished,
+                            status => Stop::Exited(status),
+                        }
                     }
                 };
             }
             drop(host);
             if Instant::now() >= deadline {
-                return false;
+                return Stop::TimedOut;
             }
             thread::park_timeout(Duration::from_millis(5));
         }
@@ -297,7 +334,7 @@ impl Live {
 
     fn wait_socket(&self) {
         assert!(
-            wait_for_socket(&self.socket, Duration::from_secs(5)),
+            wait_for_socket(&self.socket, wait_deadline()),
             "fixture server socket did not appear: {}",
             self.socket.display()
         );
@@ -309,7 +346,7 @@ impl Live {
     }
 
     fn kill_owned_groups(&self) -> bool {
-        let groups = self.pgids.lock().unwrap().clone();
+        let groups = self.owned_groups();
         let mut cleaned = true;
         for pgid in groups {
             if !group_exists(pgid) {
@@ -345,8 +382,12 @@ impl Drop for Live {
         if !self.kill_owned_groups() {
             cleanup_failed = true;
         }
-        if self.hosted() && !self.join_within(Duration::from_secs(5)) {
-            cleanup_failed = true;
+        if self.hosted() {
+            let stop = self.join_within(Duration::from_secs(5));
+            if !stop.is_finished() {
+                eprintln!("live fixture server stop: {stop:?}");
+                cleanup_failed = true;
+            }
         }
         if let Host::Binary(child) = &mut *self.host.get_mut().unwrap() {
             if child.try_wait().ok().flatten().is_none() {
@@ -372,6 +413,25 @@ impl Drop for Live {
             );
         }
     }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "panicked without a message".to_owned()
+    }
+}
+
+fn connect_with(socket: &Path, timeout: Option<Duration>) -> anyhow::Result<UnixStream> {
+    let stream = connect_server(socket)?;
+    if let Some(timeout) = timeout {
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
+    }
+    Ok(stream)
 }
 
 /// A Git repository with one commit on `main`, committed by a fixture identity
@@ -418,16 +478,15 @@ pub fn request_with_timeout(
     request: Request,
     timeout: Duration,
 ) -> Option<Response> {
-    let mut stream = connect_server(socket).ok()?;
-    stream.set_read_timeout(Some(timeout)).ok()?;
-    stream.set_write_timeout(Some(timeout)).ok()?;
+    let mut stream = connect_with(socket, Some(timeout)).ok()?;
     client::request(&mut stream, request_id, request).ok()
 }
 
-pub fn wait_for_socket(socket: &Path, timeout: Duration) -> bool {
+/// Poll `ready` until it holds, or `timeout` runs out.
+fn poll_until(timeout: Duration, mut ready: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if std::os::unix::net::UnixStream::connect(socket).is_ok() {
+        if ready() {
             return true;
         }
         if Instant::now() >= deadline {
@@ -437,17 +496,12 @@ pub fn wait_for_socket(socket: &Path, timeout: Duration) -> bool {
     }
 }
 
+pub fn wait_for_socket(socket: &Path, timeout: Duration) -> bool {
+    poll_until(timeout, || UnixStream::connect(socket).is_ok())
+}
+
 pub fn wait_for_absent(path: &Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if !path.exists() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
+    poll_until(timeout, || !path.exists())
 }
 
 /// Whether any process still belongs to this group. `EPERM` counts as present:
@@ -458,14 +512,5 @@ pub fn group_exists(pgid: libc::pid_t) -> bool {
 }
 
 pub fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if !group_exists(pgid) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
+    poll_until(timeout, || !group_exists(pgid))
 }

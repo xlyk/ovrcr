@@ -16,9 +16,14 @@
 `tests/support/live.rs` builds the live servers the integration suites drive.
 A `Live` owns a private temporary root and, inside it, the Git repository,
 workspace root, registry file and socket its server is given; the wait for the
-socket, timed control requests through `ovrcr_protocol::client`, "project and
+socket, control requests through `ovrcr_protocol::client`, "project and
 workspace ready", the process groups the fixture owns and the cleanup that runs
-from `Drop` all live there, so a suite writes none of it again. Two adapters
+from `Drop` all live there, so a suite writes none of it again. `Live::request`
+blocks until the server answers; `Live::bounded` — which `Live::binary` applies
+to itself — gives every request a deadline instead, so a test fails rather than
+hangs when its server stops answering. `Live::ready` creates the fixture
+workspace on one branch and asserting a second branch is a test's mistake, not a
+silent no-op. Two adapters
 sit at its one seam, how the server is hosted: `Live::thread` runs `run_server`
 on a thread of the test process, for tests that reach into server state or
 change the environment the server reads; `Live::binary` spawns the compiled

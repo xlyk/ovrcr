@@ -1,7 +1,7 @@
 #[path = "support/live.rs"]
 mod live;
 
-use live::{Live, group_exists, request_with_timeout, wait_deadline};
+use live::{Live, PROJECT, WORKSPACE, group_exists, request_with_timeout, wait_deadline};
 use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
@@ -175,8 +175,7 @@ fn stop(fixture: &Live) {
 
 #[test]
 fn startup_socket_directory_is_private() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mode = std::fs::metadata(fixture.socket.parent().unwrap())
         .unwrap()
         .permissions()
@@ -1218,8 +1217,7 @@ fn startup_failure_reports_server_log() {
 #[test]
 fn client_with_wrong_protocol_version_is_refused() {
     use ovrcr::protocol::{PROTOCOL_VERSION, read_preamble};
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
 
     // A newer client: the server answers with its own preamble, then closes
     // the connection without serving a frame.
@@ -1396,8 +1394,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
 
 #[test]
 fn shutdown_disconnected_requester_still_wakes_accept() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut stream = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut stream,
@@ -2191,7 +2188,6 @@ struct PauseHarness {
     dir: PathBuf,
     control_path: PathBuf,
     control: UnixDatagram,
-    pgids: Vec<libc::pid_t>,
     next_endpoint: usize,
 }
 
@@ -2222,7 +2218,6 @@ impl PauseHarness {
             dir,
             control_path,
             control,
-            pgids: Vec::new(),
             next_endpoint: 0,
         }
     }
@@ -2290,7 +2285,7 @@ impl PauseHarness {
         // Session::spawn requires the PTY leader to own its process group, so
         // the creation response gives us the group ID before any handshake
         // assertions can fail.
-        self.pgids.push(pid as libc::pid_t);
+        self.fixture.own_group(pid as libc::pid_t);
     }
 
     fn finish(&self) {
@@ -2304,47 +2299,10 @@ impl PauseHarness {
                 ),
                 Some(Response::Ok)
             );
+            let stop = self.fixture.join_within(Duration::from_secs(2));
             assert!(
-                self.fixture.join_within(Duration::from_secs(2)),
-                "control server did not finish within cleanup deadline"
-            );
-        }
-    }
-}
-
-impl Drop for PauseHarness {
-    fn drop(&mut self) {
-        let mut cleanup_failed = false;
-        if self.fixture.hosted() {
-            if request_with_timeout(
-                &self.fixture.socket,
-                999,
-                Request::Shutdown { kill: true },
-                Duration::from_secs(2),
-            ) != Some(Response::Ok)
-            {
-                cleanup_failed = true;
-            }
-            for pgid in &self.pgids {
-                unsafe {
-                    libc::kill(-*pgid, libc::SIGKILL);
-                }
-            }
-            if !self.fixture.join_within(Duration::from_secs(2)) {
-                cleanup_failed = true;
-            }
-        }
-        for pgid in &self.pgids {
-            if !live::wait_group_absent(*pgid, Duration::from_secs(2)) {
-                cleanup_failed = true;
-            }
-        }
-        if cleanup_failed {
-            let kept =
-                std::mem::replace(&mut self.fixture.root, tempfile::tempdir().unwrap()).keep();
-            eprintln!(
-                "pause/resume fixture cleanup failed; preserved {}",
-                kept.display()
+                stop.is_finished(),
+                "control server did not finish within cleanup deadline: {stop:?}"
             );
         }
     }
@@ -3371,7 +3329,10 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
         Duration::from_secs(2)
     ));
     assert!(
-        harness.fixture.join_within(Duration::from_secs(2)),
+        harness
+            .fixture
+            .join_within(Duration::from_secs(2))
+            .is_finished(),
         "control server did not finish after shutdown"
     );
     assert!(!harness.fixture.socket.exists());
@@ -4922,12 +4883,6 @@ impl std::ops::Deref for ControlFixture {
     }
 }
 
-impl std::ops::DerefMut for ControlFixture {
-    fn deref_mut(&mut self) -> &mut Live {
-        &mut self.0
-    }
-}
-
 #[derive(Clone, Copy)]
 struct HookIdentity {
     session: SessionId,
@@ -4949,8 +4904,8 @@ impl ControlFixture {
         argv: Vec<OsString>,
     ) -> ovrcr::session::SessionSummary {
         match self.request(Request::CreateSession(CreateSessionRequest {
-            project: "fixture".into(),
-            workspace: "work".into(),
+            project: PROJECT.into(),
+            workspace: WORKSPACE.into(),
             name: name.into(),
             label: None,
             argv,
@@ -5024,9 +4979,11 @@ impl ControlFixture {
         panic!("managed hook child did not publish its private identity");
     }
 
+    /// Session::spawn requires the PTY leader to own its process group, so the
+    /// creation response carries the group id itself; no lookup can lose it.
     fn record_process_group(&self, summary: &ovrcr::session::SessionSummary) {
         if let Some(pid) = summary.pid {
-            self.own(pid);
+            self.own_group(pid as libc::pid_t);
         }
     }
 
@@ -5131,9 +5088,10 @@ impl ControlFixture {
             }
         }
         assert_eq!(self.request(Request::Shutdown { kill: true }), Response::Ok);
+        let stop = self.join_within(Duration::from_secs(2));
         assert!(
-            self.join_within(Duration::from_secs(2)),
-            "bounded fixture server did not terminate after shutdown"
+            stop.is_finished(),
+            "bounded fixture server did not terminate after shutdown: {stop:?}"
         );
     }
     fn only_session_id(&self) -> SessionId {
@@ -5188,8 +5146,7 @@ fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
 
 #[test]
 fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut first = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut first,
@@ -5228,8 +5185,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
 
 #[test]
 fn duplicate_dashboard_hello_uses_the_sole_writer() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -5272,8 +5228,7 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
 
 #[test]
 fn dashboard_request_id_zero_does_not_block_followup_response() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -5374,8 +5329,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
 
 #[test]
 fn dashboard_receives_concrete_ordinary_request_errors() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -6156,8 +6110,7 @@ fn select_screen_containing(
 
 #[test]
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
-    let fixture = Live::idle();
-    fixture.start();
+    let fixture = Live::thread();
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -6237,12 +6190,7 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
     let workspaces = root.path().join("workspaces");
     std::fs::create_dir(&repo).unwrap();
     std::fs::create_dir(&workspaces).unwrap();
-    git(&repo, &["init", "-b", "main"]);
-    git(&repo, &["config", "user.name", "OVRCR Tests"]);
-    git(&repo, &["config", "user.email", "tests@example.invalid"]);
-    std::fs::write(repo.join("README"), "fixture\n").unwrap();
-    git(&repo, &["add", "README"]);
-    git(&repo, &["commit", "-m", "initial"]);
+    live::init_repo(&repo);
 
     let config = root.path().join("config.toml");
     let socket = root.path().join("server.sock");
@@ -6344,17 +6292,6 @@ fn cli_exit_preserves_session_and_shutdown_kill_cleans_up() {
     assert!(!socket.exists());
     assert!(groups.iter().all(|pgid| !group_exists(*pgid)));
     cleanup.completed = true;
-}
-
-fn git(repo: &Path, args: &[&str]) {
-    assert!(
-        Command::new("git")
-            .args(args)
-            .current_dir(repo)
-            .status()
-            .unwrap()
-            .success()
-    );
 }
 
 fn cli(bin: &str, config: &Path, socket: &Path, args: &[&str]) {

@@ -349,14 +349,7 @@ fn git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup() {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "Fixture"],
-        vec!["config", "user.email", "fixture@example.invalid"],
-        vec!["commit", "--allow-empty", "-m", "initial"],
-    ] {
-        git(&remote, &args);
-    }
+    live::init_repo(&remote);
     git(
         f.root.path(),
         &["clone", remote.to_str().unwrap(), repo.to_str().unwrap()],
@@ -585,14 +578,7 @@ fn git_task_fixture(f: &Fixture) -> (std::path::PathBuf, String) {
     let workspaces = f.root.path().join("workspaces");
     fs::create_dir(&repo).unwrap();
     fs::create_dir(&workspaces).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "Fixture"],
-        vec!["config", "user.email", "fixture@example.invalid"],
-        vec!["commit", "--allow-empty", "-m", "base"],
-    ] {
-        git(&repo, &args);
-    }
+    live::init_repo(&repo);
     git(&repo, &["remote", "add", "origin", repo.to_str().unwrap()]);
     f.call(&[
         "project",

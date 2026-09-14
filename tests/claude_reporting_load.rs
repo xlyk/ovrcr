@@ -108,9 +108,10 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let mut s = connect(&self.socket);
         assert_eq!(send(&mut s, Request::Shutdown { kill: true }), Response::Ok);
+        let stop = self.join_within(Duration::from_secs(30));
         assert!(
-            self.join_within(Duration::from_secs(30)),
-            "load fixture server did not finish"
+            stop.is_finished(),
+            "load fixture server did not finish: {stop:?}"
         );
     }
 }

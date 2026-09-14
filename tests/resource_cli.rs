@@ -85,7 +85,9 @@ impl Fixture {
     }
 
     fn capture(&mut self) {
-        self.own_sessions();
+        for pgid in self.session_groups() {
+            self.own_group(pgid);
+        }
     }
 
     fn wait_text(&self, id: &str, marker: &str) -> String {
@@ -105,7 +107,7 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let out = self.run(&["shutdown", "--kill"]);
         let stopped = live::wait_for_absent(&self.socket, Duration::from_secs(5));
-        let reaped = self.join_within(Duration::from_secs(5));
+        let reaped = self.join_within(Duration::from_secs(5)).is_finished();
         let clean = out.status.success()
             && stopped
             && reaped
