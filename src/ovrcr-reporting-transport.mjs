@@ -110,6 +110,7 @@ export function createReporter({
   // this final frame is delivered, inside the one remaining helper budget rather than one
   // budget per frame still waiting.
   function flush(event, ctx, extra = {}) {
+    if (ctx.mode !== "tui") return Promise.resolve(false);
     queue.length = 0;
     queuedBytes = 0;
     const body = frame(event, ctx, extra);
@@ -121,6 +122,7 @@ export function createReporter({
   // and the queue are cleared and one session_start-shaped frame is delivered directly.
   // The instance and its sequence continue, so the receiver still fences what came before.
   function reattach(ctx, extra = {}) {
+    if (ctx.mode !== "tui") return Promise.resolve(false);
     producer.disabled = false;
     queue.length = 0;
     queuedBytes = 0;

@@ -11772,6 +11772,67 @@ fn pi_source_gap_pauses_then_recovers_at_the_next_boundary() {
 }
 
 #[test]
+fn pi_source_gap_recovers_at_a_continuation_start_and_still_readies() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    // Sequence 3 is the input_open below: the dialog opens while the cycle is running.
+    let (summary, _probe) = pi_session_dropping(&fixture, &fixture.socket, "pi-hooks", 3);
+    let agent = |fixture: &ControlFixture| {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("a paused reporter keeps its binding")
+    };
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",   // 1
+        "agent_start",            // 2, run 1
+        "ui_prompt_start:select", // 3, lost
+        "ui_prompt_end:select",   // 4, the hole
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(agent(&fixture).health.reason.as_deref(), Some("source_gap"));
+    // Pi emits agent_start again inside the open cycle for a retry, an automatic
+    // compaction or a queued follow-up: the run is the same one. That frame recovers, and
+    // the cycle it is continuing must be published against the fresh generation — the
+    // response it is working on still has to become Ready.
+    pi_callback(&fixture, summary.id, &mut index, "agent_start");
+    let recovered = agent(&fixture);
+    assert_eq!(recovered.binding.generation, 2);
+    assert_eq!(recovered.health.state, ReporterHealth::Connected);
+    let sample = recovered
+        .activity
+        .as_ref()
+        .expect("the recovering start publishes the work it reports");
+    assert_eq!(sample.state, AgentActivity::Busy);
+    assert!(
+        sample.turn.is_some(),
+        "a published cycle carries its identity"
+    );
+    for command in ["agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    assert!(
+        ready.unread.is_some(),
+        "a continued cycle that settles after a recovery is still an unread response"
+    );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
 fn pi_reattach_command_recovers_a_paused_reporter() {
     let _guard = env_lock();
     use ovrcr::protocol::{AgentActivity, ReporterHealth};

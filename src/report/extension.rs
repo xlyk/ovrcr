@@ -521,6 +521,18 @@ impl Receiver {
         if !self.bind(conversation, deadline, true) {
             return false;
         }
+        // A fresh generation carries a fresh set of cycle identities: the server reads the
+        // same turn under a new generation as a new response, so the identities of the
+        // generation that paused must not silence the frame that just recovered it — Pi
+        // repeats `agent_start` with the same run for a retry, an automatic compaction or a
+        // queued follow-up, and that frame is the one authoritative event recovery has. The
+        // `p:<instance>` producer fences stay: a retired instance is retired for good.
+        self.seen.retain(|identity| identity.starts_with("p:"));
+        self.charged_bytes = self
+            .seen
+            .iter()
+            .map(|identity| identity.len() + std::mem::size_of::<String>())
+            .sum();
         self.paused = None;
         true
     }
@@ -1310,6 +1322,195 @@ mod tests {
             "the retired producer cannot re-admit itself"
         );
         assert!(receiver.producer.is_none() && !receiver.disabled);
+    }
+    /// A scripted supervisor: one paired stream for supervisor commands and one socket for
+    /// the observation publications, answering in the order a synchronous receiver drives
+    /// them. Returns every published report so the test can assert what reached the server.
+    fn supervised(
+        binding: ovrcr_protocol::AgentBinding,
+        rebound: ovrcr_protocol::AgentBinding,
+        publications: usize,
+    ) -> (
+        InvocationLease,
+        tempfile::TempDir,
+        std::thread::JoinHandle<Vec<ProviderReport>>,
+    ) {
+        use ovrcr_protocol::{
+            AgentCommand, AgentOperationResult, AgentSecret, AgentUpdate, ClientMessage, Request,
+            Response, ServerMessage, SupervisorAuth, exchange_preamble, read_frame, write_frame,
+        };
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (client, mut stream) = UnixStream::pair().unwrap();
+        let auth = SupervisorAuth {
+            session: ovrcr_protocol::SessionId(1),
+            lease: AgentSecret([7; 32]),
+        };
+        let expected = binding.clone();
+        let server = std::thread::spawn(move || {
+            let mut published = Vec::new();
+            let publish = |listener: &UnixListener| {
+                let (mut connection, _) = listener.accept().unwrap();
+                exchange_preamble(&mut connection).unwrap();
+                let message = read_frame::<ClientMessage>(&mut connection).unwrap();
+                let Request::AgentReport(report) = message.request else {
+                    panic!("expected an observation publication");
+                };
+                let AgentUpdate::Provider(report) = report.update else {
+                    panic!("expected a provider report");
+                };
+                write_frame(
+                    &mut connection,
+                    &ServerMessage::Response {
+                        request_id: message.request_id,
+                        response: Response::Ok,
+                    },
+                )
+                .unwrap();
+                report
+            };
+            published.push(publish(&listener));
+            // The pause: one Health Unavailable over the supervisor connection.
+            let health = read_frame::<ClientMessage>(&mut stream).unwrap();
+            let Request::Supervisor(request) = health.request else {
+                panic!("expected the pause health command");
+            };
+            assert!(matches!(
+                request.command,
+                AgentCommand::Health(ProviderReport {
+                    observation: AgentObservation::Health(ovrcr_protocol::HealthSample {
+                        state: ovrcr_protocol::ReporterHealth::Unavailable,
+                        reason: Some(ref reason),
+                    }),
+                    ..
+                }) if reason == "source_gap"
+            ));
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: health.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
+                },
+            )
+            .unwrap();
+            // The recovery: one forced Bind naming the binding it is replacing.
+            let bind = read_frame::<ClientMessage>(&mut stream).unwrap();
+            let Request::Supervisor(request) = bind.request else {
+                panic!("expected the recovery bind");
+            };
+            assert!(matches!(
+                request.command,
+                AgentCommand::Bind { ref expected_binding, ref conversation }
+                    if expected_binding.as_ref() == Some(&expected) && conversation == "sess-a"
+            ));
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: bind.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::Bound(rebound)),
+                },
+            )
+            .unwrap();
+            for _ in 1..publications {
+                published.push(publish(&listener));
+            }
+            published
+        });
+        let lease = InvocationLease {
+            stream: client,
+            auth,
+            socket,
+            binding: Some(binding),
+            next_request: 1,
+            capability: [0; 32],
+        };
+        (lease, root, server)
+    }
+    #[test]
+    fn a_recovering_continuation_publishes_its_cycle_on_the_fresh_generation() {
+        // Pi emits `agent_start` again for a retry, an automatic compaction or a queued
+        // follow-up, with the same run: the cycle identity of the generation that paused
+        // must not silence the frame that recovered it, or the Dashboard would sit at
+        // Unknown while Pi works and the response would never become Ready.
+        let binding = |generation| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "sess-a".into(),
+            generation,
+        };
+        let (lease, _root, server) = supervised(binding(1), binding(2), 3);
+        let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
+        receiver.producer = Some(("a".into(), 1));
+        let deadline = || Instant::now() + std::time::Duration::from_secs(10);
+        assert_eq!(
+            receiver.handle(
+                &event("a", 2, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.current, Some((1, "a:1".into())));
+        // A hole in the source sequence pauses; the cycle is forgotten locally.
+        assert_eq!(
+            receiver.handle(&event("a", 5, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, Some("source_gap"));
+        assert!(receiver.current.is_none());
+        // The continuation start recovers and publishes the cycle it is continuing.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 6, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, None);
+        assert_eq!(
+            receiver.current,
+            Some((1, "a:1".into())),
+            "the recovering frame opens the cycle it reports"
+        );
+        assert_eq!(
+            receiver.handle(&event("a", 7, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(
+            receiver.handle(
+                &event("a", 8, "agent_settled", Some(1), "ok"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n",
+            "the cycle settles into Ready on the fresh generation"
+        );
+        assert!(receiver.seen.contains("a:1"));
+        let published: Vec<_> = server
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|report| match report.observation {
+                AgentObservation::Activity(sample) => (
+                    report.binding.generation,
+                    report.revision,
+                    sample.state,
+                    sample.turn,
+                ),
+                other => panic!("unexpected observation {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                (1, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
     }
     #[test]
     fn a_re_announced_conversation_invalidates_the_open_cycle() {

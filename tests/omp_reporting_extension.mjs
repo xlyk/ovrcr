@@ -52,7 +52,10 @@ test("inert outside a managed invocation and outside the terminal UI", async () 
   await child.emit({ type: "session_start" });
   await child.emit({ type: "agent_start" });
   await child.emit({ type: "agent_end", messages: [assistant("stop")] });
+  // A child's shutdown drains nothing either: its session id never leaves this process.
+  await child.emit({ type: "session_shutdown", reason: "quit" });
   assert.deepEqual(frames(record), []);
+  assert.equal(existsSync(record), false, "no helper was spawned for a child session");
 });
 
 test("registers OMP's lifecycle and switch events", async () => {

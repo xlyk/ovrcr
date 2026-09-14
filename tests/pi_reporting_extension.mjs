@@ -133,6 +133,15 @@ test("non-tui modes never spawn a helper; shutdown reports once then disables", 
   assert.deepEqual(frames(record).map((f) => [f.event, f.reason]), [["session_shutdown", "reload"]]);
 });
 
+test("a print-mode shutdown drains nothing and spawns no helper", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { mode: "print" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "session_shutdown", reason: "quit" });
+  assert.equal(existsSync(record), false, "the drain must stay inert outside the terminal UI");
+});
+
 test("a hung helper is killed at the deadline and the handler still resolves", async () => {
   managed();
   const { extension } = materialize({ hang: true });
