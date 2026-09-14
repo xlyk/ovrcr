@@ -240,14 +240,22 @@ test("a transition names the conversation it left by id, never by its file path"
   managed();
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-b" });
+  // Pi names its session files `<timestamp>_<session id>.jsonl`; the binding is the bare
+  // session id, so only the trailing id may travel.
   await host.emit({
     type: "session_start", reason: "resume",
-    previousSessionFile: "/private/x/11111111-2222-3333-4444-555555555555.jsonl",
+    previousSessionFile: "/Users/x/.pi/agent/sessions/--proj--/2026-09-13T10-30-00-000Z_11111111-2222-3333-4444-555555555555.jsonl",
   });
   await host.emit({ type: "session_start", reason: "startup" });
+  // A name no id can be read out of is no expectation at all, never a truncation.
+  await host.emit({
+    type: "session_start", reason: "resume",
+    previousSessionFile: `/private/x/${"z".repeat(100)}.jsonl`,
+  });
   const sent = frames(record);
-  assert.deepEqual(sent.map((f) => f.previous), ["11111111-2222-3333-4444-555555555555", null]);
-  assert.ok(!readFileSync(record, "utf8").includes("/private/x/"), "the path never leaves");
+  assert.deepEqual(sent.map((f) => f.previous), ["11111111-2222-3333-4444-555555555555", null, null]);
+  assert.ok(!readFileSync(record, "utf8").includes("2026-09-13T10-30-00-000Z"), "the timestamp never leaves");
+  assert.ok(!readFileSync(record, "utf8").includes(".pi/agent"), "the path never leaves");
 });
 
 test("tree navigation invalidates the response cycle and carries only idleness", async () => {

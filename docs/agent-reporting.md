@@ -203,7 +203,11 @@ response survives the switch until it is reviewed. Payloads carry identifiers an
 discriminants only — the one field added for Oh My Pi is the boolean continuation flag —
 never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
 process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
-the invocation unreported until the next managed launch (reporter recovery is #96).
+the invocation unreported until the next managed launch (reporter recovery is #96). The
+bounded delivery queue overflowing ends it the same way: Oh My Pi has no reattach command,
+so that invocation stays unreported until the next managed launch, and doctor reports it as
+a lost reporter rather than a recoverable pause. A source gap or an unobserved producer
+replacement does pause and recover at the next `agent_start`, as for Pi.
 
 ### Approvals and questions
 

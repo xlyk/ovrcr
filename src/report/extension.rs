@@ -225,7 +225,12 @@ impl Receiver {
         if admission == Admission::Ignored {
             return IGNORED.to_vec();
         }
-        if self.paused.is_some() {
+        // The reattach command is a recovery whatever this receiver's health was: it
+        // restarts the producer's own counters, so the cycles that follow it reuse
+        // identities this generation has already published and would be dropped as
+        // duplicates. A fresh generation is what makes them new responses again.
+        let reattach = event == "session_start" && payload["reason"].as_str() == Some("reattach");
+        if self.paused.is_some() || reattach {
             // Nothing is applied while reporting is uncertain, and nothing is inferred from
             // the silence: the next boundary this producer reaches recovers it, once. A
             // boundary that arrives with a hole of its own still recovers — the reattach
@@ -268,7 +273,16 @@ impl Receiver {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
-                (AgentActivity::Idle, SampleQuality::Observed, None)
+                // A reattach reports what the harness's own API says about the session: a
+                // session that is not idle is doing something this reporter did not see, and
+                // uncertain is Unknown until a fresh authoritative event. An ordinary
+                // announcement carries no `idle` and is Idle by construction.
+                let state = if payload["idle"].as_bool().unwrap_or(true) {
+                    AgentActivity::Idle
+                } else {
+                    AgentActivity::Unknown
+                };
+                (state, SampleQuality::Observed, None)
             }
             "agent_start" => {
                 let Some(run) = run else {
@@ -417,7 +431,9 @@ impl Receiver {
     }
     /// The producer fence. A retired instance is gone for good, a stale or replayed
     /// sequence changes nothing, and only a `session_start` admits an instance this
-    /// receiver has not seen — replacing a live producer as an unobserved loss.
+    /// receiver has not seen — replacing a live producer as an unobserved loss. Admitting
+    /// an instance is the one answer that mutates: it installs the new producer, drops the
+    /// cycle the old one had open and retires the instance it replaced.
     fn admit(&mut self, event: &str, instance: &str, sequence: u64) -> Admission {
         if self.seen.contains(&format!("p:{instance}")) {
             return Admission::Ignored;
@@ -528,6 +544,9 @@ impl Receiver {
         // queued follow-up, and that frame is the one authoritative event recovery has. The
         // `p:<instance>` producer fences stay: a retired instance is retired for good.
         self.seen.retain(|identity| identity.starts_with("p:"));
+        // A fresh generation's snapshot is blank at the server, so the local set goes with
+        // it: a request the paused or reattached producer left open is no longer published.
+        self.open_requests.clear();
         self.charged_bytes = self
             .seen
             .iter()
@@ -1329,7 +1348,9 @@ mod tests {
     fn supervised(
         binding: ovrcr_protocol::AgentBinding,
         rebound: ovrcr_protocol::AgentBinding,
-        publications: usize,
+        before: usize,
+        pause: Option<&'static str>,
+        after: usize,
     ) -> (
         InvocationLease,
         tempfile::TempDir,
@@ -1371,30 +1392,35 @@ mod tests {
                 .unwrap();
                 report
             };
-            published.push(publish(&listener));
-            // The pause: one Health Unavailable over the supervisor connection.
-            let health = read_frame::<ClientMessage>(&mut stream).unwrap();
-            let Request::Supervisor(request) = health.request else {
-                panic!("expected the pause health command");
-            };
-            assert!(matches!(
-                request.command,
-                AgentCommand::Health(ProviderReport {
-                    observation: AgentObservation::Health(ovrcr_protocol::HealthSample {
-                        state: ovrcr_protocol::ReporterHealth::Unavailable,
-                        reason: Some(ref reason),
-                    }),
-                    ..
-                }) if reason == "source_gap"
-            ));
-            write_frame(
-                &mut stream,
-                &ServerMessage::Response {
-                    request_id: health.request_id,
-                    response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
-                },
-            )
-            .unwrap();
+            for _ in 0..before {
+                published.push(publish(&listener));
+            }
+            // The pause, when there is one: one Health Unavailable over the supervisor
+            // connection, naming the reason the receiver stopped applying events.
+            if let Some(expected_reason) = pause {
+                let health = read_frame::<ClientMessage>(&mut stream).unwrap();
+                let Request::Supervisor(request) = health.request else {
+                    panic!("expected the pause health command");
+                };
+                assert!(matches!(
+                    request.command,
+                    AgentCommand::Health(ProviderReport {
+                        observation: AgentObservation::Health(ovrcr_protocol::HealthSample {
+                            state: ovrcr_protocol::ReporterHealth::Unavailable,
+                            reason: Some(ref reason),
+                        }),
+                        ..
+                    }) if reason == expected_reason
+                ));
+                write_frame(
+                    &mut stream,
+                    &ServerMessage::Response {
+                        request_id: health.request_id,
+                        response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
+                    },
+                )
+                .unwrap();
+            }
             // The recovery: one forced Bind naming the binding it is replacing.
             let bind = read_frame::<ClientMessage>(&mut stream).unwrap();
             let Request::Supervisor(request) = bind.request else {
@@ -1413,7 +1439,7 @@ mod tests {
                 },
             )
             .unwrap();
-            for _ in 1..publications {
+            for _ in 0..after {
                 published.push(publish(&listener));
             }
             published
@@ -1440,7 +1466,7 @@ mod tests {
             conversation: "sess-a".into(),
             generation,
         };
-        let (lease, _root, server) = supervised(binding(1), binding(2), 3);
+        let (lease, _root, server) = supervised(binding(1), binding(2), 1, Some("source_gap"), 2);
         let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
         receiver.producer = Some(("a".into(), 1));
         let deadline = || Instant::now() + std::time::Duration::from_secs(10);
@@ -1509,6 +1535,91 @@ mod tests {
                 (1, 1, AgentActivity::Busy, Some("a:1".into())),
                 (2, 1, AgentActivity::Busy, Some("a:1".into())),
                 (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
+    }
+    #[test]
+    fn a_reattach_on_a_healthy_receiver_is_a_fresh_generation_that_keeps_its_fences() {
+        // The reattach command restarts the producer's run counter, so without a fresh
+        // generation the cycles that follow reuse identities this receiver has already
+        // published and are dropped. The command is a recovery whatever the health was.
+        let binding = |generation| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "sess-a".into(),
+            generation,
+        };
+        let (lease, _root, server) = supervised(binding(1), binding(2), 0, None, 3);
+        let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
+        receiver.producer = Some(("a".into(), 5));
+        receiver.seen.insert("a:1".into());
+        receiver.seen.insert("p:z".into());
+        let deadline = || Instant::now() + std::time::Duration::from_secs(10);
+        let mut reattach: serde_json::Value =
+            serde_json::from_slice(&event("a", 6, "session_start", None, "none")).unwrap();
+        reattach["payload"]["reason"] = "reattach".into();
+        reattach["payload"]["idle"] = false.into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&reattach).unwrap(), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert!(
+            receiver.seen.contains("p:z"),
+            "a recovery keeps the producer fences it earned"
+        );
+        assert_eq!(
+            receiver.admit("session_start", "z", 1),
+            Admission::Ignored,
+            "a retired producer stays retired across a recovery"
+        );
+        // The cycle numbering starts over with the producer's counters.
+        for (sequence, name, outcome) in [
+            (7, "agent_start", "none"),
+            (8, "agent_end", "ok"),
+            (9, "agent_settled", "ok"),
+        ] {
+            assert_eq!(
+                receiver.handle(
+                    &event("a", sequence, name, Some(1), outcome),
+                    true,
+                    deadline()
+                ),
+                b"admission-accepted\n",
+                "{name} after a reattach"
+            );
+        }
+        let published: Vec<_> = server
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|report| match report.observation {
+                AgentObservation::Activity(sample) => (
+                    report.binding.generation,
+                    sample.state,
+                    sample.quality,
+                    sample.turn,
+                ),
+                other => panic!("unexpected observation {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                // The reattach frame says Pi is not idle: what it is doing is unknown until
+                // a fresh authoritative event, never Idle and never the response before it.
+                (2, AgentActivity::Unknown, SampleQuality::Observed, None),
+                (
+                    2,
+                    AgentActivity::Busy,
+                    SampleQuality::Observed,
+                    Some("a:1".into())
+                ),
+                (
+                    2,
+                    AgentActivity::ResponseReady,
+                    SampleQuality::Confirmed,
+                    Some("a:1".into())
+                ),
             ]
         );
     }

@@ -126,7 +126,9 @@ async function main() {
         if (a) host.state.session = a;
         await host.emit({
           type: "session_start", reason: b ?? "resume",
-          previousSessionFile: `/private/x/${previous}.jsonl`,
+          // Pi names a session file `<timestamp>_<session id>.jsonl`
+          // (session-manager.js: `${fileTimestamp}_${this.sessionId}.jsonl`).
+          previousSessionFile: `/private/x/2026-09-13T00-00-00-000Z_${previous}.jsonl`,
         });
       } else if (command === "session_tree") await host.emit({ type: "session_tree" });
       else if (command === "session_compact") await host.emit({ type: "session_compact" });

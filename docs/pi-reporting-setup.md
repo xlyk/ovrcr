@@ -18,7 +18,7 @@ under `~/.pi` is read or written by OVRCR.
 | `ui_prompt_end` | The request closes and the activity underneath it — Busy, Idle, Error or Ready — is restored. Closing is never Unread and never a review. |
 | `session_tree` | The response cycle in progress is abandoned: activity becomes Idle when Pi's own API says the session is idle and Unknown otherwise. No historical response is replayed as Ready. |
 | `session_shutdown` | `quit` ends reporting; replacement or reload publishes an open input request closed against the retiring binding — restoring the activity underneath it — then retires the producer so the next `session_start` re-admits. Either way a request never outlives its producer, and the retired producer's later frames are ignored for good. |
-| `/ovrcr-reattach` | The command the extension registers: it re-announces this producer from inside the already-loaded extension and reports in Pi whether reporting came back. |
+| `/ovrcr-reattach` | The command the extension registers: it re-announces this producer from inside the already-loaded extension, as a fresh reporting generation, and reports in Pi whether reporting came back. Activity comes from Pi's own idleness: a reattach during a response publishes Unknown, not Idle, and does not restore that response's cycle — the response in flight will not become Ready, and the next prompt reports normally. |
 
 Payloads carry identifiers and discriminants only: never prompts, responses, tool
 arguments or results, titles or credentials.

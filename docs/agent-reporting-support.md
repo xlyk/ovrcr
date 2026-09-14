@@ -275,8 +275,12 @@ into a bounded set for #95 bumped it to 10.
 
 Session changes and recovery (#91) add no wire change. Pi replaces the extension factory on
 a session replacement and on a reload, so a replacement is an observed shutdown followed by
-a new producer whose `session_start` carries `previous`: the id parsed from the previous
-session file's own name, never the path and never anything inside it. `session_tree` is
+a new producer whose `session_start` carries `previous`: the session id parsed out of the
+previous session file's name, never the path and never anything inside it. Pi 0.85.1 names
+that file `<timestamp>_<session id>.jsonl` (`dist/core/session-manager.js`:
+`` `${fileTimestamp}_${this.sessionId}.jsonl` ``, the same shape for new and fork) while
+`getSessionId()` — what the extension binds — is the bare id, so only the trailing id
+travels and a name no bounded id can be read out of is no expectation at all. `session_tree` is
 reported as `cycle_invalidated` with Pi's own `isIdle()`; compaction and the `session_before_*`
 events are deliberately not subscribed to, so they cannot move the binding. The pause reasons
 (`source_gap`, `producer_replaced`, `source_overflow`, `transition_mismatch`) and the forced

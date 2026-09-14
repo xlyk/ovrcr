@@ -11577,7 +11577,12 @@ fn pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_prod
         replaced.binding.generation, 2,
         "a replacement is a fresh reporting generation"
     );
-    assert_eq!(replaced.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        replaced.health.state,
+        ReporterHealth::Connected,
+        "the transition Pi announced is the one this receiver expected: it must not pause"
+    );
+    assert_eq!(replaced.health.reason, None);
     let sample = replaced
         .activity
         .as_ref()
@@ -11817,10 +11822,84 @@ fn pi_source_gap_recovers_at_a_continuation_start_and_still_readies() {
     }
     let ready = fixture.session_summary(summary.id);
     assert_eq!(ready.activity, AgentActivity::ResponseReady);
-    assert!(
-        ready.unread.is_some(),
-        "a continued cycle that settles after a recovery is still an unread response"
+    let unread = ready
+        .unread
+        .clone()
+        .expect("a continued cycle that settles after a recovery is still an unread response");
+    assert_eq!(
+        unread.binding.generation, 2,
+        "the Unread belongs to the generation that recovered, not the one that paused"
     );
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
+fn pi_reattach_on_a_healthy_reporter_is_a_fresh_generation_and_the_next_cycle_readies() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
+    let agent = |fixture: &ControlFixture| {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("the session is bound")
+    };
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",
+        "agent_start",
+        "agent_end:ok",
+        "agent_settled",
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let first = fixture
+        .session_summary(summary.id)
+        .unread
+        .expect("the first Ready is unread");
+    assert_eq!(agent(&fixture).binding.generation, 1);
+    // Nothing is wrong: a user may reattach at any time, after restarting the Dashboard
+    // say. The command restarts the producer's own counters, so it has to be a fresh
+    // generation or every cycle that follows reuses an identity already published.
+    pi_callback(&fixture, summary.id, &mut index, "idle:false");
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "run_command:ovrcr-reattach",
+    );
+    let reattached = agent(&fixture);
+    assert_eq!(reattached.binding.generation, 2);
+    assert_eq!(reattached.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        reattached.activity.as_ref().unwrap().state,
+        AgentActivity::Unknown,
+        "Pi says it is not idle: what it is doing is unknown until a fresh event"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(first.clone()),
+        "a reattach reviews nothing"
+    );
+    // The next response cycle reuses run 1 and must still become Ready and Unread.
+    for command in ["agent_start", "agent_end:ok", "agent_settled"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    let second = ready.unread.expect("the cycle after a reattach is unread");
+    assert_ne!(second, first);
+    assert_eq!(second.binding.generation, 2);
     assert_eq!(
         fixture.request(Request::SendTerminal {
             session: summary.id,

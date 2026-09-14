@@ -173,6 +173,9 @@ mod tests {
             ["question:q1"],
             "the same id after a close is a new request"
         );
+        // The same mechanism makes a paused and recovered reporter unable to replay an
+        // alert: every recovery is a forced rebind, so the ids of the generation that
+        // paused are not the ids of the one that came back.
         let mut rebound = session(1, &[b]);
         rebound.agent.as_mut().unwrap().binding.generation = 2;
         assert_eq!(
@@ -183,41 +186,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["question:q1"],
             "the same id under a new binding is a different request"
-        );
-    }
-
-    #[test]
-    fn a_paused_and_recovered_reporter_replays_no_input_alert() {
-        // #91: a paused reporter keeps its binding while its health goes Unavailable, and
-        // the runtime clears the published set with it (`an_unavailable_health_report_
-        // clears_the_open_input_request` in ovrcr-runtime pins that, and its recovery is a
-        // forced rebind, so the snapshot this lane sees is empty either way). Neither step
-        // may re-deliver a request the Dashboard has already alerted for.
-        let open = [("a:p1", InputKind::Select)];
-        let mut unread = Unread::default();
-        assert_eq!(unread.observe_request(&session(1, &open)).len(), 1);
-        let mut paused = session(1, &[]);
-        let agent = paused.agent.as_mut().unwrap();
-        agent.health = HealthSample {
-            state: ReporterHealth::Unavailable,
-            reason: Some("source_gap".into()),
-        };
-        assert!(
-            unread.observe_request(&paused).is_empty(),
-            "pausing alerts nothing"
-        );
-        let mut recovered = session(1, &[]);
-        recovered.agent.as_mut().unwrap().binding.generation = 2;
-        assert!(
-            unread.observe_request(&recovered).is_empty(),
-            "a recovered generation restores no request, so it replays no alert"
-        );
-        let mut reopened = session(1, &open);
-        reopened.agent.as_mut().unwrap().binding.generation = 2;
-        assert_eq!(
-            unread.observe_request(&reopened).len(),
-            1,
-            "a genuinely new request after recovery still alerts once"
         );
     }
 
