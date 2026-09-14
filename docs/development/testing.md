@@ -1,6 +1,6 @@
 # Testing and acceptance
 
-- Test the real entry point that changed. A passing helper test is insufficient if the event loop, dispatcher, or writer bypasses that helper.
+- Test the real entry point that changed. A passing helper test is insufficient if the event loop, dispatcher, or writer bypasses that helper. Build through the production constructor as well: a test-only constructor with different wakeup, ordering, or ownership rules proves nothing about the one production runs.
 - For behavior changes, add a regression that demonstrates the defect before fixing it where practical. Distinguish compiler failures, printed reproductions, and failing behavioral assertions in the report.
 - Map each acceptance requirement to an actual assertion. Include partial acknowledgements, wrong/stale IDs, A→B→A reassignment, coalesced changes, empty/tiny layouts, failure paths, and late cleanup where relevant.
 - Preserve existing assertions when migrating fixtures. Send current-revision output when testing output handling; an ignored stale event cannot prove that output was processed safely.
