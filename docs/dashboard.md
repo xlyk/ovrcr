@@ -108,7 +108,9 @@ and the set is published whole rather than as a stream of deltas.
 
 An input request is not a response. It never creates, clears or retargets an
 [unread](#unread-responses) response, and answering one is not a review. Reporter
-loss forgets every open request and keeps the unread response. Only the request
+loss — and a reporter paused because what it delivered is no longer certain —
+forgets every open request and keeps the unread response; a recovered reporter
+starts with none and replays no alert for what was open before. Only the request
 identity, its namespace and its kind leave the extension; the prompt title, the
 approval reason, the question and the answer never do.
 

@@ -143,6 +143,23 @@ struct Receiver {
     seen: HashSet<String>,
     charged_bytes: usize,
     revision: u64,
+    /// Why live reporting is uncertain. A paused receiver keeps its lease and its binding
+    /// and applies nothing: only a trustworthy source boundary — a `session_start`, an
+    /// `agent_start`, or the extension's own reattach command, which sends one — recovers
+    /// it, and recovery is a fresh reporting generation, never a resumption.
+    paused: Option<&'static str>,
+}
+
+/// What the producer fence makes of one frame, before any state changes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Admission {
+    Accepted,
+    Ignored,
+    /// A source sequence is missing: whatever it carried was never applied.
+    Gap,
+    /// A new instance announced itself while the previous one was still live: the
+    /// replacement is admitted, but what it replaced was never observed closing.
+    LostClose,
 }
 
 impl Receiver {
@@ -158,6 +175,7 @@ impl Receiver {
             seen: HashSet::new(),
             charged_bytes: 0,
             revision: 0,
+            paused: None,
         }
     }
     fn disable(&mut self) {
@@ -202,19 +220,36 @@ impl Receiver {
             return IGNORED.to_vec();
         };
         // Producer fencing: a new instance is admitted only by its session_start; a stale,
-        // replayed or foreign sequence never mutates state, freshness, or Unread.
-        match &mut self.producer {
-            Some((current, last)) if current.as_str() == instance => {
-                if sequence <= *last {
-                    return IGNORED.to_vec();
-                }
-                *last = sequence;
+        // replayed, retired or foreign sequence never mutates state, freshness, or Unread.
+        let admission = self.admit(event, instance, sequence);
+        if admission == Admission::Ignored {
+            return IGNORED.to_vec();
+        }
+        if self.paused.is_some() {
+            // Nothing is applied while reporting is uncertain, and nothing is inferred from
+            // the silence: the next boundary this producer reaches recovers it, once. A
+            // boundary that arrives with a hole of its own still recovers — the reattach
+            // command drops whatever was queued, and that hole is the pause it is ending.
+            if !matches!(event, "session_start" | "agent_start") {
+                return IGNORED.to_vec();
             }
-            _ if event == "session_start" => {
-                self.producer = Some((instance.to_owned(), sequence));
-                self.current = None;
+            if !self.recover(session, deadline) {
+                self.disable();
+                return UNAVAILABLE.to_vec();
             }
-            _ => return IGNORED.to_vec(),
+        } else if admission == Admission::Gap {
+            return self.pause("source_gap", deadline);
+        } else if admission == Admission::LostClose {
+            return self.pause("producer_replaced", deadline);
+        } else if event == "session_start"
+            && transition_mismatch(
+                payload["previous"].as_str(),
+                self.lease.as_ref().and_then(|lease| lease.binding.as_ref()),
+            )
+        {
+            // The conversation this transition says it left is not the one this receiver is
+            // bound to: a transition happened that it never saw.
+            return self.pause("transition_mismatch", deadline);
         }
         let run = payload["run"].as_u64();
         let outcome = payload["outcome"].as_str().unwrap_or("none");
@@ -229,7 +264,7 @@ impl Receiver {
                 if let Some(closed) = self.retire_requests(deadline) {
                     return closed;
                 }
-                if !self.bind(session, deadline) {
+                if !self.bind(session, deadline, false) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
@@ -257,7 +292,7 @@ impl Receiver {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
-                if !self.bind(session, deadline) {
+                if !self.bind(session, deadline, false) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
@@ -313,6 +348,7 @@ impl Receiver {
                     if let Some(closed) = self.retire_requests(deadline) {
                         return closed;
                     }
+                    self.retire(instance);
                     self.producer = None;
                     self.current = None;
                 }
@@ -343,20 +379,34 @@ impl Receiver {
                 };
                 return self.close_request(id, deadline);
             }
+            "cycle_invalidated" => {
+                // Tree navigation moved the conversation somewhere this producer cannot
+                // vouch for: the cycle it left behind is gone, and the only activity that
+                // survives is what the extension can read from its own public API.
+                self.current = None;
+                let idle = payload["idle"].as_bool().unwrap_or(false);
+                let state = if idle {
+                    AgentActivity::Idle
+                } else {
+                    AgentActivity::Unknown
+                };
+                (state, SampleQuality::Observed, None)
+            }
             "unavailable" => {
-                self.disable();
-                return UNAVAILABLE.to_vec();
+                // The producer dropped frames of its own: what it reported is no longer
+                // complete, but the native session and this lease are both still alive.
+                return self.pause("source_overflow", deadline);
             }
             _ => return IGNORED.to_vec(),
         };
         self.publish(state, quality, turn, deadline)
     }
-    fn bind(&mut self, conversation: &str, deadline: Instant) -> bool {
+    fn bind(&mut self, conversation: &str, deadline: Instant, force: bool) -> bool {
         let provider = self.harness.provider;
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        match lease.bind(provider, conversation, deadline) {
+        match lease.bind(provider, conversation, deadline, force) {
             Some(true) => {
                 self.revision = 0;
                 true
@@ -364,6 +414,127 @@ impl Receiver {
             Some(false) => true,
             None => false,
         }
+    }
+    /// The producer fence. A retired instance is gone for good, a stale or replayed
+    /// sequence changes nothing, and only a `session_start` admits an instance this
+    /// receiver has not seen — replacing a live producer as an unobserved loss.
+    fn admit(&mut self, event: &str, instance: &str, sequence: u64) -> Admission {
+        if self.seen.contains(&format!("p:{instance}")) {
+            return Admission::Ignored;
+        }
+        match &mut self.producer {
+            Some((current, last)) if current.as_str() == instance => {
+                if sequence <= *last {
+                    return Admission::Ignored;
+                }
+                // The hole is reported once: the sequence advances before the pause so the
+                // frames that follow it are ordinary frames of a paused receiver.
+                let gap = sequence > *last + 1;
+                *last = sequence;
+                if gap {
+                    Admission::Gap
+                } else {
+                    Admission::Accepted
+                }
+            }
+            live if event == "session_start" => {
+                let replaced = live.take();
+                self.producer = Some((instance.to_owned(), sequence));
+                self.current = None;
+                match replaced {
+                    Some((old, _)) => {
+                        self.retire(&old);
+                        Admission::LostClose
+                    }
+                    None => Admission::Accepted,
+                }
+            }
+            _ => Admission::Ignored,
+        }
+    }
+    /// Fences one instance for the life of this receiver: every later frame of its own,
+    /// however high its sequence, is ignored. Charged against the same identity capacity
+    /// as the response cycles, because both are unbounded producer-supplied strings.
+    fn retire(&mut self, instance: &str) {
+        let retired = format!("p:{instance}");
+        let charge = retired.len() + std::mem::size_of::<String>();
+        if self.seen.len() >= MAX_IDENTITIES || self.charged_bytes + charge > MAX_IDENTITY_BYTES {
+            // Without room to fence it, a delayed frame from this instance could not be
+            // told from a live one: that is identity ambiguity, and it disables.
+            self.disable();
+            return;
+        }
+        self.charged_bytes += charge;
+        self.seen.insert(retired);
+    }
+    /// Stops applying events and says so once, keeping the lease, the binding and the
+    /// native session. The local cycle and request set go with it: what is on screen is
+    /// no longer certain, and the Unavailable health clears the published set too.
+    fn pause(&mut self, reason: &'static str, deadline: Instant) -> Vec<u8> {
+        use ovrcr_protocol::{
+            AgentCommand, AgentOperationResult, HealthSample, ReporterHealth, Response,
+        };
+        self.paused = Some(reason);
+        self.current = None;
+        self.open_requests.clear();
+        let revision = self.revision + 1;
+        let Some(lease) = &mut self.lease else {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        };
+        let Some(binding) = lease.binding.clone() else {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        };
+        let result = ovrcr_runtime::agent_runner::private_identifier()
+            .map_err(anyhow::Error::from)
+            .and_then(|operation| {
+                lease.command(
+                    operation,
+                    AgentCommand::Health(ProviderReport {
+                        binding,
+                        revision,
+                        observation: AgentObservation::Health(HealthSample {
+                            state: ReporterHealth::Unavailable,
+                            reason: Some(reason.to_owned()),
+                        }),
+                    }),
+                    deadline,
+                )
+            });
+        if !matches!(
+            result,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::HealthUpdated
+            ))
+        ) {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        }
+        self.revision = revision;
+        ACCEPTED.to_vec()
+    }
+    /// One forced rebind of the conversation this boundary names: the supervisor admits a
+    /// fresh reporting generation while the lease and the session identity hold, and it
+    /// starts blank — no cycle, no requests, no metrics, Unread untouched.
+    fn recover(&mut self, conversation: &str, deadline: Instant) -> bool {
+        if !self.bind(conversation, deadline, true) {
+            return false;
+        }
+        // A fresh generation carries a fresh set of cycle identities: the server reads the
+        // same turn under a new generation as a new response, so the identities of the
+        // generation that paused must not silence the frame that just recovered it — Pi
+        // repeats `agent_start` with the same run for a retry, an automatic compaction or a
+        // queued follow-up, and that frame is the one authoritative event recovery has. The
+        // `p:<instance>` producer fences stay: a retired instance is retired for good.
+        self.seen.retain(|identity| identity.starts_with("p:"));
+        self.charged_bytes = self
+            .seen
+            .iter()
+            .map(|identity| identity.len() + std::mem::size_of::<String>())
+            .sum();
+        self.paused = None;
+        true
     }
     fn publish(
         &mut self,
@@ -483,6 +654,16 @@ impl Namespace {
             },
         }
     }
+}
+
+/// Whether a transition names a conversation this receiver is not bound to. A frame with
+/// no `previous` carries no expectation (Oh My Pi's switches say nothing yet), and a
+/// receiver with no binding has none to contradict.
+fn transition_mismatch(
+    previous: Option<&str>,
+    binding: Option<&ovrcr_protocol::AgentBinding>,
+) -> bool {
+    matches!((previous, binding), (Some(previous), Some(binding)) if binding.conversation != previous)
 }
 
 /// The namespace a frame declares, checked against the id that carries it. `approval` and
@@ -687,9 +868,11 @@ mod tests {
             b"admission-ignored\n"
         );
         assert!(receiver.producer.is_none() && receiver.current.is_none() && !receiver.disabled);
+        // The retired instance is fenced for good, so the successor drives the quit path.
+        shutdown["payload"]["instance"] = "b".into();
         shutdown["payload"]["reason"] = "quit".into();
         shutdown["payload"]["sequence"] = 3.into();
-        receiver.producer = Some(("a".into(), 2));
+        receiver.producer = Some(("b".into(), 2));
         receiver.handle(
             &serde_json::to_vec(&shutdown).unwrap(),
             true,
@@ -944,8 +1127,9 @@ mod tests {
         assert!(!receiver.disabled);
         // An open request is published closed first; with no lease that publish cannot
         // happen, so the receiver disables itself rather than retiring behind a stale dialog.
-        receiver.producer = Some(("a".into(), 2));
+        receiver.producer = Some(("b".into(), 2));
         receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
+        shutdown["payload"]["instance"] = "b".into();
         shutdown["payload"]["sequence"] = 3.into();
         assert_eq!(
             receiver.handle(
@@ -969,6 +1153,364 @@ mod tests {
             b"admission-unavailable\n"
         );
         assert!(receiver.open_requests.is_empty() && receiver.disabled);
+    }
+    #[test]
+    fn admit_fences_gaps_retired_producers_and_an_unobserved_replacement() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 5));
+        assert_eq!(receiver.admit("agent_start", "a", 5), Admission::Ignored);
+        assert_eq!(receiver.admit("agent_start", "a", 4), Admission::Ignored);
+        assert_eq!(
+            receiver.admit("agent_start", "a", 7),
+            Admission::Gap,
+            "a missing source sequence is a gap, not an acceptance"
+        );
+        assert_eq!(
+            receiver.producer,
+            Some(("a".into(), 7)),
+            "the gap advances the sequence so the same hole is reported once"
+        );
+        assert_eq!(receiver.admit("agent_start", "a", 8), Admission::Accepted);
+        // An unobserved factory replacement: a new instance announces itself while the
+        // first is still live. The old producer retires and the new one is admitted.
+        assert_eq!(
+            receiver.admit("session_start", "b", 1),
+            Admission::LostClose
+        );
+        assert_eq!(receiver.producer, Some(("b".into(), 1)));
+        assert!(receiver.seen.contains("p:a"));
+        // A -> B -> A: every delayed frame from the retired first A is ignored, however
+        // high its sequence, and it can never be re-admitted by its own session_start.
+        assert_eq!(receiver.admit("session_start", "a", 99), Admission::Ignored);
+        assert_eq!(receiver.admit("agent_start", "a", 99), Admission::Ignored);
+        assert_eq!(receiver.producer, Some(("b".into(), 1)));
+    }
+    #[test]
+    fn a_gap_pauses_before_the_event_is_applied() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 5));
+        // No lease: the Unavailable health the pause publishes cannot be delivered, so the
+        // receiver disables itself — the state it pauses is still the state under test.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 7, "agent_start", Some(1), "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert_eq!(receiver.paused, Some("source_gap"));
+        assert!(
+            receiver.current.is_none() && receiver.seen.is_empty(),
+            "the gapped event never opened a cycle"
+        );
+    }
+    #[test]
+    fn a_paused_receiver_ignores_everything_but_a_trustworthy_boundary() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.paused = Some("source_gap");
+        receiver.current = Some((1, "a:1".into()));
+        for (sequence, name, run) in [
+            (2, "agent_settled", Some(1)),
+            (3, "agent_end", Some(1)),
+            (4, "session_shutdown", None),
+        ] {
+            assert_eq!(
+                receiver.handle(&event("a", sequence, name, run, "ok"), true, Instant::now()),
+                b"admission-ignored\n",
+                "{name} while paused"
+            );
+        }
+        assert_eq!(receiver.current, Some((1, "a:1".into())));
+        assert_eq!(receiver.revision, 0);
+        assert!(receiver.producer.is_some() && !receiver.disabled);
+        // A boundary attempts exactly one recovery; with no lease it fails and disables.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 5, "agent_start", Some(1), "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert!(receiver.disabled);
+    }
+    #[test]
+    fn cycle_invalidated_forgets_the_response_cycle() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.current = Some((1, "a:1".into()));
+        let mut tree: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "cycle_invalidated", None, "none")).unwrap();
+        tree["payload"]["idle"] = true.into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&tree).unwrap(), true, Instant::now()),
+            b"admission-unavailable\n",
+            "no lease: the publish fails after the cycle is cleared"
+        );
+        assert!(
+            receiver.current.is_none(),
+            "tree navigation invalidates the cycle it left behind"
+        );
+    }
+    #[test]
+    fn a_transition_names_the_conversation_it_left() {
+        let binding = |conversation: &str| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: conversation.into(),
+            generation: 1,
+        };
+        assert!(
+            !transition_mismatch(None, Some(&binding("sess-a"))),
+            "no previous is no expectation"
+        );
+        assert!(
+            !transition_mismatch(Some("sess-a"), None),
+            "nothing is bound yet"
+        );
+        assert!(!transition_mismatch(
+            Some("sess-a"),
+            Some(&binding("sess-a"))
+        ));
+        assert!(
+            transition_mismatch(Some("sess-b"), Some(&binding("sess-a"))),
+            "the conversation being left is not the one this receiver is bound to"
+        );
+    }
+    #[test]
+    fn an_overflow_notice_pauses_instead_of_disabling() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        let mut notice: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "unavailable", None, "none")).unwrap();
+        notice["payload"]["reason"] = "overflow".into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&notice).unwrap(), true, Instant::now()),
+            b"admission-unavailable\n",
+            "no lease: the pause cannot publish its health"
+        );
+        assert_eq!(receiver.paused, Some("source_overflow"));
+    }
+    #[test]
+    fn a_reload_retires_the_producer_it_observed_shutting_down() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        let mut shutdown: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "session_shutdown", None, "none")).unwrap();
+        shutdown["payload"]["reason"] = "reload".into();
+        assert_eq!(
+            receiver.handle(
+                &serde_json::to_vec(&shutdown).unwrap(),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n"
+        );
+        assert!(
+            receiver.seen.contains("p:a"),
+            "an observed shutdown retires"
+        );
+        assert_eq!(
+            receiver.handle(
+                &event("a", 3, "session_start", None, "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n",
+            "the retired producer cannot re-admit itself"
+        );
+        assert!(receiver.producer.is_none() && !receiver.disabled);
+    }
+    /// A scripted supervisor: one paired stream for supervisor commands and one socket for
+    /// the observation publications, answering in the order a synchronous receiver drives
+    /// them. Returns every published report so the test can assert what reached the server.
+    fn supervised(
+        binding: ovrcr_protocol::AgentBinding,
+        rebound: ovrcr_protocol::AgentBinding,
+        publications: usize,
+    ) -> (
+        InvocationLease,
+        tempfile::TempDir,
+        std::thread::JoinHandle<Vec<ProviderReport>>,
+    ) {
+        use ovrcr_protocol::{
+            AgentCommand, AgentOperationResult, AgentSecret, AgentUpdate, ClientMessage, Request,
+            Response, ServerMessage, SupervisorAuth, exchange_preamble, read_frame, write_frame,
+        };
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (client, mut stream) = UnixStream::pair().unwrap();
+        let auth = SupervisorAuth {
+            session: ovrcr_protocol::SessionId(1),
+            lease: AgentSecret([7; 32]),
+        };
+        let expected = binding.clone();
+        let server = std::thread::spawn(move || {
+            let mut published = Vec::new();
+            let publish = |listener: &UnixListener| {
+                let (mut connection, _) = listener.accept().unwrap();
+                exchange_preamble(&mut connection).unwrap();
+                let message = read_frame::<ClientMessage>(&mut connection).unwrap();
+                let Request::AgentReport(report) = message.request else {
+                    panic!("expected an observation publication");
+                };
+                let AgentUpdate::Provider(report) = report.update else {
+                    panic!("expected a provider report");
+                };
+                write_frame(
+                    &mut connection,
+                    &ServerMessage::Response {
+                        request_id: message.request_id,
+                        response: Response::Ok,
+                    },
+                )
+                .unwrap();
+                report
+            };
+            published.push(publish(&listener));
+            // The pause: one Health Unavailable over the supervisor connection.
+            let health = read_frame::<ClientMessage>(&mut stream).unwrap();
+            let Request::Supervisor(request) = health.request else {
+                panic!("expected the pause health command");
+            };
+            assert!(matches!(
+                request.command,
+                AgentCommand::Health(ProviderReport {
+                    observation: AgentObservation::Health(ovrcr_protocol::HealthSample {
+                        state: ovrcr_protocol::ReporterHealth::Unavailable,
+                        reason: Some(ref reason),
+                    }),
+                    ..
+                }) if reason == "source_gap"
+            ));
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: health.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
+                },
+            )
+            .unwrap();
+            // The recovery: one forced Bind naming the binding it is replacing.
+            let bind = read_frame::<ClientMessage>(&mut stream).unwrap();
+            let Request::Supervisor(request) = bind.request else {
+                panic!("expected the recovery bind");
+            };
+            assert!(matches!(
+                request.command,
+                AgentCommand::Bind { ref expected_binding, ref conversation }
+                    if expected_binding.as_ref() == Some(&expected) && conversation == "sess-a"
+            ));
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: bind.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::Bound(rebound)),
+                },
+            )
+            .unwrap();
+            for _ in 1..publications {
+                published.push(publish(&listener));
+            }
+            published
+        });
+        let lease = InvocationLease {
+            stream: client,
+            auth,
+            socket,
+            binding: Some(binding),
+            next_request: 1,
+            capability: [0; 32],
+        };
+        (lease, root, server)
+    }
+    #[test]
+    fn a_recovering_continuation_publishes_its_cycle_on_the_fresh_generation() {
+        // Pi emits `agent_start` again for a retry, an automatic compaction or a queued
+        // follow-up, with the same run: the cycle identity of the generation that paused
+        // must not silence the frame that recovered it, or the Dashboard would sit at
+        // Unknown while Pi works and the response would never become Ready.
+        let binding = |generation| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "sess-a".into(),
+            generation,
+        };
+        let (lease, _root, server) = supervised(binding(1), binding(2), 3);
+        let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
+        receiver.producer = Some(("a".into(), 1));
+        let deadline = || Instant::now() + std::time::Duration::from_secs(10);
+        assert_eq!(
+            receiver.handle(
+                &event("a", 2, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.current, Some((1, "a:1".into())));
+        // A hole in the source sequence pauses; the cycle is forgotten locally.
+        assert_eq!(
+            receiver.handle(&event("a", 5, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, Some("source_gap"));
+        assert!(receiver.current.is_none());
+        // The continuation start recovers and publishes the cycle it is continuing.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 6, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, None);
+        assert_eq!(
+            receiver.current,
+            Some((1, "a:1".into())),
+            "the recovering frame opens the cycle it reports"
+        );
+        assert_eq!(
+            receiver.handle(&event("a", 7, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(
+            receiver.handle(
+                &event("a", 8, "agent_settled", Some(1), "ok"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n",
+            "the cycle settles into Ready on the fresh generation"
+        );
+        assert!(receiver.seen.contains("a:1"));
+        let published: Vec<_> = server
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|report| match report.observation {
+                AgentObservation::Activity(sample) => (
+                    report.binding.generation,
+                    report.revision,
+                    sample.state,
+                    sample.turn,
+                ),
+                other => panic!("unexpected observation {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                (1, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
     }
     #[test]
     fn a_re_announced_conversation_invalidates_the_open_cycle() {

@@ -29,7 +29,7 @@ pub(super) const PI: Managed = Managed {
     reporting: "available",
     approvals: "available",
     questions: "unavailable_no_provider_surface",
-    recovery: "pending #91",
+    recovery: "available",
 };
 
 pub(super) const OMP: Managed = Managed {
@@ -41,6 +41,19 @@ pub(super) const OMP: Managed = Managed {
     questions: "available_tool_lifetime",
     recovery: "pending #96",
 };
+
+/// The reasons a receiver pauses: live reporting is uncertain, but the lease, the binding
+/// and the native session are all intact, so a source boundary or the extension's own
+/// reattach command recovers it. Anything else Unavailable is a reporter that is gone.
+fn paused(agent: &ovrcr::protocol::AgentSnapshot) -> bool {
+    agent.health.state == ReporterHealth::Unavailable
+        && agent.health.reason.as_deref().is_some_and(|reason| {
+            matches!(
+                reason,
+                "source_gap" | "producer_replaced" | "source_overflow" | "transition_mismatch"
+            )
+        })
+}
 
 pub(super) fn managed(name: &str) -> Option<&'static Managed> {
     match name {
@@ -134,7 +147,12 @@ pub(super) fn doctor(
                         lifecycle = json!({
                             // A binding exists only after the extension delivered session_start.
                             "extension": "loaded_and_bound",
-                            "delivery": if activity.is_some() { "observed" } else { "bound_without_activity" },
+                            "delivery": match (paused(agent), agent.health.state, activity.is_some()) {
+                                (true, _, _) => "paused_recoverable",
+                                (false, ReporterHealth::Unavailable, _) => "lost",
+                                (false, _, true) => "observed",
+                                (false, _, false) => "bound_without_activity",
+                            },
                             // The same rule `terminal list` reports: a wait covers the sample.
                             "activity": agent.effective_activity(),
                             "input_requests": agent.input_requests.iter().map(|request| request.kind).collect::<Vec<_>>(),
@@ -142,8 +160,14 @@ pub(super) fn doctor(
                             "health": agent.health.state,
                             "unread": session.unread.is_some(),
                         });
-                        if agent.health.state == ReporterHealth::Unavailable {
-                            remediation.push("Reporting is unavailable for this invocation: the transport was lost or the producer retired. Reporter recovery arrives with a later ticket; start a fresh managed launch to restore reporting.".into());
+                        if paused(agent) {
+                            remediation.push(format!(
+                                "Reporting is paused for this invocation ({}): the source data this reporter delivered is no longer certain, and nothing is being applied. The native session is untouched. Run /ovrcr-reattach in {}, or send the next prompt — the next session boundary recovers reporting as a fresh generation.",
+                                agent.health.reason.as_deref().unwrap_or("unknown"),
+                                provider.display,
+                            ));
+                        } else if agent.health.state == ReporterHealth::Unavailable {
+                            remediation.push("Reporting is unavailable for this invocation: the transport was lost or the producer ended with its session. Start a fresh managed launch to restore reporting.".into());
                         }
                         "bound"
                     }

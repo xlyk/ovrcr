@@ -14,7 +14,7 @@ const OVRCR_BINARY = __OVRCR_BINARY__;
 
 export default function (omp) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
-  const { producer, report } = createReporter({
+  const { producer, report, flush } = createReporter({
     binary: OVRCR_BINARY,
     helperArgs: ["report", "omp", "--stdin"],
   });
@@ -28,7 +28,9 @@ export default function (omp) {
     producer.run = 0; // an announcement belongs to no cycle
     producer.open = false;
     producer.outcome = "none";
-    return report("session_start", ctx, { reason });
+    // No `previous`: an Oh My Pi switch states no expectation about the conversation it
+    // leaves, and the receiver reads a missing one as exactly that.
+    return report("session_start", ctx, { reason, previous: null });
   }
 
   omp.on("session_start", (_event, ctx) => announce(ctx, "startup"));
@@ -85,7 +87,7 @@ export default function (omp) {
       : Promise.resolve(false));
 
   omp.on("session_shutdown", (_event, ctx) => {
-    const sent = report("session_shutdown", ctx, { reason: "quit" });
+    const sent = flush("session_shutdown", ctx, { reason: "quit" });
     producer.disabled = true; // shutdown handlers run in parallel under a 2 s budget
     return sent;
   });
