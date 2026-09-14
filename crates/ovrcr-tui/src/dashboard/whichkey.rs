@@ -1,5 +1,5 @@
 use super::input::is_browse_key;
-use super::keymap::{Action, KeyBinding, KeyGroup, keymap};
+use super::keymap::{Action, KeyBinding, KeyGroup, key_binding, keymap};
 use super::render::{CRUST, MAUVE, MUTED, SKY, TEXT};
 use super::{Dashboard, DashboardAction, InputMode};
 use crossterm::event::{
@@ -47,7 +47,7 @@ fn row_text(hint: &KeyBinding) -> String {
 
 // Rendering and mouse hit testing share the compact, wrapped row geometry.
 fn popup_layout(outer: Rect, groups: &[KeyGroup], selected: usize) -> PopupLayout {
-    let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+    let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
     let width = hints
         .iter()
         .map(|hint| Line::from(row_text(hint)).width())
@@ -71,7 +71,7 @@ fn popup_layout(outer: Rect, groups: &[KeyGroup], selected: usize) -> PopupLayou
             group.title.to_owned(),
             paragraph(&group.title).line_count(inner_width).max(1) as u16,
         ));
-        for hint in &group.hints {
+        for hint in &group.keys {
             let text = row_text(hint);
             let height = paragraph(&text).line_count(inner_width).max(1) as u16;
             entries.push((Some(index), text, height));
@@ -164,7 +164,7 @@ impl Dashboard {
         let mut hints = Vec::new();
         if let Some(title) = title {
             let group = group.expect("a titled popup names its group");
-            for binding in groups.into_iter().flat_map(|g| g.hints) {
+            for binding in groups.into_iter().flat_map(|g| g.keys) {
                 let Some(slot) = binding.group.filter(|slot| slot.group == group) else {
                     continue;
                 };
@@ -189,18 +189,15 @@ impl Dashboard {
                 _ => None,
             };
             if let Some((name, action, description)) = removal {
-                hints.push(KeyBinding {
-                    key: "x",
-                    code: KeyCode::Char('x'),
+                hints.push(key_binding(
+                    "x",
                     name,
-                    action,
                     description,
-                    reason: None,
-                    press_only: false,
-                    group: None,
-                });
+                    KeyCode::Char('x'),
+                    action,
+                ));
             }
-            return vec![KeyGroup { title, hints }];
+            return vec![KeyGroup { title, keys: hints }];
         }
         for (key, name, target, available) in [
             (
@@ -219,20 +216,18 @@ impl Dashboard {
             ("v", "View", "dashboard".into(), true),
         ] {
             if available {
-                hints.push(KeyBinding {
+                let group = key.chars().next().unwrap();
+                hints.push(key_binding(
                     key,
-                    code: KeyCode::Char(key.chars().next().unwrap()),
                     name,
-                    description: format!("Show actions for {target}"),
-                    reason: None,
-                    press_only: false,
-                    action: Action::Group(key.chars().next().unwrap()),
-                    group: None,
-                });
+                    format!("Show actions for {target}"),
+                    KeyCode::Char(group),
+                    Action::Group(group),
+                ));
             }
         }
         // Registration remains reachable even before a project exists.
-        hints.extend(groups.into_iter().flat_map(|g| g.hints).filter(|binding| {
+        hints.extend(groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
             matches!(
                 binding.action,
                 Action::RegisterProject
@@ -243,8 +238,17 @@ impl Dashboard {
         }));
         vec![KeyGroup {
             title: "Groups".into(),
-            hints,
+            keys: hints,
         }]
+    }
+
+    /// Open the popup's group `group`, leaving the popup itself open.
+    pub(super) fn open_group(&mut self, group: char) -> DashboardAction {
+        if let Some(popup) = &mut self.whichkey {
+            popup.group = Some(group);
+            popup.browsing = Some(0);
+        }
+        DashboardAction::Redraw
     }
 
     /// Open the popup: `leader` waits for the next key, otherwise it starts browsable.
@@ -285,7 +289,7 @@ impl Dashboard {
             return Some(DashboardAction::Redraw);
         }
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let popup = self.whichkey.as_mut().unwrap();
         if !popup.pending_leader
             && matches!(
@@ -315,7 +319,7 @@ impl Dashboard {
 
     pub(super) fn whichkey_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let selected = self.whichkey.as_ref().and_then(|p| p.browsing).unwrap_or(0);
         let layout = popup_layout(area, &groups, selected);
         if layout.area.contains(Position::new(mouse.column, mouse.row))
@@ -379,7 +383,7 @@ impl Dashboard {
             return;
         };
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let selected = popup
             .browsing
             .unwrap_or(0)

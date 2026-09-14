@@ -1046,6 +1046,20 @@ impl Dashboard {
         self.ensure_selection_visible(&rows);
     }
 
+    // A container selection can retain a wire-focused pane, but actions still
+    // target the selected container until the user selects a session again.
+    pub(super) fn creation_context(&self) -> (String, String) {
+        match &self.selected_container {
+            Some(TreeRow::Project { name }) => (name.clone(), String::new()),
+            Some(TreeRow::Workspace { project, name }) => (project.clone(), name.clone()),
+            _ => self
+                .focused_session()
+                .and_then(|id| find_session(self, id))
+                .map(|s| (s.project.clone(), s.workspace.clone()))
+                .unwrap_or_default(),
+        }
+    }
+
     pub(crate) fn select_session(&mut self, id: SessionId) {
         self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
@@ -1121,7 +1135,7 @@ impl Dashboard {
                     }
                     return DashboardAction::EnterBrowse;
                 }
-                match self.binding_for(key) {
+                match self.key_binding_for(key) {
                     Some(binding) => self.run(binding.action),
                     None => DashboardAction::None,
                 }

@@ -55,7 +55,7 @@ pub(super) struct GroupSlot {
 /// The one reason a key-popup group keeps a row, dimmed, instead of dropping it:
 /// the pane has not acknowledged a screen yet, so the key becomes available on
 /// its own. Every other reason means the action does not apply to this target.
-pub(super) const WAITING: &str = "waiting for acknowledged screen";
+const WAITING: &str = "waiting for acknowledged screen";
 
 pub(super) struct KeyBinding {
     /// The label the footer and the popup print.
@@ -74,11 +74,10 @@ pub(super) struct KeyBinding {
 
 pub(super) struct KeyGroup {
     pub title: String,
-    // Named `hints` while the start screen still reads it under that name.
-    pub hints: Vec<KeyBinding>,
+    pub keys: Vec<KeyBinding>,
 }
 
-fn binding(
+pub(super) fn key_binding(
     key: &'static str,
     name: &'static str,
     description: String,
@@ -104,7 +103,7 @@ fn capture(
     description: String,
     code: KeyCode,
 ) -> KeyBinding {
-    binding(key, name, description, code, Action::Capture(code))
+    key_binding(key, name, description, code, Action::Capture(code))
 }
 
 /// Arrows and back-tab are spellings of the letter keys the table lists.
@@ -190,38 +189,22 @@ impl KeyBinding {
 }
 
 impl Dashboard {
-    // A container selection can retain a wire-focused pane, but actions still
-    // target the selected container until the user selects a session again.
-    pub(super) fn creation_context(&self) -> (String, String) {
-        match &self.selected_container {
-            Some(TreeRow::Project { name }) => (name.clone(), String::new()),
-            Some(TreeRow::Workspace { project, name }) => (project.clone(), name.clone()),
-            _ => self
-                .focused_session()
-                .and_then(|id| find_session(self, id))
-                .map(|s| (s.project.clone(), s.workspace.clone()))
-                .unwrap_or_default(),
-        }
-    }
-
     /// The one binding the current input mode gives `key`.
-    pub(super) fn binding_for(&self, key: KeyEvent) -> Option<KeyBinding> {
+    pub(super) fn key_binding_for(&self, key: KeyEvent) -> Option<KeyBinding> {
         // ponytail: rebuilds the table per key; it is already rebuilt per draw.
         keymap(self)
             .into_iter()
-            .flat_map(|group| group.hints)
+            .flat_map(|group| group.keys)
             .find(|binding| binding.matches(key))
     }
 
     /// Run a binding's action. The key popup and the palette reach the same
     /// handlers as a bare key press.
     pub(super) fn run(&mut self, action: Action) -> DashboardAction {
+        // Opening a group stays inside the popup, so it answers before the
+        // preamble that closes the popup.
         if let Action::Group(group) = action {
-            if let Some(popup) = &mut self.whichkey {
-                popup.group = Some(group);
-                popup.browsing = Some(0);
-            }
-            return DashboardAction::Redraw;
+            return self.open_group(group);
         }
         self.whichkey = None;
         match action {
@@ -265,6 +248,9 @@ impl Dashboard {
                 self.close_focused_pane();
                 DashboardAction::Redraw
             }
+            // Dispatch runs a disabled binding's action so it can refuse in its
+            // own words, so every action holds its own bound: this one keeps the
+            // pane count the "only one pane" reason reports.
             Action::OtherPane => {
                 if self.panes.len() == 2 {
                     self.focus_pane((self.focused_pane + 1) % 2);
@@ -287,7 +273,7 @@ impl Dashboard {
             Action::Browse => {
                 self.capture_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
             }
-            Action::Group(_) => unreachable!("groups return above"),
+            Action::Group(group) => self.open_group(group),
         }
     }
 
@@ -308,14 +294,14 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     }
     let help = || {
         vec![
-            binding(
+            key_binding(
                 "Space",
                 "Leader",
                 "Show keys; the next key runs an action".into(),
                 Char(' '),
                 Action::Leader,
             ),
-            binding(
+            key_binding(
                 "?",
                 "Help",
                 "Browse available keys; Enter or click runs an action".into(),
@@ -481,19 +467,19 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         return vec![
             KeyGroup {
                 title: "Move".into(),
-                hints: motion,
+                keys: motion,
             },
             KeyGroup {
                 title: "Selection".into(),
-                hints: selection,
+                keys: selection,
             },
             KeyGroup {
                 title: "View".into(),
-                hints: help(),
+                keys: help(),
             },
             KeyGroup {
                 title: "Exit".into(),
-                hints: vec![
+                keys: vec![
                     capture(
                         "Esc",
                         if copying { "Cancel copy" } else { "Back" },
@@ -510,7 +496,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                         format!("Leave {target} and return to browse; sessions keep running"),
                         Char('q'),
                     ),
-                    binding(
+                    key_binding(
                         "Ctrl-g",
                         "Browse",
                         format!("Leave {target} and return to browse; sessions keep running"),
@@ -553,7 +539,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     let running = selected.is_some_and(|s| s.phase == SessionPhase::Running);
     let paused = selected.is_some_and(|s| s.phase == SessionPhase::Paused);
     let mut view = vec![
-        binding(
+        key_binding(
             "t/Ctrl-t",
             "Tasks",
             "Open scheduled tasks; sessions keep running".into(),
@@ -561,7 +547,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::Tasks,
         )
         .group('v', "t/Ctrl-t"),
-        binding(
+        key_binding(
             ":",
             "Search",
             "Search dashboard actions and terminals".into(),
@@ -569,7 +555,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::Palette,
         )
         .group('v', ":"),
-        binding(
+        key_binding(
             "v",
             "Split",
             format!("Open a second pane beside {target}; sessions keep running"),
@@ -591,7 +577,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 }),
         )
         .group('v', "v"),
-        binding(
+        key_binding(
             "Tab/Shift-Tab",
             "Next pane",
             "Focus the other pane; sessions keep running".into(),
@@ -600,7 +586,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .unless((dashboard.panes.len() < 2).then_some("only one pane"))
         .group('v', "Tab/Shift-Tab"),
-        binding(
+        key_binding(
             "x",
             "Close pane",
             format!("Hide the focused pane for {target}; its session keeps running"),
@@ -609,7 +595,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         )
         .unless((dashboard.panes.len() < 2).then_some("only one pane"))
         .group('v', "x"),
-        binding(
+        key_binding(
             "j/Down",
             "Next session",
             "Select the next visible session".into(),
@@ -617,7 +603,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Action::NextSession,
         )
         .group('v', "j/Down"),
-        binding(
+        key_binding(
             "k/Up",
             "Previous session",
             "Select the previous visible session".into(),
@@ -628,25 +614,25 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     ];
     view.extend(help());
     vec![
-        KeyGroup { title: "Create".into(), hints: vec![
-            binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(no_workspace).group('w', "n"),
-            binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and start its local shell; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
-            binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
+        KeyGroup { title: "Create".into(), keys: vec![
+            key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(no_workspace).group('w', "n"),
+            key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and start its local shell; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
+            key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
-        KeyGroup { title: "Session".into(), hints: vec![
-            binding("Enter", "Focus", format!("Send terminal input to {target}"), Enter, Action::Focus).unless(missing.or_else(|| (!running).then_some("session is not running")).or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING))).group('t', "Enter"),
-            binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
-            binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
-            binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),
-            binding("X", "Close terminal", format!("Stop {target} and remove its record. Asks for confirmation."), Char('X'), Action::CloseTerminal).unless(missing).group('t', "x"),
-            binding("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('['), Action::CopyScreen).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).once().group('t', "c"),
-            binding("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp, Action::History).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).group('t', "h"),
+        KeyGroup { title: "Session".into(), keys: vec![
+            key_binding("Enter", "Focus", format!("Send terminal input to {target}"), Enter, Action::Focus).unless(missing.or_else(|| (!running).then_some("session is not running")).or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING))).group('t', "Enter"),
+            key_binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
+            key_binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
+            key_binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),
+            key_binding("X", "Close terminal", format!("Stop {target} and remove its record. Asks for confirmation."), Char('X'), Action::CloseTerminal).unless(missing).group('t', "x"),
+            key_binding("[", "Copy screen", format!("Freeze the current screen of {target} for copying; sessions keep running"), Char('['), Action::CopyScreen).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).once().group('t', "c"),
+            key_binding("PageUp", "History", format!("Read frozen output from {target}; sessions keep running"), PageUp, Action::History).unless(missing.or_else(|| (!dashboard.focused_pane().is_some_and(|p| dashboard.pane_ready(p))).then_some(WAITING))).group('t', "h"),
         ] },
-        KeyGroup { title: "View".into(), hints: view },
-        KeyGroup { title: "Dashboard".into(), hints: vec![
-            binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Toggle notifications for new background agent responses or input requests in this dashboard; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
-            binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Toggle a sound for new background agent responses or input requests in this dashboard, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
-            binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
+        KeyGroup { title: "View".into(), keys: view },
+        KeyGroup { title: "Dashboard".into(), keys: vec![
+            key_binding("N", if dashboard.settings.desktop_notifications { "Disable desktop notifications" } else { "Enable desktop notifications" }, "Toggle notifications for new background agent responses or input requests in this dashboard; no replay".into(), Char('N'), Action::ToggleNotifications).once(),
+            key_binding("S", if dashboard.settings.ready_sound { "Disable ready sound" } else { "Enable ready sound" }, "Toggle a sound for new background agent responses or input requests in this dashboard, independent of desktop notifications; no replay".into(), Char('S'), Action::ToggleSound).once(),
+            key_binding("q", "Detach", "Detach this dashboard; the server and every session keep running".into(), Char('q'), Action::Detach),
         ] },
     ]
 }

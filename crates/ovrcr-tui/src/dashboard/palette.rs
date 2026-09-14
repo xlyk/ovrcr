@@ -539,7 +539,7 @@ impl Dashboard {
         };
         keymap(self)
             .into_iter()
-            .flat_map(|g| g.hints)
+            .flat_map(|g| g.keys)
             .find(|binding| binding.action == action)
     }
 
@@ -597,7 +597,7 @@ impl Dashboard {
                 }
             }
         }
-        for hint in keymap(self).into_iter().flat_map(|g| g.hints) {
+        for hint in keymap(self).into_iter().flat_map(|g| g.keys) {
             if matches!(hint.key, "n" | "w" | "a" | "X" | ":" | "Space") {
                 continue;
             }

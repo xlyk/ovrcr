@@ -110,21 +110,21 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
     let groups = super::keymap::keymap(&dashboard);
     let workspace = groups
         .iter()
-        .flat_map(|g| &g.hints)
+        .flat_map(|g| &g.keys)
         .find(|h| h.key == "w")
         .unwrap();
     assert!(workspace.description.contains("consigint"));
     let session = groups.iter().find(|g| g.title == "Session").unwrap();
-    let close = session.hints.iter().find(|h| h.key == "X").unwrap();
+    let close = session.keys.iter().find(|h| h.key == "X").unwrap();
     assert!(close.description.contains("agent (#12)"));
     assert!(close.description.contains("auth-handoff"));
     assert!(close.description.contains("confirmation"));
-    let resume = session.hints.iter().find(|h| h.key == "r").unwrap();
+    let resume = session.keys.iter().find(|h| h.key == "r").unwrap();
     assert!(!resume.enabled());
     assert!(resume.description.contains("not paused"));
     assert!(
         session
-            .hints
+            .keys
             .iter()
             .filter(|h| h.enabled())
             .all(|h| h.description.contains("agent (#12)"))
@@ -136,7 +136,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             .iter()
             .find(|g| g.title == "Session")
             .unwrap()
-            .hints
+            .keys
             .iter()
             .all(|h| !h.enabled() && h.description.contains("no session selected"))
     );
@@ -1703,7 +1703,7 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
     let names = |dashboard: &Dashboard| -> Vec<(String, String)> {
         super::keymap::keymap(dashboard)
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .map(|hint| (hint.key.to_string(), hint.name.to_string()))
             .collect()
     };
@@ -1728,7 +1728,7 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
     assert!(
         hints
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
     );
     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
@@ -1736,7 +1736,7 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
     assert!(
         hints
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .any(|hint| { hint.name == "Enable desktop notifications" && hint.key == "N" })
     );
 }
@@ -2160,7 +2160,7 @@ fn keymap_dashboard(phase: crate::protocol::SessionPhase) -> Dashboard {
 fn binding_named(dashboard: &Dashboard, key: &str) -> super::keymap::KeyBinding {
     super::keymap::keymap(dashboard)
         .into_iter()
-        .flat_map(|group| group.hints)
+        .flat_map(|group| group.keys)
         .find(|binding| binding.key == key)
         .unwrap_or_else(|| panic!("no binding for {key}"))
 }
@@ -2177,7 +2177,7 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     for mode in [InputMode::Browse, InputMode::Copy, InputMode::History] {
         dashboard.mode = mode;
         let groups = keymap(&dashboard);
-        let bindings: Vec<&KeyBinding> = groups.iter().flat_map(|group| &group.hints).collect();
+        let bindings: Vec<&KeyBinding> = groups.iter().flat_map(|group| &group.keys).collect();
         assert!(!bindings.is_empty(), "{mode:?} lists no keys");
         for binding in &bindings {
             let matched: Vec<_> = bindings
@@ -2222,7 +2222,9 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
         ),
     ] {
         assert_eq!(
-            dashboard.binding_for(event).map(|binding| binding.action),
+            dashboard
+                .key_binding_for(event)
+                .map(|binding| binding.action),
             Some(action),
             "{event:?}"
         );
@@ -2231,7 +2233,7 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
     for code in [KeyCode::Char('n'), KeyCode::Char('q'), KeyCode::Char('g')] {
         assert!(
             dashboard
-                .binding_for(KeyEvent::new(code, KeyModifiers::CONTROL))
+                .key_binding_for(KeyEvent::new(code, KeyModifiers::CONTROL))
                 .is_none(),
             "{code:?}"
         );
@@ -2246,14 +2248,14 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
         for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
             assert!(
                 dashboard
-                    .binding_for(KeyEvent::new_with_kind(code, KeyModifiers::NONE, kind))
+                    .key_binding_for(KeyEvent::new_with_kind(code, KeyModifiers::NONE, kind))
                     .is_none(),
                 "{code:?} {kind:?}"
             );
         }
         assert!(
             dashboard
-                .binding_for(KeyEvent::new(code, KeyModifiers::NONE))
+                .key_binding_for(KeyEvent::new(code, KeyModifiers::NONE))
                 .is_some(),
             "{code:?}"
         );
@@ -2262,7 +2264,6 @@ fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
 
 #[test]
 fn keymap_reasons_name_the_condition_that_disables_a_key() {
-    use super::keymap::WAITING;
     use crate::protocol::SessionPhase;
     let reason = |dashboard: &Dashboard, key: &str| binding_named(dashboard, key).reason;
     let mut dashboard = keymap_dashboard(SessionPhase::Running);
@@ -2279,7 +2280,7 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
     for key in ["Enter", "[", "PageUp"] {
         assert_eq!(
             reason(&dashboard, key),
-            Some(WAITING),
+            Some("waiting for acknowledged screen"),
             "{key} before an ack"
         );
     }
@@ -2312,7 +2313,7 @@ fn key_popup_groups_take_their_keys_from_the_table() {
     let dashboard = keymap_dashboard(crate::protocol::SessionPhase::Running);
     let bindings: Vec<_> = keymap(&dashboard)
         .into_iter()
-        .flat_map(|group| group.hints)
+        .flat_map(|group| group.keys)
         .collect();
     let slots: Vec<_> = bindings
         .iter()
@@ -2353,7 +2354,9 @@ fn key_popup_groups_take_their_keys_from_the_table() {
     assert!(close.matches(grouped) && !close.matches(bare));
     assert_eq!(close.action, Action::CloseTerminal);
     assert_eq!(
-        dashboard.binding_for(grouped).map(|binding| binding.action),
+        dashboard
+            .key_binding_for(grouped)
+            .map(|binding| binding.action),
         Some(Action::ClosePane)
     );
 }

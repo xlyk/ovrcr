@@ -735,8 +735,8 @@ impl Dashboard {
         else {
             return;
         };
-        let groups = super::hints::key_hints(self);
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let groups = super::keymap::keymap(self);
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let mut lines = Vec::new();
         if self.hierarchy.projects.is_empty() {
             lines.push(Line::from("Welcome to OVRCR"));

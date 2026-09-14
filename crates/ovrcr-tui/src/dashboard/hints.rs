@@ -1,9 +1,6 @@
 use super::keymap::keymap;
 use super::{Dashboard, InputMode};
 
-// The start screen still reaches the table under this name.
-pub(super) use super::keymap::keymap as key_hints;
-
 pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     use unicode_width::UnicodeWidthStr;
     let history = dashboard
@@ -27,7 +24,7 @@ pub(super) fn footer(dashboard: &Dashboard, width: u16) -> String {
     };
     let mut text: String = mode.chars().take(usize::from(width)).collect();
     let groups = keymap(dashboard);
-    let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+    let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
     let priority: &[&str] = if dashboard.mode == InputMode::Browse {
         &[
             "?",
