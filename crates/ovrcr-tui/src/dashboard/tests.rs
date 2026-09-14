@@ -2164,7 +2164,7 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
     let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
     assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '?');
     assert!(!dashboard.session_is_busy(SessionId(1)));
-    assert_ne!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
+    assert_ne!(dashboard.redraw_interval(), super::status::SPINNER_INTERVAL);
 
     // Closing the last request restores the activity underneath: glyph and cadence agree again.
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
@@ -2176,5 +2176,5 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
     let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
     assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '⠋');
     assert!(dashboard.session_is_busy(SessionId(1)));
-    assert_eq!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
+    assert_eq!(dashboard.redraw_interval(), super::status::SPINNER_INTERVAL);
 }

@@ -79,7 +79,6 @@ pub(super) const YELLOW: Color = Color::Rgb(249, 226, 175);
 pub(super) const RED: Color = Color::Rgb(243, 139, 168);
 pub(super) const SURFACE0: Color = Color::Rgb(49, 50, 68);
 pub(super) const SURFACE2: Color = Color::Rgb(88, 91, 112);
-pub(super) const SPINNER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen, focused: bool) {
     let (rows, cols) = screen.size();
@@ -1002,7 +1001,7 @@ fn tree_line_text(
                     reported => reported,
                 };
                 let subtext = Style::default().fg(SUBTEXT);
-                let unread = if session.unread.is_some() { " ●" } else { "" };
+                let unread = if status.unread.is_some() { " ●" } else { "" };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
@@ -1033,7 +1032,7 @@ fn tree_line_text(
                     .map_or(session.label.as_str(), |(_, model)| model)
                     .trim();
                 let model_cells = Line::raw(model).width();
-                let unread = if session.unread.is_some() { "● " } else { "" };
+                let unread = if status.unread.is_some() { "● " } else { "" };
                 let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
                 // Name width when the model is shown: two cells of gap and one trailing cell.
                 let name_width_with_model = width.saturating_sub(name_column + model_cells + 3);
