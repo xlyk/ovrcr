@@ -8,6 +8,10 @@ Synchronous terminal multiplexer. One server owner, one active dashboard, fifty 
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
 
+**Key binding**:
+The dashboard's one entry for a key in an input mode: its label, its action, and the reason it is unavailable. Dispatch, the footer, the key popup and the palette read that one entry, so a hint cannot disagree with what the key does.
+_Avoid_: the reporting binding, a hint list per consumer
+
 **Ready**:
 The accepted root observation of a completed response cycle from a supported readiness provider (Codex, Pi, Oh My Pi), identified by binding, cycle identity (the `turn` field), and activity revision.
 _Avoid_: Confirmed activity as a success claim, Claude observations, a desktop alert
@@ -24,6 +28,10 @@ _Avoid_: a newer Unread as the review target
 An open request for a human answer, identified by binding, namespace and request identity. A binding carries a bounded set of them, published whole; while any is open the session's effective activity is WaitingInput, and closing the last one restores the underlying activity.
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
 
+**Reporter**:
+The in-process owner of one managed invocation's reporting: the lease, the binding and Reporting generation that lease carries, the one revision set every observation is numbered from, the retained identities it fences, and the teardown. One per invocation, shared by every provider; the provider's receiver translates that provider's frames into observations and chooses which of these the provider needs.
+_Avoid_: the provider's receiver, the extension Producer, the helper process
+
 **Producer**:
 The admitted extension instance whose source sequence fences its events; retired by an observed shutdown or replaced by an admitted successor. In Oh My Pi one producer spans every in-place session switch, so a switch is a new binding, not a new producer.
 _Avoid_: the conversation, the binding, the native process
@@ -39,6 +47,10 @@ _Avoid_: the dashboard slot, the sink, the view subscription as separate things
 **View handshake**:
 The Dashboard's exchange with the server that acknowledges a view: one `SetView` in flight, snapshots matched by request, revision, and session, readiness granted by a complete final `Ok`.
 _Avoid_: pane ready as a flag anyone sets
+
+**Session status**:
+What one session says about itself on screen, decided once per draw: the row's glyph and the process, paused, effective activity, Unread and elapsed clauses. An Unread clause replaces a header line outright; each surface arranges and clips the rest for its own width. The sidebar row, both pane headers, and the spinner redraw cadence read the same value.
+_Avoid_: the raw rollup activity, the glyph on its own, a per-renderer reading
 
 **Retarget**:
 Any change to what a pane shows: split, focus, close, select, container, cleared, resize, or server removal. Each names which releases apply.

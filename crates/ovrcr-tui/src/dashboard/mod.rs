@@ -5,6 +5,7 @@ mod event_loop;
 mod git_hints;
 mod hints;
 mod input;
+mod keymap;
 mod outbox;
 mod palette;
 pub(crate) mod picker;
@@ -12,6 +13,7 @@ mod ready;
 mod render;
 mod settings;
 mod state;
+mod status;
 mod terminal_guard;
 #[cfg(test)]
 mod tests;

@@ -149,6 +149,7 @@ pub(super) enum DashboardDelivery {
 /// closing so the writer can still flush that final frame; anything offered in
 /// the meantime is dropped with the socket left open. Only `Closed` means the
 /// connection can no longer deliver and must be torn down.
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Enqueue {
     Queued,
     Draining,
@@ -226,13 +227,6 @@ impl DashboardSink {
         queue.record_peak();
         self.wake.notify_one();
         Enqueue::Queued
-    }
-
-    /// Boolean view of [`Self::enqueue`] for fixtures that only assert whether
-    /// a message was queued. It delegates rather than repeating the rules.
-    #[cfg(test)]
-    pub(super) fn enqueue_queued(&self, outbound: DashboardOutbound) -> bool {
-        matches!(self.enqueue(outbound), Enqueue::Queued)
     }
 
     pub(super) fn replace_view(

@@ -113,6 +113,10 @@ impl<T> ReportingSender<T> {
         }
     }
 
+    /// Read the counters a monitored channel keeps. Production reads them
+    /// through [`ReportingQueueMonitor::snapshot`]; this is the handle the
+    /// tests already hold.
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
     pub fn snapshot(&self) -> ReportingQueueSnapshot {
         *self.counters.snapshot.lock().unwrap()
     }
@@ -254,12 +258,22 @@ fn record_dequeue(snapshot: &mut ReportingQueueSnapshot, bytes: usize) {
         .expect("reporting queue byte accounting underflow");
 }
 
-fn channel<T>(
+/// The one reporting-queue constructor.
+///
+/// Without a monitor the channel is a thin pass-through over
+/// `mpsc::sync_channel`: the default server keeps no accounting and pays no
+/// lock for it. With one — the `acceptance-diagnostics` build, and the tests
+/// that assert on the accounting — every send and receive moves the counters
+/// under the same lock that moves the item, so a snapshot can never disagree
+/// with the channel. The `after_send` and `before_wait` ordering hooks live on
+/// that path too, so they fire only when a monitor is supplied.
+pub fn reporting_channel<T>(
     capacity: usize,
     weight: fn(&T) -> usize,
-    counters: Arc<QueueCounters>,
-    tracked: bool,
+    monitor: Option<&ReportingQueueMonitor>,
 ) -> (ReportingSender<T>, ReportingReceiver<T>) {
+    let tracked = monitor.is_some();
+    let counters = monitor.map_or_else(Arc::default, |monitor| Arc::clone(&monitor.counters));
     let (sender, receiver) = mpsc::sync_channel(capacity);
     (
         ReportingSender {
@@ -282,48 +296,6 @@ fn channel<T>(
 }
 
 #[cfg(test)]
-pub fn reporting_channel<T>(
-    capacity: usize,
-    weight: fn(&T) -> usize,
-) -> (ReportingSender<T>, ReportingReceiver<T>) {
-    channel(capacity, weight, Arc::new(QueueCounters::default()), true)
-}
-
-pub fn reporting_channel_with_monitor<T>(
-    capacity: usize,
-    weight: fn(&T) -> usize,
-    monitor: &ReportingQueueMonitor,
-) -> (ReportingSender<T>, ReportingReceiver<T>) {
-    channel(capacity, weight, Arc::clone(&monitor.counters), true)
-}
-
-impl<T> From<SyncSender<T>> for ReportingSender<T> {
-    fn from(sender: SyncSender<T>) -> Self {
-        Self {
-            sender: Some(sender),
-            counters: Arc::new(QueueCounters::default()),
-            weight: |_| 0,
-            tracked: false,
-            #[cfg(test)]
-            after_send: Arc::new(Mutex::new(None)),
-        }
-    }
-}
-
-impl<T> From<Receiver<T>> for ReportingReceiver<T> {
-    fn from(receiver: Receiver<T>) -> Self {
-        Self {
-            receiver: Some(receiver),
-            counters: Arc::new(QueueCounters::default()),
-            weight: |_| 0,
-            tracked: false,
-            #[cfg(test)]
-            before_wait: Arc::new(Mutex::new(None)),
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Barrier;
@@ -331,7 +303,11 @@ mod tests {
 
     #[test]
     fn accounting_is_atomic_with_channel_refill() {
-        let (sender, receiver) = reporting_channel(1, |value: &usize| *value);
+        let (sender, receiver) = reporting_channel(
+            1,
+            |value: &usize| *value,
+            Some(&ReportingQueueMonitor::default()),
+        );
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         *sender.after_send.lock().unwrap() = Some(Arc::new({
@@ -369,7 +345,8 @@ mod tests {
 
     #[test]
     fn blocked_send_wakes_when_receiver_drops() {
-        let (sender, receiver) = reporting_channel(1, |_| 1);
+        let (sender, receiver) =
+            reporting_channel(1, |_| 1, Some(&ReportingQueueMonitor::default()));
         sender.send(1).unwrap();
         let blocked = thread::spawn(move || sender.send(2));
         drop(receiver);
@@ -378,7 +355,8 @@ mod tests {
 
     #[test]
     fn receiver_wakes_on_send_and_sender_drop() {
-        let (sender, receiver) = reporting_channel(1, |_| 1);
+        let (sender, receiver) =
+            reporting_channel(1, |_| 1, Some(&ReportingQueueMonitor::default()));
         let receive = thread::spawn(move || {
             assert_eq!(receiver.recv().unwrap(), 1);
             assert_eq!(receiver.recv(), Err(mpsc::RecvError));
@@ -390,7 +368,8 @@ mod tests {
 
     #[test]
     fn sender_drop_cannot_be_lost_between_empty_and_wait() {
-        let (sender, receiver) = reporting_channel::<usize>(1, |_| 1);
+        let (sender, receiver) =
+            reporting_channel::<usize>(1, |_| 1, Some(&ReportingQueueMonitor::default()));
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         *receiver.before_wait.lock().unwrap() = Some(Arc::new({
@@ -412,7 +391,8 @@ mod tests {
 
     #[test]
     fn timeout_uses_channel_state_as_authority() {
-        let (_sender, receiver) = reporting_channel::<usize>(1, |_| 1);
+        let (_sender, receiver) =
+            reporting_channel::<usize>(1, |_| 1, Some(&ReportingQueueMonitor::default()));
         assert_eq!(
             receiver.recv_timeout(Duration::from_millis(1)),
             Err(mpsc::RecvTimeoutError::Timeout)
@@ -421,7 +401,11 @@ mod tests {
 
     #[test]
     fn receiver_drop_drains_accounting() {
-        let (sender, receiver) = reporting_channel(2, |value: &usize| *value);
+        let (sender, receiver) = reporting_channel(
+            2,
+            |value: &usize| *value,
+            Some(&ReportingQueueMonitor::default()),
+        );
         sender.send(10).unwrap();
         sender.send(20).unwrap();
         drop(receiver);

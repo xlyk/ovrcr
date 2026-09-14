@@ -1,6 +1,7 @@
 pub use ovrcr_runtime::agent_runner;
 pub mod client;
 pub use ovrcr_protocol::context;
+pub use ovrcr_protocol::freshness;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub use ovrcr_protocol as protocol;

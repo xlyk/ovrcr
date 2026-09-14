@@ -1,18 +1,12 @@
-use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::thread;
-use std::time::{Duration, Instant};
+#[path = "support/live.rs"]
+mod live;
 
-use ovrcr::config::{
-    ProjectRecord, Registry, WorkspaceRecord, load_registry, save_registry_atomic,
-};
+use std::path::{Path, PathBuf};
+
+use live::Live;
+use ovrcr::config::{ProjectRecord, WorkspaceRecord, load_registry};
 use ovrcr::git::{BranchSpec, create_worktree, inspect_worktree, remove_worktree};
-use ovrcr::protocol::{
-    ClientMessage, ErrorCode, Request, Response, ServerMessage, connect_server, read_frame,
-    write_frame,
-};
-use ovrcr::server::{ServerPaths, run_server};
+use ovrcr::protocol::{ErrorCode, Request, Response};
 
 struct GitFixture {
     dir: tempfile::TempDir,
@@ -26,15 +20,7 @@ impl GitFixture {
         let workspace_root = dir.path().join("workspaces");
         std::fs::create_dir(&repo).unwrap();
         std::fs::create_dir(&workspace_root).unwrap();
-        run_git(&repo, &["init", "-b", "main"]);
-        run_git(&repo, &["config", "user.name", "OVRCR Tests"]);
-        run_git(
-            &repo,
-            &["config", "user.email", "ovrcr-tests@example.invalid"],
-        );
-        std::fs::write(repo.join("README"), "fixture\n").unwrap();
-        run_git(&repo, &["add", "README"]);
-        run_git(&repo, &["commit", "-m", "initial"]);
+        live::init_repo(&repo);
         let repo = repo.canonicalize().unwrap();
         let workspace_root = workspace_root.canonicalize().unwrap();
         Self {
@@ -49,11 +35,11 @@ impl GitFixture {
     }
 
     fn git(&self, args: &[&str]) {
-        run_git(&self.project.repo, args);
+        live::git(&self.project.repo, args);
     }
 
     fn worktree_paths(&self) -> Vec<PathBuf> {
-        let output = git_output(&self.project.repo, &["worktree", "list", "--porcelain"]);
+        let output = live::git(&self.project.repo, &["worktree", "list", "--porcelain"]);
         output
             .lines()
             .filter_map(|line| line.strip_prefix("worktree "))
@@ -62,127 +48,11 @@ impl GitFixture {
     }
 }
 
-fn run_git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {:?} failed: {status}", args);
-}
-
-fn git_output(repo: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_COMMON_DIR")
-        .env_remove("GIT_OBJECT_DIRECTORY")
-        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {:?} failed", args);
-    String::from_utf8(output.stdout).unwrap()
-}
-
-/// Drives a live server over its own Unix socket, with its own registry
-/// file and temporary workspace root, mirroring the `ControlFixture`
-/// pattern in `tests/server_lifecycle.rs`.
-struct ServerFixture {
-    root: tempfile::TempDir,
-    repo: PathBuf,
-    registry_path: PathBuf,
-    socket: PathBuf,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl ServerFixture {
-    fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let repo = root.path().join("repo");
-        std::fs::create_dir(&repo).unwrap();
-        run_git(&repo, &["init", "-b", "main"]);
-        run_git(&repo, &["config", "user.name", "OVRCR Tests"]);
-        run_git(
-            &repo,
-            &["config", "user.email", "ovrcr-tests@example.invalid"],
-        );
-        std::fs::write(repo.join("README"), "fixture\n").unwrap();
-        run_git(&repo, &["add", "README"]);
-        run_git(&repo, &["commit", "-m", "initial"]);
-        let repo = repo.canonicalize().unwrap();
-
-        let registry_path = root.path().join("config.toml");
-        save_registry_atomic(&Registry::default(), &registry_path).unwrap();
-        let socket = root.path().join("private").join("server.sock");
-        let paths = ServerPaths {
-            socket: socket.clone(),
-        };
-        let thread_registry_path = registry_path.clone();
-        let thread = thread::spawn(move || run_server(paths, thread_registry_path).unwrap());
-        let fixture = Self {
-            root,
-            repo,
-            registry_path,
-            socket,
-            thread: Some(thread),
-        };
-        fixture.wait_for_socket();
-        fixture
-    }
-
-    fn tmp_path(&self) -> &Path {
-        self.root.path()
-    }
-
-    fn wait_for_socket(&self) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if UnixStream::connect(&self.socket).is_ok() {
-                return;
-            }
-            thread::park_timeout(Duration::from_millis(5));
-        }
-        panic!("control server did not start");
-    }
-
-    fn request(&self, request: Request) -> Response {
-        let mut stream = connect_server(&self.socket).unwrap();
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request,
-            },
-        )
-        .unwrap();
-        match read_frame::<ServerMessage>(&mut stream).unwrap() {
-            ServerMessage::Response { response, .. } => response,
-            ServerMessage::Event(event) => panic!("unexpected event: {event:?}"),
-        }
-    }
-}
-
-impl Drop for ServerFixture {
-    fn drop(&mut self) {
-        if let Some(thread) = self.thread.take() {
-            let _ = self.request(Request::Shutdown { kill: true });
-            let _ = thread.join();
-        }
-    }
-}
-
 #[test]
 fn add_project_creates_a_missing_workspace_root() {
-    let fixture = ServerFixture::new();
+    let fixture = Live::thread();
 
-    let workspace_root = fixture.tmp_path().join("workspaces").join("demo");
+    let workspace_root = fixture.root.path().join("workspaces").join("demo");
     assert!(!workspace_root.exists());
 
     assert_eq!(
@@ -195,7 +65,7 @@ fn add_project_creates_a_missing_workspace_root() {
     );
     assert!(workspace_root.is_dir());
 
-    let registry = load_registry(&fixture.registry_path).unwrap();
+    let registry = load_registry(&fixture.config).unwrap();
     let project = registry.project("demo").unwrap();
     assert_eq!(
         project.workspace_root,
@@ -204,7 +74,7 @@ fn add_project_creates_a_missing_workspace_root() {
 
     // A workspace root whose parent is a regular file cannot be created;
     // the resulting error must still name the workspace root.
-    let blocker = fixture.tmp_path().join("blocked-parent");
+    let blocker = fixture.root.path().join("blocked-parent");
     std::fs::write(&blocker, "not a directory\n").unwrap();
     let blocked_root = blocker.join("child");
     let message = match fixture.request(Request::AddProject {
@@ -223,7 +93,7 @@ fn add_project_creates_a_missing_workspace_root() {
 
 #[test]
 fn add_project_refuses_relative_paths_without_creating_anything() {
-    let fixture = ServerFixture::new();
+    let fixture = Live::thread();
 
     // A relative workspace root is created under the server's working directory, nowhere near
     // the path the caller named, so it is refused before anything is created.
@@ -246,7 +116,7 @@ fn add_project_refuses_relative_paths_without_creating_anything() {
         "a refused workspace root must not be created in the server's working directory"
     );
     assert!(
-        load_registry(&fixture.registry_path)
+        load_registry(&fixture.config)
             .unwrap()
             .project("relative-root")
             .is_err(),
@@ -255,7 +125,7 @@ fn add_project_refuses_relative_paths_without_creating_anything() {
 
     // The repository half is refused the same way, and its workspace root stays uncreated.
     let relative_repo = PathBuf::from("ovrcr-relative-repository-check");
-    let absolute_root = fixture.tmp_path().join("workspaces").join("relative-repo");
+    let absolute_root = fixture.root.path().join("workspaces").join("relative-repo");
     let (code, message) = match fixture.request(Request::AddProject {
         name: "relative-repo".into(),
         repo: relative_repo.clone(),
@@ -277,9 +147,9 @@ fn add_project_refuses_relative_paths_without_creating_anything() {
 
 #[test]
 fn add_project_leaves_no_workspace_root_when_the_repository_is_invalid() {
-    let fixture = ServerFixture::new();
-    let workspace_root = fixture.tmp_path().join("workspaces").join("unvalidated");
-    let missing_repo = fixture.tmp_path().join("not-a-repository");
+    let fixture = Live::thread();
+    let workspace_root = fixture.root.path().join("workspaces").join("unvalidated");
+    let missing_repo = fixture.root.path().join("not-a-repository");
     assert!(!workspace_root.exists());
 
     let message = match fixture.request(Request::AddProject {
@@ -596,7 +466,7 @@ fn removes_clean_registered_worktree_and_preserves_branch() {
     assert!(!workspace.path.exists());
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
-        git_output(
+        live::git(
             &fixture.project.repo,
             &["show-ref", "--verify", "refs/heads/feature/remove"]
         )
@@ -627,7 +497,7 @@ fn removes_workspace_whose_directory_is_gone() {
 
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
-        git_output(
+        live::git(
             &fixture.project.repo,
             &["show-ref", "--verify", "refs/heads/feature/vanished"]
         )

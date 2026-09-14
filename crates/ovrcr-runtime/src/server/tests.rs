@@ -6,7 +6,7 @@ use ovrcr_protocol::AgentReport;
 use ovrcr_protocol::exchange_preamble;
 use std::time::Instant;
 
-use crate::session::AgentActivity;
+use crate::session::{AgentActivity, NO_REGISTER};
 use ovrcr_protocol::{
     DashboardView, HISTORY_ROWS, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, PaneTarget, Response,
     ServerEvent, ServerMessage,
@@ -17,7 +17,7 @@ use std::net::Shutdown;
 
 #[test]
 fn raw_event_and_dispatch_queues_reject_the_65th_item() {
-    let (event_sender, event_receiver) = event_channel();
+    let (event_sender, event_receiver) = event_channel(Some(&ReportingQueueMonitor::default()));
     for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
         event_sender
             .try_send(SessionEvent::Output {
@@ -48,7 +48,8 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
         RAW_EVENT_QUEUE_CAPACITY - 1
     );
 
-    let (dispatch_sender, dispatch_receiver) = dispatch_channel();
+    let (dispatch_sender, dispatch_receiver) =
+        dispatch_channel(Some(&ReportingQueueMonitor::default()));
     for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
         dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
     }
@@ -81,14 +82,17 @@ fn split_delivery_snapshots_precede_increments() {
     let left = SessionId(1);
     let right = SessionId(2);
     for session in [left, right] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session,
-                revision: 1,
-                bytes: b"old".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 1,
+                    bytes: b"old".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     let view = DashboardView {
         revision: 2,
@@ -105,14 +109,17 @@ fn split_delivery_snapshots_precede_increments() {
         focused: Some(right),
     };
     assert!(sink.replace_view(&view, 10, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: right,
-            revision: 2,
-            bytes: b"new".to_vec(),
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: right,
+                revision: 2,
+                bytes: b"new".to_vec(),
+            }),
+            completion: None,
         }),
-        completion: None,
-    }));
+        Enqueue::Queued
+    );
     for (session, bytes) in [(left, b"LEFT".as_slice()), (right, b"RIGHT".as_slice())] {
         assert!(matches!(
             sink.next(),
@@ -149,13 +156,16 @@ fn split_delivery_snapshots_precede_increments() {
 
     let sink = DashboardSink::new();
     for _ in 0..62 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 1,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     assert!(!sink.replace_view(&view, 11, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
     assert!(sink.next().is_none());
@@ -165,23 +175,29 @@ fn split_delivery_snapshots_precede_increments() {
 fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: SessionId(1),
+                    revision: 1,
+                    bytes: vec![b'x'; 32],
+                }),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
+    }
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session: SessionId(1),
                 revision: 1,
-                bytes: vec![b'x'; 32],
+                bytes: vec![b'y'; 32],
             }),
             completion: None,
-        }));
-    }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: SessionId(1),
-            revision: 1,
-            bytes: vec![b'y'; 32],
         }),
-        completion: None,
-    }));
+        Enqueue::Queued
+    );
     let snapshot = sink.reporting_snapshot();
     assert_eq!(snapshot.message_items + snapshot.dirty_items, 1);
     assert_eq!(snapshot.dirty_items, 1);
@@ -211,60 +227,78 @@ fn split_delivery_dirty_revisions_are_isolated() {
     let first = SessionId(1);
     let second = SessionId(2);
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 1,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     for (session, bytes) in [
         (first, b"first".as_slice()),
         (second, b"second".as_slice()),
         (SessionId(3), b"interleaved".as_slice()),
     ] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 1,
+                    bytes: bytes.to_vec(),
+                }),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
+    }
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
-                session,
+                session: first,
                 revision: 1,
-                bytes: bytes.to_vec(),
+                bytes: b"first-replaced".to_vec(),
             }),
             completion: None,
-        }));
-    }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: first,
-            revision: 1,
-            bytes: b"first-replaced".to_vec(),
         }),
-        completion: None,
-    }));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: second,
-            revision: 1,
-            bytes: b"second-replaced".to_vec(),
-        }),
-        completion: None,
-    }));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: second,
-            revision: 1,
-            bytes: b"second-dirty".to_vec(),
-        }),
-        completion: None,
-    }));
-    for _ in 0..2 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 3,
-                response: Response::Ok,
-            },
+        Enqueue::Queued
+    );
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: second,
+                revision: 1,
+                bytes: b"second-replaced".to_vec(),
+            }),
             completion: None,
-        }));
+        }),
+        Enqueue::Queued
+    );
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: second,
+                revision: 1,
+                bytes: b"second-dirty".to_vec(),
+            }),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 3,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let view = DashboardView {
         revision: 2,
@@ -339,23 +373,29 @@ fn split_delivery_dirty_revisions_are_isolated() {
         sink.dirty_sent(revision, session);
     }
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 2,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     for session in [first, second] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session,
-                revision: 2,
-                bytes: b"new".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 2,
+                    bytes: b"new".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     assert!(
         sink.dirty_keys()
@@ -809,10 +849,13 @@ fn set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames() {
     // the view cannot be published without evicting a queued lifecycle frame.
     let lifecycle = ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy()));
     for _ in 0..(DASHBOARD_QUEUE - 2) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: lifecycle.clone(),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: lifecycle.clone(),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
@@ -1346,13 +1389,16 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
 #[test]
 fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
     let sink = DashboardSink::new();
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Response {
-            request_id: 1,
-            response: Response::Ok,
-        },
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     let (completion, result) = mpsc::sync_channel(1);
     assert!(matches!(
         sink.enqueue_terminal(DashboardOutbound {
@@ -1948,14 +1994,17 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
         let _ = write_started.try_send(());
     }));
     for revision in 1..=4 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session: first_id,
-                revision,
-                bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: first_id,
+                    revision,
+                    bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     writer_entered
         .recv_timeout(Duration::from_secs(10))
@@ -2065,17 +2114,20 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
     // A frame larger than the socket buffer parks the writer while this client
     // is not reading, so the terminal frame stays queued behind it. Keep it
     // small enough to drain well inside the handler's close timeout.
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: response_message(
-            72,
-            Response::TerminalText {
-                session: first_id,
-                size: TerminalSize { rows: 24, cols: 80 },
-                text: "x".repeat(32 * 1024),
-            },
-        ),
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: response_message(
+                72,
+                Response::TerminalText {
+                    session: first_id,
+                    size: TerminalSize { rows: 24, cols: 80 },
+                    text: "x".repeat(32 * 1024),
+                },
+            ),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -2341,8 +2393,8 @@ fn test_state_with_dispatch(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
 ) -> (Arc<ServerState>, ReportingReceiver<DispatchMessage>) {
-    let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, receiver) = dispatch_channel();
+    let (events, _) = event_channel(None);
+    let (dispatch, receiver) = dispatch_channel(Some(&ReportingQueueMonitor::default()));
     let (state, receiver) = (
         Arc::new(ServerState {
             tasks: None,
@@ -2356,7 +2408,7 @@ fn test_state_with_dispatch(
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            events: Mutex::new(Some(events.into())),
+            events: Mutex::new(Some(events)),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2379,11 +2431,11 @@ fn test_state_with_socket(
     registry: Registry,
 ) -> (
     Arc<ServerState>,
-    Receiver<DispatchMessage>,
-    Receiver<SessionEvent>,
+    ReportingReceiver<DispatchMessage>,
+    ReportingReceiver<SessionEvent>,
 ) {
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     (
         Arc::new(ServerState {
             tasks: None,
@@ -2394,10 +2446,10 @@ fn test_state_with_socket(
             dashboard: ActiveDashboard::default(),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch: dispatch.into(),
+            dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            events: Mutex::new(Some(events.into())),
+            events: Mutex::new(Some(events)),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2412,17 +2464,25 @@ fn test_state_with_socket(
 
 fn spawn_live_test_session(
     id: SessionId,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     spawn_live_test_session_with_hook(id, None)
 }
 
 fn spawn_live_test_session_with_hook(
     id: SessionId,
     hook_env: Option<HookEnvironment>,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let (events, receiver) = event_channel(None);
+    let session = Session::spawn_registered(
         id,
         SessionSpec {
             project: "p".into(),
@@ -2439,6 +2499,7 @@ fn spawn_live_test_session_with_hook(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        NO_REGISTER,
     )
     .unwrap();
     (cwd, session, receiver)
@@ -2446,10 +2507,14 @@ fn spawn_live_test_session_with_hook(
 
 fn spawn_exiting_test_session(
     id: SessionId,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let (events, receiver) = event_channel(None);
+    let session = Session::spawn_registered(
         id,
         SessionSpec {
             project: "p".into(),
@@ -2462,6 +2527,7 @@ fn spawn_exiting_test_session(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        NO_REGISTER,
     )
     .unwrap();
     (cwd, session, receiver)
@@ -2496,7 +2562,7 @@ impl TestSessionEvents {
 
 fn apply_test_session_events(
     session: Arc<Session>,
-    receiver: Receiver<SessionEvent>,
+    receiver: ReportingReceiver<SessionEvent>,
 ) -> TestSessionEvents {
     let cancel = Arc::new(AtomicBool::new(false));
     let (finished_sender, finished) = mpsc::sync_channel(1);
@@ -2585,6 +2651,35 @@ fn queued_dashboard_message(sink: &Arc<DashboardSink>) -> ServerMessage {
     }
 }
 
+/// Put one Dashboard request through the connection entry point under the
+/// same bound the other dispatcher fixtures use. The dispatcher answers view
+/// requests on its own thread and `await_view_completion` waits without a
+/// deadline, so a stalled dispatcher has to fail this test rather than hang
+/// the suite.
+fn dashboard_request_bounded(
+    state: &Arc<ServerState>,
+    owner: &Arc<()>,
+    request_id: u64,
+    request: Request,
+) -> Response {
+    let (response, result) = mpsc::sync_channel(1);
+    let state = Arc::clone(state);
+    let owner = Arc::clone(owner);
+    thread::spawn(move || {
+        let mut role = ClientRole::Dashboard;
+        let _ = response.send(handle_request_with_id(
+            &state,
+            &mut role,
+            request,
+            request_id,
+            Some(&owner),
+        ));
+    });
+    result
+        .recv_timeout(Duration::from_secs(2))
+        .expect("dashboard request completion")
+}
+
 fn send_history_command(
     state: &Arc<ServerState>,
     owner: &Arc<()>,
@@ -2651,19 +2746,24 @@ fn history_owner_and_token_isolation() {
         }],
         focused: Some(id),
     }));
-    let (select_completion, select_result) = mpsc::sync_channel(1);
-    state
-        .dispatch
-        .send(DispatchMessage::Select {
-            request_id: 8,
-            session: id,
-            size: TerminalSize { rows: 24, cols: 80 },
-            completion: select_completion,
-        })
-        .unwrap();
-    select_result
-        .recv_timeout(Duration::from_secs(2))
-        .expect("same-session select completion");
+    assert!(matches!(
+        dashboard_request_bounded(
+            &state,
+            &old_owner,
+            8,
+            Request::SetView {
+                view: DashboardView {
+                    revision: 2,
+                    panes: vec![PaneTarget {
+                        session: id,
+                        size: TerminalSize { rows: 24, cols: 80 },
+                    }],
+                    focused: Some(id),
+                },
+            },
+        ),
+        Response::Ok
+    ));
     assert!(matches!(
         queued_dashboard_message(&old_sink),
         ServerMessage::Response {
@@ -2698,19 +2798,24 @@ fn history_owner_and_token_isolation() {
             response: Response::HistoryRows(_),
         }
     ));
-    let (switch_completion, switch_result) = mpsc::sync_channel(1);
-    state
-        .dispatch
-        .send(DispatchMessage::Select {
-            request_id: 10,
-            session: switched_id,
-            size: TerminalSize { rows: 24, cols: 80 },
-            completion: switch_completion,
-        })
-        .unwrap();
-    switch_result
-        .recv_timeout(Duration::from_secs(2))
-        .expect("switch select completion");
+    assert!(matches!(
+        dashboard_request_bounded(
+            &state,
+            &old_owner,
+            10,
+            Request::SetView {
+                view: DashboardView {
+                    revision: 3,
+                    panes: vec![PaneTarget {
+                        session: switched_id,
+                        size: TerminalSize { rows: 24, cols: 80 },
+                    }],
+                    focused: Some(switched_id),
+                },
+            },
+        ),
+        Response::Ok
+    ));
     assert!(matches!(
         queued_dashboard_message(&old_sink),
         ServerMessage::Response {
@@ -3125,12 +3230,13 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let mut queue_filled = true;
     if parser_was_held {
         for _ in 0..DASHBOARD_QUEUE {
-            if !sink.enqueue_queued(DashboardOutbound {
+            if sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
                     projects: Vec::new(),
                 })),
                 completion: None,
-            }) {
+            }) != Enqueue::Queued
+            {
                 queue_filled = false;
                 break;
             }
@@ -3289,12 +3395,15 @@ fn dashboard_overflow_closes_affected_connection() {
         .unwrap();
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-                projects: Vec::new()
-            },)),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                },)),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let identity = Arc::new(());
     let state = test_state(Some(sink), Some((identity, server_stream)));
@@ -3316,21 +3425,27 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     // into a dirty marker rather than evict a dashboard that is keeping up.
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session: SessionId(2),
-                revision: 7,
-                bytes: b"x".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: SessionId(2),
+                    revision: 7,
+                    bytes: b"x".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-            projects: Vec::new()
-        })),
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            })),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     assert!(matches!(
         queued_dashboard_message(&sink),
         ServerMessage::Event(ServerEvent::HierarchyChanged(_))
@@ -3344,12 +3459,15 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     ));
     // Messages that cannot be coalesced still evict once they fill the queue.
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-                projects: Vec::new()
-            })),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                })),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     assert!(matches!(
         sink.enqueue(DashboardOutbound {
@@ -3781,8 +3899,8 @@ fn control_and_refresh_failures_preserve_both_causes() {
     let id = SessionId(8);
     let (_cwd, session, receiver) = {
         let cwd = tempfile::tempdir().unwrap();
-        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-        let session = Session::spawn(
+        let (events, receiver) = event_channel(None);
+        let session = Session::spawn_registered(
             id,
             SessionSpec {
                 project: "p".into(),
@@ -3795,6 +3913,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
+            NO_REGISTER,
         )
         .unwrap();
         (cwd, session, receiver)
@@ -4123,9 +4242,9 @@ fn uncommitted_partial_failure_does_not_publish_hierarchy() {
 #[test]
 fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let capability = [0x49; 32];
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4142,6 +4261,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        NO_REGISTER,
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4189,7 +4309,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
 #[test]
 fn kill_session_termination_failure_revokes_and_retains_session() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let capability = [0x5a; 32];
     let refuse_sigcont = Arc::new(AtomicBool::new(true));
     let refusal = Arc::clone(&refuse_sigcont);
@@ -4300,7 +4420,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
 #[test]
 fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
             SessionSpec {
@@ -4395,8 +4515,8 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
 #[test]
 fn shutdown_without_kill_rejects_paused_session() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let (events, receiver) = event_channel(None);
+    let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4409,6 +4529,7 @@ fn shutdown_without_kill_rejects_paused_session() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        NO_REGISTER,
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4442,9 +4563,9 @@ fn shutdown_without_kill_rejects_paused_session() {
 #[test]
 fn close_failure_retains_record_until_cleanup_can_finish() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let id = SessionId(17);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4457,6 +4578,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        NO_REGISTER,
     )
     .unwrap();
     let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
@@ -4523,8 +4645,8 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     // the spawn is still in flight is answered rather than rejected. The
     // sessions guard is not held for the rest of the spawn.
     let root = tempfile::tempdir().unwrap();
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let workspace = root.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let registry = Registry {
@@ -4550,10 +4672,10 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         dashboard: ActiveDashboard::default(),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone().into(),
+        dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
-        events: Mutex::new(Some(events.into())),
+        events: Mutex::new(Some(events)),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -4701,8 +4823,8 @@ fn session_output_flows_while_another_session_spawns() {
     // dashboard with it. The gate channel proves the spawn really is in
     // flight when the output is injected.
     let root = tempfile::tempdir().unwrap();
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let workspace = root.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let registry = Registry {
@@ -4726,7 +4848,7 @@ fn session_output_flows_while_another_session_spawns() {
     // The live session shares the server's event channel, so the fixture's
     // bridge and dispatcher apply its output and exit the way they would for
     // any session the server created.
-    let live = Session::spawn(
+    let live = Session::spawn_registered(
         live_id,
         SessionSpec {
             project: "project".into(),
@@ -4743,6 +4865,7 @@ fn session_output_flows_while_another_session_spawns() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events.clone(),
+        NO_REGISTER,
     )
     .unwrap();
     let state = Arc::new(ServerState {
@@ -4754,10 +4877,10 @@ fn session_output_flows_while_another_session_spawns() {
         dashboard: ActiveDashboard::default(),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone().into(),
+        dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
-        events: Mutex::new(Some(events.into())),
+        events: Mutex::new(Some(events)),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -5564,46 +5687,34 @@ mod agent_reporting {
             turn: None,
         })
     }
-    fn measurement<T>(value: T, revision: &str) -> Measurement<T> {
+    fn measurement<T>(value: T) -> Measurement<T> {
         Measurement {
             value,
             source: "fixture".into(),
-            source_revision: Some(revision.into()),
-            source_sequence: Some(1),
-            freshness: MeasurementFreshness::SourceIdentified,
         }
     }
     fn metrics() -> MetricsSample {
         MetricsSample {
             model: Some("test".into()),
-            context: measurement(
-                ContextSample {
-                    used_tokens: Some(10),
-                    capacity_tokens: Some(100),
-                    quality: SampleQuality::Confirmed,
-                },
-                "context-1",
-            ),
-            usage: measurement(
-                UsageTotals {
-                    scope: UsageScope::Conversation,
-                    coverage: UsageCoverage::Complete,
-                    input_tokens: Some(20),
-                    output_tokens: Some(30),
-                    cache_read_tokens: Some(2),
-                    cache_write_tokens: Some(3),
-                    reasoning_output_tokens: Some(4),
-                },
-                "usage-1",
-            ),
-            cost: measurement(
-                Some(UsageCost {
-                    usd_ticks: 100,
-                    kind: CostKind::Reported,
-                    scope: UsageScope::Conversation,
-                }),
-                "cost-1",
-            ),
+            context: measurement(ContextSample {
+                used_tokens: Some(10),
+                capacity_tokens: Some(100),
+                quality: SampleQuality::Confirmed,
+            }),
+            usage: measurement(UsageTotals {
+                scope: UsageScope::Conversation,
+                coverage: UsageCoverage::Complete,
+                input_tokens: Some(20),
+                output_tokens: Some(30),
+                cache_read_tokens: Some(2),
+                cache_write_tokens: Some(3),
+                reasoning_output_tokens: Some(4),
+            }),
+            cost: measurement(Some(UsageCost {
+                usd_ticks: 100,
+                kind: CostKind::Reported,
+                scope: UsageScope::Conversation,
+            })),
         }
     }
     fn rejected(response: Response) {
@@ -5716,31 +5827,40 @@ mod agent_reporting {
         assert_eq!(f.session.summary(), before);
         let mut next = metrics();
         next.usage.value.input_tokens = Some(22);
-        next.usage.source_revision = Some("usage-2".into());
-        next.usage.source_sequence = Some(2);
         assert_eq!(
             f.report(&a, 21, AgentObservation::Metrics(next.clone().into())),
             Response::Ok
         );
         let new = f.session.summary().agent.unwrap().metrics.unwrap();
         let old = before.agent.unwrap().metrics.unwrap();
+        // Only the component that changed takes the new receipt stamp.
         assert_eq!(new.context_received_unix_ms, old.context_received_unix_ms);
         assert_eq!(new.cost_received_unix_ms, old.cost_received_unix_ms);
+        assert_eq!(new.usage_received_unix_ms, new.received_unix_ms);
+        // A replay of the same sample advances nothing at all.
+        assert_eq!(
+            f.report(&a, 22, AgentObservation::Metrics(next.clone().into())),
+            Response::Ok
+        );
         let before = f.session.summary();
-        next.context.value.used_tokens = None;
-        rejected(f.report(&a, 22, AgentObservation::Metrics(next.clone().into())));
+        let replayed = before.agent.clone().unwrap().metrics.unwrap();
+        assert_eq!(replayed.usage_received_unix_ms, new.usage_received_unix_ms);
+        assert_eq!(
+            replayed.context_received_unix_ms,
+            new.context_received_unix_ms
+        );
+        next.usage.value.input_tokens = Some(21);
+        rejected(f.report(&a, 23, AgentObservation::Metrics(next.clone().into())));
         assert_eq!(
             f.session.summary(),
             before,
-            "conflict must reject whole snapshot and freshness"
+            "a rejected snapshot must not move any component, receipt stamp or revision"
         );
-        next.context.source_revision = Some("context-2".into());
-        next.context.source_sequence = Some(2);
+        next.usage.value.input_tokens = Some(22);
+        next.context.value.used_tokens = None;
         next.cost.value = None;
-        next.cost.source_revision = Some("cost-2".into());
-        next.cost.source_sequence = Some(2);
         assert_eq!(
-            f.report(&a, 22, AgentObservation::Metrics(next.into())),
+            f.report(&a, 23, AgentObservation::Metrics(next.into())),
             Response::Ok
         );
         assert_eq!(
@@ -5765,40 +5885,6 @@ mod agent_reporting {
             None
         );
     }
-    #[test]
-    fn agent_report_component_order_survives_uncertain_clear() {
-        let f = Fixture::new();
-        let auth = f.acquire();
-        let a = f.bind(&auth, None, "A", "bind");
-        let mut latest = metrics();
-        latest.context.source_revision = Some("context-2".into());
-        latest.context.source_sequence = Some(2);
-        assert_eq!(
-            f.report(&a, 1, AgentObservation::Metrics(latest.clone().into())),
-            Response::Ok
-        );
-        rejected(f.report(&a, 2, AgentObservation::Metrics(metrics().into())));
-        let mut conflicting = latest.clone();
-        conflicting.context.value.used_tokens = Some(15);
-        rejected(f.report(&a, 2, AgentObservation::Metrics(conflicting.into())));
-        let mut clear = latest.clone();
-        clear.context.value.used_tokens = None;
-        clear.context.source_revision = None;
-        clear.context.source_sequence = None;
-        clear.context.freshness = MeasurementFreshness::Uncertain;
-        assert_eq!(
-            f.report(&a, 2, AgentObservation::Metrics(clear.into())),
-            Response::Ok
-        );
-        let cleared = f.session.summary();
-        rejected(f.report(&a, 3, AgentObservation::Metrics(metrics().into())));
-        assert_eq!(f.session.summary(), cleared);
-        latest.context.source = "different-source".into();
-        latest.context.source_sequence = Some(3);
-        latest.context.source_revision = Some("context-3".into());
-        rejected(f.report(&a, 3, AgentObservation::Metrics(latest.into())));
-    }
-
     fn supervisor_connection(
         f: &Fixture,
         auth: &SupervisorAuth,
@@ -6396,15 +6482,11 @@ mod agent_reporting {
         );
         let mut unknown = metrics();
         unknown.usage.value.input_tokens = None;
-        unknown.usage.source_revision = Some("usage-2".into());
-        unknown.usage.source_sequence = Some(2);
         assert_eq!(
             f.report(&a, 2, AgentObservation::Metrics(unknown.clone().into())),
             Response::Ok
         );
         unknown.usage.value.input_tokens = Some(19);
-        unknown.usage.source_revision = Some("usage-3".into());
-        unknown.usage.source_sequence = Some(3);
         let before = f.session.summary();
         rejected(f.report(&a, 3, AgentObservation::Metrics(unknown.into())));
         assert_eq!(f.session.summary(), before);
@@ -6421,9 +6503,7 @@ mod agent_reporting {
             f.command(&auth, "lost", AgentCommand::Health(health)),
             Response::AgentOperation(AgentOperationResult::HealthUpdated)
         );
-        let mut latest = metrics();
-        latest.usage.source_revision = Some("usage-3".into());
-        latest.usage.source_sequence = Some(3);
+        let latest = metrics();
         assert_eq!(
             f.report(&a, 3, AgentObservation::Metrics(latest.into())),
             Response::Ok

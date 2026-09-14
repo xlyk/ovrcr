@@ -1,5 +1,5 @@
-use super::hints::{HintAction, HintGroup, KeyHint, key_hints};
 use super::input::is_browse_key;
+use super::keymap::{Action, KeyBinding, KeyGroup, key_binding, keymap};
 use super::render::{CRUST, MAUVE, MUTED, SKY, TEXT};
 use super::{Dashboard, DashboardAction, InputMode};
 use crossterm::event::{
@@ -41,13 +41,13 @@ fn paragraph(text: &str) -> Paragraph<'_> {
     Paragraph::new(text).wrap(Wrap { trim: false })
 }
 
-fn row_text(hint: &KeyHint) -> String {
+fn row_text(hint: &KeyBinding) -> String {
     format!("{}  {}", hint.key, hint.name)
 }
 
 // Rendering and mouse hit testing share the compact, wrapped row geometry.
-fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayout {
-    let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+fn popup_layout(outer: Rect, groups: &[KeyGroup], selected: usize) -> PopupLayout {
+    let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
     let width = hints
         .iter()
         .map(|hint| Line::from(row_text(hint)).width())
@@ -71,7 +71,7 @@ fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayo
             group.title.to_owned(),
             paragraph(&group.title).line_count(inner_width).max(1) as u16,
         ));
-        for hint in &group.hints {
+        for hint in &group.keys {
             let text = row_text(hint);
             let height = paragraph(&text).line_count(inner_width).max(1) as u16;
             entries.push((Some(index), text, height));
@@ -140,8 +140,10 @@ fn popup_layout(outer: Rect, groups: &[HintGroup], selected: usize) -> PopupLayo
 }
 
 impl Dashboard {
-    fn whichkey_hints(&self) -> Vec<HintGroup> {
-        let groups = key_hints(self);
+    /// The popup's rows: every binding the table places in the open group, under
+    /// the key that group gives it, plus the group list at the top level.
+    fn whichkey_hints(&self) -> Vec<KeyGroup> {
+        let groups = keymap(self);
         if self.mode != InputMode::Browse {
             return groups;
         }
@@ -161,62 +163,41 @@ impl Dashboard {
         };
         let mut hints = Vec::new();
         if let Some(title) = title {
-            for mut hint in groups.into_iter().flat_map(|g| g.hints) {
-                let key = match (group, hint.action) {
-                    (Some('t'), HintAction::Key(KeyCode::Enter))
-                        if session
-                            .is_some_and(|s| s.phase == ovrcr_protocol::SessionPhase::Running) =>
-                    {
-                        "Enter"
-                    }
-                    (Some('t'), HintAction::Key(KeyCode::Char('p' | 'r' | 'R')))
-                        if hint.enabled =>
-                    {
-                        hint.key
-                    }
-                    (Some('t'), HintAction::Key(KeyCode::Char('X'))) => "x",
-                    (Some('t'), HintAction::Key(KeyCode::Char('['))) => "c",
-                    (Some('t'), HintAction::Key(KeyCode::PageUp)) => "h",
-                    (Some('w'), HintAction::Key(KeyCode::Char('n'))) => "n",
-                    (Some('p'), HintAction::Key(KeyCode::Char('w'))) => "n",
-                    (Some('p'), HintAction::Key(KeyCode::Char('a'))) => "a",
-                    (Some('v'), HintAction::Tasks) => "t/Ctrl-t",
-                    (Some('v'), HintAction::Key(KeyCode::Char(':' | 'j' | 'k'))) => hint.key,
-                    (Some('v'), HintAction::Key(KeyCode::Char('v' | 'x') | KeyCode::Tab))
-                        if hint.enabled =>
-                    {
-                        hint.key
-                    }
-                    _ => continue,
+            let group = group.expect("a titled popup names its group");
+            for binding in groups.into_iter().flat_map(|g| g.keys) {
+                let Some(slot) = binding.group.filter(|slot| slot.group == group) else {
+                    continue;
                 };
-                hint.key = key;
-                hints.push(hint);
+                if !binding.shown_in_group() {
+                    continue;
+                }
+                hints.push(binding.with_group_key(slot.key));
             }
             let removal = match group {
-                Some('w') => Some((
+                'w' => Some((
                     "Remove workspace",
-                    HintAction::RemoveWorkspace,
+                    Action::RemoveWorkspace,
                     format!(
                         "Remove {project} / {workspace}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
                     ),
                 )),
-                Some('p') => Some((
+                'p' => Some((
                     "Remove project",
-                    HintAction::RemoveProject,
+                    Action::RemoveProject,
                     format!("Unregister {project}; asks for confirmation. Keeps the repository."),
                 )),
                 _ => None,
             };
             if let Some((name, action, description)) = removal {
-                hints.push(KeyHint {
-                    key: "x",
+                hints.push(key_binding(
+                    "x",
                     name,
-                    action,
                     description,
-                    enabled: true,
-                });
+                    KeyCode::Char('x'),
+                    action,
+                ));
             }
-            return vec![HintGroup { title, hints }];
+            return vec![KeyGroup { title, keys: hints }];
         }
         for (key, name, target, available) in [
             (
@@ -235,26 +216,50 @@ impl Dashboard {
             ("v", "View", "dashboard".into(), true),
         ] {
             if available {
-                hints.push(KeyHint {
+                let group = key.chars().next().unwrap();
+                hints.push(key_binding(
                     key,
                     name,
-                    description: format!("Show actions for {target}"),
-                    enabled: true,
-                    action: HintAction::Group(key.chars().next().unwrap()),
-                });
+                    format!("Show actions for {target}"),
+                    KeyCode::Char(group),
+                    Action::Group(group),
+                ));
             }
         }
         // Registration remains reachable even before a project exists.
-        hints.extend(groups.into_iter().flat_map(|g| g.hints).filter(|hint| {
+        hints.extend(groups.into_iter().flat_map(|g| g.keys).filter(|binding| {
             matches!(
-                hint.action,
-                HintAction::Key(KeyCode::Char('a' | 'q' | 'N' | 'S'))
+                binding.action,
+                Action::RegisterProject
+                    | Action::Detach
+                    | Action::ToggleNotifications
+                    | Action::ToggleSound
             )
         }));
-        vec![HintGroup {
+        vec![KeyGroup {
             title: "Groups".into(),
-            hints,
+            keys: hints,
         }]
+    }
+
+    /// Open the popup's group `group`, leaving the popup itself open.
+    pub(super) fn open_group(&mut self, group: char) -> DashboardAction {
+        if let Some(popup) = &mut self.whichkey {
+            popup.group = Some(group);
+            popup.browsing = Some(0);
+        }
+        DashboardAction::Redraw
+    }
+
+    /// Open the popup: `leader` waits for the next key, otherwise it starts browsable.
+    pub(super) fn open_whichkey(&mut self, leader: bool) -> DashboardAction {
+        self.cancel_mouse_gesture();
+        self.whichkey = Some(WhichKey {
+            pending_leader: leader,
+            browsing: Some(0),
+            group: None,
+        });
+        DashboardAction::Redraw
     }
 
     pub(super) fn whichkey_key(&mut self, key: KeyEvent) -> Option<DashboardAction> {
@@ -268,13 +273,7 @@ impl Dashboard {
             {
                 return None;
             }
-            self.cancel_mouse_gesture();
-            self.whichkey = Some(WhichKey {
-                pending_leader: key.code == KeyCode::Char(' '),
-                browsing: Some(0),
-                group: None,
-            });
-            return Some(DashboardAction::Redraw);
+            return Some(self.open_whichkey(key.code == KeyCode::Char(' ')));
         }
         if key.kind == KeyEventKind::Release {
             return Some(DashboardAction::None);
@@ -290,7 +289,7 @@ impl Dashboard {
             return Some(DashboardAction::Redraw);
         }
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let popup = self.whichkey.as_mut().unwrap();
         if !popup.pending_leader
             && matches!(
@@ -314,33 +313,13 @@ impl Dashboard {
         } else {
             hints.iter().copied().find(|h| h.matches(key))
         };
-        let action = chosen.filter(|h| h.enabled).map(|h| h.action);
-        Some(action.map_or(DashboardAction::Redraw, |action| self.run_hint(action)))
-    }
-
-    pub(super) fn run_hint(&mut self, action: HintAction) -> DashboardAction {
-        if let HintAction::Group(group) = action {
-            if let Some(popup) = &mut self.whichkey {
-                popup.group = Some(group);
-                popup.browsing = Some(0);
-            }
-            return DashboardAction::Redraw;
-        }
-        self.whichkey = None;
-        let event = match action {
-            HintAction::Key(code) => KeyEvent::new(code, KeyModifiers::NONE),
-            HintAction::Tasks => KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
-            HintAction::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
-            HintAction::RemoveWorkspace => return self.open_remove_context(true),
-            HintAction::RemoveProject => return self.open_remove_context(false),
-            HintAction::Group(_) => unreachable!(),
-        };
-        self.key_action(event)
+        let action = chosen.filter(|h| h.enabled()).map(|h| h.action);
+        Some(action.map_or(DashboardAction::Redraw, |action| self.run(action)))
     }
 
     pub(super) fn whichkey_mouse(&mut self, mouse: MouseEvent, area: Rect) -> DashboardAction {
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let selected = self.whichkey.as_ref().and_then(|p| p.browsing).unwrap_or(0);
         let layout = popup_layout(area, &groups, selected);
         if layout.area.contains(Position::new(mouse.column, mouse.row))
@@ -389,8 +368,8 @@ impl Dashboard {
             .and_then(|r| r.index)
         {
             let hint = hints[index];
-            if hint.enabled {
-                return self.run_hint(hint.action);
+            if hint.enabled() {
+                return self.run(hint.action);
             }
             let popup = self.whichkey.as_mut().unwrap();
             popup.pending_leader = false;
@@ -404,7 +383,7 @@ impl Dashboard {
             return;
         };
         let groups = self.whichkey_hints();
-        let hints: Vec<_> = groups.iter().flat_map(|g| &g.hints).collect();
+        let hints: Vec<_> = groups.iter().flat_map(|g| &g.keys).collect();
         let selected = popup
             .browsing
             .unwrap_or(0)
@@ -430,8 +409,8 @@ impl Dashboard {
                 None => Style::default().fg(MAUVE).add_modifier(Modifier::BOLD),
                 Some(index) => {
                     let mut style =
-                        Style::default().fg(if hints[index].enabled { TEXT } else { MUTED });
-                    if !hints[index].enabled {
+                        Style::default().fg(if hints[index].enabled() { TEXT } else { MUTED });
+                    if !hints[index].enabled() {
                         style = style.add_modifier(Modifier::DIM);
                     }
                     if index == selected {
@@ -445,7 +424,7 @@ impl Dashboard {
                 Line::from(vec![
                     Span::styled(
                         key,
-                        if index == selected || !hints[index].enabled {
+                        if index == selected || !hints[index].enabled() {
                             style
                         } else {
                             style.fg(SKY)
@@ -463,7 +442,7 @@ impl Dashboard {
         }
         if let Some(hint) = hints.get(selected) {
             frame.render_widget(
-                paragraph(&hint.description).style(Style::default().fg(if hint.enabled {
+                paragraph(&hint.description).style(Style::default().fg(if hint.enabled() {
                     TEXT
                 } else {
                     MUTED

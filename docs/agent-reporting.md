@@ -6,6 +6,15 @@ context occupancy is available through session inspection.
 Terminal output, elapsed silence, keyboard input, and process liveness never imply
 that an agent is busy or idle.
 
+Every managed provider reports through one reporter lifecycle: the reservation it binds,
+the Reporting generation that binding carries, and the revisions its observations are
+numbered from work the same way for Claude Code, Codex, Pi and Oh My Pi, so those
+guarantees hold identically wherever they are repeated below. Which of the rest a
+provider uses is not uniform, and the differences are real: Pi and Oh My Pi pause and
+recover, Codex and Claude Code do not; Claude Code settles its usage accounting when the
+native command exits, the others simply release the reservation. Each provider's section
+states what that provider does.
+
 ## Managed Claude Code
 
 For the supported version, setup instructions, and current acceptance limits, see
@@ -23,14 +32,18 @@ even after EOF, Stop, or process exit. It does not certify all auxiliary work or
 billing. Input tokens already include cache-read and cache-write subsets; do not
 add those subsets again. Cost is independently scoped, source-reported estimated
 conversation cost. Missing values are unknown, while explicit zero remains zero.
-Component ages are independent. Native source freshness is uncertain; receiving a
-callback does not prove it is the newest provider sample.
+Component ages are independent, and each one counts from the last sample whose
+value actually changed: a timer replay of an unchanged provider sample keeps the
+age it already had, so a session whose totals keep moving never ages out. No
+provider certifies sample order, so receiving a callback does not prove it is the
+newest provider sample; the receipt age is the only provenance a reader gets.
 
 The dashboard keeps the full `estimate` label when the metrics row fits. In a
-narrow or split pane it uses `est` so scoped cost and both component freshness
-labels remain visible. If that row is still too wide, it also shortens `tokens`
-to `tok` and removes one separator space while preserving the scopes, values,
-coverage, and freshness labels.
+narrow or split pane it uses `est` so scoped cost and both component stale labels
+remain visible. If that row is still too wide, it also shortens `tokens` to `tok`
+and removes one separator space while preserving the scopes, values, coverage,
+and stale labels. A component is labelled ` stale` once its age reaches five
+minutes or its session exits; a fresh component carries no label.
 
 Inspect the complete observation with `ovrcr session usage SESSION_ID` or terminal
 inventory. Both retain the raw binding, activity, metrics, and source health.
@@ -316,8 +329,10 @@ capacity is unknown is still a stored sample; a later complete report replaces i
 
 ### Freshness
 
-Samples are kept in memory with their receipt time. Freshness is advisory and uses
-the wall clock: a clock earlier than the receipt marks the sample stale, and
+Samples are kept in memory with their receipt time, which this legacy path sets
+to the arrival time of every accepted report: a replay of an unchanged sample
+does advance it here, unlike the managed component ages above. Freshness is
+advisory and uses the wall clock: a clock earlier than the receipt marks the sample stale, and
 wall-clock changes may shorten or extend its apparent freshness. A sample is fresh
 while its receipt age is under five minutes. At five minutes or more, or as soon as
 its session exits, inspection returns `stale: true` and terminal inventory returns

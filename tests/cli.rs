@@ -1,3 +1,6 @@
+#[path = "support/live.rs"]
+mod live;
+
 use ovrcr::protocol::{
     ClientMessage, Request, Response, ServerMessage, client, connect_server, read_frame,
     write_frame,
@@ -240,40 +243,7 @@ fn assert_activity_reaches_managed_session(
     let workspaces = root.path().join("workspaces");
     std::fs::create_dir(&repo).unwrap();
     std::fs::create_dir(&workspaces).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "OVRCR Tests"],
-        vec!["config", "user.email", "tests@example.invalid"],
-    ] {
-        let mut command = Command::new("git");
-        command.args(args).current_dir(&repo);
-        let output = run_cli_bounded(command).unwrap();
-        assert!(
-            output.status.success(),
-            "git setup: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    std::fs::write(repo.join("README"), "fixture\n").unwrap();
-    let mut command = Command::new("git");
-    command.args(["add", "README"]).current_dir(&repo);
-    let output = run_cli_bounded(command).unwrap();
-    assert!(
-        output.status.success(),
-        "git add: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let mut command = Command::new("git");
-    command.args(["commit", "-m", "initial"]).current_dir(&repo);
-    let output = run_cli_bounded(command).unwrap();
-    assert!(
-        output.status.success(),
-        "git commit: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    live::init_repo(&repo);
 
     let config = root.path().join("config.toml");
     let socket = root.path().join("server.sock");
@@ -1185,39 +1155,7 @@ fn context_helper_missing_server_does_not_start_one() {
 fn setup_git_fixture(repo: &std::path::Path, workspaces: &std::path::Path) {
     std::fs::create_dir(repo).unwrap();
     std::fs::create_dir(workspaces).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "OVRCR Tests"],
-        vec!["config", "user.email", "tests@example.invalid"],
-    ] {
-        let output = run_cli_bounded({
-            let mut command = Command::new("git");
-            command.args(args).current_dir(repo);
-            command
-        })
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "git setup: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    std::fs::write(repo.join("README"), "fixture\n").unwrap();
-    for args in [vec!["add", "README"], vec!["commit", "-m", "initial"]] {
-        let output = run_cli_bounded({
-            let mut command = Command::new("git");
-            command.args(args).current_dir(repo);
-            command
-        })
-        .unwrap();
-        assert!(
-            output.status.success(),
-            "git fixture: stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    live::init_repo(repo);
 }
 
 fn accept_with_deadline(
@@ -1605,37 +1543,7 @@ fn session_command_keeps_arguments_after_separator() {
     let workspaces = root.path().join("workspaces");
     std::fs::create_dir(&repo).unwrap();
     std::fs::create_dir(&workspaces).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "OVRCR Tests"],
-        vec!["config", "user.email", "tests@example.invalid"],
-    ] {
-        assert!(
-            Command::new("git")
-                .args(args)
-                .current_dir(&repo)
-                .status()
-                .unwrap()
-                .success()
-        );
-    }
-    std::fs::write(repo.join("README"), "fixture\n").unwrap();
-    assert!(
-        Command::new("git")
-            .args(["add", "README"])
-            .current_dir(&repo)
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        Command::new("git")
-            .args(["commit", "-m", "initial"])
-            .current_dir(&repo)
-            .status()
-            .unwrap()
-            .success()
-    );
+    live::init_repo(&repo);
     let config = root.path().join("config.toml");
     let socket = root.path().join("server.sock");
     let envs = [

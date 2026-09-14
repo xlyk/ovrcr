@@ -122,8 +122,7 @@ impl ReportingState {
                     bail!("stale metrics revision");
                 }
                 let mut measurements = self.measurements.clone();
-                let mut next =
-                    measurements.replace(snapshot.metrics.as_ref(), metrics, now_ms())?;
+                let mut next = measurements.replace(metrics, now_ms())?;
                 if snapshot.health.state == ReporterHealth::Unavailable {
                     next.sample.usage.value.coverage = UsageCoverage::Partial;
                 }
@@ -166,43 +165,8 @@ struct MeasurementWatermarks {
     usage_totals: [Option<UsageTotals>; 2],
     costs: [Option<u64>; 2],
 }
-fn measurement_age<T: Clone + PartialEq>(
-    watermark: &mut Option<(Measurement<T>, u64)>,
-    new: &Measurement<T>,
-    previous_age: Option<u64>,
-    now: u64,
-) -> Result<u64> {
-    if new.freshness == MeasurementFreshness::Uncertain {
-        // Unknown/uncertain replacement does not erase the certified ordering watermark.
-        return Ok(previous_age.unwrap_or(now));
-    }
-    if let Some((old, age)) = watermark {
-        if old.source != new.source {
-            bail!("identified component source changed within binding");
-        }
-        if new.source_sequence < old.source_sequence {
-            bail!("stale component source sequence");
-        }
-        if new.source_sequence == old.source_sequence {
-            if old != new {
-                bail!("conflicting component reuses source sequence");
-            }
-            return Ok(*age);
-        }
-        if new.source_revision == old.source_revision {
-            bail!("source identity reused with a new sequence");
-        }
-    }
-    *watermark = Some((new.clone(), now));
-    Ok(now)
-}
 impl MeasurementWatermarks {
-    fn replace(
-        &mut self,
-        old: Option<&MetricsSnapshot>,
-        new: &MetricsSample,
-        now: u64,
-    ) -> Result<MetricsSnapshot> {
+    fn replace(&mut self, new: &MetricsSample, now: u64) -> Result<MetricsSnapshot> {
         new.validate()?;
         let scope_index = |scope| match scope {
             UsageScope::Conversation => 0,
@@ -239,30 +203,12 @@ impl MeasurementWatermarks {
             }
             *old = Some(cost.usd_ticks);
         }
-        let context_age = measurement_age(
-            &mut self.context,
-            &new.context,
-            old.map(|o| o.context_received_unix_ms),
-            now,
-        )?;
-        let usage_age = measurement_age(
-            &mut self.usage,
-            &new.usage,
-            old.map(|o| o.usage_received_unix_ms),
-            now,
-        )?;
-        let cost_age = measurement_age(
-            &mut self.cost,
-            &new.cost,
-            old.map(|o| o.cost_received_unix_ms),
-            now,
-        )?;
         Ok(MetricsSnapshot {
             sample: new.clone(),
             received_unix_ms: now,
-            context_received_unix_ms: context_age,
-            usage_received_unix_ms: usage_age,
-            cost_received_unix_ms: cost_age,
+            context_received_unix_ms: freshness::received_at(&mut self.context, &new.context, now),
+            usage_received_unix_ms: freshness::received_at(&mut self.usage, &new.usage, now),
+            cost_received_unix_ms: freshness::received_at(&mut self.cost, &new.cost, now),
         })
     }
 }
@@ -908,44 +854,92 @@ mod tests {
     }
 
     #[test]
-    fn agent_report_component_receipt_age_uses_source_order_not_transport_time() {
-        let first = Measurement {
-            value: Some(5_u64),
-            source: "fixture".into(),
-            source_revision: Some("one".into()),
-            source_sequence: Some(1),
-            freshness: MeasurementFreshness::SourceIdentified,
+    fn changed_measurement_advances_its_receipt_stamp_while_a_replay_keeps_it() {
+        const START: u64 = 1_000;
+        const SIX_MINUTES: u64 = 360_000;
+        fn measurement<T>(value: T) -> Measurement<T> {
+            Measurement {
+                value,
+                source: "fixture".into(),
+            }
+        }
+        let sample = |input_tokens| MetricsSample {
+            model: None,
+            context: measurement(ContextSample {
+                used_tokens: Some(10),
+                capacity_tokens: Some(100),
+                quality: SampleQuality::Observed,
+            }),
+            usage: measurement(UsageTotals {
+                scope: UsageScope::Conversation,
+                coverage: UsageCoverage::Complete,
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(1),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_output_tokens: None,
+            }),
+            cost: measurement(None),
         };
-        let mut watermark = None;
+        let mut watermarks = MeasurementWatermarks::default();
+        let first = watermarks.replace(&sample(10), START).unwrap();
+        assert_eq!(first.usage_received_unix_ms, START);
+        assert_eq!(first.context_received_unix_ms, START);
+
+        // A timer replay of an unchanged sample keeps every stamp, so six
+        // minutes of replaying one sample really is a stale reading.
+        let later = START + SIX_MINUTES;
+        let replay = watermarks.replace(&sample(10), later).unwrap();
         assert_eq!(
-            measurement_age(&mut watermark, &first, None, 100).unwrap(),
-            100
+            replay.usage_received_unix_ms, START,
+            "replay keeps its stamp"
+        );
+        assert!(freshness::is_stale(
+            replay.usage_received_unix_ms,
+            later,
+            false
+        ));
+
+        // A sample that actually differs advances its own stamp and nothing else.
+        let changed = watermarks.replace(&sample(20), later).unwrap();
+        assert_eq!(
+            changed.usage_received_unix_ms, later,
+            "a changed usage sample advances its receipt stamp"
         );
         assert_eq!(
-            measurement_age(&mut watermark, &first, Some(100), 999).unwrap(),
-            100
+            changed.context_received_unix_ms, START,
+            "an unchanged context sample keeps its own stamp"
         );
-        let uncertain = Measurement {
-            value: None,
-            source: "fixture".into(),
-            source_revision: None,
-            source_sequence: None,
-            freshness: MeasurementFreshness::Uncertain,
-        };
+        assert!(
+            !freshness::is_stale(changed.usage_received_unix_ms, later, false),
+            "a session whose totals keep moving is never stale"
+        );
+        assert!(freshness::is_stale(
+            changed.context_received_unix_ms,
+            later,
+            false
+        ));
+        assert!(
+            freshness::is_stale(changed.usage_received_unix_ms, later, true),
+            "an exited session is stale whatever its stamps say"
+        );
+
+        // `received_at` compares whole samples, so the reporter label counts:
+        // the same number arriving under a different source is a new reading,
+        // not a replay. Production runs one source per component per binding,
+        // so this only decides the ambiguous case, and it decides it the safe
+        // way -- a fresh reading is never reported as old.
+        let relabelled_at = later + 1_000;
+        let mut relabelled = sample(20);
+        relabelled.usage.source = "second_fixture".into();
+        let relabelled = watermarks.replace(&relabelled, relabelled_at).unwrap();
         assert_eq!(
-            measurement_age(&mut watermark, &uncertain, Some(100), 1000).unwrap(),
-            100
+            relabelled.usage_received_unix_ms, relabelled_at,
+            "a source change with an unchanged value takes a new stamp"
         );
-        let second = Measurement {
-            source_revision: Some("two".into()),
-            source_sequence: Some(2),
-            ..first.clone()
-        };
         assert_eq!(
-            measurement_age(&mut watermark, &second, Some(100), 1200).unwrap(),
-            1200
+            relabelled.context_received_unix_ms, START,
+            "and it moves nothing else"
         );
-        assert!(measurement_age(&mut watermark, &first, Some(1200), 1500).is_err());
-        assert_eq!(watermark.unwrap().1, 1200);
     }
 }
