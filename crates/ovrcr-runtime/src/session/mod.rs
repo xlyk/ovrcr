@@ -244,20 +244,10 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         register: SessionRegister<'_>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(
-            id,
-            spec,
-            size,
-            events.into(),
-            register,
-            None,
-            None,
-            None,
-            None,
-        )
+        Self::spawn_internal(id, spec, size, events, register, None, None, None, None)
     }
 
     #[cfg(test)]
@@ -265,7 +255,7 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -274,7 +264,7 @@ impl Session {
             id,
             spec,
             size,
-            events.into(),
+            events,
             &|_| {},
             reap_hook,
             signal_hook,
@@ -288,14 +278,14 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         leader_wait: LeaderWaitOverride<'_>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
             spec,
             size,
-            events.into(),
+            events,
             &|_| {},
             None,
             None,

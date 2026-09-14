@@ -60,11 +60,9 @@ pub enum HistoryRequest {
     },
 }
 pub(super) fn bridge_events(
-    events: impl Into<ReportingReceiver<SessionEvent>>,
-    dispatch: impl Into<ReportingSender<DispatchMessage>>,
+    events: ReportingReceiver<SessionEvent>,
+    dispatch: ReportingSender<DispatchMessage>,
 ) {
-    let events = events.into();
-    let dispatch = dispatch.into();
     while let Ok(event) = events.recv() {
         if dispatch.send(DispatchMessage::Session(event)).is_err() {
             break;
@@ -72,11 +70,7 @@ pub(super) fn bridge_events(
     }
 }
 
-pub fn run_dispatcher(
-    state: Arc<ServerState>,
-    commands: impl Into<ReportingReceiver<DispatchMessage>>,
-) {
-    let commands = commands.into();
+pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<DispatchMessage>) {
     while let Ok(command) = commands.recv() {
         match command {
             DispatchMessage::Session(event) => dispatch_session_event(&state, event),

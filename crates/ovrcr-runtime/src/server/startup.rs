@@ -162,26 +162,8 @@ fn run_server_inner(
             return Err(error);
         }
     };
-    let (events, event_receiver) =
-        event_monitor
-            .as_ref()
-            .map_or_else(untracked_event_channel, |monitor| {
-                reporting_queue::reporting_channel_with_monitor(
-                    RAW_EVENT_QUEUE_CAPACITY,
-                    event_weight,
-                    monitor,
-                )
-            });
-    let (dispatch, dispatch_receiver) =
-        dispatch_monitor
-            .as_ref()
-            .map_or_else(untracked_dispatch_channel, |monitor| {
-                reporting_queue::reporting_channel_with_monitor(
-                    RAW_DISPATCH_QUEUE_CAPACITY,
-                    dispatch_weight,
-                    monitor,
-                )
-            });
+    let (events, event_receiver) = event_channel(event_monitor.as_ref());
+    let (dispatch, dispatch_receiver) = dispatch_channel(dispatch_monitor.as_ref());
     let state = Arc::new(ServerState {
         tasks: Some(Arc::clone(&task_manager)),
         socket: bound_socket,

@@ -187,7 +187,7 @@ impl Drop for BarrierGuard {
 
 fn spawn_test_shell() -> Arc<Session> {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
@@ -209,7 +209,10 @@ fn spawn_test_shell() -> Arc<Session> {
     session
 }
 
-fn dispatch_test_events(session: Arc<Session>, rx: Receiver<SessionEvent>) -> JoinHandle<()> {
+fn dispatch_test_events(
+    session: Arc<Session>,
+    rx: crate::server::ReportingReceiver<SessionEvent>,
+) -> JoinHandle<()> {
     thread::spawn(move || {
         while let Ok(event) = rx.recv() {
             let exited = matches!(event, SessionEvent::Exited { .. });
@@ -254,7 +257,7 @@ fn wait_for_process_state(pid: u32, expected: char, timeout: Duration) -> bool {
 #[cfg(target_os = "macos")]
 fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let signal_gate = Arc::clone(&reap_gate);
     let signal_result_gate = Arc::clone(&reap_gate);
     let session = Session::spawn_with_test_hooks(
@@ -288,7 +291,7 @@ fn spawn_live_refusal_session(
     signal_result_hook: Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>,
 ) -> (Arc<Session>, JoinHandle<()>) {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_with_test_hooks(
         SessionId(51),
         SessionSpec {
@@ -351,7 +354,7 @@ fn agent_report_order_rejects_zero_sequence_without_mutating_unset() {
 #[test]
 fn agent_report_requires_capability_and_preserves_order_on_rejection() {
     let dir = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(64);
+    let (events, receiver) = crate::server::event_channel(None);
     let capability = [0x37; 32];
     let session = Session::spawn_registered(
         SessionId(700),
@@ -440,7 +443,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
 #[test]
 fn pause_resume_terminate_runs_term_handler() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
             SessionId(5),
             SessionSpec {
@@ -676,7 +679,7 @@ fn terminate_retains_sigcont_permission_error_for_live_group() {
 #[test]
 fn pause_resume_exit_event_cannot_be_overwritten() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
@@ -752,7 +755,7 @@ fn pause_resume_exit_event_cannot_be_overwritten() {
 
 fn dispatch_test_events_with_exit_gate(
     session: Arc<Session>,
-    rx: Receiver<SessionEvent>,
+    rx: crate::server::ReportingReceiver<SessionEvent>,
     gate: Arc<CancellableBarrier>,
     exit_ready: mpsc::SyncSender<()>,
     dispatch_done: mpsc::SyncSender<()>,
@@ -783,7 +786,7 @@ fn pause_resume_rejects_unsafe_group() {
 #[test]
 fn shell_round_trip_updates_the_current_screen() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
@@ -814,7 +817,7 @@ fn shell_round_trip_updates_the_current_screen() {
 #[test]
 fn final_output_is_parsed_before_session_becomes_removable() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(2),
         SessionSpec {
@@ -874,7 +877,7 @@ fn resize_reaches_the_child_tty() {
 #[test]
 fn terminate_removes_the_whole_process_group() {
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(3),
         SessionSpec {
@@ -936,7 +939,7 @@ fn terminate_removes_job_control_subgroups() {
     // is the controlling terminal, and terminate must hang up every group
     // attached to it without waiting out the grace period.
     let dir = tempfile::tempdir().unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
@@ -1036,7 +1039,7 @@ fn group_leader_timeout_kills_the_child() {
     // the override bound, the real kill, and the kernel's own answer to
     // `kill(pid, 0)`.
     let dir = tempfile::tempdir().unwrap();
-    let (events, _events_receiver) = mpsc::sync_channel(64);
+    let (events, _events_receiver) = crate::server::event_channel(None);
     let (observed, observed_pid) = mpsc::sync_channel(1);
     let probe = move |pid: libc::pid_t| {
         let _ = observed.try_send(pid);
@@ -1140,7 +1143,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     )
     .unwrap();
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let (tx, rx) = mpsc::sync_channel(64);
+    let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {

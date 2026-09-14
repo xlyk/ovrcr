@@ -87,9 +87,7 @@ pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
 pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
-#[cfg(test)]
 use reporting_queue::reporting_channel;
-#[cfg(feature = "acceptance-diagnostics")]
 pub use reporting_queue::{ReportingQueueMonitor, ReportingQueueSnapshot};
 pub(crate) use reporting_queue::{ReportingReceiver, ReportingSender};
 
@@ -122,36 +120,22 @@ fn dispatch_weight(message: &DispatchMessage) -> usize {
     }
 }
 
-#[cfg(test)]
-fn event_channel() -> (
+pub(crate) fn event_channel(
+    monitor: Option<&ReportingQueueMonitor>,
+) -> (
     ReportingSender<SessionEvent>,
     ReportingReceiver<SessionEvent>,
 ) {
-    reporting_channel(RAW_EVENT_QUEUE_CAPACITY, event_weight)
+    reporting_channel(RAW_EVENT_QUEUE_CAPACITY, event_weight, monitor)
 }
 
-#[cfg(test)]
-fn dispatch_channel() -> (
+pub(crate) fn dispatch_channel(
+    monitor: Option<&ReportingQueueMonitor>,
+) -> (
     ReportingSender<DispatchMessage>,
     ReportingReceiver<DispatchMessage>,
 ) {
-    reporting_channel(RAW_DISPATCH_QUEUE_CAPACITY, dispatch_weight)
-}
-
-fn untracked_event_channel() -> (
-    ReportingSender<SessionEvent>,
-    ReportingReceiver<SessionEvent>,
-) {
-    let (sender, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    (sender.into(), receiver.into())
-}
-
-fn untracked_dispatch_channel() -> (
-    ReportingSender<DispatchMessage>,
-    ReportingReceiver<DispatchMessage>,
-) {
-    let (sender, receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
-    (sender.into(), receiver.into())
+    reporting_channel(RAW_DISPATCH_QUEUE_CAPACITY, dispatch_weight, monitor)
 }
 
 #[cfg(feature = "acceptance-diagnostics")]
@@ -446,8 +430,8 @@ impl ServerState {
         tasks: Arc<TaskManager>,
         registry_path: PathBuf,
     ) -> Arc<Self> {
-        let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-        let (dispatch, _) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+        let (events, _) = event_channel(None);
+        let (dispatch, _) = dispatch_channel(None);
         Arc::new(Self {
             tasks: Some(tasks),
             socket: registry_path.with_extension("sock"),
@@ -457,10 +441,10 @@ impl ServerState {
             dashboard: ActiveDashboard::default(),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch: dispatch.into(),
+            dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            events: Mutex::new(Some(events.into())),
+            events: Mutex::new(Some(events)),
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
             before_dashboard_write_hook: Mutex::new(None),

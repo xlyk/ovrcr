@@ -17,7 +17,7 @@ use std::net::Shutdown;
 
 #[test]
 fn raw_event_and_dispatch_queues_reject_the_65th_item() {
-    let (event_sender, event_receiver) = event_channel();
+    let (event_sender, event_receiver) = event_channel(Some(&ReportingQueueMonitor::default()));
     for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
         event_sender
             .try_send(SessionEvent::Output {
@@ -48,7 +48,8 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
         RAW_EVENT_QUEUE_CAPACITY - 1
     );
 
-    let (dispatch_sender, dispatch_receiver) = dispatch_channel();
+    let (dispatch_sender, dispatch_receiver) =
+        dispatch_channel(Some(&ReportingQueueMonitor::default()));
     for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
         dispatch_sender.try_send(DispatchMessage::Stop).unwrap();
     }
@@ -2392,8 +2393,8 @@ fn test_state_with_dispatch(
     dashboard: Option<Arc<DashboardSink>>,
     stream: Option<(Arc<()>, UnixStream)>,
 ) -> (Arc<ServerState>, ReportingReceiver<DispatchMessage>) {
-    let (events, _) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, receiver) = dispatch_channel();
+    let (events, _) = event_channel(None);
+    let (dispatch, receiver) = dispatch_channel(Some(&ReportingQueueMonitor::default()));
     let (state, receiver) = (
         Arc::new(ServerState {
             tasks: None,
@@ -2407,7 +2408,7 @@ fn test_state_with_dispatch(
             dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            events: Mutex::new(Some(events.into())),
+            events: Mutex::new(Some(events)),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2430,11 +2431,11 @@ fn test_state_with_socket(
     registry: Registry,
 ) -> (
     Arc<ServerState>,
-    Receiver<DispatchMessage>,
-    Receiver<SessionEvent>,
+    ReportingReceiver<DispatchMessage>,
+    ReportingReceiver<SessionEvent>,
 ) {
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     (
         Arc::new(ServerState {
             tasks: None,
@@ -2445,10 +2446,10 @@ fn test_state_with_socket(
             dashboard: ActiveDashboard::default(),
             next_session_id: AtomicU64::new(1),
             mutation_lock: Mutex::new(()),
-            dispatch: dispatch.into(),
+            dispatch,
             shutdown: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
-            events: Mutex::new(Some(events.into())),
+            events: Mutex::new(Some(events)),
             #[cfg(test)]
             resize_hook: Mutex::new(None),
             before_view_publish_hook: Mutex::new(None),
@@ -2463,16 +2464,24 @@ fn test_state_with_socket(
 
 fn spawn_live_test_session(
     id: SessionId,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     spawn_live_test_session_with_hook(id, None)
 }
 
 fn spawn_live_test_session_with_hook(
     id: SessionId,
     hook_env: Option<HookEnvironment>,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let session = Session::spawn_registered(
         id,
         SessionSpec {
@@ -2498,9 +2507,13 @@ fn spawn_live_test_session_with_hook(
 
 fn spawn_exiting_test_session(
     id: SessionId,
-) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
+) -> (
+    tempfile::TempDir,
+    Arc<Session>,
+    ReportingReceiver<SessionEvent>,
+) {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let session = Session::spawn_registered(
         id,
         SessionSpec {
@@ -2549,7 +2562,7 @@ impl TestSessionEvents {
 
 fn apply_test_session_events(
     session: Arc<Session>,
-    receiver: Receiver<SessionEvent>,
+    receiver: ReportingReceiver<SessionEvent>,
 ) -> TestSessionEvents {
     let cancel = Arc::new(AtomicBool::new(false));
     let (finished_sender, finished) = mpsc::sync_channel(1);
@@ -3848,7 +3861,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
     let id = SessionId(8);
     let (_cwd, session, receiver) = {
         let cwd = tempfile::tempdir().unwrap();
-        let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+        let (events, receiver) = event_channel(None);
         let session = Session::spawn_registered(
             id,
             SessionSpec {
@@ -4191,7 +4204,7 @@ fn uncommitted_partial_failure_does_not_publish_hierarchy() {
 #[test]
 fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let capability = [0x49; 32];
     let session = Session::spawn_registered(
         SessionId(7),
@@ -4258,7 +4271,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
 #[test]
 fn kill_session_termination_failure_revokes_and_retains_session() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let capability = [0x5a; 32];
     let refuse_sigcont = Arc::new(AtomicBool::new(true));
     let refusal = Arc::clone(&refuse_sigcont);
@@ -4369,7 +4382,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
 #[test]
 fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
             SessionSpec {
@@ -4464,7 +4477,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
 #[test]
 fn shutdown_without_kill_rejects_paused_session() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
@@ -4512,7 +4525,7 @@ fn shutdown_without_kill_rejects_paused_session() {
 #[test]
 fn close_failure_retains_record_until_cleanup_can_finish() {
     let cwd = tempfile::tempdir().unwrap();
-    let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
+    let (events, receiver) = event_channel(None);
     let id = SessionId(17);
     let session = Session::spawn_registered(
         id,
@@ -4594,8 +4607,8 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     // the spawn is still in flight is answered rather than rejected. The
     // sessions guard is not held for the rest of the spawn.
     let root = tempfile::tempdir().unwrap();
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let workspace = root.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let registry = Registry {
@@ -4621,10 +4634,10 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         dashboard: ActiveDashboard::default(),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone().into(),
+        dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
-        events: Mutex::new(Some(events.into())),
+        events: Mutex::new(Some(events)),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
@@ -4772,8 +4785,8 @@ fn session_output_flows_while_another_session_spawns() {
     // dashboard with it. The gate channel proves the spawn really is in
     // flight when the output is injected.
     let root = tempfile::tempdir().unwrap();
-    let (events, event_receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let (dispatch, dispatch_receiver) = mpsc::sync_channel(RAW_DISPATCH_QUEUE_CAPACITY);
+    let (events, event_receiver) = event_channel(None);
+    let (dispatch, dispatch_receiver) = dispatch_channel(None);
     let workspace = root.path().join("workspace");
     std::fs::create_dir(&workspace).unwrap();
     let registry = Registry {
@@ -4826,10 +4839,10 @@ fn session_output_flows_while_another_session_spawns() {
         dashboard: ActiveDashboard::default(),
         next_session_id: AtomicU64::new(1),
         mutation_lock: Mutex::new(()),
-        dispatch: dispatch.clone().into(),
+        dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
         stopping: AtomicBool::new(false),
-        events: Mutex::new(Some(events.into())),
+        events: Mutex::new(Some(events)),
         #[cfg(test)]
         resize_hook: Mutex::new(None),
         before_view_publish_hook: Mutex::new(None),
