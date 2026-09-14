@@ -145,9 +145,39 @@ response). Ready creates one unread identity per response cycle; review and aler
 for Codex. An extension dialog's outer prompt span is reported as an
 [input request](dashboard.md#input-requests): the session waits, whatever activity was
 underneath is kept and restored on close, and a background request can raise one
-**OVRCR · input needed** alert. Payloads carry identifiers and discriminants only: never
-prompts, responses, tool data or prompt titles. Session switches and reporter recovery
-are later tickets.
+**OVRCR · input needed** alert. Pi has no approval or question surface of its own
+beyond these dialogs. Payloads carry identifiers and discriminants only: never
+prompts, responses, tool data or prompt titles.
+
+### Transitions and recovery
+
+Pi replaces the whole extension factory when a session is replaced (new, resume, fork) and
+when extensions reload. The producer that shut down is retired, and its successor's
+`session_start` binds the conversation now in the foreground as a fresh reporting
+generation: blank activity, no requests, and the server-owned unread response untouched.
+The announcement names the conversation it left by id, so a transition OVRCR never saw is
+detected rather than assumed. Returning to an earlier conversation is a new generation too,
+never the reuse of the old one, and every later frame from a retired producer is ignored
+however high its source sequence. Compaction inside the same conversation changes nothing.
+Tree navigation abandons the response cycle it was in (`cycle_invalidated`): activity falls
+back to what Pi's own API answers — Idle when it says the session is idle, otherwise
+Unknown — and a historical response is never replayed as a new Ready.
+
+When live reporting stops being certain, the reporter pauses instead of ending: a hole in
+the source sequence (`source_gap`), a producer replaced without its shutdown being observed
+(`producer_replaced`), the extension's own bounded queue overflowing (`source_overflow`),
+or a transition naming a conversation OVRCR is not bound to (`transition_mismatch`). A
+paused reporter publishes health `Unavailable` with that reason, keeps its lease and its
+binding, applies nothing, and leaves the native session running; the open request set is
+cleared, because a reporter that is unsure cannot vouch for a dialog. Nothing is inferred
+from silence, idleness, empty queues or elapsed time, and no timer retries.
+
+Recovery is one forced rebind at a trustworthy boundary: the next `session_start` or
+`agent_start`, or the `/ovrcr-reattach` command the extension registers, which re-announces
+the producer from inside the already-loaded extension and says whether it worked. Each
+recovery is a fresh generation that starts blank: activity comes only from Pi's public API,
+the cycle identity waits for a genuine `agent_settled`, and restored requests and responses
+raise no alerts — later genuine ones alert normally. An earlier unread response survives.
 See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Oh My Pi
@@ -173,8 +203,42 @@ response survives the switch until it is reviewed. Payloads carry identifiers an
 discriminants only — the one field added for Oh My Pi is the boolean continuation flag —
 never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
 process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
-the invocation unreported until the next managed launch (reporter recovery is #96).
-Approvals and questions (Oh My Pi exports no event for them, #95) are a later ticket.
+the invocation unreported until the next managed launch (reporter recovery is #96). The
+bounded delivery queue overflowing ends it the same way: Oh My Pi has no reattach command,
+so that invocation stays unreported until the next managed launch, and doctor reports it as
+a lost reporter rather than a recoverable pause. A source gap or an unobserved producer
+replacement does pause and recover at the next `agent_start`, as for Pi.
+
+### Approvals and questions
+
+Oh My Pi reports two kinds of [input request](dashboard.md#input-requests), both
+only for the interactive root conversation. A native tool-approval prompt opens
+`approval:<tool call id>` on `tool_approval_requested` and closes it on
+`tool_approval_resolved`, whether the answer was allow, deny or a cancellation —
+a denial closes that one approval and is not by itself a failed run. Approval
+events carry the session id they belong to, and OVRCR reports only those whose id
+is the interactive root's, so an in-process task or advisor child cannot open or
+close a root request.
+
+A question is the ask tool's own execution: `question:<tool call id>` opens at
+`tool_execution_start` with `toolName` `ask` and closes at `tool_execution_end`,
+whatever the outcome — answered, redirected to chat, cancelled, timed out,
+aborted or errored. One execution is one request however many surfaces it walks,
+so a multi-question form, a selector and an editor fallback are all the same
+request. **This is tool lifetime, not dialog visibility**: the request opens a
+moment before the dialog is visible, and it covers a question queued behind
+another dialog. OVRCR claims no visibility beyond that, and there is no version
+gate. Tool events carry no session id at all, so what keeps in-process children
+silent is the same terminal-UI check that silences the rest of their reporting.
+
+Frames carry the namespace, the request identity and the kind. The approval
+reason, the question text, the answer and every tool argument or result stay
+inside Oh My Pi.
+
+**Side effect:** registering the two approval handlers disables Oh My Pi's
+speculative read execution. Its speculation gate refuses while any tool lifecycle
+handler is registered, so a managed launch trades that optimization for approval
+reporting.
 
 ## Context usage
 

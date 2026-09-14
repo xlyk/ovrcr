@@ -14,7 +14,7 @@ const OVRCR_BINARY = __OVRCR_BINARY__;
 
 export default function (omp) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
-  const { producer, report } = createReporter({
+  const { producer, report, flush } = createReporter({
     binary: OVRCR_BINARY,
     helperArgs: ["report", "omp", "--stdin"],
   });
@@ -28,7 +28,9 @@ export default function (omp) {
     producer.run = 0; // an announcement belongs to no cycle
     producer.open = false;
     producer.outcome = "none";
-    return report("session_start", ctx, { reason });
+    // No `previous`: an Oh My Pi switch states no expectation about the conversation it
+    // leaves, and the receiver reads a missing one as exactly that.
+    return report("session_start", ctx, { reason, previous: null });
   }
 
   omp.on("session_start", (_event, ctx) => announce(ctx, "startup"));
@@ -55,8 +57,37 @@ export default function (omp) {
     producer.open = false;
     return Promise.all([end, settled]).then(([, sent]) => sent);
   });
+  // Root-only: task and advisor sessions run in this same process and their approval
+  // events carry their own session id (or ""), never the interactive root's.
+  const root = (event, ctx) =>
+    Boolean(event?.sessionId) && event.sessionId === ctx.sessionManager.getSessionId();
+  const request = (ns, id) => `${ns}:${id}`;
+
+  // Registering these two handlers disables Oh My Pi's speculative read execution
+  // (its gate refuses speculation while any tool lifecycle handler is registered).
+  omp.on("tool_approval_requested", (event, ctx) =>
+    root(event, ctx)
+      ? report("input_open", ctx, { namespace: "approval", request_id: request("approval", event.toolCallId), kind: "approval" })
+      : Promise.resolve(false));
+  omp.on("tool_approval_resolved", (event, ctx) =>
+    root(event, ctx)
+      ? report("input_close", ctx, { namespace: "approval", request_id: request("approval", event.toolCallId) })
+      : Promise.resolve(false));
+  // A question is the ask tool's lifetime, never dialog visibility: the request opens with
+  // the tool, a moment before the dialog, and covers a question queued behind another
+  // dialog. Tool events carry no session id, so the mode guard in report() is what keeps
+  // in-process children silent. `args` and `result` are never read.
+  omp.on("tool_execution_start", (event, ctx) =>
+    event?.toolName === "ask"
+      ? report("input_open", ctx, { namespace: "question", request_id: request("question", event.toolCallId), kind: "select" })
+      : Promise.resolve(false));
+  omp.on("tool_execution_end", (event, ctx) =>
+    event?.toolName === "ask"
+      ? report("input_close", ctx, { namespace: "question", request_id: request("question", event.toolCallId) })
+      : Promise.resolve(false));
+
   omp.on("session_shutdown", (_event, ctx) => {
-    const sent = report("session_shutdown", ctx, { reason: "quit" });
+    const sent = flush("session_shutdown", ctx, { reason: "quit" });
     producer.disabled = true; // shutdown handlers run in parallel under a 2 s budget
     return sent;
   });

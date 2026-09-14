@@ -18,9 +18,14 @@ function materialize({ hang = false } = {}) {
   materialized.push(dir);
   const record = join(dir, "record.jsonl");
   const helper = join(dir, "fake-ovrcr");
+  // `hang: "queued"` is a helper that only answers the final drain frame: an ordinary
+  // frame stalls before it records anything, exactly as a lost helper does.
+  const body = hang === "queued"
+    ? `body=$(cat)\ncase "$body" in *session_shutdown*) ;; *) sleep 5;; esac\nprintf '%s\\n' "$body" >> "${record}"\n`
+    : `cat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`;
   writeFileSync(
     helper,
-    `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\ncat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`,
+    `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\n${body}`,
   );
   chmodSync(helper, 0o700);
   // The receiver materializes the shared transport beside the extension that imports it.
@@ -52,7 +57,8 @@ test("one response cycle: start, end, settled carry run, outcome and ordered seq
   managed();
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
-  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "session_shutdown", "session_start", "ui_prompt_end", "ui_prompt_start"]);
+  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "session_shutdown", "session_start", "session_tree", "ui_prompt_end", "ui_prompt_start"]);
+  assert.deepEqual(host.commands(), ["ovrcr-reattach"]);
   await host.emit({ type: "session_start", reason: "startup" });
   await host.emit({ type: "agent_start" });
   await host.emit({ type: "agent_end", messages: [{ role: "user", content: "secret prompt" }, assistant("stop")] });
@@ -125,6 +131,15 @@ test("non-tui modes never spawn a helper; shutdown reports once then disables", 
   await host.emit({ type: "session_shutdown", reason: "reload" });
   await host.emit({ type: "agent_start" });
   assert.deepEqual(frames(record).map((f) => [f.event, f.reason]), [["session_shutdown", "reload"]]);
+});
+
+test("a print-mode shutdown drains nothing and spawns no helper", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { mode: "print" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "session_shutdown", reason: "quit" });
+  assert.equal(existsSync(record), false, "the drain must stay inert outside the terminal UI");
 });
 
 test("a hung helper is killed at the deadline and the handler still resolves", async () => {
@@ -219,4 +234,93 @@ test("a prompt can open while no cycle is running and never touches the cycle", 
   await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm" });
   await host.emit({ type: "agent_start" });
   assert.deepEqual(frames(record).map((f) => [f.event, f.run]), [["input_open", null], ["input_close", null], ["agent_start", 1]]);
+});
+
+test("a transition names the conversation it left by id, never by its file path", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-b" });
+  // Pi names its session files `<timestamp>_<session id>.jsonl`; the binding is the bare
+  // session id, so only the trailing id may travel.
+  await host.emit({
+    type: "session_start", reason: "resume",
+    previousSessionFile: "/Users/x/.pi/agent/sessions/--proj--/2026-09-13T10-30-00-000Z_11111111-2222-3333-4444-555555555555.jsonl",
+  });
+  await host.emit({ type: "session_start", reason: "startup" });
+  // A name no id can be read out of is no expectation at all, never a truncation.
+  await host.emit({
+    type: "session_start", reason: "resume",
+    previousSessionFile: `/private/x/${"z".repeat(100)}.jsonl`,
+  });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => f.previous), ["11111111-2222-3333-4444-555555555555", null, null]);
+  assert.ok(!readFileSync(record, "utf8").includes("2026-09-13T10-30-00-000Z"), "the timestamp never leaves");
+  assert.ok(!readFileSync(record, "utf8").includes(".pi/agent"), "the path never leaves");
+});
+
+test("tree navigation invalidates the response cycle and carries only idleness", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  await host.emit({ type: "agent_start" });
+  host.state.idle = false;
+  await host.emit({ type: "session_tree", node: "SECRET_NODE" });
+  host.state.idle = true;
+  await host.emit({ type: "session_tree" });
+  await host.emit({ type: "agent_start" });
+  assert.deepEqual(frames(record).map((f) => [f.event, f.run, f.idle ?? null]), [
+    ["agent_start", 1, null],
+    ["cycle_invalidated", 1, false],
+    ["cycle_invalidated", 1, true],
+    ["agent_start", 2, null],
+  ]);
+  assert.ok(!readFileSync(record, "utf8").includes("SECRET_NODE"));
+});
+
+test("the reattach command re-announces a disabled producer once and says so", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "session_shutdown", reason: "reload" });
+  await host.emit({ type: "agent_start" });
+  assert.deepEqual(frames(record).map((f) => f.event), ["agent_start", "session_shutdown"], "disabled");
+  await host.run("ovrcr-reattach");
+  const sent = frames(record);
+  assert.deepEqual(sent.at(-1).event, "session_start");
+  assert.deepEqual([sent.at(-1).reason, sent.at(-1).run, sent.at(-1).idle], ["reattach", null, true]);
+  assert.deepEqual(host.state.notices, [["OVRCR reporting reattached", "info"]]);
+  await host.emit({ type: "agent_start" });
+  assert.deepEqual(frames(record).at(-1).event, "agent_start", "reporting resumes after a reattach");
+});
+
+test("a shutdown drain discards the queue and delivers only the final frame in one deadline", async () => {
+  managed();
+  const { extension, record } = materialize({ hang: "queued" });
+  const host = await createHost(extension);
+  const started = performance.now();
+  const queued = [];
+  for (let i = 0; i < 5; i += 1) queued.push(host.emit({ type: "agent_start" }));
+  await host.emit({ type: "session_shutdown", reason: "reload" });
+  const elapsed = performance.now() - started;
+  await Promise.all(queued);
+  assert.ok(elapsed < 1200, `the drain took ${elapsed}ms: one absolute deadline, not one per queued frame`);
+  assert.deepEqual(frames(record).map((f) => f.event), ["session_shutdown"]);
+});
+
+test("a replacement factory is a new instance that names the conversation it replaced", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const first = await createHost(extension, { session: "sess-a" });
+  await first.emit({ type: "session_start", reason: "startup" });
+  await first.emit({ type: "session_shutdown", reason: "resume" });
+  const second = await createHost(extension, { session: "sess-b" });
+  await second.emit({ type: "session_start", reason: "resume", previousSessionFile: "/private/x/sess-a.jsonl" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.session_id, f.previous ?? null, f.sequence]), [
+    ["session_start", "sess-a", null, 1],
+    ["session_shutdown", "sess-a", null, 2],
+    ["session_start", "sess-b", "sess-a", 1],
+  ]);
+  assert.notEqual(sent[0].instance, sent[2].instance, "a replaced factory is a new producer");
 });

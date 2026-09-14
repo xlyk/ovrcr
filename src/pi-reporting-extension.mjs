@@ -16,16 +16,23 @@ const OVRCR_BINARY = __OVRCR_BINARY__;
 
 export default function (pi) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
-  const { producer, report } = createReporter({
+  const { producer, report, flush, reattach } = createReporter({
     binary: OVRCR_BINARY,
     helperArgs: ["report", "pi", "--stdin"],
   });
+
+  // The conversation a transition left, as its identity alone: Pi names a session file
+  // `<timestamp>_<session id>.jsonl` while it binds the bare session id, so this takes the
+  // trailing id and nothing else — never the timestamp, never the directory, never
+  // anything inside the file. Anchored, so a name no bounded id can be read out of yields
+  // null (no expectation) instead of a truncation that would contradict a healthy binding.
+  const idOf = (file) => file?.match(/(?:^|[/_])([A-Za-z0-9][A-Za-z0-9.-]{0,63})\.jsonl$/)?.[1] ?? null;
 
   pi.on("session_start", (event, ctx) => {
     producer.run = 0;
     producer.open = false;
     producer.outcome = "none";
-    return report("session_start", ctx, { reason: event.reason });
+    return report("session_start", ctx, { reason: event.reason, previous: idOf(event.previousSessionFile) });
   });
   pi.on("agent_start", (_event, ctx) => {
     // A second start inside an open cycle is a continuation: same run, outcome so far kept.
@@ -50,13 +57,30 @@ export default function (pi) {
   // never read.
   pi.on("ui_prompt_start", (event, ctx) => {
     producer.prompt += 1;
-    return report("input_open", ctx, { request_id: `${producer.instance}:p${producer.prompt}`, kind: event.kind });
+    return report("input_open", ctx, { namespace: "prompt", request_id: `${producer.instance}:p${producer.prompt}`, kind: event.kind });
   });
   pi.on("ui_prompt_end", (_event, ctx) =>
-    report("input_close", ctx, { request_id: `${producer.instance}:p${producer.prompt}` }));
+    report("input_close", ctx, { namespace: "prompt", request_id: `${producer.instance}:p${producer.prompt}` }));
+  // Tree navigation moves the conversation to a node this producer never reported: the
+  // response cycle it was in the middle of is gone, and the only activity that survives is
+  // what Pi's own API answers. Historical responses are never replayed as new ones.
+  pi.on("session_tree", (_event, ctx) => {
+    producer.open = false;
+    producer.outcome = "none";
+    return report("cycle_invalidated", ctx, { idle: Boolean(ctx.isIdle?.()) });
+  });
   pi.on("session_shutdown", (event, ctx) => {
-    const sent = report("session_shutdown", ctx, { reason: event.reason });
+    const sent = flush("session_shutdown", ctx, { reason: event.reason });
     producer.disabled = true; // Pi re-runs factories after replacement or reload
     return sent;
+  });
+  // The explicit reattachment action: it runs inside the already-loaded extension, so it
+  // never needs a fresh native launch to restore reporting for this same session.
+  pi.registerCommand("ovrcr-reattach", {
+    description: "Reattach OVRCR reporting for this session",
+    handler: async (_args, ctx) => {
+      const ok = await reattach(ctx, { idle: Boolean(ctx.isIdle?.()) });
+      ctx.ui?.notify?.(ok ? "OVRCR reporting reattached" : "OVRCR reporting is unavailable", ok ? "info" : "warning");
+    },
   });
 }

@@ -188,7 +188,7 @@ fn unavailable_reporter_mutes_the_status_glyph() {
         activity_revision: 1,
         metrics_revision: 1,
         health_revision: 1,
-        input_request: None,
+        input_requests: Vec::new(),
         input_revision: 0,
     });
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();

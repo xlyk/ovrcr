@@ -7,7 +7,7 @@
 use super::{HOOK_INPUT_LIMIT, InvocationLease};
 use ovrcr_protocol::{
     ActivitySample, AgentActivity, AgentObservation, AgentProvider, InputKind, InputRequest,
-    ProviderReport, SampleQuality, validate_agent_id,
+    MAX_INPUT_REQUESTS, ProviderReport, SampleQuality, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::{HookEvent, HookHandler, private_identifier};
 use std::{
@@ -135,12 +135,31 @@ struct Receiver {
     producer: Option<(String, u64)>,
     /// The open response cycle: the harness run counter and the identity published as `turn`.
     current: Option<(u64, String)>,
-    /// The active Input request, by identity. Bound: one slot, exact for Pi's coalesced
-    /// outer prompt span (#95's Oh My Pi approvals need a set).
-    open_request: Option<String>,
+    /// The open Input requests, oldest first, bounded by `MAX_INPUT_REQUESTS`. Every
+    /// mutation republishes the whole set, so the runtime never merges deltas. The kind
+    /// travels with the id because only the `prompt` namespace's kind comes from the
+    /// payload; `approval` and `question` are fixed by their namespace.
+    open_requests: Vec<(String, InputKind)>,
     seen: HashSet<String>,
     charged_bytes: usize,
     revision: u64,
+    /// Why live reporting is uncertain. A paused receiver keeps its lease and its binding
+    /// and applies nothing: only a trustworthy source boundary — a `session_start`, an
+    /// `agent_start`, or the extension's own reattach command, which sends one — recovers
+    /// it, and recovery is a fresh reporting generation, never a resumption.
+    paused: Option<&'static str>,
+}
+
+/// What the producer fence makes of one frame, before any state changes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Admission {
+    Accepted,
+    Ignored,
+    /// A source sequence is missing: whatever it carried was never applied.
+    Gap,
+    /// A new instance announced itself while the previous one was still live: the
+    /// replacement is admitted, but what it replaced was never observed closing.
+    LostClose,
 }
 
 impl Receiver {
@@ -152,16 +171,17 @@ impl Receiver {
             extension_dir: None,
             producer: None,
             current: None,
-            open_request: None,
+            open_requests: Vec::new(),
             seen: HashSet::new(),
             charged_bytes: 0,
             revision: 0,
+            paused: None,
         }
     }
     fn disable(&mut self) {
         self.disabled = true;
         self.current = None;
-        self.open_request = None;
+        self.open_requests.clear();
         if let Some(lease) = self.lease.take() {
             let _ = lease.stream.shutdown(std::net::Shutdown::Both);
             drop(lease);
@@ -200,19 +220,41 @@ impl Receiver {
             return IGNORED.to_vec();
         };
         // Producer fencing: a new instance is admitted only by its session_start; a stale,
-        // replayed or foreign sequence never mutates state, freshness, or Unread.
-        match &mut self.producer {
-            Some((current, last)) if current.as_str() == instance => {
-                if sequence <= *last {
-                    return IGNORED.to_vec();
-                }
-                *last = sequence;
+        // replayed, retired or foreign sequence never mutates state, freshness, or Unread.
+        let admission = self.admit(event, instance, sequence);
+        if admission == Admission::Ignored {
+            return IGNORED.to_vec();
+        }
+        // The reattach command is a recovery whatever this receiver's health was: it
+        // restarts the producer's own counters, so the cycles that follow it reuse
+        // identities this generation has already published and would be dropped as
+        // duplicates. A fresh generation is what makes them new responses again.
+        let reattach = event == "session_start" && payload["reason"].as_str() == Some("reattach");
+        if self.paused.is_some() || reattach {
+            // Nothing is applied while reporting is uncertain, and nothing is inferred from
+            // the silence: the next boundary this producer reaches recovers it, once. A
+            // boundary that arrives with a hole of its own still recovers — the reattach
+            // command drops whatever was queued, and that hole is the pause it is ending.
+            if !matches!(event, "session_start" | "agent_start") {
+                return IGNORED.to_vec();
             }
-            _ if event == "session_start" => {
-                self.producer = Some((instance.to_owned(), sequence));
-                self.current = None;
+            if !self.recover(session, deadline) {
+                self.disable();
+                return UNAVAILABLE.to_vec();
             }
-            _ => return IGNORED.to_vec(),
+        } else if admission == Admission::Gap {
+            return self.pause("source_gap", deadline);
+        } else if admission == Admission::LostClose {
+            return self.pause("producer_replaced", deadline);
+        } else if event == "session_start"
+            && transition_mismatch(
+                payload["previous"].as_str(),
+                self.lease.as_ref().and_then(|lease| lease.binding.as_ref()),
+            )
+        {
+            // The conversation this transition says it left is not the one this receiver is
+            // bound to: a transition happened that it never saw.
+            return self.pause("transition_mismatch", deadline);
         }
         let run = payload["run"].as_u64();
         let outcome = payload["outcome"].as_str().unwrap_or("none");
@@ -222,19 +264,25 @@ impl Receiver {
                 // re-announces with session_start): whatever cycle was open belongs to the
                 // conversation being left, so it is invalidated before the new binding.
                 self.current = None;
-                // The runtime must see the dialog close against the binding that owned it, so
-                // the request is published closed while that binding is still current.
-                if self.open_request.take().is_some() {
-                    let closed = self.publish_observation(AgentObservation::Input(None), deadline);
-                    if closed.as_slice() == UNAVAILABLE {
-                        return closed;
-                    }
+                // The runtime must see the dialogs close against the binding that owned
+                // them, so the set is published empty while that binding is still current.
+                if let Some(closed) = self.retire_requests(deadline) {
+                    return closed;
                 }
-                if !self.bind(session, deadline) {
+                if !self.bind(session, deadline, false) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
-                (AgentActivity::Idle, SampleQuality::Observed, None)
+                // A reattach reports what the harness's own API says about the session: a
+                // session that is not idle is doing something this reporter did not see, and
+                // uncertain is Unknown until a fresh authoritative event. An ordinary
+                // announcement carries no `idle` and is Idle by construction.
+                let state = if payload["idle"].as_bool().unwrap_or(true) {
+                    AgentActivity::Idle
+                } else {
+                    AgentActivity::Unknown
+                };
+                (state, SampleQuality::Observed, None)
             }
             "agent_start" => {
                 let Some(run) = run else {
@@ -258,7 +306,7 @@ impl Receiver {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
-                if !self.bind(session, deadline) {
+                if !self.bind(session, deadline, false) {
                     self.disable();
                     return UNAVAILABLE.to_vec();
                 }
@@ -311,65 +359,68 @@ impl Receiver {
                     // a dialog left open is published closed before the producer retires:
                     // otherwise a re-admitted producer that binds the same conversation reuses
                     // the same snapshot and keeps a stale WaitingInput with nothing on screen.
-                    if self.open_request.take().is_some() {
-                        let closed =
-                            self.publish_observation(AgentObservation::Input(None), deadline);
-                        if closed.as_slice() == UNAVAILABLE {
-                            return closed;
-                        }
+                    if let Some(closed) = self.retire_requests(deadline) {
+                        return closed;
                     }
+                    self.retire(instance);
                     self.producer = None;
                     self.current = None;
                 }
                 return IGNORED.to_vec();
             }
             "input_open" => {
-                let (Some(id), Some(kind)) = (
+                let (Some(id), Some(namespace)) = (
                     payload["request_id"]
                         .as_str()
                         .filter(|s| validate_agent_id(s).is_ok()),
-                    input_kind(payload["kind"].as_str()),
+                    namespace_of(
+                        payload["namespace"].as_str(),
+                        payload["request_id"].as_str(),
+                    ),
                 ) else {
                     return IGNORED.to_vec();
                 };
-                if self.open_request.as_deref() == Some(id) {
+                // The kind of an approval or a question follows from its namespace; only a
+                // prompt carries its own, and it must still be one this protocol knows.
+                let Some(kind) = namespace.kind(payload["kind"].as_str()) else {
                     return IGNORED.to_vec();
-                }
-                // Pi coalesces nested prompts into one span; a different id while one is open
-                // is a replacement, published as such. Bound: one slot (#95's approvals need a set).
-                self.open_request = Some(id.to_owned());
-                return self.publish_observation(
-                    AgentObservation::Input(Some(InputRequest {
-                        id: id.to_owned(),
-                        kind,
-                    })),
-                    deadline,
-                );
+                };
+                return self.open_request(id, kind, deadline);
             }
             "input_close" => {
                 let Some(id) = payload["request_id"].as_str() else {
                     return IGNORED.to_vec();
                 };
-                if self.open_request.as_deref() != Some(id) {
-                    return IGNORED.to_vec();
-                }
-                self.open_request = None;
-                return self.publish_observation(AgentObservation::Input(None), deadline);
+                return self.close_request(id, deadline);
+            }
+            "cycle_invalidated" => {
+                // Tree navigation moved the conversation somewhere this producer cannot
+                // vouch for: the cycle it left behind is gone, and the only activity that
+                // survives is what the extension can read from its own public API.
+                self.current = None;
+                let idle = payload["idle"].as_bool().unwrap_or(false);
+                let state = if idle {
+                    AgentActivity::Idle
+                } else {
+                    AgentActivity::Unknown
+                };
+                (state, SampleQuality::Observed, None)
             }
             "unavailable" => {
-                self.disable();
-                return UNAVAILABLE.to_vec();
+                // The producer dropped frames of its own: what it reported is no longer
+                // complete, but the native session and this lease are both still alive.
+                return self.pause("source_overflow", deadline);
             }
             _ => return IGNORED.to_vec(),
         };
         self.publish(state, quality, turn, deadline)
     }
-    fn bind(&mut self, conversation: &str, deadline: Instant) -> bool {
+    fn bind(&mut self, conversation: &str, deadline: Instant, force: bool) -> bool {
         let provider = self.harness.provider;
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        match lease.bind(provider, conversation, deadline) {
+        match lease.bind(provider, conversation, deadline, force) {
             Some(true) => {
                 self.revision = 0;
                 true
@@ -377,6 +428,132 @@ impl Receiver {
             Some(false) => true,
             None => false,
         }
+    }
+    /// The producer fence. A retired instance is gone for good, a stale or replayed
+    /// sequence changes nothing, and only a `session_start` admits an instance this
+    /// receiver has not seen — replacing a live producer as an unobserved loss. Admitting
+    /// an instance is the one answer that mutates: it installs the new producer, drops the
+    /// cycle the old one had open and retires the instance it replaced.
+    fn admit(&mut self, event: &str, instance: &str, sequence: u64) -> Admission {
+        if self.seen.contains(&format!("p:{instance}")) {
+            return Admission::Ignored;
+        }
+        match &mut self.producer {
+            Some((current, last)) if current.as_str() == instance => {
+                if sequence <= *last {
+                    return Admission::Ignored;
+                }
+                // The hole is reported once: the sequence advances before the pause so the
+                // frames that follow it are ordinary frames of a paused receiver.
+                let gap = sequence > *last + 1;
+                *last = sequence;
+                if gap {
+                    Admission::Gap
+                } else {
+                    Admission::Accepted
+                }
+            }
+            live if event == "session_start" => {
+                let replaced = live.take();
+                self.producer = Some((instance.to_owned(), sequence));
+                self.current = None;
+                match replaced {
+                    Some((old, _)) => {
+                        self.retire(&old);
+                        Admission::LostClose
+                    }
+                    None => Admission::Accepted,
+                }
+            }
+            _ => Admission::Ignored,
+        }
+    }
+    /// Fences one instance for the life of this receiver: every later frame of its own,
+    /// however high its sequence, is ignored. Charged against the same identity capacity
+    /// as the response cycles, because both are unbounded producer-supplied strings.
+    fn retire(&mut self, instance: &str) {
+        let retired = format!("p:{instance}");
+        let charge = retired.len() + std::mem::size_of::<String>();
+        if self.seen.len() >= MAX_IDENTITIES || self.charged_bytes + charge > MAX_IDENTITY_BYTES {
+            // Without room to fence it, a delayed frame from this instance could not be
+            // told from a live one: that is identity ambiguity, and it disables.
+            self.disable();
+            return;
+        }
+        self.charged_bytes += charge;
+        self.seen.insert(retired);
+    }
+    /// Stops applying events and says so once, keeping the lease, the binding and the
+    /// native session. The local cycle and request set go with it: what is on screen is
+    /// no longer certain, and the Unavailable health clears the published set too.
+    fn pause(&mut self, reason: &'static str, deadline: Instant) -> Vec<u8> {
+        use ovrcr_protocol::{
+            AgentCommand, AgentOperationResult, HealthSample, ReporterHealth, Response,
+        };
+        self.paused = Some(reason);
+        self.current = None;
+        self.open_requests.clear();
+        let revision = self.revision + 1;
+        let Some(lease) = &mut self.lease else {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        };
+        let Some(binding) = lease.binding.clone() else {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        };
+        let result = ovrcr_runtime::agent_runner::private_identifier()
+            .map_err(anyhow::Error::from)
+            .and_then(|operation| {
+                lease.command(
+                    operation,
+                    AgentCommand::Health(ProviderReport {
+                        binding,
+                        revision,
+                        observation: AgentObservation::Health(HealthSample {
+                            state: ReporterHealth::Unavailable,
+                            reason: Some(reason.to_owned()),
+                        }),
+                    }),
+                    deadline,
+                )
+            });
+        if !matches!(
+            result,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::HealthUpdated
+            ))
+        ) {
+            self.disable();
+            return UNAVAILABLE.to_vec();
+        }
+        self.revision = revision;
+        ACCEPTED.to_vec()
+    }
+    /// One forced rebind of the conversation this boundary names: the supervisor admits a
+    /// fresh reporting generation while the lease and the session identity hold, and it
+    /// starts blank — no cycle, no requests, no metrics, Unread untouched.
+    fn recover(&mut self, conversation: &str, deadline: Instant) -> bool {
+        if !self.bind(conversation, deadline, true) {
+            return false;
+        }
+        // A fresh generation carries a fresh set of cycle identities: the server reads the
+        // same turn under a new generation as a new response, so the identities of the
+        // generation that paused must not silence the frame that just recovered it — Pi
+        // repeats `agent_start` with the same run for a retry, an automatic compaction or a
+        // queued follow-up, and that frame is the one authoritative event recovery has. The
+        // `p:<instance>` producer fences stay: a retired instance is retired for good.
+        self.seen.retain(|identity| identity.starts_with("p:"));
+        // A fresh generation's snapshot is blank at the server, so the local set goes with
+        // it: a request the paused or reattached producer left open is no longer published.
+        self.open_requests.clear();
+        self.charged_bytes = self
+            .seen
+            .iter()
+            .map(|identity| identity.len() + std::mem::size_of::<String>())
+            .sum();
+        self.paused = None;
+        true
     }
     fn publish(
         &mut self,
@@ -393,6 +570,50 @@ impl Receiver {
             }),
             deadline,
         )
+    }
+    /// Insert-if-absent, then publish the whole set. A repeated open of a known id and the
+    /// opening past the bound are both IGNORED before any mutation: overflow drops the new
+    /// request, it never disables reporting.
+    fn open_request(&mut self, id: &str, kind: InputKind, deadline: Instant) -> Vec<u8> {
+        if self.open_requests.iter().any(|(open, _)| open == id)
+            || self.open_requests.len() >= MAX_INPUT_REQUESTS
+        {
+            return IGNORED.to_vec();
+        }
+        self.open_requests.push((id.to_owned(), kind));
+        self.publish_requests(deadline)
+    }
+    /// Remove-if-present, then publish the whole set. A close for an id this receiver never
+    /// admitted is IGNORED: a late subscriber's unmatched close changes nothing.
+    fn close_request(&mut self, id: &str, deadline: Instant) -> Vec<u8> {
+        let before = self.open_requests.len();
+        self.open_requests.retain(|(open, _)| open != id);
+        if self.open_requests.len() == before {
+            return IGNORED.to_vec();
+        }
+        self.publish_requests(deadline)
+    }
+    fn publish_requests(&mut self, deadline: Instant) -> Vec<u8> {
+        let requests = self
+            .open_requests
+            .iter()
+            .map(|(id, kind)| InputRequest {
+                id: id.clone(),
+                kind: *kind,
+            })
+            .collect();
+        self.publish_observation(AgentObservation::Input(requests), deadline)
+    }
+    /// Publishes the empty set for a producer that is about to retire or rebind, while the
+    /// binding that owned the requests is still current. `Some` is the caller's early
+    /// return: the publish failed and the receiver disabled itself.
+    fn retire_requests(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+        if self.open_requests.is_empty() {
+            return None;
+        }
+        self.open_requests.clear();
+        let closed = self.publish_requests(deadline);
+        (closed.as_slice() == UNAVAILABLE).then_some(closed)
     }
     fn publish_observation(&mut self, observation: AgentObservation, deadline: Instant) -> Vec<u8> {
         let Some(lease) = &self.lease else {
@@ -424,8 +645,57 @@ fn input_kind(value: Option<&str>) -> Option<InputKind> {
         "input" => InputKind::Input,
         "editor" => InputKind::Editor,
         "custom" => InputKind::Custom,
+        "approval" => InputKind::Approval,
         _ => return None,
     })
+}
+
+/// Which surface issued a request. The id carries the namespace so the runtime, the
+/// Dashboard and a later close cannot confuse one surface's request identity with
+/// another's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Namespace {
+    Prompt,
+    Approval,
+    Question,
+}
+
+impl Namespace {
+    /// An approval and a question are what their namespace says they are; only a prompt
+    /// reports its own kind, and it may not claim to be an approval.
+    fn kind(self, payload: Option<&str>) -> Option<InputKind> {
+        match self {
+            Namespace::Approval => Some(InputKind::Approval),
+            Namespace::Question => Some(InputKind::Select),
+            Namespace::Prompt => match input_kind(payload)? {
+                InputKind::Approval => None,
+                kind => Some(kind),
+            },
+        }
+    }
+}
+
+/// Whether a transition names a conversation this receiver is not bound to. A frame with
+/// no `previous` carries no expectation (Oh My Pi's switches say nothing yet), and a
+/// receiver with no binding has none to contradict.
+fn transition_mismatch(
+    previous: Option<&str>,
+    binding: Option<&ovrcr_protocol::AgentBinding>,
+) -> bool {
+    matches!((previous, binding), (Some(previous), Some(binding)) if binding.conversation != previous)
+}
+
+/// The namespace a frame declares, checked against the id that carries it. `approval` and
+/// `question` ids are namespace-prefixed; a prompt's id is the producer's own (Pi's
+/// `<instance>:p<n>`), so a missing namespace means `prompt` and no prefix is required.
+fn namespace_of(declared: Option<&str>, id: Option<&str>) -> Option<Namespace> {
+    let (namespace, prefix) = match declared {
+        None | Some("prompt") => return Some(Namespace::Prompt),
+        Some("approval") => (Namespace::Approval, "approval:"),
+        Some("question") => (Namespace::Question, "question:"),
+        Some(_) => return None,
+    };
+    id?.starts_with(prefix).then_some(namespace)
 }
 
 /// The accept loop can exit, or its thread be abandoned, without a disabling callback:
@@ -617,9 +887,11 @@ mod tests {
             b"admission-ignored\n"
         );
         assert!(receiver.producer.is_none() && receiver.current.is_none() && !receiver.disabled);
+        // The retired instance is fenced for good, so the successor drives the quit path.
+        shutdown["payload"]["instance"] = "b".into();
         shutdown["payload"]["reason"] = "quit".into();
         shutdown["payload"]["sequence"] = 3.into();
-        receiver.producer = Some(("a".into(), 2));
+        receiver.producer = Some(("b".into(), 2));
         receiver.handle(
             &serde_json::to_vec(&shutdown).unwrap(),
             true,
@@ -642,6 +914,149 @@ mod tests {
         }
         serde_json::to_vec(&value).unwrap()
     }
+    fn namespaced_event(
+        instance: &str,
+        sequence: u64,
+        name: &str,
+        namespace: &str,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&input_event(instance, sequence, name, request_id, kind))
+                .unwrap();
+        value["payload"]["namespace"] = namespace.into();
+        serde_json::to_vec(&value).unwrap()
+    }
+    fn ids(receiver: &Receiver) -> Vec<&str> {
+        receiver
+            .open_requests
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+    #[test]
+    fn the_request_set_keeps_its_order_and_removes_only_the_closed_member() {
+        // A lease-less receiver cannot publish, so this drives the state through the
+        // helpers directly: the publication path is covered by the lifecycle tests.
+        let mut receiver = unbound();
+        assert_eq!(
+            receiver.open_request("approval:c1", InputKind::Approval, Instant::now()),
+            b"admission-unavailable\n",
+            "a lease-less publish is UNAVAILABLE exactly as before"
+        );
+        assert_eq!(
+            ids(&receiver),
+            Vec::<&str>::new(),
+            "disabling clears the set"
+        );
+
+        let mut receiver = unbound();
+        receiver.open_requests = vec![
+            ("approval:c1".into(), InputKind::Approval),
+            ("question:q1".into(), InputKind::Select),
+        ];
+        assert_eq!(
+            receiver.open_request("approval:c1", InputKind::Approval, Instant::now()),
+            b"admission-ignored\n",
+            "a repeated open of a known id never mutates the set"
+        );
+        assert_eq!(ids(&receiver), ["approval:c1", "question:q1"]);
+        assert_eq!(
+            receiver.close_request("question:zz", Instant::now()),
+            b"admission-ignored\n",
+            "an unknown close never mutates the set"
+        );
+        assert_eq!(ids(&receiver), ["approval:c1", "question:q1"]);
+        assert!(!receiver.disabled && receiver.revision == 0);
+    }
+    #[test]
+    fn the_thirty_third_open_is_ignored_without_disabling() {
+        let mut receiver = unbound();
+        receiver.open_requests = (0..MAX_INPUT_REQUESTS)
+            .map(|n| (format!("approval:c{n}"), InputKind::Approval))
+            .collect();
+        assert_eq!(
+            receiver.open_request("approval:overflow", InputKind::Approval, Instant::now()),
+            b"admission-ignored\n"
+        );
+        assert_eq!(receiver.open_requests.len(), MAX_INPUT_REQUESTS);
+        assert!(
+            !receiver.disabled,
+            "the bound drops the new request, it never disables reporting"
+        );
+        assert_eq!(receiver.revision, 0);
+    }
+    #[test]
+    fn an_open_whose_namespace_and_id_disagree_is_ignored() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        for (sequence, namespace, id, kind) in [
+            // The prefix must match the declared namespace.
+            (2, "approval", "question:c1", Some("approval")),
+            (3, "question", "approval:q1", Some("select")),
+            (4, "approval", "c1", Some("approval")),
+            // An unknown namespace is not a namespace.
+            (5, "dialog", "dialog:c1", Some("select")),
+            // A prompt may not claim to be an approval.
+            (6, "prompt", "a:p1", Some("approval")),
+        ] {
+            assert_eq!(
+                receiver.handle(
+                    &namespaced_event("a", sequence, "input_open", namespace, id, kind),
+                    true,
+                    Instant::now()
+                ),
+                b"admission-ignored\n",
+                "{namespace} / {id}"
+            );
+        }
+        assert!(receiver.open_requests.is_empty());
+        assert_eq!(receiver.revision, 0);
+        assert!(!receiver.disabled);
+    }
+    #[test]
+    fn an_approval_or_question_namespace_fixes_the_kind_it_publishes() {
+        // The kind follows the namespace, so a mislabelled payload cannot make an approval
+        // look like a select in the Dashboard.
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        assert_eq!(
+            receiver.handle(
+                &namespaced_event(
+                    "a",
+                    2,
+                    "input_open",
+                    "approval",
+                    "approval:c1",
+                    Some("select")
+                ),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n",
+            "no lease: the publish fails after the set is admitted"
+        );
+        assert_eq!(
+            namespace_of(Some("approval"), Some("approval:c1"))
+                .unwrap()
+                .kind(Some("select")),
+            Some(InputKind::Approval)
+        );
+        assert_eq!(
+            namespace_of(Some("question"), Some("question:q1"))
+                .unwrap()
+                .kind(Some("confirm")),
+            Some(InputKind::Select)
+        );
+        assert_eq!(
+            namespace_of(None, Some("a:p1"))
+                .unwrap()
+                .kind(Some("editor")),
+            Some(InputKind::Editor),
+            "a missing namespace is a prompt and keeps its own kind"
+        );
+    }
     #[test]
     fn input_close_for_an_unknown_or_stale_request_is_ignored() {
         let mut receiver = unbound();
@@ -655,8 +1070,8 @@ mod tests {
             b"admission-ignored\n",
             "no request is open"
         );
-        assert!(receiver.open_request.is_none());
-        receiver.open_request = Some("a:p1".into());
+        assert!(receiver.open_requests.is_empty());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &input_event("a", 3, "input_close", "a:p2", None),
@@ -666,7 +1081,7 @@ mod tests {
             b"admission-ignored\n",
             "a close only closes its own request"
         );
-        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(ids(&receiver), ["a:p1"]);
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -690,7 +1105,7 @@ mod tests {
                 "{id:?} {kind:?}"
             );
         }
-        assert!(receiver.open_request.is_none());
+        assert!(receiver.open_requests.is_empty());
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -698,7 +1113,7 @@ mod tests {
     fn a_repeated_open_for_the_same_request_is_ignored_before_any_mutation() {
         let mut receiver = unbound();
         receiver.producer = Some(("a".into(), 1));
-        receiver.open_request = Some("a:p1".into());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &input_event("a", 2, "input_open", "a:p1", Some("select")),
@@ -707,7 +1122,7 @@ mod tests {
             ),
             b"admission-ignored\n"
         );
-        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(ids(&receiver), ["a:p1"]);
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -727,12 +1142,13 @@ mod tests {
             ),
             b"admission-ignored\n"
         );
-        assert!(receiver.producer.is_none() && receiver.open_request.is_none());
+        assert!(receiver.producer.is_none() && receiver.open_requests.is_empty());
         assert!(!receiver.disabled);
         // An open request is published closed first; with no lease that publish cannot
         // happen, so the receiver disables itself rather than retiring behind a stale dialog.
-        receiver.producer = Some(("a".into(), 2));
-        receiver.open_request = Some("a:p1".into());
+        receiver.producer = Some(("b".into(), 2));
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
+        shutdown["payload"]["instance"] = "b".into();
         shutdown["payload"]["sequence"] = 3.into();
         assert_eq!(
             receiver.handle(
@@ -742,11 +1158,11 @@ mod tests {
             ),
             b"admission-unavailable\n"
         );
-        assert!(receiver.open_request.is_none() && receiver.disabled);
+        assert!(receiver.open_requests.is_empty() && receiver.disabled);
         // The same ordering on the conversation-switch path.
         let mut receiver = unbound();
         receiver.producer = Some(("a".into(), 1));
-        receiver.open_request = Some("a:p1".into());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &event("a", 2, "session_start", None, "none"),
@@ -755,7 +1171,457 @@ mod tests {
             ),
             b"admission-unavailable\n"
         );
-        assert!(receiver.open_request.is_none() && receiver.disabled);
+        assert!(receiver.open_requests.is_empty() && receiver.disabled);
+    }
+    #[test]
+    fn admit_fences_gaps_retired_producers_and_an_unobserved_replacement() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 5));
+        assert_eq!(receiver.admit("agent_start", "a", 5), Admission::Ignored);
+        assert_eq!(receiver.admit("agent_start", "a", 4), Admission::Ignored);
+        assert_eq!(
+            receiver.admit("agent_start", "a", 7),
+            Admission::Gap,
+            "a missing source sequence is a gap, not an acceptance"
+        );
+        assert_eq!(
+            receiver.producer,
+            Some(("a".into(), 7)),
+            "the gap advances the sequence so the same hole is reported once"
+        );
+        assert_eq!(receiver.admit("agent_start", "a", 8), Admission::Accepted);
+        // An unobserved factory replacement: a new instance announces itself while the
+        // first is still live. The old producer retires and the new one is admitted.
+        assert_eq!(
+            receiver.admit("session_start", "b", 1),
+            Admission::LostClose
+        );
+        assert_eq!(receiver.producer, Some(("b".into(), 1)));
+        assert!(receiver.seen.contains("p:a"));
+        // A -> B -> A: every delayed frame from the retired first A is ignored, however
+        // high its sequence, and it can never be re-admitted by its own session_start.
+        assert_eq!(receiver.admit("session_start", "a", 99), Admission::Ignored);
+        assert_eq!(receiver.admit("agent_start", "a", 99), Admission::Ignored);
+        assert_eq!(receiver.producer, Some(("b".into(), 1)));
+    }
+    #[test]
+    fn a_gap_pauses_before_the_event_is_applied() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 5));
+        // No lease: the Unavailable health the pause publishes cannot be delivered, so the
+        // receiver disables itself — the state it pauses is still the state under test.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 7, "agent_start", Some(1), "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert_eq!(receiver.paused, Some("source_gap"));
+        assert!(
+            receiver.current.is_none() && receiver.seen.is_empty(),
+            "the gapped event never opened a cycle"
+        );
+    }
+    #[test]
+    fn a_paused_receiver_ignores_everything_but_a_trustworthy_boundary() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.paused = Some("source_gap");
+        receiver.current = Some((1, "a:1".into()));
+        for (sequence, name, run) in [
+            (2, "agent_settled", Some(1)),
+            (3, "agent_end", Some(1)),
+            (4, "session_shutdown", None),
+        ] {
+            assert_eq!(
+                receiver.handle(&event("a", sequence, name, run, "ok"), true, Instant::now()),
+                b"admission-ignored\n",
+                "{name} while paused"
+            );
+        }
+        assert_eq!(receiver.current, Some((1, "a:1".into())));
+        assert_eq!(receiver.revision, 0);
+        assert!(receiver.producer.is_some() && !receiver.disabled);
+        // A boundary attempts exactly one recovery; with no lease it fails and disables.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 5, "agent_start", Some(1), "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n"
+        );
+        assert!(receiver.disabled);
+    }
+    #[test]
+    fn cycle_invalidated_forgets_the_response_cycle() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        receiver.current = Some((1, "a:1".into()));
+        let mut tree: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "cycle_invalidated", None, "none")).unwrap();
+        tree["payload"]["idle"] = true.into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&tree).unwrap(), true, Instant::now()),
+            b"admission-unavailable\n",
+            "no lease: the publish fails after the cycle is cleared"
+        );
+        assert!(
+            receiver.current.is_none(),
+            "tree navigation invalidates the cycle it left behind"
+        );
+    }
+    #[test]
+    fn a_transition_names_the_conversation_it_left() {
+        let binding = |conversation: &str| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: conversation.into(),
+            generation: 1,
+        };
+        assert!(
+            !transition_mismatch(None, Some(&binding("sess-a"))),
+            "no previous is no expectation"
+        );
+        assert!(
+            !transition_mismatch(Some("sess-a"), None),
+            "nothing is bound yet"
+        );
+        assert!(!transition_mismatch(
+            Some("sess-a"),
+            Some(&binding("sess-a"))
+        ));
+        assert!(
+            transition_mismatch(Some("sess-b"), Some(&binding("sess-a"))),
+            "the conversation being left is not the one this receiver is bound to"
+        );
+    }
+    #[test]
+    fn an_overflow_notice_pauses_instead_of_disabling() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        let mut notice: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "unavailable", None, "none")).unwrap();
+        notice["payload"]["reason"] = "overflow".into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&notice).unwrap(), true, Instant::now()),
+            b"admission-unavailable\n",
+            "no lease: the pause cannot publish its health"
+        );
+        assert_eq!(receiver.paused, Some("source_overflow"));
+    }
+    #[test]
+    fn a_reload_retires_the_producer_it_observed_shutting_down() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        let mut shutdown: serde_json::Value =
+            serde_json::from_slice(&event("a", 2, "session_shutdown", None, "none")).unwrap();
+        shutdown["payload"]["reason"] = "reload".into();
+        assert_eq!(
+            receiver.handle(
+                &serde_json::to_vec(&shutdown).unwrap(),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n"
+        );
+        assert!(
+            receiver.seen.contains("p:a"),
+            "an observed shutdown retires"
+        );
+        assert_eq!(
+            receiver.handle(
+                &event("a", 3, "session_start", None, "none"),
+                true,
+                Instant::now()
+            ),
+            b"admission-ignored\n",
+            "the retired producer cannot re-admit itself"
+        );
+        assert!(receiver.producer.is_none() && !receiver.disabled);
+    }
+    /// A scripted supervisor: one paired stream for supervisor commands and one socket for
+    /// the observation publications, answering in the order a synchronous receiver drives
+    /// them. Returns every published report so the test can assert what reached the server.
+    fn supervised(
+        binding: ovrcr_protocol::AgentBinding,
+        rebound: ovrcr_protocol::AgentBinding,
+        before: usize,
+        pause: Option<&'static str>,
+        after: usize,
+    ) -> (
+        InvocationLease,
+        tempfile::TempDir,
+        std::thread::JoinHandle<Vec<ProviderReport>>,
+    ) {
+        use ovrcr_protocol::{
+            AgentCommand, AgentOperationResult, AgentSecret, AgentUpdate, ClientMessage, Request,
+            Response, ServerMessage, SupervisorAuth, exchange_preamble, read_frame, write_frame,
+        };
+        use std::os::unix::net::{UnixListener, UnixStream};
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("agent.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (client, mut stream) = UnixStream::pair().unwrap();
+        let auth = SupervisorAuth {
+            session: ovrcr_protocol::SessionId(1),
+            lease: AgentSecret([7; 32]),
+        };
+        let expected = binding.clone();
+        let server = std::thread::spawn(move || {
+            let mut published = Vec::new();
+            let publish = |listener: &UnixListener| {
+                let (mut connection, _) = listener.accept().unwrap();
+                exchange_preamble(&mut connection).unwrap();
+                let message = read_frame::<ClientMessage>(&mut connection).unwrap();
+                let Request::AgentReport(report) = message.request else {
+                    panic!("expected an observation publication");
+                };
+                let AgentUpdate::Provider(report) = report.update else {
+                    panic!("expected a provider report");
+                };
+                write_frame(
+                    &mut connection,
+                    &ServerMessage::Response {
+                        request_id: message.request_id,
+                        response: Response::Ok,
+                    },
+                )
+                .unwrap();
+                report
+            };
+            for _ in 0..before {
+                published.push(publish(&listener));
+            }
+            // The pause, when there is one: one Health Unavailable over the supervisor
+            // connection, naming the reason the receiver stopped applying events.
+            if let Some(expected_reason) = pause {
+                let health = read_frame::<ClientMessage>(&mut stream).unwrap();
+                let Request::Supervisor(request) = health.request else {
+                    panic!("expected the pause health command");
+                };
+                assert!(matches!(
+                    request.command,
+                    AgentCommand::Health(ProviderReport {
+                        observation: AgentObservation::Health(ovrcr_protocol::HealthSample {
+                            state: ovrcr_protocol::ReporterHealth::Unavailable,
+                            reason: Some(ref reason),
+                        }),
+                        ..
+                    }) if reason == expected_reason
+                ));
+                write_frame(
+                    &mut stream,
+                    &ServerMessage::Response {
+                        request_id: health.request_id,
+                        response: Response::AgentOperation(AgentOperationResult::HealthUpdated),
+                    },
+                )
+                .unwrap();
+            }
+            // The recovery: one forced Bind naming the binding it is replacing.
+            let bind = read_frame::<ClientMessage>(&mut stream).unwrap();
+            let Request::Supervisor(request) = bind.request else {
+                panic!("expected the recovery bind");
+            };
+            assert!(matches!(
+                request.command,
+                AgentCommand::Bind { ref expected_binding, ref conversation }
+                    if expected_binding.as_ref() == Some(&expected) && conversation == "sess-a"
+            ));
+            write_frame(
+                &mut stream,
+                &ServerMessage::Response {
+                    request_id: bind.request_id,
+                    response: Response::AgentOperation(AgentOperationResult::Bound(rebound)),
+                },
+            )
+            .unwrap();
+            for _ in 0..after {
+                published.push(publish(&listener));
+            }
+            published
+        });
+        let lease = InvocationLease {
+            stream: client,
+            auth,
+            socket,
+            binding: Some(binding),
+            next_request: 1,
+            capability: [0; 32],
+        };
+        (lease, root, server)
+    }
+    #[test]
+    fn a_recovering_continuation_publishes_its_cycle_on_the_fresh_generation() {
+        // Pi emits `agent_start` again for a retry, an automatic compaction or a queued
+        // follow-up, with the same run: the cycle identity of the generation that paused
+        // must not silence the frame that recovered it, or the Dashboard would sit at
+        // Unknown while Pi works and the response would never become Ready.
+        let binding = |generation| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "sess-a".into(),
+            generation,
+        };
+        let (lease, _root, server) = supervised(binding(1), binding(2), 1, Some("source_gap"), 2);
+        let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
+        receiver.producer = Some(("a".into(), 1));
+        let deadline = || Instant::now() + std::time::Duration::from_secs(10);
+        assert_eq!(
+            receiver.handle(
+                &event("a", 2, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.current, Some((1, "a:1".into())));
+        // A hole in the source sequence pauses; the cycle is forgotten locally.
+        assert_eq!(
+            receiver.handle(&event("a", 5, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, Some("source_gap"));
+        assert!(receiver.current.is_none());
+        // The continuation start recovers and publishes the cycle it is continuing.
+        assert_eq!(
+            receiver.handle(
+                &event("a", 6, "agent_start", Some(1), "none"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n"
+        );
+        assert_eq!(receiver.paused, None);
+        assert_eq!(
+            receiver.current,
+            Some((1, "a:1".into())),
+            "the recovering frame opens the cycle it reports"
+        );
+        assert_eq!(
+            receiver.handle(&event("a", 7, "agent_end", Some(1), "ok"), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert_eq!(
+            receiver.handle(
+                &event("a", 8, "agent_settled", Some(1), "ok"),
+                true,
+                deadline()
+            ),
+            b"admission-accepted\n",
+            "the cycle settles into Ready on the fresh generation"
+        );
+        assert!(receiver.seen.contains("a:1"));
+        let published: Vec<_> = server
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|report| match report.observation {
+                AgentObservation::Activity(sample) => (
+                    report.binding.generation,
+                    report.revision,
+                    sample.state,
+                    sample.turn,
+                ),
+                other => panic!("unexpected observation {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                (1, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
+    }
+    #[test]
+    fn a_reattach_on_a_healthy_receiver_is_a_fresh_generation_that_keeps_its_fences() {
+        // The reattach command restarts the producer's run counter, so without a fresh
+        // generation the cycles that follow reuse identities this receiver has already
+        // published and are dropped. The command is a recovery whatever the health was.
+        let binding = |generation| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "sess-a".into(),
+            generation,
+        };
+        let (lease, _root, server) = supervised(binding(1), binding(2), 0, None, 3);
+        let mut receiver = Receiver::new(&pi::HARNESS, Some(lease));
+        receiver.producer = Some(("a".into(), 5));
+        receiver.seen.insert("a:1".into());
+        receiver.seen.insert("p:z".into());
+        let deadline = || Instant::now() + std::time::Duration::from_secs(10);
+        let mut reattach: serde_json::Value =
+            serde_json::from_slice(&event("a", 6, "session_start", None, "none")).unwrap();
+        reattach["payload"]["reason"] = "reattach".into();
+        reattach["payload"]["idle"] = false.into();
+        assert_eq!(
+            receiver.handle(&serde_json::to_vec(&reattach).unwrap(), true, deadline()),
+            b"admission-accepted\n"
+        );
+        assert!(
+            receiver.seen.contains("p:z"),
+            "a recovery keeps the producer fences it earned"
+        );
+        assert_eq!(
+            receiver.admit("session_start", "z", 1),
+            Admission::Ignored,
+            "a retired producer stays retired across a recovery"
+        );
+        // The cycle numbering starts over with the producer's counters.
+        for (sequence, name, outcome) in [
+            (7, "agent_start", "none"),
+            (8, "agent_end", "ok"),
+            (9, "agent_settled", "ok"),
+        ] {
+            assert_eq!(
+                receiver.handle(
+                    &event("a", sequence, name, Some(1), outcome),
+                    true,
+                    deadline()
+                ),
+                b"admission-accepted\n",
+                "{name} after a reattach"
+            );
+        }
+        let published: Vec<_> = server
+            .join()
+            .unwrap()
+            .into_iter()
+            .map(|report| match report.observation {
+                AgentObservation::Activity(sample) => (
+                    report.binding.generation,
+                    sample.state,
+                    sample.quality,
+                    sample.turn,
+                ),
+                other => panic!("unexpected observation {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                // The reattach frame says Pi is not idle: what it is doing is unknown until
+                // a fresh authoritative event, never Idle and never the response before it.
+                (2, AgentActivity::Unknown, SampleQuality::Observed, None),
+                (
+                    2,
+                    AgentActivity::Busy,
+                    SampleQuality::Observed,
+                    Some("a:1".into())
+                ),
+                (
+                    2,
+                    AgentActivity::ResponseReady,
+                    SampleQuality::Confirmed,
+                    Some("a:1".into())
+                ),
+            ]
+        );
     }
     #[test]
     fn a_re_announced_conversation_invalidates_the_open_cycle() {

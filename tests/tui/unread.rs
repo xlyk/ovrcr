@@ -217,10 +217,17 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
         activity_revision: 2,
         metrics_revision: 0,
         health_revision: 0,
-        input_request: Some(InputRequest {
-            id: "i:p1".into(),
-            kind: InputKind::Select,
-        }),
+        // Two at once: neither the set nor its partial closure is a response.
+        input_requests: vec![
+            InputRequest {
+                id: "approval:c1".into(),
+                kind: InputKind::Approval,
+            },
+            InputRequest {
+                id: "question:q1".into(),
+                kind: InputKind::Select,
+            },
+        ],
         input_revision: 3,
     });
     publish_session(&mut d, summary.clone());
@@ -237,8 +244,23 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
         },
         "answering is not reviewing: R still targets the presented Ready"
     );
+    // One member closing leaves the other open, and Unread is still Unread.
+    let mut partial = summary.clone();
+    partial.agent.as_mut().unwrap().input_requests.remove(0);
+    publish_session(&mut d, partial);
+    draw(&mut d, 120, 30);
+    let DashboardAction::Request(between) = d.key(KeyCode::Char('R')) else {
+        panic!("closing one member of the set must not clear the unread");
+    };
+    assert_eq!(
+        between.request,
+        Request::MarkReviewed {
+            session: id,
+            expected: unread.clone(),
+        }
+    );
     let mut closed = summary.clone();
-    closed.agent.as_mut().unwrap().input_request = None;
+    closed.agent.as_mut().unwrap().input_requests.clear();
     publish_session(&mut d, closed);
     draw(&mut d, 120, 30);
     let DashboardAction::Request(after) = d.key(KeyCode::Char('R')) else {

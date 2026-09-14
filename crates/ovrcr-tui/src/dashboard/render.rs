@@ -1176,7 +1176,7 @@ fn provider_activity(session: &SessionSummary) -> String {
     };
     // An open Input request outranks whatever is underneath it, exactly as
     // AgentSnapshot::effective_activity does.
-    if let Some(request) = &agent.input_request {
+    if let Some(request) = agent.input_requests.first() {
         return format!(
             " input needed · {}",
             match request.kind {
@@ -1185,6 +1185,7 @@ fn provider_activity(session: &SessionSummary) -> String {
                 InputKind::Input => "input",
                 InputKind::Editor => "editor",
                 InputKind::Custom => "custom",
+                InputKind::Approval => "approval",
             }
         );
     }

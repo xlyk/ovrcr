@@ -117,10 +117,14 @@ pub enum InputKind {
     Input,
     Editor,
     Custom,
+    /// A native tool-approval prompt. Appended last: bincode numbers variants by
+    /// declaration order.
+    Approval,
 }
 
-/// An open request for a human answer from a visible provider dialog (CONTEXT.md: Input
-/// request). Identified within its binding by `id`; carries no content.
+/// An open request for a human answer (CONTEXT.md: Input request). Identified within its
+/// binding by `id`, whose prefix names the namespace that issued it (`prompt:`,
+/// `approval:`, `question:`); carries no content.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputRequest {
     pub id: String,
@@ -133,14 +137,37 @@ impl InputRequest {
     }
 }
 
+/// The most open Input requests one binding may carry. A producer that would exceed it
+/// ignores the new opening; the bound never disables reporting.
+pub const MAX_INPUT_REQUESTS: usize = 32;
+
+/// The trust-boundary check for a whole published request set: bounded, each id valid,
+/// no id twice.
+pub fn validate_input_requests(requests: &[InputRequest]) -> Result<()> {
+    if requests.len() > MAX_INPUT_REQUESTS {
+        bail!("at most {MAX_INPUT_REQUESTS} open Input requests per binding");
+    }
+    for (index, request) in requests.iter().enumerate() {
+        request.validate()?;
+        if requests[..index]
+            .iter()
+            .any(|earlier| earlier.id == request.id)
+        {
+            bail!("Input request ids are unique within a binding");
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentObservation {
     Activity(ActivitySample),
     Metrics(Box<MetricsSample>),
     Health(HealthSample),
-    /// `Some` opens or replaces the active Input request; `None` closes it. Appended last:
+    /// The complete set of open Input requests for the binding, oldest first; empty closes
+    /// all. Published whole so a snapshot is never assembled from deltas. Appended last:
     /// bincode numbers variants by declaration order.
-    Input(Option<InputRequest>),
+    Input(Vec<InputRequest>),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderReport {
@@ -193,15 +220,16 @@ pub struct AgentSnapshot {
     pub activity_revision: u64,
     pub metrics_revision: u64,
     pub health_revision: u64,
-    pub input_request: Option<InputRequest>,
+    /// Open Input requests, oldest first (CONTEXT.md: Input request).
+    pub input_requests: Vec<InputRequest>,
     pub input_revision: u64,
 }
 
 impl AgentSnapshot {
-    /// WaitingInput while an Input request is open; otherwise the underlying activity sample.
-    /// The one rule the server summary and the Dashboard both use.
+    /// WaitingInput while any Input request is open; otherwise the underlying activity
+    /// sample. The one rule the server summary and the Dashboard both use.
     pub fn effective_activity(&self) -> AgentActivity {
-        if self.input_request.is_some() {
+        if !self.input_requests.is_empty() {
             AgentActivity::WaitingInput
         } else {
             self.activity
@@ -343,9 +371,7 @@ impl ProviderReport {
             AgentObservation::Activity(a) => optional_id(&a.turn),
             AgentObservation::Metrics(m) => m.validate(),
             AgentObservation::Health(h) => optional_id(&h.reason),
-            AgentObservation::Input(request) => {
-                request.as_ref().map_or(Ok(()), InputRequest::validate)
-            }
+            AgentObservation::Input(requests) => validate_input_requests(requests),
         }
     }
 }
@@ -443,7 +469,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn effective_activity_is_waiting_input_only_while_a_request_is_open() {
+    fn effective_activity_is_waiting_input_while_any_request_is_open() {
         let mut snapshot = AgentSnapshot {
             binding: AgentBinding {
                 provider: AgentProvider::Pi,
@@ -464,18 +490,30 @@ pub(crate) mod tests {
             activity_revision: 3,
             metrics_revision: 0,
             health_revision: 0,
-            input_request: Some(InputRequest {
-                id: "i:p1".into(),
-                kind: InputKind::Select,
-            }),
+            input_requests: vec![
+                InputRequest {
+                    id: "approval:c1".into(),
+                    kind: InputKind::Approval,
+                },
+                InputRequest {
+                    id: "question:q1".into(),
+                    kind: InputKind::Select,
+                },
+            ],
             input_revision: 4,
         };
         assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
-        snapshot.input_request = None;
+        snapshot.input_requests.remove(0);
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::WaitingInput,
+            "the wait holds until the last request closes"
+        );
+        snapshot.input_requests.clear();
         assert_eq!(
             snapshot.effective_activity(),
             AgentActivity::ResponseReady,
-            "closing restores the underlying sample"
+            "closing the last one restores the underlying sample"
         );
         snapshot.activity = None;
         assert_eq!(snapshot.effective_activity(), AgentActivity::Unknown);
@@ -492,27 +530,63 @@ pub(crate) mod tests {
         let ok = ProviderReport {
             binding: binding.clone(),
             revision: 1,
-            observation: AgentObservation::Input(Some(InputRequest {
-                id: "i:p1".into(),
+            observation: AgentObservation::Input(vec![InputRequest {
+                id: "prompt:i:p1".into(),
                 kind: InputKind::Editor,
-            })),
+            }]),
         };
         ok.validate().unwrap();
         let close = ProviderReport {
             binding: binding.clone(),
             revision: 2,
-            observation: AgentObservation::Input(None),
+            observation: AgentObservation::Input(Vec::new()),
         };
         close.validate().unwrap();
         let bad = ProviderReport {
             binding,
             revision: 3,
-            observation: AgentObservation::Input(Some(InputRequest {
+            observation: AgentObservation::Input(vec![InputRequest {
                 id: "bad\nid".into(),
                 kind: InputKind::Custom,
-            })),
+            }]),
         };
         assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn input_observation_rejects_overflow_and_duplicate_ids() {
+        let binding = AgentBinding {
+            provider: AgentProvider::Omp,
+            invocation: "inv".into(),
+            conversation: "conv".into(),
+            generation: 1,
+        };
+        let set = |count: usize| -> Vec<InputRequest> {
+            (0..count)
+                .map(|n| InputRequest {
+                    id: format!("approval:c{n}"),
+                    kind: InputKind::Approval,
+                })
+                .collect()
+        };
+        let report = |requests: Vec<InputRequest>| ProviderReport {
+            binding: binding.clone(),
+            revision: 1,
+            observation: AgentObservation::Input(requests),
+        };
+        report(set(MAX_INPUT_REQUESTS)).validate().unwrap();
+        let overflow = report(set(MAX_INPUT_REQUESTS + 1))
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(overflow.contains("at most 32"), "{overflow}");
+        let mut duplicate = set(2);
+        duplicate[1].id = duplicate[0].id.clone();
+        let error = report(duplicate).validate().unwrap_err().to_string();
+        assert!(error.contains("unique"), "{error}");
+        let mut invalid = set(2);
+        invalid[1].id = "bad\nid".into();
+        assert!(report(invalid).validate().is_err());
     }
 
     #[test]
@@ -683,11 +757,11 @@ pub(crate) mod tests {
             }),
             AgentObservation::Metrics(metrics().into()),
             health.observation,
-            AgentObservation::Input(Some(InputRequest {
-                id: "req".into(),
-                kind: InputKind::Confirm,
-            })),
-            AgentObservation::Input(None),
+            AgentObservation::Input(vec![InputRequest {
+                id: "question:req".into(),
+                kind: InputKind::Select,
+            }]),
+            AgentObservation::Input(Vec::new()),
         ] {
             requests.push(Request::AgentReport(crate::AgentReport {
                 session: SessionId(1),

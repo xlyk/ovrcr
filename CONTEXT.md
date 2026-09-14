@@ -21,8 +21,16 @@ The Unread the Dashboard last showed.
 _Avoid_: a newer Unread as the review target
 
 **Input request**:
-An open request for a human answer from a visible provider dialog, identified by binding and request identity. While one is open the session's effective activity is WaitingInput; closing the last one restores the underlying activity.
+An open request for a human answer, identified by binding, namespace and request identity. A binding carries a bounded set of them, published whole; while any is open the session's effective activity is WaitingInput, and closing the last one restores the underlying activity.
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
+
+**Producer**:
+The admitted extension instance whose source sequence fences its events; retired by an observed shutdown or replaced by an admitted successor.
+_Avoid_: the conversation, the binding, the native process
+
+**Reporting generation**:
+The `generation` of a binding, bumped by every accepted Bind; a fresh one is admitted by the supervisor while the lease and session identity hold, and it starts with Unknown activity and no requests.
+_Avoid_: the reservation epoch, a restart
 
 **Active dashboard**:
 The server-side seat the one Dashboard connection holds: its identity, outbound queue, acknowledged view, and focused geometry.

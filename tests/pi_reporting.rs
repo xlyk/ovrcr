@@ -244,6 +244,22 @@ fn pi_and_omp_doctor_classify_versions_as_evidence_not_an_allowlist() {
         assert_eq!(report["capabilities"]["managed_launch"], true);
         assert_eq!(report["capabilities"]["reporting"].to_string(), reporting);
         assert_eq!(report["capabilities"]["metrics"], "absent");
+        // #95 split `input_requests` into the two surfaces it actually covers. Pi has no
+        // approval surface of its own beyond its prompts, and no question surface at all;
+        // Oh My Pi reports both, its questions from the ask tool's lifetime.
+        assert_eq!(report["capabilities"]["approvals"], "available");
+        assert_eq!(
+            report["capabilities"]["questions"],
+            if provider == "pi" {
+                "unavailable_no_provider_surface"
+            } else {
+                "available_tool_lifetime"
+            }
+        );
+        assert!(
+            report["capabilities"]["input_requests"].is_null(),
+            "the merged field is gone"
+        );
         assert_eq!(report["session_status"], "not_requested");
         assert!(
             report["tested_versions"]

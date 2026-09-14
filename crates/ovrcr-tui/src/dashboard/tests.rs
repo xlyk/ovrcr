@@ -1397,7 +1397,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                     activity_revision: 1,
                     metrics_revision: 1,
                     health_revision: 1,
-                    input_request: None,
+                    input_requests: Vec::new(),
                     input_revision: 0,
                 }),
                 agent_epoch: 1,

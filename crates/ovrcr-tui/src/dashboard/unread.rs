@@ -1,7 +1,8 @@
 //! Dashboard Unread identity: Presented, the last Ready identity per session, and the
-//! second, independent lane of the last open Input request per session. An Input request is
+//! second, independent lane of the open Input requests per session. An Input request is
 //! never Unread and never a review target; the lane exists only so a Ready and a request for
-//! the same cycle cannot suppress each other's alert.
+//! the same cycle cannot suppress each other's alert. The lane charges each request id
+//! once per binding, so several open at once alert once each and none of them twice.
 use ovrcr_protocol::{AgentBinding, InputRequest, ReadyObservation, SessionId, SessionSummary};
 use std::collections::{HashMap, HashSet};
 
@@ -9,7 +10,9 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Unread {
     presented: Option<(SessionId, ReadyObservation)>,
     observed: HashMap<SessionId, ReadyObservation>,
-    requests: HashMap<SessionId, (AgentBinding, InputRequest)>,
+    /// Per session, the binding and the request ids already delivered under it. A
+    /// rebinding resets the set: the same id under a new generation is a new request.
+    requests: HashMap<SessionId, (AgentBinding, HashSet<String>)>,
 }
 
 impl Unread {
@@ -25,23 +28,36 @@ impl Unread {
         new
     }
 
-    /// Records this session's open Input request. True when a request opened or was replaced.
-    pub(super) fn observe_request(&mut self, session: &SessionSummary) -> bool {
-        let Some(request) = super::ready::input_live(session) else {
-            return false;
-        };
+    /// Records this session's open Input requests and returns the ones seen for the first
+    /// time under the current binding. A closed and reopened id is new again; a
+    /// republication of the same set returns nothing.
+    pub(super) fn observe_request(&mut self, session: &SessionSummary) -> Vec<InputRequest> {
+        let live = super::ready::input_live(session);
+        if live.is_empty() {
+            // Nothing open: forget the delivered ids so a later reopening alerts again,
+            // and leave the entry only while a binding is worth remembering.
+            self.requests.remove(&session.id);
+            return Vec::new();
+        }
         let binding = &session
             .agent
             .as_ref()
-            .expect("input_live checked it")
+            .expect("input_live returns nothing without an agent")
             .binding;
-        let new = self
+        let (known, seen) = self
             .requests
-            .get(&session.id)
-            .is_none_or(|(previous, open)| previous != binding || open.id != request.id);
-        self.requests
-            .insert(session.id, (binding.clone(), request.clone()));
-        new
+            .entry(session.id)
+            .or_insert_with(|| (binding.clone(), HashSet::new()));
+        if known != binding {
+            *known = binding.clone();
+            seen.clear();
+        }
+        // Only the ids still open stay charged: an id that closed is forgotten here.
+        seen.retain(|id| live.iter().any(|request| &request.id == id));
+        live.iter()
+            .filter(|request| seen.insert(request.id.clone()))
+            .cloned()
+            .collect()
     }
 
     pub(super) fn retain(&mut self, existing: &HashSet<SessionId>) {
@@ -78,7 +94,7 @@ mod tests {
         }
     }
 
-    fn session(id: u64, open: Option<(&str, InputKind)>) -> SessionSummary {
+    fn session(id: u64, open: &[(&str, InputKind)]) -> SessionSummary {
         SessionSummary {
             id: SessionId(id),
             project: "p".into(),
@@ -107,61 +123,94 @@ mod tests {
                 activity_revision: 1,
                 metrics_revision: 0,
                 health_revision: 0,
-                input_request: open.map(|(id, kind)| InputRequest {
-                    id: id.into(),
-                    kind,
-                }),
+                input_requests: open
+                    .iter()
+                    .map(|(id, kind)| InputRequest {
+                        id: (*id).into(),
+                        kind: *kind,
+                    })
+                    .collect(),
                 input_revision: 2,
             }),
         }
     }
 
     #[test]
-    fn observe_request_is_true_only_for_a_newly_opened_or_replaced_identity() {
+    fn observe_request_returns_exactly_the_ids_seen_for_the_first_time() {
+        fn seen(unread: &mut Unread, open: &[(&str, InputKind)]) -> Vec<String> {
+            unread
+                .observe_request(&session(1, open))
+                .into_iter()
+                .map(|request| request.id)
+                .collect()
+        }
+        let a = ("approval:c1", InputKind::Approval);
+        let b = ("question:q1", InputKind::Select);
         let mut unread = Unread::default();
-        assert!(!unread.observe_request(&session(1, None)), "no request");
-        assert!(unread.observe_request(&session(1, Some(("p1", InputKind::Select)))));
-        assert!(
-            !unread.observe_request(&session(1, Some(("p1", InputKind::Select)))),
-            "the same identity is not new"
+        assert!(seen(&mut unread, &[]).is_empty(), "nothing open");
+        assert_eq!(seen(&mut unread, &[a]), ["approval:c1"]);
+        assert_eq!(
+            seen(&mut unread, &[a]),
+            Vec::<String>::new(),
+            "a republication of the same set is not new"
+        );
+        assert_eq!(
+            seen(&mut unread, &[a, b]),
+            ["question:q1"],
+            "only the request that joined the set is new"
+        );
+        assert_eq!(
+            seen(&mut unread, &[b]),
+            Vec::<String>::new(),
+            "closing one member does not re-announce the other"
         );
         assert!(
-            unread.observe_request(&session(1, Some(("p2", InputKind::Confirm)))),
-            "a replacement is new"
-        );
-        assert!(
-            !unread.observe_request(&session(1, None)),
+            seen(&mut unread, &[]).is_empty(),
             "a close is not an opening"
         );
-        let mut rebound = session(1, Some(("p2", InputKind::Confirm)));
+        assert_eq!(
+            seen(&mut unread, &[b]),
+            ["question:q1"],
+            "the same id after a close is a new request"
+        );
+        // The same mechanism makes a paused and recovered reporter unable to replay an
+        // alert: every recovery is a forced rebind, so the ids of the generation that
+        // paused are not the ids of the one that came back.
+        let mut rebound = session(1, &[b]);
         rebound.agent.as_mut().unwrap().binding.generation = 2;
-        assert!(
-            unread.observe_request(&rebound),
+        assert_eq!(
+            unread
+                .observe_request(&rebound)
+                .into_iter()
+                .map(|request| request.id)
+                .collect::<Vec<_>>(),
+            ["question:q1"],
             "the same id under a new binding is a different request"
         );
     }
 
     #[test]
     fn observe_request_requires_a_live_supported_session_and_retain_prunes_both_lanes() {
+        let open = [("approval:c1", InputKind::Approval)];
         let mut unread = Unread::default();
-        let mut claude = session(1, Some(("p1", InputKind::Select)));
+        let mut claude = session(1, &open);
         claude.agent.as_mut().unwrap().binding.provider = AgentProvider::Claude;
         assert!(
-            !unread.observe_request(&claude),
+            unread.observe_request(&claude).is_empty(),
             "Claude's waits carry no Input request lane"
         );
-        let mut exited = session(1, Some(("p1", InputKind::Select)));
+        let mut exited = session(1, &open);
         exited.phase = SessionPhase::Exited {
             code: Some(0),
             signal: None,
         };
-        assert!(!unread.observe_request(&exited));
-        let mut lost = session(1, Some(("p1", InputKind::Select)));
+        assert!(unread.observe_request(&exited).is_empty());
+        let mut lost = session(1, &open);
         lost.agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
-        assert!(!unread.observe_request(&lost));
+        assert!(unread.observe_request(&lost).is_empty());
 
-        assert!(unread.observe_request(&session(1, Some(("p1", InputKind::Select)))));
-        let mut ready = session(1, None);
+        assert_eq!(unread.observe_request(&session(1, &open)).len(), 1);
+        let mut ready = session(1, &[]);
         ready.unread = Some(ovrcr_protocol::ReadyObservation {
             binding: binding(AgentProvider::Pi),
             turn: Some("t".into()),

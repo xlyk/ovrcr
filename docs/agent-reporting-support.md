@@ -270,7 +270,27 @@ covered by `pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_
 and, for input requests, by
 `pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activity`, which
 drives real `ui_prompt_start`/`ui_prompt_end` callbacks through the shipped Dashboard.
-Carrying the input request on `AgentSnapshot` bumped `PROTOCOL_VERSION` to 9.
+Carrying the input request on `AgentSnapshot` bumped `PROTOCOL_VERSION` to 9; turning it
+into a bounded set for #95 bumped it to 10.
+
+Session changes and recovery (#91) add no wire change. Pi replaces the extension factory on
+a session replacement and on a reload, so a replacement is an observed shutdown followed by
+a new producer whose `session_start` carries `previous`: the session id parsed out of the
+previous session file's name, never the path and never anything inside it. Pi 0.85.1 names
+that file `<timestamp>_<session id>.jsonl` (`dist/core/session-manager.js`:
+`` `${fileTimestamp}_${this.sessionId}.jsonl` ``, the same shape for new and fork) while
+`getSessionId()` — what the extension binds — is the bare id, so only the trailing id
+travels and a name no bounded id can be read out of is no expectation at all. `session_tree` is
+reported as `cycle_invalidated` with Pi's own `isIdle()`; compaction and the `session_before_*`
+events are deliberately not subscribed to, so they cannot move the binding. The pause reasons
+(`source_gap`, `producer_replaced`, `source_overflow`, `transition_mismatch`) and the forced
+rebind that ends them are receiver-side; the extension's own recovery control is
+`pi.registerCommand("ovrcr-reattach")`. Shutdown and reload share one absolute helper-drain
+deadline: the queue is discarded and only the final frame is delivered. The automated proof
+is `pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_producer`,
+`pi_source_gap_pauses_then_recovers_at_the_next_boundary` and
+`pi_reattach_command_recovers_a_paused_reporter`, driving the real extension through the real
+CLI, PTY and receiver, with a dropped frame injected by `OVRCR_TEST_DROP_SEQUENCE`.
 
 Tested versions: 0.85.1 (opt-in installed-Pi test, 2026-09-13). Doctor vocabulary is defined
 in [pi-reporting-setup.md](pi-reporting-setup.md).
@@ -307,17 +327,76 @@ identity the receiver has already published.
 Ordinary handlers are awaited sequentially under a 30 s budget and shutdown handlers in
 parallel under a 2 s budget, both far above the transport's 900 ms per-event deadline.
 
-Approvals and questions are not observable: Oh My Pi exports no extension event for them
-(`tools/ask.ts` and `modes/controllers/extension-ui-controller.ts` own the native dialog).
-That gap is #95 and is reported by doctor as a capability gap; it does not disable response
-reporting.
+### Approvals and questions
+
+An earlier reading of this binary recorded approvals and questions as unobservable. That is
+wrong for approvals and was corrected on 2026-09-13 by reinspecting the installed 18.1.19
+binary: it emits `tool_approval_requested` with
+`{ sessionId, toolName, toolCallId, reason?, approvalMode }` and `tool_approval_resolved`
+with the same fields plus `approved`, both gated on
+`runner.hasHandlers("tool_approval_requested") || runner.hasHandlers("tool_approval_resolved")`,
+and both carrying `sessionId = n?.sessionManager?.getSessionId() ?? ""` — so the id can be
+empty and must be compared against the interactive root's rather than trusted. OVRCR reports
+only approvals whose session id matches the root's, which is what keeps in-process task and
+advisor children from opening or closing a root request.
+
+Questions genuinely have no dedicated export: a search of the binary finds no
+`question_opened` or `questionVisibility` surface. Decision 2026-09-13 (Kyle) was to take no
+upstream change and derive questions from the ask tool's own execution lifetime instead:
+`tool_execution_start` (`{ toolCallId, toolName, args, intent }`) and `tool_execution_end`
+(`{ toolCallId, toolName, result, isError }`) with `toolName === "ask"`. The binary itself
+reads the same signal for its own question reporting
+(`e.on("tool_execution_start", r => { if (r.toolName === "ask") … })`), which is the strongest
+available evidence that the tool name is stable.
+
+**The approximation and its known false positives.** A tool-lifetime request opens when the
+ask tool starts executing, which is a moment before its dialog is on screen, and it stays
+open for the whole execution. So it will report a wait that is not yet visible for that
+moment; it will report a wait for a question queued behind another dialog, which is
+arguably right but is not dialog visibility; and if an ask execution ends without ever
+drawing a dialog — a same-tick abort, or no interactive UI — the request opens and closes
+without anything having been on screen. Nothing here claims dialog-level visibility, doctor
+says `available_tool_lifetime`, and there is no version gate, because both events exist in
+every release that supports extensions and a probe would add a failure mode without adding
+information.
+
+That third case is visible to the user, not just to the snapshot. The open and the close are
+two separate publications with a helper round trip between them, and the Dashboard queues a
+background **OVRCR · input needed** alert when the open arrives and only cancels it when the
+close does. If the alert reaches the notification host in that window it has already been
+sent, and cancellation cannot recall it. So a question that was never drawn can still raise
+one background alert, and a user who walks over to the terminal will find nothing waiting.
+The same window exists for an approval resolved in the same tick as its request.
+
+Request identity is namespaced so the two surfaces cannot collide: `approval:<toolCallId>`
+and `question:<toolCallId>`, with Pi's `<instance>:p<n>` treated as the `prompt` namespace.
+Storage is bounded: at most 32 open requests per binding, ids unique, validated in
+`ProviderReport::validate`; a producer that would exceed the bound drops the new opening
+rather than disabling reporting. No frame carries the approval reason, the question text,
+the answer, or any tool argument or result.
+
+**Side effect of registering the approval handlers.** The binary's speculative-read gate
+refuses speculation while any tool lifecycle handler is registered — it returns
+`{ allowed: false, reason: "active extension lifecycle handler" }` when
+`hasHandlers("tool_call") || hasHandlers("tool_result") || hasHandlers("tool_approval_requested") || hasHandlers("tool_approval_resolved")`.
+A managed Oh My Pi launch therefore trades speculative read execution for approval reporting.
+
+Arbitrary third-party dialogs carry no guarantee: an extension that draws its own UI without
+going through tool approval or the ask tool reports nothing, and collaboration guests and the
+ACP route are outside the terminal UI and so silent by construction.
 
 The automated proof is `node --test tests/omp_reporting_extension.mjs` over the shared Node
 event host and the managed lifecycle test
 `omp_managed_extension_reports_observed_ready_continuations_switches_and_child_inertness`,
 which drives the real extension through the real CLI, PTY, private socket and receiver.
-The Dashboard slice is covered by `omp_ready_alerts_once_and_creates_unread`, and the launch
-shape and per-invocation cleanup by `omp_managed_launch_inserts_its_extension_and_removes_it`.
+The Dashboard slice is covered by `omp_ready_alerts_once_and_creates_unread` and, for input
+requests, by `omp_input_requests_wait_until_the_last_closes_and_alert_once_each`, which drives
+real approval and ask-tool callbacks through the shipped Dashboard: a denied approval, an
+approval opened during a question, a partial close that keeps the wait, a reused tool call id
+after its close, a foreign session id that reports nothing, a request over Ready, a switch
+with one open, and reporter loss with one open. The launch
+shape and per-invocation cleanup are covered by
+`omp_managed_launch_inserts_its_extension_and_removes_it`.
 Native acceptance against an installed Oh My Pi is tracked by #97. The opt-in
 `installed_omp_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
 and requires `OVRCR_TEST_OMP_EXECUTABLE` plus an isolated `HOME`; it never writes to the
