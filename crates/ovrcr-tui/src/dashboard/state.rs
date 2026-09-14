@@ -1125,11 +1125,12 @@ impl Dashboard {
         }
         match self.mode {
             InputMode::Browse => {
-                // Esc and Ctrl-g cancel a history request that has not opened yet;
-                // neither is a binding of its own.
-                if (is_browse_key(key) || key.code == KeyCode::Esc)
-                    && self.history_begin_request.is_some()
-                {
+                // Esc and Ctrl-g cancel a history request that has not opened
+                // yet; neither is a binding of its own. Ctrl reaches Browse only
+                // as Ctrl-t, so it blocks the Esc half.
+                let cancels_history = is_browse_key(key)
+                    || (key.code == KeyCode::Esc && !key.modifiers.contains(KeyModifiers::CONTROL));
+                if cancels_history && self.history_begin_request.is_some() {
                     if let Some(begin) = self.history_begin_request.as_mut() {
                         begin.cancelled = true;
                     }

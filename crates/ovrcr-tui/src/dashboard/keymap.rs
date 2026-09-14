@@ -9,8 +9,9 @@ use crate::task_tui::TasksView;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_protocol::SessionPhase;
 
-/// What a key does. Dispatch, the key popup and the palette run these directly;
-/// none of them synthesises a key event to reach the next consumer.
+/// What a key does. Dispatch, the key popup and the palette run these directly,
+/// without synthesising a key event to reach one another. `Capture` is the one
+/// exception, and says why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
     Palette,
@@ -39,7 +40,10 @@ pub(super) enum Action {
     Help,
     /// Open a key-popup group rather than run an action.
     Group(char),
-    /// Copy and History own their motion dispatcher; the table names the key it takes.
+    /// A Copy or History motion key. Those modes keep their own dispatcher, which
+    /// reads a key event rather than an action, so this is the one action that
+    /// rebuilds the event it names instead of calling a handler. Folding that
+    /// dispatcher into the table is the follow-up.
     Capture(KeyCode),
     /// Leave Copy or History for Browse.
     Browse,
@@ -69,6 +73,10 @@ pub(super) struct KeyBinding {
     pub action: Action,
     /// Ignore repeat and release, so a toggle fires once per press.
     pub press_only: bool,
+    /// Answer only to the unmodified key. `whichkey_key` claims the popup keys
+    /// before dispatch sees them and refuses any Ctrl, Alt or Super, so Browse's
+    /// modifier fold must not hand them a modified key either.
+    pub bare: bool,
     pub group: Option<GroupSlot>,
 }
 
@@ -92,6 +100,7 @@ pub(super) fn key_binding(
         reason: None,
         action,
         press_only: false,
+        bare: false,
         group: None,
     }
 }
@@ -140,6 +149,11 @@ impl KeyBinding {
 
     fn once(mut self) -> Self {
         self.press_only = true;
+        self
+    }
+
+    fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 
@@ -205,16 +219,18 @@ impl KeyBinding {
 impl Dashboard {
     /// The one binding the current input mode gives `key`.
     pub(super) fn key_binding_for(&self, key: KeyEvent) -> Option<KeyBinding> {
-        let key = if self.mode == InputMode::Browse {
-            browse_modifiers(key)
-        } else {
-            key
-        };
+        let browse = self.mode == InputMode::Browse;
         // ponytail: rebuilds the table per key; it is already rebuilt per draw.
         keymap(self)
             .into_iter()
             .flat_map(|group| group.keys)
-            .find(|binding| binding.matches(key))
+            .find(|binding| {
+                binding.matches(if browse && !binding.bare {
+                    browse_modifiers(key)
+                } else {
+                    key
+                })
+            })
     }
 
     /// Run a binding's action. The key popup and the palette reach the same
@@ -325,14 +341,16 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 "Show keys; the next key runs an action".into(),
                 Char(' '),
                 Action::Leader,
-            ),
+            )
+            .bare(),
             key_binding(
                 "?",
                 "Help",
                 "Browse available keys; Enter or click runs an action".into(),
                 Char('?'),
                 Action::Help,
-            ),
+            )
+            .bare(),
         ]
     };
     if matches!(dashboard.mode, InputMode::Copy | InputMode::History) {

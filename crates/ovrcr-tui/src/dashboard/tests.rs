@@ -2434,6 +2434,44 @@ fn browse_dispatch_keeps_its_own_modifier_rule() {
         );
     }
     assert!(dashboard.tasks.is_none());
+
+    // The popup claims Space and ? only unmodified, so a modified one runs
+    // nothing rather than opening the popup.
+    for code in [KeyCode::Char(' '), KeyCode::Char('?')] {
+        for modifiers in [
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
+        ] {
+            assert_eq!(
+                dashboard.key_action(KeyEvent::new(code, modifiers)),
+                DashboardAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert!(dashboard.whichkey.is_none(), "{code:?} {modifiers:?}");
+        }
+    }
+    assert_eq!(dashboard.key(KeyCode::Char(' ')), DashboardAction::Redraw);
+    assert!(
+        dashboard.whichkey.is_some(),
+        "the unmodified key still opens the popup"
+    );
+
+    // Ctrl blocks the Esc that cancels a history request, as it blocks every
+    // Browse key but Ctrl-t.
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::PageUp);
+    assert!(dashboard.history_begin_request.is_some());
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL)),
+        DashboardAction::None
+    );
+    assert!(
+        !dashboard.history_begin_request.as_ref().unwrap().cancelled,
+        "Ctrl-Esc must leave the pending request alone"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
+    assert!(dashboard.history_begin_request.as_ref().unwrap().cancelled);
 }
 
 #[test]
