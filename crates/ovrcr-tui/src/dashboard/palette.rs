@@ -1,6 +1,6 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
-use super::hints::{HintAction, KeyHint, key_hints};
 use super::input::is_browse_key;
+use super::keymap::{Action, KeyBinding, keymap};
 use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
 use super::state::find_session;
@@ -37,7 +37,7 @@ enum Command {
     RemoveWorkspace,
     RemoveProject,
     Switch(SessionId),
-    Hint(HintAction),
+    Hint(Action),
 }
 
 struct Entry {
@@ -526,19 +526,21 @@ impl Dashboard {
         }
     }
 
-    fn command_hint(&self, command: &Command) -> Option<KeyHint> {
+    /// The key binding a palette entry duplicates, so the list can print its key
+    /// and its reason instead of restating them.
+    fn command_hint(&self, command: &Command) -> Option<KeyBinding> {
         let action = match command {
-            Command::CreateTerminal => HintAction::Key(KeyCode::Char('n')),
-            Command::CreateWorkspace => HintAction::Key(KeyCode::Char('w')),
-            Command::RegisterProject => HintAction::Key(KeyCode::Char('a')),
-            Command::CloseTerminal(_) => HintAction::Key(KeyCode::Char('X')),
+            Command::CreateTerminal => Action::CreateTerminal,
+            Command::CreateWorkspace => Action::CreateWorkspace,
+            Command::RegisterProject => Action::RegisterProject,
+            Command::CloseTerminal(_) => Action::CloseTerminal,
             Command::Hint(action) => *action,
             _ => return None,
         };
-        key_hints(self)
+        keymap(self)
             .into_iter()
             .flat_map(|g| g.hints)
-            .find(|h| h.action == action)
+            .find(|binding| binding.action == action)
     }
 
     pub(super) fn palette_paste(&mut self, text: &str) -> DashboardAction {
@@ -595,7 +597,7 @@ impl Dashboard {
                 }
             }
         }
-        for hint in key_hints(self).into_iter().flat_map(|g| g.hints) {
+        for hint in keymap(self).into_iter().flat_map(|g| g.hints) {
             if matches!(hint.key, "n" | "w" | "a" | "X" | ":" | "Space") {
                 continue;
             }
@@ -998,11 +1000,14 @@ impl Dashboard {
                                 return self.request_selected();
                             }
                             Command::Hint(action) => {
-                                if self.command_hint(&entry.command).is_some_and(|h| h.enabled) {
+                                if self
+                                    .command_hint(&entry.command)
+                                    .is_some_and(|h| h.enabled())
+                                {
                                     if let Some(request_id) = palette.suggestions.inspect {
                                         self.ignored_responses.insert(request_id);
                                     }
-                                    return self.run_hint(action);
+                                    return self.run(action);
                                 }
                             }
                             command => palette.page = self.command_page(command),

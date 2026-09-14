@@ -346,8 +346,11 @@ Copy and History retain their direct movement/selection menus, including
 `Space v` to set an anchor. The title bar's Menu control also opens the menu
 from Terminal mode. Popup Back and Close controls support mouse navigation.
 
-Popup actions reuse the hint table's target descriptions and the existing action
-handlers. The palette and direct-key footer retain their original shortcuts.
+Popup actions come from the same key-binding table as the footer and the
+palette: the group's key, the target description, and the reason a dimmed row
+is unavailable are the table's, and choosing a row runs the same handler the
+bare key does. The palette and direct-key footer retain their original
+shortcuts.
 
 
 ## Command palette

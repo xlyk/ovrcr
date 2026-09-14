@@ -107,7 +107,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
         }],
     });
     dashboard.select_session(SessionId(12));
-    let groups = super::hints::key_hints(&dashboard);
+    let groups = super::keymap::keymap(&dashboard);
     let workspace = groups
         .iter()
         .flat_map(|g| &g.hints)
@@ -120,17 +120,17 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
     assert!(close.description.contains("auth-handoff"));
     assert!(close.description.contains("confirmation"));
     let resume = session.hints.iter().find(|h| h.key == "r").unwrap();
-    assert!(!resume.enabled);
+    assert!(!resume.enabled());
     assert!(resume.description.contains("not paused"));
     assert!(
         session
             .hints
             .iter()
-            .filter(|h| h.enabled)
+            .filter(|h| h.enabled())
             .all(|h| h.description.contains("agent (#12)"))
     );
     dashboard.panes[0].session = None;
-    let groups = super::hints::key_hints(&dashboard);
+    let groups = super::keymap::keymap(&dashboard);
     assert!(
         groups
             .iter()
@@ -138,7 +138,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             .unwrap()
             .hints
             .iter()
-            .all(|h| !h.enabled && h.description.contains("no session selected"))
+            .all(|h| !h.enabled() && h.description.contains("no session selected"))
     );
 }
 
@@ -1701,7 +1701,7 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
         cols: 120,
     });
     let names = |dashboard: &Dashboard| -> Vec<(String, String)> {
-        super::hints::key_hints(dashboard)
+        super::keymap::keymap(dashboard)
             .iter()
             .flat_map(|group| &group.hints)
             .map(|hint| (hint.key.to_string(), hint.name.to_string()))
@@ -1724,7 +1724,7 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
         cols: 120,
     });
     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
-    let hints = super::hints::key_hints(&dashboard);
+    let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
             .iter()
@@ -1732,7 +1732,7 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
             .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
     );
     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
-    let hints = super::hints::key_hints(&dashboard);
+    let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
             .iter()
