@@ -1,6 +1,6 @@
 //! Authenticated synchronous Codex hooks. No transcript or completion inference.
 use super::InvocationLease;
-use super::reporter::{self, Cycle, Reporter};
+use super::reporter::{self, Reporter};
 use ovrcr_protocol::{
     ActivitySample, AgentActivity, AgentObservation, AgentProvider, SampleQuality,
 };
@@ -72,7 +72,13 @@ pub fn supported_version(executable: &OsStr) -> bool {
     super::admission::probe_version(executable).as_deref() == Some(b"codex-cli 0.153.0\n")
 }
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
-    let unavailable = reporter::preflight(&lease, argv, eligible_argv).or_else(|| {
+    let unavailable = reporter::preflight(
+        lease.is_some(),
+        argv,
+        eligible_argv,
+        reporter::interactive(),
+    )
+    .or_else(|| {
         (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
     });
     let mut reporter = Reporter::new(AgentProvider::Codex, lease, None);
@@ -95,11 +101,8 @@ impl reporter::Frames for Hooks {
         native_root: bool,
         deadline: Instant,
     ) -> Vec<u8> {
-        if reporter.closed() {
-            return reporter::UNAVAILABLE.to_vec();
-        }
-        if !reporter::own_frame(input, native_root) {
-            return reporter::IGNORED.to_vec();
+        if let Some(answer) = reporter.own_frame(input, native_root) {
+            return answer;
         }
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(input) else {
             return reporter::IGNORED.to_vec();
@@ -153,18 +156,15 @@ impl reporter::Frames for Hooks {
         }
         let state = if event == "UserPromptSubmit" {
             // Deduplicate *before* any revisions, binding changes, or freshness updates.
-            match reporter.admit_cycle(&identity) {
-                Cycle::Known => return reporter::IGNORED.to_vec(),
-                Cycle::Exhausted => return reporter::UNAVAILABLE.to_vec(),
-                Cycle::Fresh => {}
+            if let Some(answer) = reporter.admit_cycle(&identity) {
+                return answer;
             }
             if self.active.is_some() {
                 reporter.disable();
                 return reporter::UNAVAILABLE.to_vec();
             }
-            if !reporter.bind(session, deadline, false) {
-                reporter.disable();
-                return reporter::UNAVAILABLE.to_vec();
+            if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                return unavailable;
             }
             self.active = Some(identity);
             AgentActivity::Busy
@@ -187,5 +187,170 @@ impl reporter::Frames for Hooks {
             }),
             deadline,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::reporter::Frames;
+    use crate::report::reporter::scripted::Supervisor;
+
+    fn start() -> (Hooks, Reporter, Supervisor) {
+        let (reporter, supervisor) = Supervisor::reporter(AgentProvider::Codex);
+        (Hooks { active: None }, reporter, supervisor)
+    }
+    fn deadline() -> Instant {
+        Instant::now() + std::time::Duration::from_secs(10)
+    }
+    fn hook(event: &str, session: &str, turn: &str) -> Vec<u8> {
+        serde_json::to_vec(
+            &serde_json::json!({"provider":"codex","origin":"codex-hook","payload":{
+                "hook_event_name":event,"session_id":session,"turn_id":turn
+            }}),
+        )
+        .unwrap()
+    }
+    fn drive(hooks: &mut Hooks, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
+        hooks.frame(reporter, input, true, deadline())
+    }
+    fn states(supervisor: Supervisor) -> Vec<(u64, AgentActivity, Option<String>, SampleQuality)> {
+        Supervisor::activity(&supervisor.observed())
+            .into_iter()
+            .map(|(generation, _, state, turn, quality)| (generation, state, turn, quality))
+            .collect()
+    }
+
+    #[test]
+    fn a_closed_turn_that_repeats_is_a_duplicate_and_publishes_nothing() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::IGNORED,
+            "the turn identity is already published; a repeat is not a new response"
+        );
+        assert!(hooks.active.is_none() && !reporter.closed());
+        // The pair is one identity: neither half alone matches another turn's.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1x")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            states(supervisor),
+            vec![
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("t1".into()),
+                    SampleQuality::Observed
+                ),
+                (
+                    1,
+                    AgentActivity::ResponseReady,
+                    Some("t1".into()),
+                    SampleQuality::Observed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_end_for_a_turn_this_receiver_published_ends_reporting() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1"));
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("SessionEnd", "root", "unseen")
+            ),
+            reporter::IGNORED
+        );
+        assert!(
+            !reporter.closed(),
+            "an end naming a turn this receiver never published is not this conversation's"
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("SessionEnd", "root", "t1")),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t2")
+            ),
+            reporter::UNAVAILABLE,
+            "a receiver that has ended reports nothing more"
+        );
+        assert_eq!(states(supervisor).len(), 2);
+    }
+
+    #[test]
+    fn a_frame_that_is_not_the_native_roots_is_never_this_receivers() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        assert_eq!(
+            hooks.frame(
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1"),
+                false,
+                deadline()
+            ),
+            reporter::IGNORED
+        );
+        assert!(hooks.active.is_none() && !reporter.closed());
+        // The same frame from the native root is this receiver's.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(states(supervisor).len(), 1);
+    }
+
+    #[test]
+    fn a_second_prompt_while_a_cycle_is_open_ends_reporting() {
+        // Codex reports one response cycle at a time; an overlap is ordering ambiguity.
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t2")
+            ),
+            reporter::UNAVAILABLE
+        );
+        assert!(reporter.closed());
+        assert_eq!(states(supervisor).len(), 1);
     }
 }

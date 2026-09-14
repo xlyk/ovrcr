@@ -17,9 +17,12 @@ pub fn receiver(
     argv: &mut Vec<OsString>,
 ) -> ovrcr_runtime::agent_runner::HookHandler {
     let reserved = lease.is_some();
-    let launch = if reporter::preflight(&lease, argv, |argv| {
-        eligible_argv(argv, ClaudeVersion::V2_1_268)
-    })
+    let launch = if reporter::preflight(
+        reserved,
+        argv,
+        |argv| eligible_argv(argv, ClaudeVersion::V2_1_268),
+        reporter::interactive(),
+    )
     .is_none()
         && let Some(version) = pinned_version(&argv[0]).supported()
     {
@@ -361,7 +364,7 @@ impl InitialSource {
 }
 
 /// Claude's hooks and statusline. The conversation this invocation certified, the turn
-/// identity its prompts establish, and the transcript reader are this adapter's; the
+/// identity its prompts establish, and the transcript reader are this receiver's; the
 /// binding, the revisions and the teardown are the reporter's.
 struct Hooks {
     expected: Option<String>,
@@ -808,13 +811,19 @@ mod tests {
                 reporter::IGNORED,
                 "a repeated announcement is not a second binding"
             );
-            let observed = supervisor.observed();
+            let binds: Vec<_> = supervisor
+                .observed()
+                .into_iter()
+                .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                .collect();
             assert_eq!(
-                observed
-                    .iter()
-                    .filter(|entry| matches!(entry, Observed::Bind { .. }))
-                    .count(),
-                1
+                binds,
+                vec![Observed::Bind {
+                    conversation: EXPECTED.to_owned(),
+                    generation: 1,
+                    expected: None,
+                }],
+                "an initial admission replaces no binding, and binds exactly once"
             );
         }
     }
@@ -824,28 +833,81 @@ mod tests {
         // The Bind and the receipt re-read that follows it are both withheld, so this
         // receiver answers unavailable and the announcement that repeats asks for the
         // original operation's receipt rather than binding a second generation.
-        let (mut reporter, supervisor) = Supervisor::scripted(
-            AgentProvider::Claude,
-            vec![Answer::Withhold, Answer::Withhold],
-        );
-        let mut receiver = hooks(InitialSource::Startup);
+        for (initial_source, source) in [
+            (InitialSource::Startup, "startup"),
+            (InitialSource::Resume, "resume"),
+        ] {
+            let (mut reporter, supervisor) =
+                Supervisor::scripted(AgentProvider::Claude, vec![Answer::Withhold]);
+            let mut receiver = hooks(initial_source);
+            assert_eq!(
+                receiver.frame(
+                    &mut reporter,
+                    &start(source),
+                    true,
+                    Instant::now() + Duration::from_millis(200)
+                ),
+                reporter::UNAVAILABLE,
+                "{source}"
+            );
+            assert!(!reporter.closed() && reporter.binding().is_none());
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &start(source)),
+                reporter::ACCEPTED,
+                "{source}"
+            );
+            assert_eq!(
+                reporter.binding().map(|binding| binding.generation),
+                Some(1)
+            );
+            let observed = supervisor.observed();
+            assert_eq!(
+                observed
+                    .iter()
+                    .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                    .count(),
+                1,
+                "the retry asked for a receipt, it never bound again"
+            );
+            assert!(
+                observed
+                    .iter()
+                    .any(|entry| matches!(entry, Observed::Status(_)))
+            );
+        }
+    }
+
+    #[test]
+    fn a_resume_recovers_only_on_an_announcement_that_names_its_transcript() {
+        // A resume is certified by the transcript the announcement names, and an
+        // outstanding bind receipt does not relax that: an announcement without one is a
+        // transition this invocation cannot vouch for, not the receipt it was waiting on.
+        let (mut reporter, supervisor) =
+            Supervisor::scripted(AgentProvider::Claude, vec![Answer::Withhold]);
+        let mut receiver = hooks(InitialSource::Resume);
         assert_eq!(
             receiver.frame(
                 &mut reporter,
-                &start("startup"),
+                &start("resume"),
                 true,
                 Instant::now() + Duration::from_millis(200)
             ),
             reporter::UNAVAILABLE
         );
-        assert!(!reporter.closed() && reporter.binding().is_none());
+        let transcriptless = envelope(serde_json::json!({
+            "hook_event_name":"SessionStart",
+            "source":"resume",
+            "session_id":EXPECTED,
+        }));
         assert_eq!(
-            drive(&mut receiver, &mut reporter, &start("startup")),
-            reporter::ACCEPTED
+            drive(&mut receiver, &mut reporter, &transcriptless),
+            reporter::IGNORED
         );
+        assert!(reporter.closed());
         assert_eq!(
-            reporter.binding().map(|binding| binding.generation),
-            Some(1)
+            drive(&mut receiver, &mut reporter, &start("resume")),
+            reporter::IGNORED,
+            "the announcement that would have recovered it arrives too late"
         );
         let observed = supervisor.observed();
         assert_eq!(
@@ -854,12 +916,21 @@ mod tests {
                 .filter(|entry| matches!(entry, Observed::Bind { .. }))
                 .count(),
             1,
-            "the retry asked for a receipt, it never bound again"
+            "a transition never binds"
         );
-        assert!(
-            observed
-                .iter()
-                .any(|entry| matches!(entry, Observed::Status(_)))
+        // Ending the invocation settles the outstanding receipt first, so the health that
+        // says so is published against the generation the supervisor really granted
+        // rather than dropped for want of a binding.
+        assert_eq!(
+            reporter.binding().map(|binding| binding.generation),
+            Some(1)
+        );
+        assert_eq!(
+            Supervisor::health(&observed),
+            vec![(
+                ReporterHealth::Unavailable,
+                "identity_transition_unavailable".to_owned()
+            )]
         );
     }
 

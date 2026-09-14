@@ -152,6 +152,9 @@ impl Default for ClaudeUsageAccumulator {
             records: BTreeMap::new(),
             sums: [0; 5],
             unknown: [0; 5],
+            // The same ceiling as a reporter's identity budget, deliberately, but a
+            // separate budget: this accumulator retains transcript records in the
+            // collector process, not the reporter's fences and response cycles.
             identity_limit: super::reporter::MAX_IDENTITIES,
             byte_limit: super::reporter::MAX_IDENTITY_BYTES,
             retained_bytes: 0,

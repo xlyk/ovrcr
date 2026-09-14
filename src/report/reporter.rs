@@ -1,11 +1,26 @@
-//! One reporter lifecycle behind every provider's frame adapter.
+//! One reporter lifecycle behind every provider's frame receiver.
 //!
 //! A `Reporter` owns everything about a managed invocation that is not provider
 //! vocabulary: the lease and the binding it carries, the bind receipts that survive a
 //! lost reply, the one revision set every observation is numbered from, the publish-or-
 //! disable decision, the Producer fence and the identity budget it is charged against,
-//! the pause a Reporting generation recovers from, and the teardown. An adapter decides
+//! the pause a Reporting generation recovers from, and the teardown. A receiver decides
 //! only what its provider's frames mean; it says so by handing observations here.
+//!
+//! What every provider shares is this mechanism, not a uniform use of it. Each receiver
+//! still chooses which parts it needs, and the choices differ:
+//!
+//! - Pi and Oh My Pi pause and recover; Codex and Claude never call [`Reporter::health`]
+//!   for a pause, and Codex has no health to report at all.
+//! - Claude settles its accounting at exit through [`Reporter::finalize`]; every other
+//!   receiver takes the default [`Frames::finish`], which disables and lets the closed
+//!   connection release the reservation.
+//! - A bind whose receipt is lost is remembered for the next attempt, but only Claude
+//!   ever makes one: the extension and Codex receivers have no second chance at a
+//!   boundary, so they call [`Reporter::bind_or_disable`] and end reporting instead.
+//! - Only the receivers that speak their own transport ask [`Reporter::own_frame`];
+//!   Claude's hook helper runs inside the native command, so its frames are certified by
+//!   conversation identity rather than by which process connected.
 use super::{HOOK_INPUT_LIMIT, InvocationLease};
 use ovrcr_protocol::{
     AgentBinding, AgentCommand, AgentObservation, AgentOperationResult, AgentProvider,
@@ -48,28 +63,36 @@ pub trait Frames: Send + 'static {
     }
 }
 
-/// The launch checks every provider makes before its receiver can report anything:
-/// a managed reservation, an eligible argv, and an interactive terminal. `Some` names
-/// the reason this launch cannot be reported on.
+/// The launch checks every provider makes before its receiver can report anything, in
+/// the order they are answered: a managed reservation, an eligible argv, and an
+/// interactive terminal. `Some` names the reason this launch cannot be reported on.
 pub fn preflight(
-    lease: &Option<InvocationLease>,
+    reserved: bool,
     argv: &[OsString],
     eligible: fn(&[OsString]) -> bool,
+    interactive: bool,
 ) -> Option<&'static str> {
-    if lease.is_none() {
+    if !reserved {
         Some("no managed reservation")
     } else if !eligible(argv) {
         Some("unsupported launch arguments")
-    } else if unsafe { libc::isatty(0) != 1 || libc::isatty(1) != 1 } {
+    } else if !interactive {
         Some("interactive terminal required")
     } else {
         None
     }
 }
 
-/// What the Producer fence makes of one frame, before any state changes.
+/// Whether both standard streams are a terminal, which is what a managed launch needs.
+pub fn interactive() -> bool {
+    unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 }
+}
+
+/// What the Producer fence makes of one frame, before any state changes. Named for the
+/// fence rather than for admission, which in this crate is Claude's launch gate and the
+/// `admission-*` reply bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Admission {
+pub enum Fence {
     Accepted,
     Ignored,
     /// A source sequence is missing: whatever it carried was never applied.
@@ -77,18 +100,6 @@ pub enum Admission {
     /// A new instance announced itself while the previous one was still live: the
     /// replacement is admitted, but what it replaced was never observed closing.
     LostClose,
-}
-
-/// What the identity budget makes of one response-cycle identity.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Cycle {
-    /// Already published by this reporter; nothing was charged.
-    Known,
-    /// Charged now.
-    Fresh,
-    /// The budget is exhausted, so a later frame for this identity could not be told
-    /// from a new one. The reporter has disabled itself.
-    Exhausted,
 }
 
 pub struct Reporter {
@@ -136,8 +147,8 @@ impl Reporter {
         }
     }
 
-    /// The receiver `src/cli/agent.rs` installs: this reporter's lifecycle in front of
-    /// one provider's frame adapter.
+    /// The `HookHandler` `src/cli/agent.rs` installs and `ovrcr_runtime::agent_runner`
+    /// drives: this lifecycle in front of one provider's `Frames`.
     pub fn handler(mut self, mut frames: impl Frames) -> HookHandler {
         Box::new(move |event| match event {
             HookEvent::Request {
@@ -194,9 +205,11 @@ impl Reporter {
     }
 
     /// Bind this reporter's reservation to `conversation`, answering whether it now holds
-    /// a binding for it. A lost receipt is re-read with the rest of the budget and, if
-    /// that fails too, remembered: the next call asks for that same operation's receipt.
-    /// A refusal closes the reporter — this reservation will not bind this conversation.
+    /// a binding for it. The whole callback budget goes to the command, because a caller
+    /// that uses this rather than [`Reporter::bind_or_disable`] will be asked again; a
+    /// lost receipt is remembered, and the next call asks for that same operation's
+    /// receipt instead of issuing a second Bind. A refusal closes the reporter — this
+    /// reservation will not bind this conversation.
     ///
     /// `force` asks for a fresh Reporting generation on the conversation already bound —
     /// the recovery a paused reporter makes at a trustworthy source boundary — instead of
@@ -205,6 +218,20 @@ impl Reporter {
     /// turn under a new generation as a new response. Producer fences are not identities
     /// of a generation and survive it.
     pub fn bind(&mut self, conversation: &str, deadline: Instant, force: bool) -> bool {
+        self.bind_within(conversation, deadline, force, false)
+    }
+
+    /// `reserve_receipt` keeps half the budget back so a lost reply can still be re-read
+    /// inside this same call. A receiver that will be asked again spends the whole budget
+    /// on the command instead and asks for the receipt next time; re-reading early only
+    /// when the command failed with time to spare costs it nothing.
+    fn bind_within(
+        &mut self,
+        conversation: &str,
+        deadline: Instant,
+        force: bool,
+        reserve_receipt: bool,
+    ) -> bool {
         if self.closed {
             return false;
         }
@@ -233,20 +260,29 @@ impl Reporter {
                     return false;
                 };
                 let expected_binding = lease.binding.clone();
-                // Half the remaining budget goes to the command, the rest to the receipt
-                // re-read that recovers a lost reply.
                 let remaining = deadline.saturating_duration_since(Instant::now());
+                let granted = if reserve_receipt {
+                    Instant::now() + remaining / 2
+                } else {
+                    deadline
+                };
                 let response = lease.command(
                     operation.clone(),
                     AgentCommand::Bind {
                         expected_binding,
                         conversation: conversation.to_owned(),
                     },
-                    Instant::now() + remaining / 2,
+                    granted,
                 );
                 let response = match response {
                     Ok(response) => Ok(response),
-                    Err(_) => lease.operation_status(operation.clone(), deadline),
+                    // Worth asking for the receipt only while budget remains. Spending
+                    // none of it on a re-read that cannot finish is what leaves the
+                    // operation to be asked about on the next attempt instead.
+                    Err(_) if Instant::now() < deadline => {
+                        lease.operation_status(operation.clone(), deadline)
+                    }
+                    Err(error) => Err(error),
                 };
                 (operation, response)
             }
@@ -255,13 +291,7 @@ impl Reporter {
             Ok(Response::AgentOperation(AgentOperationResult::Bound(binding)))
                 if binding.conversation == conversation && binding.provider == provider =>
             {
-                lease.binding = Some(binding);
-                self.revision = 0;
-                self.paused = None;
-                if force {
-                    self.cycles.clear();
-                    self.recharge();
-                }
+                self.bound(binding, force);
                 true
             }
             Ok(_) => {
@@ -299,6 +329,39 @@ impl Reporter {
             self.disable();
             UNAVAILABLE.to_vec()
         }
+    }
+
+    /// Bind, or end reporting. The extension and Codex receivers reach a binding only at
+    /// a source boundary and have no second chance at one, so a bind they cannot complete
+    /// disables them rather than leaving a receipt to ask about — and, for the same
+    /// reason, half the budget is kept back to re-read a lost reply inside this same
+    /// call. `Some` is the caller's early return. Claude admission does not use this: it
+    /// waits for the announcement to repeat and asks for the original receipt then.
+    pub fn bind_or_disable(
+        &mut self,
+        conversation: &str,
+        deadline: Instant,
+        force: bool,
+    ) -> Option<Vec<u8>> {
+        if self.bind_within(conversation, deadline, force, true) {
+            return None;
+        }
+        self.disable();
+        Some(UNAVAILABLE.to_vec())
+    }
+
+    /// The gate a receiver that speaks its own transport applies before reading a frame.
+    /// `Some` is the caller's early return: a reporter that has ended answers UNAVAILABLE,
+    /// and a frame that did not come from the native root, or is larger than one hook
+    /// input, is not this receiver's to read.
+    pub fn own_frame(&self, input: &[u8], native_root: bool) -> Option<Vec<u8>> {
+        if self.closed {
+            return Some(UNAVAILABLE.to_vec());
+        }
+        if !native_root || input.len() > HOOK_INPUT_LIMIT {
+            return Some(IGNORED.to_vec());
+        }
+        None
     }
 
     /// Publish this reporter's own health over the supervisor connection. `Some` is the
@@ -404,24 +467,20 @@ impl Reporter {
     /// this reporter has not seen — replacing a live Producer as an unobserved loss.
     /// Admitting an instance is the one answer that mutates: it installs the new Producer
     /// and retires the instance it replaced.
-    pub fn admit_producer(&mut self, instance: &str, sequence: u64, announces: bool) -> Admission {
+    pub fn admit_producer(&mut self, instance: &str, sequence: u64, announces: bool) -> Fence {
         if self.fences.contains(instance) {
-            return Admission::Ignored;
+            return Fence::Ignored;
         }
         match &mut self.producer {
             Some((current, last)) if current.as_str() == instance => {
                 // The hole is reported once: the sequence advances before the pause so the
                 // frames that follow it are ordinary frames of a paused reporter.
                 if sequence <= *last {
-                    return Admission::Ignored;
+                    return Fence::Ignored;
                 }
                 let gap = sequence > *last + 1;
                 *last = sequence;
-                if gap {
-                    Admission::Gap
-                } else {
-                    Admission::Accepted
-                }
+                if gap { Fence::Gap } else { Fence::Accepted }
             }
             live if announces => {
                 let replaced = live.take();
@@ -429,12 +488,12 @@ impl Reporter {
                 match replaced {
                     Some((old, _)) => {
                         self.fence(&old);
-                        Admission::LostClose
+                        Fence::LostClose
                     }
-                    None => Admission::Accepted,
+                    None => Fence::Accepted,
                 }
             }
-            _ => Admission::Ignored,
+            _ => Fence::Ignored,
         }
     }
 
@@ -445,18 +504,20 @@ impl Reporter {
         self.producer = None;
     }
 
-    /// Charge one response-cycle identity against the identity budget. A `Known`
-    /// identity is a duplicate and is answered before any capacity is considered, so a
-    /// repeat can never exhaust the budget.
-    pub fn admit_cycle(&mut self, identity: &str) -> Cycle {
+    /// Charge one response-cycle identity against the identity budget. `Some` is the
+    /// caller's early return: a `Known` identity is a duplicate and is IGNORED before any
+    /// capacity is considered, so a repeat can never exhaust the budget; an identity there
+    /// is no room to retain could not be told from a new one later, which is identity
+    /// ambiguity — the reporter disables itself and answers UNAVAILABLE.
+    pub fn admit_cycle(&mut self, identity: &str) -> Option<Vec<u8>> {
         if self.cycles.contains(identity) {
-            return Cycle::Known;
+            return Some(IGNORED.to_vec());
         }
         if !self.charge(identity) {
-            return Cycle::Exhausted;
+            return Some(UNAVAILABLE.to_vec());
         }
         self.cycles.insert(identity.to_owned());
-        Cycle::Fresh
+        None
     }
 
     /// Whether this reporter has published `identity` under the current generation.
@@ -498,6 +559,22 @@ impl Reporter {
             .sum();
     }
 
+    /// Install a Reporting generation this reporter just obtained a receipt for, however
+    /// it obtained it. Every generation starts its revision set over and ends the pause;
+    /// a forced one starts its response-cycle identities over too, because the server
+    /// reads the same turn under a new generation as a new response.
+    fn bound(&mut self, binding: AgentBinding, force: bool) {
+        if let Some(lease) = self.lease.as_mut() {
+            lease.binding = Some(binding);
+        }
+        self.revision = 0;
+        self.paused = None;
+        if force {
+            self.cycles.clear();
+            self.recharge();
+        }
+    }
+
     /// Re-read the receipt of a bind this reporter is still waiting on.
     fn settle(&mut self, deadline: Instant) -> bool {
         let Some(operation) = self.pending.take() else {
@@ -508,7 +585,7 @@ impl Reporter {
         };
         match lease.operation_status(operation, deadline) {
             Ok(Response::AgentOperation(AgentOperationResult::Bound(binding))) => {
-                lease.binding = Some(binding);
+                self.bound(binding, false);
                 true
             }
             _ => false,
@@ -528,11 +605,6 @@ impl Drop for Reporter {
     fn drop(&mut self) {
         self.remove_scratch();
     }
-}
-
-/// Whether a frame is this provider's own and came from the native root.
-pub fn own_frame(input: &[u8], native_root: bool) -> bool {
-    native_root && input.len() <= HOOK_INPUT_LIMIT
 }
 
 #[cfg(test)]

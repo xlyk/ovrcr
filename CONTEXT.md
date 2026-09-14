@@ -25,10 +25,7 @@ An open request for a human answer, identified by binding, namespace and request
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
 
 **Reporter**:
-The in-process owner of one managed invocation's reporting: the lease, the binding and
-Reporting generation that lease carries, the one revision set every observation is numbered
-from, the retained identities it fences, and the teardown. One per invocation; each
-provider's receiver only translates that provider's frames into observations it publishes.
+The in-process owner of one managed invocation's reporting: the lease, the binding and Reporting generation that lease carries, the one revision set every observation is numbered from, the retained identities it fences, and the teardown. One per invocation, shared by every provider; the provider's receiver translates that provider's frames into observations and chooses which of these the provider needs.
 _Avoid_: the provider's receiver, the extension Producer, the helper process
 
 **Producer**:

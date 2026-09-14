@@ -7,7 +7,7 @@
 //! vocabulary — the lease, the binding, the revisions, the fences, the pause — belongs to
 //! the [`Reporter`](super::reporter::Reporter) each call is handed.
 use super::InvocationLease;
-use super::reporter::{self, Admission, Cycle, Reporter};
+use super::reporter::{self, Fence, Reporter};
 use ovrcr_protocol::{
     ActivitySample, AgentActivity, AgentObservation, AgentProvider, InputKind, InputRequest,
     MAX_INPUT_REQUESTS, SampleQuality, validate_agent_id,
@@ -80,17 +80,22 @@ pub fn receiver(
     argv: &mut Vec<OsString>,
 ) -> HookHandler {
     let mut scratch = None;
-    let unavailable = reporter::preflight(&lease, argv, harness.eligible_argv)
-        .map(str::to_owned)
-        .or_else(|| match materialize_extension(harness) {
-            Ok((dir, path)) => {
-                scratch = Some(dir);
-                argv.insert(1, "-e".into());
-                argv.insert(2, path.into_os_string());
-                None
-            }
-            Err(error) => Some(format!("extension not materialized: {error}")),
-        });
+    let unavailable = reporter::preflight(
+        lease.is_some(),
+        argv,
+        harness.eligible_argv,
+        reporter::interactive(),
+    )
+    .map(str::to_owned)
+    .or_else(|| match materialize_extension(harness) {
+        Ok((dir, path)) => {
+            scratch = Some(dir);
+            argv.insert(1, "-e".into());
+            argv.insert(2, path.into_os_string());
+            None
+        }
+        Err(error) => Some(format!("extension not materialized: {error}")),
+    });
     let mut reporter = Reporter::new(harness.provider, lease, scratch);
     if let Some(reason) = unavailable {
         reporter.unavailable(harness.display, &reason);
@@ -103,7 +108,7 @@ pub fn receiver(
 }
 
 /// One extension's frames. Only the response cycle they open and the Input requests they
-/// leave on screen are this adapter's to remember.
+/// leave on screen are this receiver's to remember.
 struct Events {
     harness: &'static Harness,
     /// The open response cycle: the harness run counter and the identity published as `turn`.
@@ -123,11 +128,8 @@ impl reporter::Frames for Events {
         native_root: bool,
         deadline: Instant,
     ) -> Vec<u8> {
-        if reporter.closed() {
-            return reporter::UNAVAILABLE.to_vec();
-        }
-        if !reporter::own_frame(input, native_root) {
-            return reporter::IGNORED.to_vec();
+        if let Some(answer) = reporter.own_frame(input, native_root) {
+            return answer;
         }
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(input) else {
             return reporter::IGNORED.to_vec();
@@ -153,8 +155,8 @@ impl reporter::Frames for Events {
         };
         // Producer fencing: a new instance is admitted only by its session_start; a stale,
         // replayed, retired or foreign sequence never mutates state, freshness, or Unread.
-        let admission = reporter.admit_producer(instance, sequence, event == "session_start");
-        if admission == Admission::Ignored {
+        let fence = reporter.admit_producer(instance, sequence, event == "session_start");
+        if fence == Fence::Ignored {
             return reporter::IGNORED.to_vec();
         }
         // The reattach command is a recovery whatever this receiver's health was: it
@@ -173,17 +175,16 @@ impl reporter::Frames for Events {
             // One forced rebind of the conversation this boundary names: the supervisor
             // admits a fresh reporting generation while the lease and the session identity
             // hold, and it starts blank — no cycle, no requests, Unread untouched.
-            if !reporter.bind(session, deadline, true) {
-                reporter.disable();
-                return reporter::UNAVAILABLE.to_vec();
+            if let Some(unavailable) = reporter.bind_or_disable(session, deadline, true) {
+                return unavailable;
             }
             // A fresh generation's snapshot is blank at the server, so the local set goes
             // with it: a request the paused or reattached producer left open is no longer
             // published.
             self.open_requests.clear();
-        } else if admission == Admission::Gap {
+        } else if fence == Fence::Gap {
             return self.pause(reporter, "source_gap", deadline);
-        } else if admission == Admission::LostClose {
+        } else if fence == Fence::LostClose {
             return self.pause(reporter, "producer_replaced", deadline);
         } else if event == "session_start"
             && transition_mismatch(payload["previous"].as_str(), reporter.binding())
@@ -205,9 +206,8 @@ impl reporter::Frames for Events {
                 if let Some(closed) = self.retire_requests(reporter, deadline) {
                     return closed;
                 }
-                if !reporter.bind(session, deadline, false) {
-                    reporter.disable();
-                    return reporter::UNAVAILABLE.to_vec();
+                if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                    return unavailable;
                 }
                 // A reattach reports what the harness's own API says about the session: a
                 // session that is not idle is doing something this reporter did not see, and
@@ -233,14 +233,11 @@ impl reporter::Frames for Events {
                 // A different run while a cycle is open replaces it and publishes the new
                 // identity. Permanent disablement is reserved for unresolvable identity or
                 // ordering ambiguity (#88); recovering a lost close is #91's job.
-                match reporter.admit_cycle(&turn) {
-                    Cycle::Known => return reporter::IGNORED.to_vec(),
-                    Cycle::Exhausted => return reporter::UNAVAILABLE.to_vec(),
-                    Cycle::Fresh => {}
+                if let Some(answer) = reporter.admit_cycle(&turn) {
+                    return answer;
                 }
-                if !reporter.bind(session, deadline, false) {
-                    reporter.disable();
-                    return reporter::UNAVAILABLE.to_vec();
+                if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                    return unavailable;
                 }
                 self.current = Some((run, turn.clone()));
                 (AgentActivity::Busy, SampleQuality::Observed, Some(turn))
@@ -1368,8 +1365,9 @@ mod tests {
                 "{name} after the recovery"
             );
         }
+        let observed = supervisor.observed();
         assert_eq!(
-            Supervisor::activity(&supervisor.observed())
+            Supervisor::activity(&observed)
                 .into_iter()
                 .map(|(generation, revision, state, turn, _)| (generation, revision, state, turn))
                 .collect::<Vec<_>>(),
@@ -1378,6 +1376,31 @@ mod tests {
                 (1, 2, AgentActivity::Busy, Some("a:1".into())),
                 (2, 1, AgentActivity::Busy, Some("a:1".into())),
                 (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
+        // The recovery names the binding it is replacing, so a generation the supervisor
+        // granted to someone else is never overwritten by a reporter that never saw it.
+        assert_eq!(
+            observed
+                .iter()
+                .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                .collect::<Vec<_>>(),
+            vec![
+                &Observed::Bind {
+                    conversation: "sess-a".to_owned(),
+                    generation: 1,
+                    expected: None,
+                },
+                &Observed::Bind {
+                    conversation: "sess-a".to_owned(),
+                    generation: 2,
+                    expected: Some(ovrcr_protocol::AgentBinding {
+                        provider: AgentProvider::Pi,
+                        invocation: "inv".into(),
+                        conversation: "sess-a".into(),
+                        generation: 1,
+                    }),
+                },
             ]
         );
     }

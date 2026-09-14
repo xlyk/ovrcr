@@ -23,24 +23,24 @@ fn unbound() -> Reporter {
 
 #[test]
 fn preflight_names_the_first_reason_a_launch_cannot_be_reported_on() {
+    // The terminal is a fact the caller supplies, so the order these are answered in is
+    // the same whether or not the test binary itself has one.
     let argv = vec![OsString::from("pi")];
     assert_eq!(
-        preflight(&None, &argv, |_| true),
+        preflight(false, &argv, |_| false, false),
         Some("no managed reservation"),
         "a reservation is checked before anything about the launch"
     );
-    let (reporter, supervisor) = Supervisor::reporter(AgentProvider::Pi);
-    let lease = &reporter.lease;
     assert_eq!(
-        preflight(lease, &argv, |_| false),
-        Some("unsupported launch arguments")
+        preflight(true, &argv, |_| false, false),
+        Some("unsupported launch arguments"),
+        "an ineligible launch is named before the terminal it would have needed"
     );
-    // An interactive terminal is the last check, and the test harness has none.
     assert_eq!(
-        preflight(lease, &argv, |_| true),
+        preflight(true, &argv, |_| true, false),
         Some("interactive terminal required")
     );
-    drop(supervisor);
+    assert_eq!(preflight(true, &argv, |_| true, true), None);
 }
 
 #[test]
@@ -48,45 +48,45 @@ fn admit_fences_gaps_retired_producers_and_an_unobserved_replacement() {
     let mut reporter = unbound();
     assert_eq!(
         reporter.admit_producer("a", 1, false),
-        Admission::Ignored,
+        Fence::Ignored,
         "only a frame that announces an instance admits an unknown one"
     );
-    assert_eq!(reporter.admit_producer("a", 5, true), Admission::Accepted);
-    assert_eq!(reporter.admit_producer("a", 5, false), Admission::Ignored);
-    assert_eq!(reporter.admit_producer("a", 4, false), Admission::Ignored);
+    assert_eq!(reporter.admit_producer("a", 5, true), Fence::Accepted);
+    assert_eq!(reporter.admit_producer("a", 5, false), Fence::Ignored);
+    assert_eq!(reporter.admit_producer("a", 4, false), Fence::Ignored);
     assert_eq!(
         reporter.admit_producer("a", 7, false),
-        Admission::Gap,
+        Fence::Gap,
         "a missing source sequence is a gap, not an acceptance"
     );
     assert_eq!(
         reporter.admit_producer("a", 8, false),
-        Admission::Accepted,
+        Fence::Accepted,
         "the gap advanced the sequence so the same hole is reported once"
     );
     // An unobserved factory replacement: a new instance announces itself while the
     // first is still live. The old producer retires and the new one is admitted.
-    assert_eq!(reporter.admit_producer("b", 1, true), Admission::LostClose);
+    assert_eq!(reporter.admit_producer("b", 1, true), Fence::LostClose);
     // A -> B -> A: every delayed frame from the retired first A is ignored, however
     // high its sequence, and it can never be re-admitted by its own announcement.
-    assert_eq!(reporter.admit_producer("a", 99, true), Admission::Ignored);
-    assert_eq!(reporter.admit_producer("a", 99, false), Admission::Ignored);
-    assert_eq!(reporter.admit_producer("b", 2, false), Admission::Accepted);
+    assert_eq!(reporter.admit_producer("a", 99, true), Fence::Ignored);
+    assert_eq!(reporter.admit_producer("a", 99, false), Fence::Ignored);
+    assert_eq!(reporter.admit_producer("b", 2, false), Fence::Accepted);
 }
 
 #[test]
 fn a_retired_producer_leaves_no_producer_behind_and_cannot_return() {
     let mut reporter = unbound();
-    assert_eq!(reporter.admit_producer("a", 1, true), Admission::Accepted);
+    assert_eq!(reporter.admit_producer("a", 1, true), Fence::Accepted);
     reporter.retire("a");
     assert_eq!(
         reporter.admit_producer("a", 2, true),
-        Admission::Ignored,
+        Fence::Ignored,
         "an observed shutdown retires the instance for good"
     );
     assert_eq!(
         reporter.admit_producer("b", 1, true),
-        Admission::Accepted,
+        Fence::Accepted,
         "a successor is admitted without being counted as an unobserved loss"
     );
     assert!(!reporter.closed());
@@ -95,26 +95,32 @@ fn a_retired_producer_leaves_no_producer_behind_and_cannot_return() {
 #[test]
 fn the_identity_budget_answers_duplicates_before_capacity() {
     let mut reporter = unbound();
-    assert_eq!(reporter.admit_cycle("a:1"), Cycle::Fresh);
+    assert_eq!(
+        reporter.admit_cycle("a:1"),
+        None,
+        "a fresh identity is charged"
+    );
     assert!(reporter.published("a:1"));
-    assert_eq!(reporter.admit_cycle("a:1"), Cycle::Known);
+    assert_eq!(reporter.admit_cycle("a:1"), Some(IGNORED.to_vec()));
     assert!(!reporter.published("a:2"));
 
     // A duplicate is answered with no capacity left at all, so a repeat can never
     // exhaust the budget or disable a healthy reporter.
     let mut reporter = unbound();
-    assert_eq!(reporter.admit_cycle("a:1"), Cycle::Fresh);
+    assert_eq!(reporter.admit_cycle("a:1"), None);
     reporter.charged = MAX_IDENTITY_BYTES;
-    assert_eq!(reporter.admit_cycle("a:1"), Cycle::Known);
+    assert_eq!(reporter.admit_cycle("a:1"), Some(IGNORED.to_vec()));
     assert!(!reporter.closed());
-    assert_eq!(reporter.admit_cycle("a:2"), Cycle::Exhausted);
-    assert!(
-        reporter.closed(),
+    let retained = reporter.cycles.clone();
+    assert_eq!(
+        reporter.admit_cycle("a:2"),
+        Some(UNAVAILABLE.to_vec()),
         "an identity that cannot be retained is identity ambiguity"
     );
-    assert!(
-        !reporter.published("a:2"),
-        "nothing was charged or retained"
+    assert!(reporter.closed());
+    assert_eq!(
+        reporter.cycles, retained,
+        "exhaustion disables instead of evicting an identity it already published"
     );
 }
 
@@ -122,16 +128,21 @@ fn the_identity_budget_answers_duplicates_before_capacity() {
 fn the_identity_budget_counts_fences_and_cycles_against_one_ceiling() {
     let mut reporter = unbound();
     for index in 0..MAX_IDENTITIES - 1 {
-        assert_eq!(reporter.admit_cycle(&index.to_string()), Cycle::Fresh);
+        assert_eq!(reporter.admit_cycle(&index.to_string()), None);
     }
     reporter.admit_producer("p", 1, true);
     reporter.retire("p");
+    let retained = reporter.cycles.clone();
     assert_eq!(
         reporter.admit_cycle("one-too-many"),
-        Cycle::Exhausted,
+        Some(UNAVAILABLE.to_vec()),
         "the fence took the last slot the cycles had left"
     );
     assert!(reporter.closed());
+    assert_eq!(
+        reporter.cycles, retained,
+        "nothing was evicted to make room"
+    );
 
     // The byte ceiling is reached by actual retained string sizes, independently
     // calculated rather than by setting the counter to its limit.
@@ -140,10 +151,12 @@ fn the_identity_budget_counts_fences_and_cycles_against_one_ceiling() {
     loop {
         let identity = format!("{index:0256}");
         if reporter.charged + identity.len() + std::mem::size_of::<String>() > MAX_IDENTITY_BYTES {
-            assert_eq!(reporter.admit_cycle(&identity), Cycle::Exhausted);
+            let retained = reporter.cycles.clone();
+            assert_eq!(reporter.admit_cycle(&identity), Some(UNAVAILABLE.to_vec()));
+            assert_eq!(reporter.cycles, retained);
             break;
         }
-        assert_eq!(reporter.admit_cycle(&identity), Cycle::Fresh);
+        assert_eq!(reporter.admit_cycle(&identity), None);
         index += 1;
     }
     assert!(reporter.charged <= MAX_IDENTITY_BYTES);
@@ -193,14 +206,14 @@ fn a_bind_resets_the_revision_set_and_a_forced_bind_recovers_the_pause() {
         reporter.bind("sess-a", deadline(), false),
         "a bind to the conversation already bound is already done"
     );
-    assert_eq!(reporter.admit_cycle("a:1"), Cycle::Fresh);
+    assert_eq!(reporter.admit_cycle("a:1"), None);
     assert!(
         reporter.bind("sess-b", deadline(), false),
         "a conversation switch is a fresh generation"
     );
     assert_eq!(
         reporter.admit_cycle("a:1"),
-        Cycle::Known,
+        Some(IGNORED.to_vec()),
         "a switch does not restart the producer's own cycle counter"
     );
     assert_eq!(reporter.publish(busy("b:1"), deadline()), ACCEPTED);
@@ -210,7 +223,7 @@ fn a_bind_resets_the_revision_set_and_a_forced_bind_recovers_the_pause() {
     assert!(!reporter.paused(), "a forced bind ends the pause");
     assert_eq!(
         reporter.admit_cycle("a:1"),
-        Cycle::Fresh,
+        None,
         "a fresh generation reads the same turn as a new response"
     );
     assert_eq!(reporter.publish(busy("a:1"), deadline()), ACCEPTED);
@@ -236,16 +249,30 @@ fn a_bind_resets_the_revision_set_and_a_forced_bind_recovers_the_pause() {
     );
 }
 
+fn binds(observed: &[Observed]) -> usize {
+    observed
+        .iter()
+        .filter(|entry| matches!(entry, Observed::Bind { .. }))
+        .count()
+}
+fn statuses(observed: &[Observed]) -> usize {
+    observed
+        .iter()
+        .filter(|entry| matches!(entry, Observed::Status(_)))
+        .count()
+}
+
 #[test]
-fn a_lost_bind_receipt_is_re_read_and_the_bind_is_never_issued_twice() {
-    // The Bind and the in-call receipt re-read that follows it are both withheld, so
-    // the operation is remembered and the next attempt asks for that same receipt.
-    let (mut reporter, supervisor) = Supervisor::scripted(
-        AgentProvider::Claude,
-        vec![Answer::Withhold, Answer::Withhold],
-    );
-    let short = Instant::now() + Duration::from_millis(200);
-    assert!(!reporter.bind("expected", short, false));
+fn a_lost_bind_receipt_is_remembered_and_the_bind_is_never_issued_twice() {
+    // `bind` spends the whole budget on the command, because its caller will be asked
+    // again; the withheld reply leaves the operation to ask about next time.
+    let (mut reporter, supervisor) =
+        Supervisor::scripted(AgentProvider::Claude, vec![Answer::Withhold]);
+    assert!(!reporter.bind(
+        "expected",
+        Instant::now() + Duration::from_millis(200),
+        false
+    ));
     assert!(
         !reporter.closed(),
         "a lost receipt is not a refusal: the reporter stays open to ask again"
@@ -257,24 +284,42 @@ fn a_lost_bind_receipt_is_re_read_and_the_bind_is_never_issued_twice() {
         "the recovered receipt is the generation the first Bind created"
     );
     let observed = supervisor.observed();
-    let binds: Vec<_> = observed
-        .iter()
-        .filter(|entry| matches!(entry, Observed::Bind { .. }))
-        .collect();
     assert_eq!(
-        binds.len(),
+        binds(&observed),
         1,
         "a second Bind would claim an unseen generation"
     );
-    let statuses: Vec<_> = observed
-        .iter()
-        .filter(|entry| matches!(entry, Observed::Status(_)))
-        .collect();
     assert_eq!(
-        statuses.len(),
+        statuses(&observed),
         1,
         "the retry asked for a receipt, not a bind"
     );
+}
+
+#[test]
+fn a_receiver_with_no_second_chance_re_reads_the_lost_receipt_in_the_same_call() {
+    // `bind_or_disable` keeps half the budget back, so a boundary that gets one attempt
+    // still recovers a reply lost in transit without waiting for a later callback.
+    let (mut reporter, supervisor) =
+        Supervisor::scripted(AgentProvider::Pi, vec![Answer::Withhold]);
+    assert_eq!(reporter.bind_or_disable("sess-a", deadline(), false), None);
+    assert_eq!(
+        reporter.binding().map(|binding| binding.generation),
+        Some(1)
+    );
+    let observed = supervisor.observed();
+    assert_eq!(binds(&observed), 1);
+    assert_eq!(statuses(&observed), 1);
+
+    // When the receipt cannot be read either, there is no later attempt to leave it to.
+    let (mut reporter, supervisor) =
+        Supervisor::scripted(AgentProvider::Pi, vec![Answer::Withhold, Answer::Withhold]);
+    assert_eq!(
+        reporter.bind_or_disable("sess-a", Instant::now() + Duration::from_millis(200), false),
+        Some(UNAVAILABLE.to_vec())
+    );
+    assert!(reporter.closed() && reporter.binding().is_none());
+    assert_eq!(binds(&supervisor.observed()), 1);
 }
 
 #[test]
