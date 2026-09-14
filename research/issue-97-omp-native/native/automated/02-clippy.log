@@ -1,0 +1,8 @@
+$ cargo clippy --workspace --all-targets --all-features -- -D warnings
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/crates/ovrcr-protocol)
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/crates/ovrcr-terminal)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/crates/ovrcr-runtime)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/crates/ovrcr-tui)
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.78s
+exit=0

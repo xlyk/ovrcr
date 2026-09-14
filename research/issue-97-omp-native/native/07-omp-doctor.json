@@ -1,0 +1,37 @@
+# O1: agent doctor omp --json --session 11
+2026-09-14T08:26:22Z
+{
+  "binding": {
+    "generation": 1,
+    "provider": "Omp"
+  },
+  "capabilities": {
+    "approvals": "available",
+    "managed_launch": true,
+    "metrics": "absent",
+    "questions": "available_tool_lifetime",
+    "recovery": "available",
+    "reporting": "available"
+  },
+  "executable": "omp",
+  "known_incompatibilities": [],
+  "lifecycle": {
+    "activity": "Idle",
+    "delivery": "observed",
+    "extension": "loaded_and_bound",
+    "health": "Connected",
+    "input_requests": [],
+    "unread": false,
+    "work_seen": false
+  },
+  "probe_status": "probed",
+  "provider": "omp",
+  "remediation": [],
+  "session_status": "bound",
+  "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+  "tested_versions": [
+    "18.1.19"
+  ],
+  "version": "18.1.19",
+  "version_status": "tested"
+}

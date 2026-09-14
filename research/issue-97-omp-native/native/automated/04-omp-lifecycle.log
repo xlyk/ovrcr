@@ -1,0 +1,71 @@
+$ cargo test -p ovrcr --test server_lifecycle omp
+   Compiling ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.18s
+     Running tests/server_lifecycle.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/server_lifecycle-12b32790fbf296fb)
+
+running 13 tests
+test installed_omp_managed_launch_binds_the_real_session_and_stays_idle ... ignored, requires OVRCR_TEST_OMP_EXECUTABLE (installed omp) and isolated HOME
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp4wAMpF/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6TAXeo/repo/.git/
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmplQYjXM/repo/.git/
+[main (root-commit) 9edbfb7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9edbfb7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[main (root-commit) 9edbfb7] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test claude_metrics_clear_freezes_components_and_prevents_reader_reopening ... ok
+test private_claude_activity_tracks_only_current_root_prompt_observations ... ok
+test omp_input_requests_wait_until_the_last_closes_and_alert_once_each ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp6MOFbB/repo/.git/
+[main (root-commit) 9efe2fc] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_managed_extension_reports_observed_ready_continuations_switches_and_child_inertness ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpfOnONB/repo/.git/
+[main (root-commit) ff6da1f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpKXjDPc/repo/.git/
+[main (root-commit) 7476ed0] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test concurrent_terminal_sends_are_serialized_as_complete_pastes ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpMRv4zd/repo/.git/
+[main (root-commit) e0145ef] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_managed_launch_inserts_its_extension_and_removes_it ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7IQczQ/repo/.git/
+[main (root-commit) 9771f04] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_source_gap_pauses_then_recovers_at_the_next_boundary ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp39V5vT/repo/.git/
+[main (root-commit) cad13b5] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_managed_completion_reaches_host_once_and_respects_visibility ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpVIYfdg/repo/.git/
+[main (root-commit) 69caf82] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_reattach_recovers_a_paused_reporter_during_an_input_wait ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmp7SKBCE/repo/.git/
+[main (root-commit) e5909d1] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_visible ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmphZDpRm/repo/.git/
+[main (root-commit) e0debec] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test omp_ready_alerts_once_and_creates_unread ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 99 filtered out; finished in 15.17s
+
+exit=0

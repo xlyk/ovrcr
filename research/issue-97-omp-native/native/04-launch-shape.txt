@@ -1,0 +1,14 @@
+# 04-launch-shape: HOME and fixture paths seen from inside an OVRCR terminal (session 2)
+2026-09-14T08:24:37Z
+{"cols":126,"id":2,"rows":66,"text":"auth-handoff › printf \"HOME=%s\\n\" \"$HOME\"; /bin/ls -a \"$HOME\"; printf \"CFG=%s SOCK=%s\\n\" \"$OVRCR_CONFIG\" \"$OVRCR_SOCKET\"\nHOME=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.AlQ1oA/home\n.       ..      .omp\nCFG=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-qZCSb0/config.toml SOCK=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-qZCSb0/server.sock\nauth-handoff › "}
+
+{"cols":126,"id":2,"rows":66,"text":"auth-handoff › printf \"HOME=%s\\n\" \"$HOME\"; /bin/ls -a \"$HOME\"; printf \"CFG=%s SOCK=%s\\n\" \"$OVRCR_CONFIG\" \"$OVRCR_SOCKET\"\nHOME=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.AlQ1oA/home\n.       ..      .omp\nCFG=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-qZCSb0/config.toml SOCK=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-qZCSb0/server.sock\nauth-handoff › ps -o pid,pgid,ppid,command -p 43734\n  PID  PGID  PPID COMMAND\n43734 43731     1 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui\nauth-handoff › "}
+# O1 launch shape
+2026-09-14T08:26:30Z
+  PID  PGID  PPID COMMAND
+53276 53276 43759 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run omp -- /Users/xlyk/.local/bin/omp
+
+53276 53276 43759 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run omp -- /Users/xlyk/.local/bin/omp
+53324 53324 53276 /Users/xlyk/.local/bin/omp -e /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-cbaef9910763af4eb97c633dcfb0d485f3db27421821cfab74631ebff9871a37/ovrcr-omp-reporting.mjs
+
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-cbaef9910763af4eb97c633dcfb0d485f3db27421821cfab74631ebff9871a37

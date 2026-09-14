@@ -1,0 +1,55 @@
+# 99-untouched: paths under ~/.pi and ~/.omp newer than /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.AlQ1oA/marker-before (created before any copy)
+2026-09-14T09:05:33Z
+# find ~/.pi -newer marker-before
+/Users/xlyk/.pi/agent
+# exit=0
+# find ~/.omp -newer marker-before
+/Users/xlyk/.omp/logs
+/Users/xlyk/.omp/logs/omp.2026-09-14.33897.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.55087.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.91758.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.55384.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.68375.log
+/Users/xlyk/.omp/logs/.omp.33897-audit.json
+/Users/xlyk/.omp/logs/omp.2026-09-14.75252.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.33788.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.30448.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.75304.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.76962.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.86002.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.30377.log
+# exit=0
+# other live omp processes owned by the user during the window (never signalled, never inspected):
+24141 omp
+65178 omp
+85766 omp
+
+# ---------------- attribution ----------------
+# Checked at 2026-09-14T09:07:23Z. The check proves mtime, not "not read": reading a file with
+# cp does not change its mtime, which is the point.
+#
+# ~/.pi  -> one hit: the directory /Users/xlyk/.pi/agent itself.
+#   `find ~/.pi/agent -mindepth 1 -newer marker-before` is EMPTY: nothing inside was created,
+#   modified or deleted. Every entry still carries a pre-run mtime (auth.json and
+#   models-store.json 2026-09-09T17:15:30-0700; trust.json 2026-09-01; settings.json,
+#   git/, skills/, extensions/, npm/, sessions/ all older than the marker). Only the
+#   directory's own mtime moved, to 2026-09-14T01:59:22-0700, which is when the managed
+#   pi-1 terminal was launched — i.e. a file was created and removed inside it.
+#   Every invocation of `pi` in this run had HOME=$ROOT/home: the `pi --version` in
+#   02-binaries.txt, and the managed pi-1 launch, whose own state landed entirely in the
+#   fixture ($ROOT/home/.pi/agent/{auth.json,models-store.json,settings.json,bin,sessions}).
+#   The fixture auth.json is 2 bytes — Pi created an empty store; no credential was copied
+#   into or out of the real home, and no Pi credential file was ever copied at all
+#   (only the Oh My Pi files of runbook §1.3 were authorised and copied).
+#   PI_CODING_AGENT_DIR was never exported. No `pi` process was alive at the start of the
+#   run (`pgrep -l '^pi$'` empty) and none is alive now, but `pgrep` was not sampled
+#   continuously, so "Pi 0.85.1 touches the real ~/.pi/agent even under a different HOME"
+#   is the correlation this run supports, not a proof. Recorded, not absorbed.
+#
+# ~/.omp -> 13 files, all under ~/.omp/logs/. They are Kyle's own live omp processes:
+#   three were running before the run started (pids 24141, 65178, 85766) and were never
+#   signalled, inspected or read. None of the log PIDs in that list belongs to a process
+#   this run started. Every omp process this run started logged into the FIXTURE instead —
+#   $ROOT/home/.omp/logs/ holds omp.2026-09-14.{53277,53324,84006,84111}.log, exactly the
+#   managed launches recorded in 04-launch-shape.txt and 23-omp-mixed.json.
+#   Nothing under ~/.omp/agent, ~/.omp/config.yml, ~/.omp/sessions or ~/.omp/run changed.
