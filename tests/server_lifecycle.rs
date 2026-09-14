@@ -11252,7 +11252,11 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
     let waiting = fixture.session_summary(summary.id);
     assert_eq!(waiting.activity, AgentActivity::WaitingInput);
     let agent = waiting.agent.as_ref().expect("bound");
-    let first_request = agent.input_request.clone().expect("an open Input request");
+    let first_request = agent
+        .input_requests
+        .first()
+        .cloned()
+        .expect("an open Input request");
     assert_eq!(first_request.kind, InputKind::Select);
     assert_eq!(
         agent.activity.as_ref().unwrap().state,
@@ -11280,7 +11284,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .unwrap()
         .clone();
     assert_eq!(row["activity"], "waiting_input");
-    assert_eq!(row["agent"]["input_request"]["kind"], "Select");
+    assert_eq!(row["agent"]["input_requests"][0]["kind"], "Select");
     assert_eq!(row["unread"], serde_json::Value::Null);
     assert!(
         !row.to_string().contains("PROMPT_TITLE_SECRET"),
@@ -11291,7 +11295,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
     pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:select");
     let answered = fixture.session_summary(summary.id);
     assert_eq!(answered.activity, AgentActivity::Busy);
-    assert_eq!(answered.agent.as_ref().unwrap().input_request, None);
+    assert!(answered.agent.as_ref().unwrap().input_requests.is_empty());
     assert_eq!(
         dashboard.wait_alert_titles(1, summary.id, "pi-hooks"),
         [INPUT],
@@ -11305,8 +11309,9 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .agent
         .as_ref()
         .unwrap()
-        .input_request
-        .clone()
+        .input_requests
+        .first()
+        .cloned()
         .unwrap();
     assert_ne!(second_request.id, first_request.id);
     assert_eq!(
@@ -11336,8 +11341,8 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
             .agent
             .as_ref()
             .unwrap()
-            .input_request
-            .as_ref()
+            .input_requests
+            .first()
             .unwrap()
             .kind,
         InputKind::Confirm
@@ -11399,7 +11404,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .as_ref()
         .expect("the snapshot outlives the reporter");
     assert_eq!(agent.health.state, ReporterHealth::Unavailable);
-    assert_eq!(agent.input_request, None);
+    assert!(agent.input_requests.is_empty());
     assert_eq!(lost.unread, Some(unread), "reporter loss keeps Unread");
     dashboard.detach();
 }
@@ -11430,8 +11435,8 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
             .agent
             .as_ref()
             .unwrap()
-            .input_request
-            .as_ref()
+            .input_requests
+            .first()
             .unwrap()
             .kind,
         InputKind::Select
@@ -11468,7 +11473,8 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
     let retired = fixture.session_summary(summary.id);
     let agent = retired.agent.as_ref().expect("the binding is retained");
     assert_eq!(
-        agent.input_request, None,
+        agent.input_requests,
+        Vec::new(),
         "a retiring producer must not leave a stale dialog behind"
     );
     assert_eq!(

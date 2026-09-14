@@ -722,7 +722,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
         },
         "health":{"state":"Unavailable","reason":"source_completion_unverified"},
         "activity_revision":2,"metrics_revision":3,"health_revision":1,
-        "input_request":null,"input_revision":0
+        "input_requests":[],"input_revision":0
     });
     for scenario in 0..6 {
         let case = scenario / 2;

@@ -25,7 +25,7 @@ pub(super) fn input_live(session: &SessionSummary) -> Option<&InputRequest> {
     {
         return None;
     }
-    agent.input_request.as_ref()
+    agent.input_requests.first()
 }
 
 pub(super) fn ready(session: &SessionSummary) -> Option<&ActivitySample> {
@@ -96,7 +96,7 @@ mod tests {
                 activity_revision: 1,
                 metrics_revision: 0,
                 health_revision: 0,
-                input_request: None,
+                input_requests: Vec::new(),
                 input_revision: 0,
             }),
         }

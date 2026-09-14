@@ -225,7 +225,8 @@ impl Receiver {
                 // The runtime must see the dialog close against the binding that owned it, so
                 // the request is published closed while that binding is still current.
                 if self.open_request.take().is_some() {
-                    let closed = self.publish_observation(AgentObservation::Input(None), deadline);
+                    let closed =
+                        self.publish_observation(AgentObservation::Input(Vec::new()), deadline);
                     if closed.as_slice() == UNAVAILABLE {
                         return closed;
                     }
@@ -313,7 +314,7 @@ impl Receiver {
                     // the same snapshot and keeps a stale WaitingInput with nothing on screen.
                     if self.open_request.take().is_some() {
                         let closed =
-                            self.publish_observation(AgentObservation::Input(None), deadline);
+                            self.publish_observation(AgentObservation::Input(Vec::new()), deadline);
                         if closed.as_slice() == UNAVAILABLE {
                             return closed;
                         }
@@ -339,10 +340,10 @@ impl Receiver {
                 // is a replacement, published as such. Bound: one slot (#95's approvals need a set).
                 self.open_request = Some(id.to_owned());
                 return self.publish_observation(
-                    AgentObservation::Input(Some(InputRequest {
+                    AgentObservation::Input(vec![InputRequest {
                         id: id.to_owned(),
                         kind,
-                    })),
+                    }]),
                     deadline,
                 );
             }
@@ -354,7 +355,7 @@ impl Receiver {
                     return IGNORED.to_vec();
                 }
                 self.open_request = None;
-                return self.publish_observation(AgentObservation::Input(None), deadline);
+                return self.publish_observation(AgentObservation::Input(Vec::new()), deadline);
             }
             "unavailable" => {
                 self.disable();

@@ -107,10 +107,13 @@ mod tests {
                 activity_revision: 1,
                 metrics_revision: 0,
                 health_revision: 0,
-                input_request: open.map(|(id, kind)| InputRequest {
-                    id: id.into(),
-                    kind,
-                }),
+                input_requests: open
+                    .map(|(id, kind)| InputRequest {
+                        id: id.into(),
+                        kind,
+                    })
+                    .into_iter()
+                    .collect(),
                 input_revision: 2,
             }),
         }

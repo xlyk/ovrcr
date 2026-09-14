@@ -217,10 +217,10 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
         activity_revision: 2,
         metrics_revision: 0,
         health_revision: 0,
-        input_request: Some(InputRequest {
-            id: "i:p1".into(),
+        input_requests: vec![InputRequest {
+            id: "prompt:i:p1".into(),
             kind: InputKind::Select,
-        }),
+        }],
         input_revision: 3,
     });
     publish_session(&mut d, summary.clone());
@@ -238,7 +238,7 @@ fn an_input_request_never_changes_unread_or_the_review_target() {
         "answering is not reviewing: R still targets the presented Ready"
     );
     let mut closed = summary.clone();
-    closed.agent.as_mut().unwrap().input_request = None;
+    closed.agent.as_mut().unwrap().input_requests.clear();
     publish_session(&mut d, closed);
     draw(&mut d, 120, 30);
     let DashboardAction::Request(after) = d.key(KeyCode::Char('R')) else {

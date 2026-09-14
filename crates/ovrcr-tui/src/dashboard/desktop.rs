@@ -540,7 +540,7 @@ mod tests {
                             activity_revision: revision,
                             metrics_revision: 0,
                             health_revision: 0,
-                            input_request: None,
+                            input_requests: Vec::new(),
                             input_revision: 0,
                         }),
                     }],
@@ -564,7 +564,7 @@ mod tests {
     ) -> HierarchySnapshot {
         let mut hierarchy = snapshot(revision, turn, state);
         let agent = session(&mut hierarchy).agent.as_mut().unwrap();
-        agent.input_request = open;
+        agent.input_requests = open.into_iter().collect();
         agent.input_revision = revision;
         hierarchy
     }
@@ -828,7 +828,7 @@ mod tests {
         let mut d = dashboard();
         let mut hierarchy = snapshot(2, "a", AgentActivity::ResponseReady);
         let agent = session(&mut hierarchy).agent.as_mut().unwrap();
-        agent.input_request = Some(request("p1", InputKind::Select));
+        agent.input_requests = vec![request("p1", InputKind::Select)];
         agent.input_revision = 2;
         deliver(&mut d, hierarchy.clone());
         assert_eq!(
