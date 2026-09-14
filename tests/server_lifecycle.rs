@@ -11795,6 +11795,36 @@ fn pi_reattach_command_recovers_a_paused_reporter() {
         pi_callback(&fixture, summary.id, &mut index, command);
     }
     assert_eq!(agent(&fixture).health.reason.as_deref(), Some("source_gap"));
+    // Doctor tells a paused reporter apart from a lost one and names the control.
+    let doctor = cli_with_output(
+        env!("CARGO_BIN_EXE_ovrcr"),
+        &fixture._root.path().join("config.toml"),
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "pi",
+            "--json",
+            "--session",
+            &summary.id.0.to_string(),
+            "--executable",
+            fixture._root.path().join("pi").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["lifecycle"]["delivery"], "paused_recoverable");
+    assert_eq!(doctor["capabilities"]["recovery"], "available");
+    assert!(
+        doctor["remediation"]
+            .to_string()
+            .contains("/ovrcr-reattach"),
+        "{doctor}"
+    );
     // The recovery control is usable while normal delivery is paused: it runs inside the
     // extension that is already loaded, with no fresh native launch.
     pi_callback(

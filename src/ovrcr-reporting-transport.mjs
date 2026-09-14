@@ -81,7 +81,7 @@ export function createReporter({
   }
 
   // One helper in flight; FIFO; bounded. Overflow disables this producer after one
-  // content-free notice (recovery is a later ticket).
+  // content-free notice; the receiver pauses on it, and `reattach` below re-enables it.
   function report(event, ctx, extra = {}) {
     if (producer.disabled || ctx.mode !== "tui") return Promise.resolve(false);
     const body = frame(event, ctx, extra);

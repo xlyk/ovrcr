@@ -273,6 +273,21 @@ drives real `ui_prompt_start`/`ui_prompt_end` callbacks through the shipped Dash
 Carrying the input request on `AgentSnapshot` bumped `PROTOCOL_VERSION` to 9; turning it
 into a bounded set for #95 bumped it to 10.
 
+Session changes and recovery (#91) add no wire change. Pi replaces the extension factory on
+a session replacement and on a reload, so a replacement is an observed shutdown followed by
+a new producer whose `session_start` carries `previous`: the id parsed from the previous
+session file's own name, never the path and never anything inside it. `session_tree` is
+reported as `cycle_invalidated` with Pi's own `isIdle()`; compaction and the `session_before_*`
+events are deliberately not subscribed to, so they cannot move the binding. The pause reasons
+(`source_gap`, `producer_replaced`, `source_overflow`, `transition_mismatch`) and the forced
+rebind that ends them are receiver-side; the extension's own recovery control is
+`pi.registerCommand("ovrcr-reattach")`. Shutdown and reload share one absolute helper-drain
+deadline: the queue is discarded and only the final frame is delivered. The automated proof
+is `pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_producer`,
+`pi_source_gap_pauses_then_recovers_at_the_next_boundary` and
+`pi_reattach_command_recovers_a_paused_reporter`, driving the real extension through the real
+CLI, PTY and receiver, with a dropped frame injected by `OVRCR_TEST_DROP_SEQUENCE`.
+
 Tested versions: 0.85.1 (opt-in installed-Pi test, 2026-09-13). Doctor vocabulary is defined
 in [pi-reporting-setup.md](pi-reporting-setup.md).
 

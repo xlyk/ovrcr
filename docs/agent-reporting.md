@@ -147,8 +147,37 @@ for Codex. An extension dialog's outer prompt span is reported as an
 underneath is kept and restored on close, and a background request can raise one
 **OVRCR · input needed** alert. Pi has no approval or question surface of its own
 beyond these dialogs. Payloads carry identifiers and discriminants only: never
-prompts, responses, tool data or prompt titles. Session switches and reporter recovery
-are later tickets.
+prompts, responses, tool data or prompt titles.
+
+### Transitions and recovery
+
+Pi replaces the whole extension factory when a session is replaced (new, resume, fork) and
+when extensions reload. The producer that shut down is retired, and its successor's
+`session_start` binds the conversation now in the foreground as a fresh reporting
+generation: blank activity, no requests, and the server-owned unread response untouched.
+The announcement names the conversation it left by id, so a transition OVRCR never saw is
+detected rather than assumed. Returning to an earlier conversation is a new generation too,
+never the reuse of the old one, and every later frame from a retired producer is ignored
+however high its source sequence. Compaction inside the same conversation changes nothing.
+Tree navigation abandons the response cycle it was in (`cycle_invalidated`): activity falls
+back to what Pi's own API answers — Idle when it says the session is idle, otherwise
+Unknown — and a historical response is never replayed as a new Ready.
+
+When live reporting stops being certain, the reporter pauses instead of ending: a hole in
+the source sequence (`source_gap`), a producer replaced without its shutdown being observed
+(`producer_replaced`), the extension's own bounded queue overflowing (`source_overflow`),
+or a transition naming a conversation OVRCR is not bound to (`transition_mismatch`). A
+paused reporter publishes health `Unavailable` with that reason, keeps its lease and its
+binding, applies nothing, and leaves the native session running; the open request set is
+cleared, because a reporter that is unsure cannot vouch for a dialog. Nothing is inferred
+from silence, idleness, empty queues or elapsed time, and no timer retries.
+
+Recovery is one forced rebind at a trustworthy boundary: the next `session_start` or
+`agent_start`, or the `/ovrcr-reattach` command the extension registers, which re-announces
+the producer from inside the already-loaded extension and says whether it worked. Each
+recovery is a fresh generation that starts blank: activity comes only from Pi's public API,
+the cycle identity waits for a genuine `agent_settled`, and restored requests and responses
+raise no alerts — later genuine ones alert normally. An earlier unread response survives.
 See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Oh My Pi
