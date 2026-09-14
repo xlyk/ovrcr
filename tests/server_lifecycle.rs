@@ -11900,12 +11900,13 @@ fn omp_input_requests_wait_until_the_last_closes_and_alert_once_each() {
         "closing one member is not an alert"
     );
 
-    // The ask tool ending closes the last request, whatever its outcome.
+    // The ask tool ending closes the last request, whatever its outcome: this end carries
+    // `isError`, which the extension never reads.
     pi_callback(
         &fixture,
         summary.id,
         &mut index,
-        "tool_execution_end:ask:q1",
+        "tool_execution_end:ask:q1:error",
     );
     let restored = fixture.session_summary(summary.id);
     assert_eq!(restored.activity, AgentActivity::Busy);

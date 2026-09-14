@@ -341,6 +341,14 @@ says `available_tool_lifetime`, and there is no version gate, because both event
 every release that supports extensions and a probe would add a failure mode without adding
 information.
 
+That third case is visible to the user, not just to the snapshot. The open and the close are
+two separate publications with a helper round trip between them, and the Dashboard queues a
+background **OVRCR · input needed** alert when the open arrives and only cancels it when the
+close does. If the alert reaches the notification host in that window it has already been
+sent, and cancellation cannot recall it. So a question that was never drawn can still raise
+one background alert, and a user who walks over to the terminal will find nothing waiting.
+The same window exists for an approval resolved in the same tick as its request.
+
 Request identity is namespaced so the two surfaces cannot collide: `approval:<toolCallId>`
 and `question:<toolCallId>`, with Pi's `<instance>:p<n>` treated as the `prompt` namespace.
 Storage is bounded: at most 32 open requests per binding, ids unique, validated in

@@ -115,6 +115,10 @@ approval reason, the question and the answer never do.
 Each newly opened request may raise one **OVRCR · input needed** alert, once.
 Closing a request cancels its queued alert and leaves the others; a set already
 open when the Dashboard attaches or reconnects is a baseline and never replays.
+Cancellation only reaches an alert that has not been sent yet, so a request that
+opens and closes before its dialog is ever drawn — an Oh My Pi approval resolved
+in the same tick as its request, or an ask execution aborted with no interactive
+UI — can still deliver one alert for a wait you will not find on screen.
 
 Read `agent.input_requests` from a terminal's JSON row for the open set, oldest
 first. The metadata line labels the oldest one.

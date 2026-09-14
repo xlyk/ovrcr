@@ -86,8 +86,8 @@ function resolved(toolCallId, approved, sessionId = "sess-a") {
 function askStart(toolCallId, toolName = "ask") {
   return { type: "tool_execution_start", toolCallId, toolName, args: { question: "QUESTION_TEXT_SECRET" }, intent: "ask" };
 }
-function askEnd(toolCallId, toolName = "ask") {
-  return { type: "tool_execution_end", toolCallId, toolName, result: { text: "ANSWER_SECRET" }, isError: false };
+function askEnd(toolCallId, toolName = "ask", isError = false) {
+  return { type: "tool_execution_end", toolCallId, toolName, result: { text: "ANSWER_SECRET" }, isError };
 }
 const requests = (record) => frames(record).map((f) => [f.event, f.namespace ?? null, f.request_id ?? null, f.kind ?? null]);
 
@@ -178,6 +178,61 @@ test("an approval opened during a question keeps both requests and their order",
     ["input_close", "approval:c1"],
     ["input_close", "question:q1"],
   ]);
+});
+
+test("an end that failed, timed out or aborted still closes the question", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  // The extension never reads `isError` or `result`: the tool's end is the end of the
+  // wait whatever the outcome was — answered, redirected, cancelled, timed out or errored.
+  await host.emit(askStart("q1"));
+  await host.emit(askEnd("q1", "ask", true));
+  assert.deepEqual(requests(record), [
+    ["input_open", "question", "question:q1", "select"],
+    ["input_close", "question", "question:q1", null],
+  ]);
+  const text = readFileSync(record, "utf8");
+  assert.ok(!text.includes("isError") && !text.includes("ANSWER_SECRET"));
+});
+
+test("an approval requested and resolved in one tick is delivered open before close", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  // Oh My Pi resolves immediately, without awaiting the request, when the channel cannot
+  // prompt: a no-interactive-UI resolution is a closure, never a visible wait. Ordering
+  // here rests entirely on the transport's FIFO, so assert it rather than assume it.
+  const requested = host.emit(approval("c1"));
+  const settled = host.emit(resolved("c1", true));
+  await Promise.all([requested, settled]);
+  const sent = frames(record);
+  assert.deepEqual(
+    sent.map((f) => [f.event, f.request_id]),
+    [
+      ["input_open", "approval:c1"],
+      ["input_close", "approval:c1"],
+    ],
+  );
+  assert.ok(sent[0].sequence < sent[1].sequence, "the frames carry ascending sequence");
+});
+
+test("an ask execution that starts and ends in one tick is delivered open before close", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  const started = host.emit(askStart("q1"));
+  const ended = host.emit(askEnd("q1", "ask", true));
+  await Promise.all([started, ended]);
+  const sent = frames(record);
+  assert.deepEqual(
+    sent.map((f) => [f.event, f.request_id]),
+    [
+      ["input_open", "question:q1"],
+      ["input_close", "question:q1"],
+    ],
+  );
+  assert.ok(sent[0].sequence < sent[1].sequence, "the frames carry ascending sequence");
 });
 
 test("a print-mode child emits no approval or question frames", async () => {
