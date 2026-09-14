@@ -58,6 +58,10 @@ stop reporting.
 
 ## Boundaries
 
+Native macOS evidence for this setup is recorded in
+[research/issue-92-pi-native](../research/issue-92-pi-native/README.md); the support record's
+"Native verification" section says what it proves, what stays open, and how it was isolated.
+
 `WaitingInput` is extension-dialog-only: Pi exposes no other visible question surface,
 and a tool call is not an input request. OVRCR does not open dialogs of its own to
 probe for one. A long-running response is never declared failed because no end event

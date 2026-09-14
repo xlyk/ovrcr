@@ -182,6 +182,10 @@ See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Oh My Pi
 
+Native macOS evidence for Oh My Pi reporting is recorded in
+[research/issue-97-omp-native](../research/issue-97-omp-native/README.md); see the support
+record's "Native verification" section for what it proves and what stays open.
+
 `ovrcr agent run omp -- omp [ARGS...]` (or picking `omp` in the Dashboard) materializes the
 owned reporting extension into a private per-invocation directory and adds `-e <path>`
 beside your own extensions; nothing under `~/.omp` changes. The extension is inert without
