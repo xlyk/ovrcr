@@ -64,7 +64,130 @@ test("registers OMP's lifecycle and switch events", async () => {
     "session_shutdown",
     "session_start",
     "session_switch",
+    "tool_approval_requested",
+    "tool_approval_resolved",
+    "tool_execution_end",
+    "tool_execution_start",
   ]);
+});
+
+function approval(toolCallId, sessionId = "sess-a") {
+  return {
+    type: "tool_approval_requested", sessionId, toolName: "bash", toolCallId,
+    reason: "APPROVAL_REASON_SECRET", approvalMode: "always-ask",
+  };
+}
+function resolved(toolCallId, approved, sessionId = "sess-a") {
+  return {
+    type: "tool_approval_resolved", sessionId, toolName: "bash", toolCallId, approved,
+    ...(approved ? {} : { reason: "denied by user" }),
+  };
+}
+function askStart(toolCallId, toolName = "ask") {
+  return { type: "tool_execution_start", toolCallId, toolName, args: { question: "QUESTION_TEXT_SECRET" }, intent: "ask" };
+}
+function askEnd(toolCallId, toolName = "ask") {
+  return { type: "tool_execution_end", toolCallId, toolName, result: { text: "ANSWER_SECRET" }, isError: false };
+}
+const requests = (record) => frames(record).map((f) => [f.event, f.namespace ?? null, f.request_id ?? null, f.kind ?? null]);
+
+test("an approval opens and closes one namespaced request and carries no reason", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(approval("c1"));
+  await host.emit(resolved("c1", true));
+  assert.deepEqual(requests(record), [
+    ["input_open", "approval", "approval:c1", "approval"],
+    ["input_close", "approval", "approval:c1", null],
+  ]);
+  assert.ok(!readFileSync(record, "utf8").includes("APPROVAL_REASON_SECRET"));
+});
+
+test("a denial closes the approval exactly as an allow does", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(approval("c1"));
+  await host.emit(resolved("c1", false));
+  assert.deepEqual(requests(record).map((r) => r[0]), ["input_open", "input_close"]);
+  assert.ok(!readFileSync(record, "utf8").includes("denied by user"));
+});
+
+test("an approval from another session id or with none emits nothing", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  // In-process task and advisor children carry their own session id, or "".
+  await host.emit(approval("c1", "other-session"));
+  await host.emit(resolved("c1", true, "other-session"));
+  await host.emit(approval("c2", ""));
+  assert.deepEqual(frames(record), []);
+});
+
+test("two approvals overlap: each frame carries its own tool call id", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(approval("c1"));
+  await host.emit(approval("c2"));
+  await host.emit(resolved("c1", true));
+  await host.emit(resolved("c2", false));
+  assert.deepEqual(requests(record).map((r) => [r[0], r[2]]), [
+    ["input_open", "approval:c1"],
+    ["input_open", "approval:c2"],
+    ["input_close", "approval:c1"],
+    ["input_close", "approval:c2"],
+  ]);
+});
+
+test("the ask tool's lifetime is one question request keyed by its tool call id", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(askStart("q1"));
+  await host.emit(askEnd("q1"));
+  assert.deepEqual(requests(record), [
+    ["input_open", "question", "question:q1", "select"],
+    ["input_close", "question", "question:q1", null],
+  ]);
+  const text = readFileSync(record, "utf8");
+  assert.ok(!text.includes("QUESTION_TEXT_SECRET") && !text.includes("ANSWER_SECRET"));
+});
+
+test("a tool that is not ask emits nothing", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(askStart("t1", "bash"));
+  await host.emit(askEnd("t1", "bash"));
+  assert.deepEqual(frames(record), []);
+});
+
+test("an approval opened during a question keeps both requests and their order", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit(askStart("q1"));
+  await host.emit(approval("c1"));
+  await host.emit(resolved("c1", true));
+  await host.emit(askEnd("q1"));
+  assert.deepEqual(requests(record).map((r) => [r[0], r[2]]), [
+    ["input_open", "question:q1"],
+    ["input_open", "approval:c1"],
+    ["input_close", "approval:c1"],
+    ["input_close", "question:q1"],
+  ]);
+});
+
+test("a print-mode child emits no approval or question frames", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const child = await createHost(extension, { mode: "print", session: "sess-a" });
+  await child.emit(approval("c1"));
+  await child.emit(askStart("q1"));
+  await child.emit(askEnd("q1"));
+  assert.deepEqual(frames(record), []);
 });
 
 test("an end that will continue keeps the cycle open; the final end settles it as observed work", async () => {
