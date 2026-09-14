@@ -389,7 +389,27 @@ mod wire_snapshot {
             started_unix_ms: 3,
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
-            agent: None,
+            agent: Some(crate::AgentSnapshot {
+                binding: unread().binding.clone(),
+                activity: Some(crate::ActivitySample {
+                    state: AgentActivity::Busy,
+                    quality: crate::SampleQuality::Observed,
+                    turn: Some("turn".into()),
+                }),
+                metrics: None,
+                health: crate::HealthSample {
+                    state: crate::ReporterHealth::Connected,
+                    reason: None,
+                },
+                activity_revision: 2,
+                metrics_revision: 0,
+                health_revision: 0,
+                input_request: Some(crate::InputRequest {
+                    id: "req".into(),
+                    kind: crate::InputKind::Select,
+                }),
+                input_revision: 3,
+            }),
             agent_epoch: 0,
             unread: Some(unread()),
             context_usage: Some(ContextUsageSnapshot {
@@ -804,13 +824,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
+            "020101700177016e016c0102030000010103696e7604636f6e760101020101047475726e0000000200000103726571000300010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("Response::Screen", "03010301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
+            "0500010101700177016e016c0102030000010103696e7604636f6e760101020101047475726e0000000200000103726571000300010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -824,7 +844,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "020103"),
         (
             "ServerEvent::SessionChanged",
-            "030101700177016e016c01020300000000010103696e7604636f6e760101047475726e02010000000104010506",
+            "030101700177016e016c0102030000010103696e7604636f6e760101020101047475726e0000000200000103726571000300010103696e7604636f6e760101047475726e02010000000104010506",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),
@@ -869,6 +889,14 @@ mod wire_snapshot {
         (
             "AgentRequest::9",
             "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010201010e636f6c6c6563746f725f6c6f7374",
+        ),
+        (
+            "AgentRequest::10",
+            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e76010103010372657101",
+        ),
+        (
+            "AgentRequest::11",
+            "1501a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a500020003696e7604636f6e7601010300",
         ),
         (
             "AgentResponse::0",

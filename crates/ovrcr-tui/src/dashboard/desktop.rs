@@ -1,9 +1,13 @@
-//! Dashboard-local opt-in delivery. Queue from unread identity.
-use super::ready::delivery_live;
+//! Dashboard-local opt-in delivery. Two lanes, one queue: a Ready keyed by response
+//! identity, and an Input request keyed by request identity. Both reuse the same
+//! preferences, host, visibility suppression and reconnect baseline.
+use super::ready::{delivery_live, input_live};
 use super::{Dashboard, DashboardAction};
 #[cfg(test)]
 use ovrcr_protocol::{AgentActivity, AgentProvider, SessionPhase};
-use ovrcr_protocol::{HierarchySnapshot, ReadyObservation, SessionId, SessionSummary};
+use ovrcr_protocol::{
+    AgentBinding, HierarchySnapshot, InputRequest, ReadyObservation, SessionId, SessionSummary,
+};
 use std::collections::VecDeque;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -25,9 +29,18 @@ const CHANNEL_SOUND: u8 = 2;
 const HOST_POLL: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
+enum Alert {
+    Ready(ReadyObservation),
+    Input {
+        binding: AgentBinding,
+        request: InputRequest,
+    },
+}
+
+#[derive(Clone)]
 struct Notification {
     session: SessionId,
-    unread: ReadyObservation,
+    alert: Alert,
     title: &'static str,
     body: String,
 }
@@ -151,15 +164,29 @@ impl Dashboard {
         {
             self.desktop.pending.push_back(Notification {
                 session: session.id,
-                unread: session.unread.clone().unwrap(),
+                alert: Alert::Ready(session.unread.clone().unwrap()),
                 title: "OVRCR · response ready",
-                body: format!(
-                    "{} / {} / {} (#{})",
-                    safe_identity(&session.project),
-                    safe_identity(&session.workspace),
-                    safe_identity(&session.name),
-                    session.id.0
-                ),
+                body: identity_body(session),
+            });
+        }
+        // The second lane, consumed on the same terms: answering is not a review, so this
+        // never reads or writes Unread.
+        let new_request = self.unread.observe_request(session);
+        if !initial
+            && self.alert_channels() != 0
+            && new_request
+            && !self.desktop_session_visible(session.id)
+            && self.desktop.pending.len() < QUEUE_CAPACITY
+            && let Some(request) = input_live(session)
+        {
+            self.desktop.pending.push_back(Notification {
+                session: session.id,
+                alert: Alert::Input {
+                    binding: session.agent.as_ref().unwrap().binding.clone(),
+                    request: request.clone(),
+                },
+                title: "OVRCR · input needed",
+                body: identity_body(session),
             });
         }
     }
@@ -242,14 +269,36 @@ impl Dashboard {
 }
 
 fn notification_matches_session(notification: &Notification, session: &SessionSummary) -> bool {
-    delivery_live(session)
-        && session.agent.as_ref().is_some_and(|agent| {
-            agent.binding == notification.unread.binding
-                && agent
-                    .activity
+    match &notification.alert {
+        Alert::Ready(unread) => {
+            delivery_live(session)
+                && session.agent.as_ref().is_some_and(|agent| {
+                    agent.binding == unread.binding
+                        && agent
+                            .activity
+                            .as_ref()
+                            .is_some_and(|activity| activity.turn == unread.turn)
+                })
+        }
+        Alert::Input { binding, request } => {
+            input_live(session).is_some_and(|live| live.id == request.id)
+                && session
+                    .agent
                     .as_ref()
-                    .is_some_and(|activity| activity.turn == notification.unread.turn)
-        })
+                    .is_some_and(|agent| agent.binding == *binding)
+        }
+    }
+}
+
+/// Session identity only: never a prompt title, a turn, a path or a label.
+fn identity_body(session: &SessionSummary) -> String {
+    format!(
+        "{} / {} / {} (#{})",
+        safe_identity(&session.project),
+        safe_identity(&session.workspace),
+        safe_identity(&session.name),
+        session.id.0
+    )
 }
 
 fn unavailable_notice(channels: u8) -> &'static str {
@@ -436,9 +485,9 @@ mod tests {
     use super::*;
     use crate::dashboard::{DashboardAction, InputMode};
     use crate::protocol::{
-        ActivitySample, AgentBinding, AgentSnapshot, ClientMessage, HealthSample, ProjectSummary,
-        ReadyObservation, ReporterHealth, Response, SampleQuality, ServerEvent, ServerMessage,
-        WorkspaceSummary,
+        ActivitySample, AgentBinding, AgentSnapshot, ClientMessage, HealthSample, InputKind,
+        InputRequest, ProjectSummary, ReadyObservation, ReporterHealth, Response, SampleQuality,
+        ServerEvent, ServerMessage, WorkspaceSummary,
     };
     use crossterm::event::KeyCode;
     use ovrcr_protocol::TerminalSize;
@@ -491,11 +540,312 @@ mod tests {
                             activity_revision: revision,
                             metrics_revision: 0,
                             health_revision: 0,
+                            input_request: None,
+                            input_revision: 0,
                         }),
                     }],
                 }],
             }],
         }
+    }
+    fn request(id: &str, kind: InputKind) -> InputRequest {
+        InputRequest {
+            id: id.into(),
+            kind,
+        }
+    }
+    /// `snapshot()` with an Input request open on the same agent; the underlying activity
+    /// sample is untouched, exactly as the runtime publishes it.
+    fn snapshot_with_request(
+        revision: u64,
+        turn: &str,
+        state: AgentActivity,
+        open: Option<InputRequest>,
+    ) -> HierarchySnapshot {
+        let mut hierarchy = snapshot(revision, turn, state);
+        let agent = session(&mut hierarchy).agent.as_mut().unwrap();
+        agent.input_request = open;
+        agent.input_revision = revision;
+        hierarchy
+    }
+    fn titles(d: &Dashboard) -> Vec<&'static str> {
+        d.desktop.pending.iter().map(|n| n.title).collect()
+    }
+    #[test]
+    fn desktop_input_request_alerts_once_per_request_identity() {
+        let mut d = dashboard();
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        assert_eq!(d.desktop.pending[0].title, "OVRCR · input needed");
+        assert_eq!(
+            d.desktop.pending[0].body,
+            "project / workspace / session (#1)"
+        );
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                3,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "a republication of the same request never alerts twice"
+        );
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                4,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p2", InputKind::Confirm)),
+            ),
+        );
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "a replacement drops the superseded alert and queues its own"
+        );
+        assert_eq!(titles(&d), ["OVRCR · input needed"]);
+        d.desktop.pending.clear();
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                5,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p2", InputKind::Confirm)),
+            ),
+        );
+        assert!(
+            d.desktop.pending.is_empty(),
+            "a consumed request does not replay"
+        );
+    }
+    #[test]
+    fn desktop_input_request_close_removes_pending_and_cancels_in_flight() {
+        let mut d = dashboard();
+        let (received, _failed) = stub_host(&mut d);
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        deliver(
+            &mut d,
+            snapshot_with_request(3, "a", AgentActivity::Busy, None),
+        );
+        assert!(
+            d.desktop.pending.is_empty(),
+            "an answered request cancels its queued alert"
+        );
+        d.emit_desktop_notifications();
+        assert!(received.try_recv().is_err());
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                4,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p2", InputKind::Editor)),
+            ),
+        );
+        d.emit_desktop_notifications();
+        let (_, delivery) = received.try_recv().unwrap();
+        assert_eq!(delivery.state.load(Ordering::Acquire), DELIVERY_ACTIVE);
+        deliver(
+            &mut d,
+            snapshot_with_request(5, "a", AgentActivity::Busy, None),
+        );
+        assert_eq!(
+            delivery.state.load(Ordering::Acquire),
+            DELIVERY_CANCELLED,
+            "closing cancels the delivery already with the host"
+        );
+    }
+    #[test]
+    fn desktop_pending_input_alert_dies_with_its_binding_or_its_reporter() {
+        fn input_generation(notification: &Notification) -> u64 {
+            match &notification.alert {
+                Alert::Input { binding, .. } => binding.generation,
+                Alert::Ready(_) => panic!("expected an input alert"),
+            }
+        }
+        // A rebinding invalidates the queued alert: the same request id under a new
+        // generation is a different request, so the superseded alert is dropped and only
+        // the new binding's alert survives to reach the host.
+        let mut d = dashboard();
+        let (received, _failed) = stub_host(&mut d);
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        assert_eq!(input_generation(&d.desktop.pending[0]), 1);
+        let mut rebound = snapshot_with_request(
+            3,
+            "a",
+            AgentActivity::Busy,
+            Some(request("p1", InputKind::Select)),
+        );
+        session(&mut rebound)
+            .agent
+            .as_mut()
+            .unwrap()
+            .binding
+            .generation = 2;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut rebound).clone(),
+        ))));
+        assert_eq!(
+            d.desktop.pending.len(),
+            1,
+            "the superseded alert is dropped"
+        );
+        assert_eq!(
+            input_generation(&d.desktop.pending[0]),
+            2,
+            "only the live binding's request stays deliverable"
+        );
+        d.emit_desktop_notifications();
+        let (_, delivery) = received.try_recv().unwrap();
+        assert_eq!(input_generation(&delivery.notification), 2);
+        assert!(
+            received.try_recv().is_err(),
+            "the alert for the retired binding never reached the host"
+        );
+
+        // A lost reporter cannot vouch for the dialog: the queued alert dies with it and
+        // nothing is delivered, exactly as a Ready alert dies on health loss.
+        let mut d = dashboard();
+        let (received, _failed) = stub_host(&mut d);
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1);
+        let mut lost = snapshot_with_request(
+            3,
+            "a",
+            AgentActivity::Busy,
+            Some(request("p1", InputKind::Select)),
+        );
+        session(&mut lost).agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
+        d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+            session(&mut lost).clone(),
+        ))));
+        assert!(
+            d.desktop.pending.is_empty(),
+            "an unavailable reporter invalidates the queued input alert"
+        );
+        d.emit_desktop_notifications();
+        assert!(received.try_recv().is_err());
+    }
+    #[test]
+    fn desktop_input_request_on_the_attach_baseline_never_replays() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 120,
+        });
+        d.key(KeyCode::Char('N'));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: 1,
+            response: Response::Hierarchy(snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            )),
+        });
+        assert!(
+            d.desktop.pending.is_empty(),
+            "a request open at attach is a baseline"
+        );
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                3,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert!(d.desktop.pending.is_empty(), "reconnect does not replay");
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                4,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p2", InputKind::Input)),
+            ),
+        );
+        assert_eq!(d.desktop.pending.len(), 1, "a genuinely new request alerts");
+    }
+    #[test]
+    fn desktop_input_request_in_a_visible_pane_never_alerts() {
+        let mut d = dashboard();
+        d.select_session(SessionId(1));
+        deliver(
+            &mut d,
+            snapshot_with_request(
+                2,
+                "a",
+                AgentActivity::Busy,
+                Some(request("p1", InputKind::Select)),
+            ),
+        );
+        assert!(d.desktop.pending.is_empty(), "visible focused pane");
+    }
+    #[test]
+    fn desktop_ready_and_input_request_are_two_lanes_that_do_not_suppress_each_other() {
+        let mut d = dashboard();
+        let mut hierarchy = snapshot(2, "a", AgentActivity::ResponseReady);
+        let agent = session(&mut hierarchy).agent.as_mut().unwrap();
+        agent.input_request = Some(request("p1", InputKind::Select));
+        agent.input_revision = 2;
+        deliver(&mut d, hierarchy.clone());
+        assert_eq!(
+            titles(&d),
+            ["OVRCR · response ready", "OVRCR · input needed"],
+            "one cycle can be both ready and waiting"
+        );
+        deliver(&mut d, hierarchy);
+        assert_eq!(
+            titles(&d),
+            ["OVRCR · response ready", "OVRCR · input needed"],
+            "neither lane cancels the other on republication"
+        );
+        assert_eq!(
+            d.desktop.pending[0].session, d.desktop.pending[1].session,
+            "both alerts identify the same session"
+        );
     }
     fn session(snapshot: &mut HierarchySnapshot) -> &mut SessionSummary {
         &mut snapshot.projects[0].workspaces[0].sessions[0]

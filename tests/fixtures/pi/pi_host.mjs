@@ -42,6 +42,7 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 
 // stdin grammar: session_start[:<id>[:<reason>]] | agent_start
 //   | agent_end:<ok|error|aborted|none>[:continue] | agent_settled
+//   | ui_prompt_start:<kind> | ui_prompt_end:<kind>
 //   | session_switch[:<id>[:<reason>]] | session_shutdown:<reason>
 //   | mode:<tui|rpc|print> | exit
 async function main() {
@@ -68,6 +69,9 @@ async function main() {
       else if (command === "agent_end") {
         const messages = a === "none" ? [] : [assistant(a === "ok" ? "stop" : a)];
         await host.emit({ type: "agent_end", messages, ...(b === "continue" ? { willContinue: true } : {}) });
+      } else if (command === "ui_prompt_start" || command === "ui_prompt_end") {
+        // The title is a deliberate secret: no frame may carry it.
+        await host.emit({ type: command, reason: "ui_prompt", kind: a, title: "PROMPT_TITLE_SECRET" });
       } else if (command === "session_switch") {
         if (a) host.state.session = a;
         await host.emit({ type: "session_switch", reason: b ?? "resume" });

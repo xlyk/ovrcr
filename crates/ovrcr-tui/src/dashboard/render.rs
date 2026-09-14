@@ -4,8 +4,8 @@ use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, hi
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
 use ovrcr_protocol::{
-    CostKind, HistoryColor, MeasurementFreshness, ReporterHealth, SampleQuality, SessionSummary,
-    UsageCoverage, UsageScope,
+    CostKind, HistoryColor, InputKind, MeasurementFreshness, ReporterHealth, SampleQuality,
+    SessionSummary, UsageCoverage, UsageScope,
 };
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
@@ -1174,6 +1174,20 @@ fn provider_activity(session: &SessionSummary) -> String {
     let Some(agent) = &session.agent else {
         return String::new();
     };
+    // An open Input request outranks whatever is underneath it, exactly as
+    // AgentSnapshot::effective_activity does.
+    if let Some(request) = &agent.input_request {
+        return format!(
+            " input needed · {}",
+            match request.kind {
+                InputKind::Select => "select",
+                InputKind::Confirm => "confirm",
+                InputKind::Input => "input",
+                InputKind::Editor => "editor",
+                InputKind::Custom => "custom",
+            }
+        );
+    }
     if let Some(activity) = super::ready::ready(session) {
         let quality = match activity.quality {
             SampleQuality::Confirmed => "confirmed",

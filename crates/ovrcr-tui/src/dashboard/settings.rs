@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DashboardSettings {
+    /// Desktop alerts for new background agent responses and Input requests. Off by default.
     pub desktop_notifications: bool,
+    /// A sound for the same two alert kinds, independent of the desktop channel. Off by default.
     pub ready_sound: bool,
     pub agents: Vec<AgentOverride>,
     pub picker_roots: Vec<PathBuf>,

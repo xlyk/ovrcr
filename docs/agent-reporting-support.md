@@ -266,12 +266,18 @@ The automated proof is the Node event host (`tests/fixtures/pi/pi_host.mjs`, exe
 `node --test tests/pi_reporting_extension.mjs`) and the managed lifecycle test
 `pi_managed_extension_reports_busy_ready_error_idle_and_fences_producers`, which drives the
 real extension through the real CLI, PTY, private socket and receiver. The Dashboard slice is
-covered by `pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented`.
+covered by `pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented`
+and, for input requests, by
+`pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activity`, which
+drives real `ui_prompt_start`/`ui_prompt_end` callbacks through the shipped Dashboard.
+Carrying the input request on `AgentSnapshot` bumped `PROTOCOL_VERSION` to 9.
 
 Tested versions: 0.85.1 (opt-in installed-Pi test, 2026-09-13). Doctor vocabulary is defined
 in [pi-reporting-setup.md](pi-reporting-setup.md).
 
-Native acceptance against an installed Pi is not claimed here and is tracked by #92. The
+Native acceptance against an installed Pi, including a real extension dialog on screen
+with its WaitingInput indicator and a delivered input-needed alert, is not claimed here
+and is tracked by #92. The
 opt-in `installed_pi_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
 and requires `OVRCR_TEST_PI_EXECUTABLE` plus an isolated `PI_CODING_AGENT_DIR`; it never
 touches the user's `~/.pi`.

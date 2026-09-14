@@ -110,11 +110,37 @@ pub struct HealthSample {
     pub state: ReporterHealth,
     pub reason: Option<String>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputKind {
+    Select,
+    Confirm,
+    Input,
+    Editor,
+    Custom,
+}
+
+/// An open request for a human answer from a visible provider dialog (CONTEXT.md: Input
+/// request). Identified within its binding by `id`; carries no content.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputRequest {
+    pub id: String,
+    pub kind: InputKind,
+}
+
+impl InputRequest {
+    pub fn validate(&self) -> Result<()> {
+        validate_agent_id(&self.id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentObservation {
     Activity(ActivitySample),
     Metrics(Box<MetricsSample>),
     Health(HealthSample),
+    /// `Some` opens or replaces the active Input request; `None` closes it. Appended last:
+    /// bincode numbers variants by declaration order.
+    Input(Option<InputRequest>),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderReport {
@@ -167,6 +193,22 @@ pub struct AgentSnapshot {
     pub activity_revision: u64,
     pub metrics_revision: u64,
     pub health_revision: u64,
+    pub input_request: Option<InputRequest>,
+    pub input_revision: u64,
+}
+
+impl AgentSnapshot {
+    /// WaitingInput while an Input request is open; otherwise the underlying activity sample.
+    /// The one rule the server summary and the Dashboard both use.
+    pub fn effective_activity(&self) -> AgentActivity {
+        if self.input_request.is_some() {
+            AgentActivity::WaitingInput
+        } else {
+            self.activity
+                .as_ref()
+                .map_or(AgentActivity::Unknown, |sample| sample.state)
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,6 +343,9 @@ impl ProviderReport {
             AgentObservation::Activity(a) => optional_id(&a.turn),
             AgentObservation::Metrics(m) => m.validate(),
             AgentObservation::Health(h) => optional_id(&h.reason),
+            AgentObservation::Input(request) => {
+                request.as_ref().map_or(Ok(()), InputRequest::validate)
+            }
         }
     }
 }
@@ -395,6 +440,79 @@ pub(crate) mod tests {
         ] {
             assert!(invalid.validate().is_err());
         }
+    }
+
+    #[test]
+    fn effective_activity_is_waiting_input_only_while_a_request_is_open() {
+        let mut snapshot = AgentSnapshot {
+            binding: AgentBinding {
+                provider: AgentProvider::Pi,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            activity: Some(ActivitySample {
+                state: AgentActivity::ResponseReady,
+                quality: SampleQuality::Confirmed,
+                turn: Some("t".into()),
+            }),
+            metrics: None,
+            health: HealthSample {
+                state: ReporterHealth::Connected,
+                reason: None,
+            },
+            activity_revision: 3,
+            metrics_revision: 0,
+            health_revision: 0,
+            input_request: Some(InputRequest {
+                id: "i:p1".into(),
+                kind: InputKind::Select,
+            }),
+            input_revision: 4,
+        };
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+        snapshot.input_request = None;
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::ResponseReady,
+            "closing restores the underlying sample"
+        );
+        snapshot.activity = None;
+        assert_eq!(snapshot.effective_activity(), AgentActivity::Unknown);
+    }
+
+    #[test]
+    fn input_observation_validates_its_identity() {
+        let binding = AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: "conv".into(),
+            generation: 1,
+        };
+        let ok = ProviderReport {
+            binding: binding.clone(),
+            revision: 1,
+            observation: AgentObservation::Input(Some(InputRequest {
+                id: "i:p1".into(),
+                kind: InputKind::Editor,
+            })),
+        };
+        ok.validate().unwrap();
+        let close = ProviderReport {
+            binding: binding.clone(),
+            revision: 2,
+            observation: AgentObservation::Input(None),
+        };
+        close.validate().unwrap();
+        let bad = ProviderReport {
+            binding,
+            revision: 3,
+            observation: AgentObservation::Input(Some(InputRequest {
+                id: "bad\nid".into(),
+                kind: InputKind::Custom,
+            })),
+        };
+        assert!(bad.validate().is_err());
     }
 
     #[test]
@@ -565,6 +683,11 @@ pub(crate) mod tests {
             }),
             AgentObservation::Metrics(metrics().into()),
             health.observation,
+            AgentObservation::Input(Some(InputRequest {
+                id: "req".into(),
+                kind: InputKind::Confirm,
+            })),
+            AgentObservation::Input(None),
         ] {
             requests.push(Request::AgentReport(crate::AgentReport {
                 session: SessionId(1),

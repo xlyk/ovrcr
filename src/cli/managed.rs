@@ -22,7 +22,7 @@ pub(super) const PI: Managed = Managed {
     display: "Pi",
     tested_versions: &["0.85.1"],
     reporting: "available",
-    input_requests: "pending #90",
+    input_requests: "available",
     recovery: "pending #91",
 };
 
@@ -128,7 +128,9 @@ pub(super) fn doctor(
                             // A binding exists only after the extension delivered session_start.
                             "extension": "loaded_and_bound",
                             "delivery": if activity.is_some() { "observed" } else { "bound_without_activity" },
-                            "activity": activity,
+                            // The same rule `terminal list` reports: a wait covers the sample.
+                            "activity": agent.effective_activity(),
+                            "input_request": agent.input_request.as_ref().map(|request| request.kind),
                             "work_seen": matches!(activity, Some(AgentActivity::Busy | AgentActivity::ResponseReady | AgentActivity::Error | AgentActivity::WaitingInput)),
                             "health": agent.health.state,
                             "unread": session.unread.is_some(),

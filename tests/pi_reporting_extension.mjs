@@ -52,7 +52,7 @@ test("one response cycle: start, end, settled carry run, outcome and ordered seq
   managed();
   const { extension, record } = materialize();
   const host = await createHost(extension, { session: "sess-a" });
-  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "session_shutdown", "session_start"]);
+  assert.deepEqual(host.registered(), ["agent_end", "agent_settled", "agent_start", "session_shutdown", "session_start", "ui_prompt_end", "ui_prompt_start"]);
   await host.emit({ type: "session_start", reason: "startup" });
   await host.emit({ type: "agent_start" });
   await host.emit({ type: "agent_end", messages: [{ role: "user", content: "secret prompt" }, assistant("stop")] });
@@ -189,4 +189,34 @@ test("resume and fork announce the conversation without a cycle; a run whose las
   assert.deepEqual(sent.slice(1).map((f) => [f.event, f.run, f.outcome]), [
     ["agent_start", 1, "none"], ["agent_end", 1, "error"], ["agent_settled", 1, "error"],
   ]);
+});
+
+test("an outer prompt span opens and closes one Input request; the title never leaves", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
+  await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "select", title: "PROMPT_TITLE_SECRET" });
+  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "editor" });
+  await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "editor" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.run, f.kind ?? null]), [
+    ["agent_start", 1, null], ["input_open", 1, "select"], ["input_close", 1, null], ["input_open", 1, "editor"], ["input_close", 1, null],
+  ]);
+  assert.equal(sent[1].request_id, sent[2].request_id);
+  assert.notEqual(sent[1].request_id, sent[3].request_id);
+  assert.match(sent[1].request_id, /^[0-9a-f]{32}:p1$/);
+  assert.ok(!readFileSync(record, "utf8").includes("PROMPT_TITLE_SECRET"));
+  assert.ok(!("title" in sent[1]));
+});
+
+test("a prompt can open while no cycle is running and never touches the cycle", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  await host.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "confirm" });
+  await host.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm" });
+  await host.emit({ type: "agent_start" });
+  assert.deepEqual(frames(record).map((f) => [f.event, f.run]), [["input_open", null], ["input_close", null], ["agent_start", 1]]);
 });

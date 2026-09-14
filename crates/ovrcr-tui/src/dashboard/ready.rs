@@ -2,14 +2,30 @@
 //! supported readiness provider. This is the only place the Dashboard decides whether a
 //! session is ready and whether that readiness may be delivered as an alert. The sidebar
 //! glyph, the metadata line, and desktop delivery all ask here, so they cannot disagree.
-use ovrcr_protocol::{ActivitySample, AgentActivity, ReporterHealth, SessionPhase, SessionSummary};
+use ovrcr_protocol::{
+    ActivitySample, AgentActivity, InputRequest, ReporterHealth, SessionPhase, SessionSummary,
+};
 
 pub(super) fn activity(session: &SessionSummary) -> AgentActivity {
     session
         .agent
         .as_ref()
-        .and_then(|agent| agent.activity.as_ref())
-        .map_or(session.activity, |sample| sample.state)
+        .map_or(session.activity, |agent| agent.effective_activity())
+}
+
+/// The open Input request of a running, connected, supported session: the one identity the
+/// Dashboard may deliver as an Input needed alert.
+pub(super) fn input_live(session: &SessionSummary) -> Option<&InputRequest> {
+    if session.phase != SessionPhase::Running {
+        return None;
+    }
+    let agent = session.agent.as_ref()?;
+    if !agent.binding.provider.supports_readiness()
+        || agent.health.state != ReporterHealth::Connected
+    {
+        return None;
+    }
+    agent.input_request.as_ref()
 }
 
 pub(super) fn ready(session: &SessionSummary) -> Option<&ActivitySample> {
@@ -80,6 +96,8 @@ mod tests {
                 activity_revision: 1,
                 metrics_revision: 0,
                 health_revision: 0,
+                input_request: None,
+                input_revision: 0,
             }),
         }
     }
