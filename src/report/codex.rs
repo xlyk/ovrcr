@@ -1,19 +1,17 @@
 //! Authenticated synchronous Codex hooks. No transcript or completion inference.
 use super::InvocationLease;
+use super::reporter::{self, Reporter};
 use ovrcr_protocol::{
-    ActivitySample, AgentActivity, AgentObservation, ProviderReport, SampleQuality,
+    ActivitySample, AgentActivity, AgentObservation, AgentProvider, SampleQuality,
 };
-use ovrcr_runtime::agent_runner::{HookEvent, HookHandler};
+use ovrcr_runtime::agent_runner::HookHandler;
 use std::{
-    collections::HashSet,
     ffi::{OsStr, OsString},
     path::Path,
     time::Instant,
 };
 
 pub const PINNED_VERSION: &str = "0.153.0";
-const MAX_IDENTITIES: usize = 65_536;
-const MAX_IDENTITY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Fresh interactive grammar only. Provider arguments are never rewritten.
 pub fn eligible_argv(argv: &[OsString]) -> bool {
@@ -74,144 +72,105 @@ pub fn supported_version(executable: &OsStr) -> bool {
     super::admission::probe_version(executable).as_deref() == Some(b"codex-cli 0.153.0\n")
 }
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
-    let unavailable = if lease.is_none() {
-        Some("no managed reservation")
-    } else if !eligible_argv(argv) {
-        Some("unsupported launch arguments")
-    } else if unsafe { libc::isatty(0) != 1 || libc::isatty(1) != 1 } {
-        Some("interactive terminal required")
-    } else if !supported_version(&argv[0]) {
-        Some("version probe unsupported or unavailable")
-    } else {
-        None
-    };
-    let supported = unavailable.is_none();
-    let mut receiver = Receiver {
-        lease,
-        disabled: !supported,
-        active: None,
-        seen: HashSet::new(),
-        charged_bytes: 0,
-        revision: 0,
-    };
+    let unavailable = reporter::preflight(
+        lease.is_some(),
+        argv,
+        eligible_argv,
+        reporter::interactive(),
+    )
+    .or_else(|| {
+        (!supported_version(&argv[0])).then_some("version probe unsupported or unavailable")
+    });
+    let mut reporter = Reporter::new(AgentProvider::Codex, lease, None);
     if let Some(reason) = unavailable {
-        receiver.disable();
-        eprintln!("Codex reporting unavailable ({reason}); running native command");
+        reporter.unavailable("Codex", reason);
     }
-    Box::new(move |event| match event {
-        HookEvent::Request {
-            input,
-            native_root,
-            deadline,
-        } => receiver.handle(input, native_root, deadline),
-        HookEvent::NativeCompleted { .. } => {
-            receiver.disable();
-            Vec::new()
-        }
-        HookEvent::Poll { .. } => Vec::new(),
-    })
+    reporter.handler(Hooks { active: None })
 }
-struct Receiver {
-    lease: Option<InvocationLease>,
-    disabled: bool,
-    active: Option<(String, String)>,
-    seen: HashSet<(String, String)>,
-    charged_bytes: usize,
-    revision: u64,
+
+/// Codex's frames: one open response cycle at a time, identified by its session and turn.
+struct Hooks {
+    active: Option<String>,
 }
-impl Receiver {
-    fn disable(&mut self) {
-        self.disabled = true;
-        self.active = None;
-        if let Some(lease) = self.lease.take() {
-            // Close the watch immediately; Drop cannot create an extra blocking grace period.
-            let _ = lease.stream.shutdown(std::net::Shutdown::Both);
-            drop(lease);
-        }
-    }
-    fn handle(&mut self, input: &[u8], native_root: bool, deadline: Instant) -> Vec<u8> {
-        const IGNORED: &[u8] = b"admission-ignored\n";
-        const UNAVAILABLE: &[u8] = b"admission-unavailable\n";
-        if self.disabled {
-            return UNAVAILABLE.to_vec();
-        }
-        if !native_root || input.len() > super::HOOK_INPUT_LIMIT {
-            return IGNORED.to_vec();
+
+impl reporter::Frames for Hooks {
+    fn frame(
+        &mut self,
+        reporter: &mut Reporter,
+        input: &[u8],
+        native_root: bool,
+        deadline: Instant,
+    ) -> Vec<u8> {
+        if let Some(answer) = reporter.own_frame(input, native_root) {
+            return answer;
         }
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(input) else {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         };
         if value["provider"] != "codex" || value["origin"] != "codex-hook" {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         }
         let payload = &value["payload"];
         let Some(event) = payload["hook_event_name"].as_str() else {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         };
         if event.starts_with("Subagent")
             || payload
                 .get("agent_id")
                 .is_some_and(|id| id.as_str() != Some(""))
         {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         }
         if !matches!(
             event,
             "UserPromptSubmit" | "Stop" | "Interrupt" | "SessionEnd"
         ) {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         }
         let Some(session) = payload["session_id"]
             .as_str()
             .filter(|s| ovrcr_protocol::validate_agent_id(s).is_ok())
         else {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         };
         let Some(turn) = payload["turn_id"]
             .as_str()
             .filter(|s| ovrcr_protocol::validate_agent_id(s).is_ok())
         else {
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         };
-        let identity = (session.to_owned(), turn.to_owned());
+        // A newline cannot appear in either validated identity, so one string names the
+        // pair without two of them ever colliding.
+        let identity = format!("{session}\n{turn}");
         if event == "SessionEnd" {
             if self.active.as_ref() == Some(&identity)
                 || (self.active.is_none()
-                    && self.seen.contains(&identity)
-                    && self
-                        .lease
-                        .as_ref()
-                        .and_then(|lease| lease.binding.as_ref())
+                    && reporter.published(&identity)
+                    && reporter
+                        .binding()
                         .is_some_and(|binding| binding.conversation == session))
             {
-                self.disable();
+                reporter.disable();
             }
-            return IGNORED.to_vec();
+            return reporter::IGNORED.to_vec();
         }
         let state = if event == "UserPromptSubmit" {
             // Deduplicate *before* any revisions, binding changes, or freshness updates.
-            if self.seen.contains(&identity) {
-                return IGNORED.to_vec();
+            if let Some(answer) = reporter.admit_cycle(&identity) {
+                return answer;
             }
-            let charge = session.len() + turn.len() + std::mem::size_of::<(String, String)>();
-            if self.active.is_some()
-                || self.seen.len() >= MAX_IDENTITIES
-                || self.charged_bytes + charge > MAX_IDENTITY_BYTES
-            {
-                self.disable();
-                return UNAVAILABLE.to_vec();
+            if self.active.is_some() {
+                reporter.disable();
+                return reporter::UNAVAILABLE.to_vec();
             }
-            self.seen.insert(identity.clone());
-            self.charged_bytes += charge;
-            if !self.bind(session, deadline) {
-                self.disable();
-                return UNAVAILABLE.to_vec();
+            if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                return unavailable;
             }
-            self.active = Some(identity.clone());
+            self.active = Some(identity);
             AgentActivity::Busy
         } else {
             if self.active.as_ref() != Some(&identity) {
-                return IGNORED.to_vec();
+                return reporter::IGNORED.to_vec();
             }
             self.active = None;
             if event == "Stop" {
@@ -220,128 +179,178 @@ impl Receiver {
                 AgentActivity::Idle
             }
         };
-        let Some(lease) = &self.lease else {
-            self.disable();
-            return UNAVAILABLE.to_vec();
-        };
-        let Some(binding) = lease.binding.clone() else {
-            self.disable();
-            return UNAVAILABLE.to_vec();
-        };
-        self.revision += 1;
-        let report = ProviderReport {
-            binding,
-            revision: self.revision,
-            observation: AgentObservation::Activity(ActivitySample {
+        reporter.publish(
+            AgentObservation::Activity(ActivitySample {
                 state,
                 quality: SampleQuality::Observed,
                 turn: Some(turn.to_owned()),
             }),
-        };
-        if lease.publish_observation(report, deadline).is_err() {
-            self.disable();
-            return UNAVAILABLE.to_vec();
-        }
-        b"admission-accepted\n".to_vec()
-    }
-    fn bind(&mut self, conversation: &str, deadline: Instant) -> bool {
-        let Some(lease) = &mut self.lease else {
-            return false;
-        };
-        match lease.bind(
-            ovrcr_protocol::AgentProvider::Codex,
-            conversation,
             deadline,
-            false,
-        ) {
-            Some(true) => {
-                self.revision = 0;
-                true
-            }
-            Some(false) => true,
-            None => false,
-        }
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn unbound() -> Receiver {
-        Receiver {
-            lease: None,
-            disabled: false,
-            active: None,
-            seen: HashSet::new(),
-            charged_bytes: 0,
-            revision: 0,
-        }
+    use crate::report::reporter::Frames;
+    use crate::report::reporter::scripted::Supervisor;
+
+    fn start() -> (Hooks, Reporter, Supervisor) {
+        let (reporter, supervisor) = Supervisor::reporter(AgentProvider::Codex);
+        (Hooks { active: None }, reporter, supervisor)
     }
-    fn prompt(session: &str, turn: &str) -> Vec<u8> {
+    fn deadline() -> Instant {
+        Instant::now() + std::time::Duration::from_secs(10)
+    }
+    fn hook(event: &str, session: &str, turn: &str) -> Vec<u8> {
         serde_json::to_vec(
             &serde_json::json!({"provider":"codex","origin":"codex-hook","payload":{
-                "hook_event_name":"UserPromptSubmit","session_id":session,"turn_id":turn
+                "hook_event_name":event,"session_id":session,"turn_id":turn
             }}),
         )
         .unwrap()
     }
-    #[test]
-    fn codex_identity_count_exhaustion_disables_instead_of_evicting() {
-        let mut receiver = unbound();
-        for i in 0..MAX_IDENTITIES {
-            receiver.seen.insert(("root".into(), i.to_string()));
-        }
-        let before = receiver.seen.clone();
-        assert_eq!(
-            receiver.handle(&prompt("root", "new"), true, Instant::now()),
-            b"admission-unavailable\n"
-        );
-        assert!(receiver.disabled);
-        assert_eq!(receiver.seen, before);
-        assert_eq!(receiver.revision, 0);
+    fn drive(hooks: &mut Hooks, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
+        hooks.frame(reporter, input, true, deadline())
     }
+    fn states(supervisor: Supervisor) -> Vec<(u64, AgentActivity, Option<String>, SampleQuality)> {
+        Supervisor::activity(&supervisor.observed())
+            .into_iter()
+            .map(|(generation, _, state, turn, quality)| (generation, state, turn, quality))
+            .collect()
+    }
+
     #[test]
-    fn codex_identity_byte_exhaustion_disables_instead_of_evicting() {
-        let mut receiver = unbound();
-        let session = "s".repeat(256);
-        let mut i = 0;
-        // Charge actual retained string sizes and identity storage, independently
-        // calculating the boundary instead of merely setting the counter to its limit.
-        loop {
-            let turn = format!("{i:0256}");
-            let charge = session.len() + turn.len() + std::mem::size_of::<(String, String)>();
-            if receiver.charged_bytes + charge > MAX_IDENTITY_BYTES {
-                break;
-            }
-            receiver.charged_bytes += charge;
-            receiver.seen.insert((session.clone(), turn));
-            i += 1;
-        }
-        assert!(receiver.seen.len() < MAX_IDENTITIES);
-        let count = receiver.seen.len();
+    fn a_closed_turn_that_repeats_is_a_duplicate_and_publishes_nothing() {
+        let (mut hooks, mut reporter, supervisor) = start();
         assert_eq!(
-            receiver.handle(
-                &prompt(&session, &format!("{i:0256}")),
-                true,
-                Instant::now()
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
             ),
-            b"admission-unavailable\n"
+            reporter::ACCEPTED
         );
-        assert!(receiver.disabled);
-        assert_eq!(receiver.seen.len(), count);
-        assert!(receiver.charged_bytes <= MAX_IDENTITY_BYTES);
-    }
-    #[test]
-    fn codex_closed_turn_duplicate_is_checked_before_capacity() {
-        let mut receiver = unbound();
-        receiver.seen.insert(("root".into(), "old".into()));
-        receiver.charged_bytes = MAX_IDENTITY_BYTES;
         assert_eq!(
-            receiver.handle(&prompt("root", "old"), true, Instant::now()),
-            b"admission-ignored\n"
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1")),
+            reporter::ACCEPTED
         );
-        assert!(!receiver.disabled);
-        assert!(receiver.active.is_none());
-        assert_eq!(receiver.revision, 0);
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::IGNORED,
+            "the turn identity is already published; a repeat is not a new response"
+        );
+        assert!(hooks.active.is_none() && !reporter.closed());
+        // The pair is one identity: neither half alone matches another turn's.
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1x")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            states(supervisor),
+            vec![
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("t1".into()),
+                    SampleQuality::Observed
+                ),
+                (
+                    1,
+                    AgentActivity::ResponseReady,
+                    Some("t1".into()),
+                    SampleQuality::Observed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_end_for_a_turn_this_receiver_published_ends_reporting() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1"));
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("SessionEnd", "root", "unseen")
+            ),
+            reporter::IGNORED
+        );
+        assert!(
+            !reporter.closed(),
+            "an end naming a turn this receiver never published is not this conversation's"
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("SessionEnd", "root", "t1")),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t2")
+            ),
+            reporter::UNAVAILABLE,
+            "a receiver that has ended reports nothing more"
+        );
+        assert_eq!(states(supervisor).len(), 2);
+    }
+
+    #[test]
+    fn a_frame_that_is_not_the_native_roots_is_never_this_receivers() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        assert_eq!(
+            hooks.frame(
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1"),
+                false,
+                deadline()
+            ),
+            reporter::IGNORED
+        );
+        assert!(hooks.active.is_none() && !reporter.closed());
+        // The same frame from the native root is this receiver's.
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(states(supervisor).len(), 1);
+    }
+
+    #[test]
+    fn a_second_prompt_while_a_cycle_is_open_ends_reporting() {
+        // Codex reports one response cycle at a time; an overlap is ordering ambiguity.
+        let (mut hooks, mut reporter, supervisor) = start();
+        drive(
+            &mut hooks,
+            &mut reporter,
+            &hook("UserPromptSubmit", "root", "t1"),
+        );
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t2")
+            ),
+            reporter::UNAVAILABLE
+        );
+        assert!(reporter.closed());
+        assert_eq!(states(supervisor).len(), 1);
     }
 }

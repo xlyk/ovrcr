@@ -152,8 +152,11 @@ impl Default for ClaudeUsageAccumulator {
             records: BTreeMap::new(),
             sums: [0; 5],
             unknown: [0; 5],
-            identity_limit: 65_536,
-            byte_limit: 16 * 1024 * 1024,
+            // The same ceiling as a reporter's identity budget, deliberately, but a
+            // separate budget: this accumulator retains transcript records in the
+            // collector process, not the reporter's fences and response cycles.
+            identity_limit: super::reporter::MAX_IDENTITIES,
+            byte_limit: super::reporter::MAX_IDENTITY_BYTES,
             retained_bytes: 0,
             diagnostic: None,
         }
@@ -488,7 +491,7 @@ mod tests {
     #[test]
     fn production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one() {
         let mut totals = ClaudeUsageAccumulator::default();
-        for index in 0..65_536 {
+        for index in 0..crate::report::reporter::MAX_IDENTITIES {
             assert!(
                 totals
                     .apply_record(&record(&index.to_string(), "r", 0))
@@ -500,8 +503,11 @@ mod tests {
         assert!(!totals.apply_record(&record("65536", "r", 0)).unwrap());
         assert!(!totals.apply_record(&record("0", "r", 100)).unwrap());
         assert_eq!(totals.snapshot().input_tokens, Some(393_217));
-        assert_eq!(totals.records.len(), 65_536);
-        assert!(totals.retained_bytes <= 16 * 1024 * 1024);
+        assert_eq!(
+            totals.records.len(),
+            crate::report::reporter::MAX_IDENTITIES
+        );
+        assert!(totals.retained_bytes <= crate::report::reporter::MAX_IDENTITY_BYTES);
     }
 
     #[test]

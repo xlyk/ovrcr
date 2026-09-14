@@ -6,6 +6,15 @@ context occupancy is available through session inspection.
 Terminal output, elapsed silence, keyboard input, and process liveness never imply
 that an agent is busy or idle.
 
+Every managed provider reports through one reporter lifecycle: the reservation it binds,
+the Reporting generation that binding carries, and the revisions its observations are
+numbered from work the same way for Claude Code, Codex, Pi and Oh My Pi, so those
+guarantees hold identically wherever they are repeated below. Which of the rest a
+provider uses is not uniform, and the differences are real: Pi and Oh My Pi pause and
+recover, Codex and Claude Code do not; Claude Code settles its usage accounting when the
+native command exits, the others simply release the reservation. Each provider's section
+states what that provider does.
+
 ## Managed Claude Code
 
 For the supported version, setup instructions, and current acceptance limits, see

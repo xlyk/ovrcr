@@ -8,6 +8,8 @@
 | `crates/ovrcr-tui` | Dashboard state, input routing, rendering, and task UI. |
 | Root `src/` | Application composition, CLI/client, reporting, service integration, and optional GUI helper. |
 
+One Reporter (`src/report/reporter.rs`) owns every managed invocation's reporting lifecycle: lease ownership, bind receipts, the single revision set, publish-or-disable, Producer fencing and the identity budget, pause and recovery, and teardown. `report/extension.rs` (Pi, Oh My Pi), `report/codex.rs`, and `report/admission.rs` (Claude) are frame receivers: they translate one provider's frames into observations and hold nothing else. Each receiver chooses which lifecycle parts its provider needs and they differ — only the extension receivers pause and recover, only Claude finalizes its accounting or retries a lost bind receipt, and only receivers with their own transport check the native root — so read the Reporter's own documentation for which is which. Add lifecycle behaviour to the Reporter, never to a receiver.
+
 - Runtime and TUI depend on protocol/terminal primitives, not on each other. Keep root facades thin; put implementations in the owning crate.
 - Keep modules focused and exports small. Reuse existing helpers and dependencies before adding abstractions or libraries. Do not introduce Tokio, a database, an agent SDK, or a new crate without a concrete requirement in the approved design.
 - Update constructors, exhaustive matches, public re-exports, CLI output, and optional-feature callers together when shared types change. Which providers may produce Ready, Unread, review targets and alerts is decided once by `AgentProvider::supports_readiness`; never compare a provider literal at a consumer.
