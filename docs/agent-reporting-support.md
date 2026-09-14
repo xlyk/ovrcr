@@ -378,13 +378,13 @@ question is open, and an old question's close failing to clear a newer one).
 
 Three gaps are stated rather than hidden. There is no Oh My Pi old-producer lifecycle test:
 Oh My Pi never replaces its extension factory in-process, so a second instance is
-unreachable at that seam, and the fence is pinned by the shared receiver unit test
-`admit_fences_gaps_retired_producers_and_an_unobserved_replacement`. There is no Oh My Pi
+unreachable at that seam, and the fence is pinned by the shared reporter-lifecycle unit
+test `admit_fences_gaps_retired_producers_and_an_unobserved_replacement`. There is no Oh My Pi
 `source_overflow` lifecycle test: reaching the bound needs 257 PTY round trips, so the
 doctor consequence is pinned by `a_pause_is_recoverable_only_where_the_provider_has_a_way_out_of_it`
 and the mechanism itself is Pi's, already covered. There is no Oh My Pi lost-bind-receipt
-test: the `InvocationLease::operation_status` recovery path is shared and is covered by the
-Codex lifecycle test. Native acceptance against an installed Oh My Pi stays #97.
+test: the bind-receipt recovery is the shared `Reporter::bind` path, covered by the Codex
+lifecycle test and by `a_lost_bind_receipt_is_re_read_and_the_bind_is_never_issued_twice`. Native acceptance against an installed Oh My Pi stays #97.
 
 ### Approvals and questions
 

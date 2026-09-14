@@ -24,6 +24,13 @@ _Avoid_: a newer Unread as the review target
 An open request for a human answer, identified by binding, namespace and request identity. A binding carries a bounded set of them, published whole; while any is open the session's effective activity is WaitingInput, and closing the last one restores the underlying activity.
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
 
+**Reporter**:
+The in-process owner of one managed invocation's reporting: the lease, the binding and
+Reporting generation that lease carries, the one revision set every observation is numbered
+from, the retained identities it fences, and the teardown. One per invocation; each
+provider's receiver only translates that provider's frames into observations it publishes.
+_Avoid_: the provider's receiver, the extension Producer, the helper process
+
 **Producer**:
 The admitted extension instance whose source sequence fences its events; retired by an observed shutdown or replaced by an admitted successor. In Oh My Pi one producer spans every in-place session switch, so a switch is a new binding, not a new producer.
 _Avoid_: the conversation, the binding, the native process
