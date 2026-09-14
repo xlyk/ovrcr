@@ -21,7 +21,7 @@ The Unread the Dashboard last showed.
 _Avoid_: a newer Unread as the review target
 
 **Input request**:
-An open request for a human answer from a visible provider dialog, identified by binding and request identity. While one is open the session's effective activity is WaitingInput; closing the last one restores the underlying activity.
+An open request for a human answer, identified by binding, namespace and request identity. A binding carries a bounded set of them, published whole; while any is open the session's effective activity is WaitingInput, and closing the last one restores the underlying activity.
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
 
 **Active dashboard**:

@@ -35,9 +35,12 @@ arguments or results, titles or credentials.
   `session_start`; `bound` afterwards with `binding` and `lifecycle`.
 - `lifecycle.delivery` (`observed` once any activity arrived), `activity` (the
   effective activity `terminal list` reports, so `WaitingInput` while a dialog is
-  open), `input_request` (the open request's kind, or null), `work_seen`, `health`
-  (`Unavailable` after transport loss or a retired producer), `unread`.
-- `capabilities`: `reporting` and `input_requests` are available; `recovery`
+  open), `input_requests` (the open requests' kinds, oldest first), `work_seen`,
+  `health` (`Unavailable` after transport loss or a retired producer), `unread`.
+- `capabilities`: `reporting` and `approvals` are available; `questions` is
+  `unavailable_no_provider_surface` for Pi, which has no question surface beyond
+  its dialogs, and `available_tool_lifetime` for Oh My Pi, whose question request
+  spans the ask tool's execution rather than the dialog's visibility; `recovery`
   (#91) and `metrics` (absent by design) are stated explicitly.
 
 ## Removal

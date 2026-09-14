@@ -13,7 +13,12 @@ pub(super) struct Managed {
     /// Releases exercised by this repository's recorded evidence. Not an allowlist.
     pub tested_versions: &'static [&'static str],
     pub reporting: &'static str,
-    pub input_requests: &'static str,
+    /// Native tool-approval prompts as Input requests.
+    pub approvals: &'static str,
+    /// Agent questions as Input requests. `available_tool_lifetime` means the request
+    /// spans the asking tool's execution, not the dialog's visibility: it opens a moment
+    /// before the dialog and covers a question queued behind another one.
+    pub questions: &'static str,
     pub recovery: &'static str,
 }
 
@@ -22,7 +27,8 @@ pub(super) const PI: Managed = Managed {
     display: "Pi",
     tested_versions: &["0.85.1"],
     reporting: "available",
-    input_requests: "available",
+    approvals: "available",
+    questions: "unavailable_no_provider_surface",
     recovery: "pending #91",
 };
 
@@ -31,7 +37,8 @@ pub(super) const OMP: Managed = Managed {
     display: "Oh My Pi",
     tested_versions: &["18.1.19"],
     reporting: "available",
-    input_requests: "pending #95",
+    approvals: "available",
+    questions: "available_tool_lifetime",
     recovery: "pending #96",
 };
 
@@ -156,7 +163,8 @@ pub(super) fn doctor(
         "capabilities": {
             "managed_launch": true,
             "reporting": provider.reporting,
-            "input_requests": provider.input_requests,
+            "approvals": provider.approvals,
+            "questions": provider.questions,
             "recovery": provider.recovery,
             "metrics": "absent",
         },
