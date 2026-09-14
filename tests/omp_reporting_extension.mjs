@@ -61,17 +61,112 @@ test("inert outside a managed invocation and outside the terminal UI", async () 
 test("registers OMP's lifecycle and switch events", async () => {
   managed();
   const host = await createHost(materialize().extension);
+  // An EXACT list, so a later ticket cannot add a fabricated plugin-refresh or
+  // before-switch subscription unnoticed.
   assert.deepEqual(host.registered(), [
     "agent_end",
     "agent_start",
     "session_shutdown",
     "session_start",
     "session_switch",
+    "session_tree",
     "tool_approval_requested",
     "tool_approval_resolved",
     "tool_execution_end",
     "tool_execution_start",
   ]);
+  // A plugin-resource refresh emits no extension event in Oh My Pi and never re-instantiates
+  // a factory; nothing here may pretend otherwise, and a cancellable pre-switch never binds.
+  assert.equal(host.registered().includes("session_before_switch"), false);
+  assert.equal(host.registered().includes("session_compact"), false);
+  assert.deepEqual(host.commands(), ["ovrcr-reattach"]);
+});
+
+test("a switch names the conversation it left by id, never by its file path", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({ type: "session_start" });
+  host.state.session = "sess-b";
+  await host.emit({
+    type: "session_switch", reason: "resume",
+    previousSessionFile: "/private/x/2026-09-13T00-00-00-000Z_sess-a.jsonl",
+  });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.session_id, f.reason, f.previous]), [
+    // A startup announcement states no expectation about a previous conversation.
+    ["session_start", "sess-a", "startup", null],
+    ["session_start", "sess-b", "resume", "sess-a"],
+  ]);
+  const body = JSON.stringify(sent);
+  assert.ok(!body.includes("/private/x"), "no directory leaves the extension");
+  assert.ok(!body.includes("2026-09-13T00-00-00-000Z"), "no timestamp leaves the extension");
+  assert.ok(!body.includes(".jsonl"));
+});
+
+test("a same-file reload is a switch that names the conversation it is already on", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a" });
+  await host.emit({
+    type: "session_switch", reason: "resume",
+    previousSessionFile: "/private/x/2026-09-13T00-00-00-000Z_sess-a.jsonl",
+  });
+  assert.deepEqual(frames(record).map((f) => [f.event, f.session_id, f.previous]), [
+    ["session_start", "sess-a", "sess-a"],
+  ]);
+});
+
+test("tree navigation invalidates the response cycle and carries only idleness", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a", idle: false });
+  await host.emit({ type: "agent_start" });
+  await host.emit({
+    type: "session_tree", newLeafId: "LEAF_SECRET", oldLeafId: "OLD_LEAF_SECRET",
+    summaryEntry: { text: "SUMMARY_SECRET" }, fromExtension: undefined,
+  });
+  host.state.idle = true;
+  await host.emit({ type: "agent_start" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.run, f.idle ?? null]), [
+    ["agent_start", 1, null],
+    // The frame still names the cycle it abandons, exactly as Pi's does; the receiver
+    // publishes no turn for it and forgets the cycle either way.
+    ["cycle_invalidated", 1, false],
+    // The abandoned cycle is not resumed: the next start opens a new one.
+    ["agent_start", 2, null],
+  ]);
+  const body = JSON.stringify(sent);
+  for (const secret of ["LEAF_SECRET", "OLD_LEAF_SECRET", "SUMMARY_SECRET"]) {
+    assert.ok(!body.includes(secret), secret);
+  }
+});
+
+test("the reattach command re-announces this producer once and says so", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-a", idle: false });
+  await host.emit({ type: "agent_start" });
+  await host.run("ovrcr-reattach");
+  await host.emit({ type: "agent_start" });
+  assert.deepEqual(frames(record).map((f) => [f.event, f.reason ?? null, f.idle ?? null, f.run]), [
+    ["agent_start", null, null, 1],
+    ["session_start", "reattach", false, null],
+    // The reattached producer abandons the cycle it had open; the next start is a new one.
+    ["agent_start", null, null, 2],
+  ]);
+  assert.deepEqual(host.state.notices, [["OVRCR reporting reattached", "info"]]);
+});
+
+test("a print-mode reattach delivers nothing, spawns no helper, and says it is unavailable", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const child = await createHost(extension, { mode: "print", session: "child" });
+  await child.run("ovrcr-reattach");
+  assert.deepEqual(frames(record), []);
+  assert.equal(existsSync(record), false, "no helper was spawned for a child session");
+  assert.deepEqual(child.state.notices, [["OVRCR reporting is unavailable", "warning"]]);
 });
 
 function approval(toolCallId, sessionId = "sess-a") {
@@ -323,18 +418,21 @@ test("an in-place session switch re-announces the conversation and closes any op
   await host.emit({ type: "session_start" });
   await host.emit({ type: "agent_start" });
   host.state.session = "sess-b";
-  await host.emit({ type: "session_switch", reason: "resume", previousSessionFile: "/private/a.jsonl" });
+  await host.emit({
+    type: "session_switch", reason: "resume",
+    previousSessionFile: "/private/x/2026-09-13T00-00-00-000Z_sess-a.jsonl",
+  });
   await host.emit({ type: "agent_start" });
   const sent = frames(record);
-  assert.deepEqual(sent.map((f) => [f.event, f.session_id, f.run, f.reason ?? null]), [
-    ["session_start", "sess-a", null, "startup"],
-    ["agent_start", "sess-a", 1, null],
-    ["session_start", "sess-b", null, "resume"],
+  assert.deepEqual(sent.map((f) => [f.event, f.session_id, f.run, f.reason ?? null, f.previous ?? null]), [
+    ["session_start", "sess-a", null, "startup", null],
+    ["agent_start", "sess-a", 1, null, null],
+    ["session_start", "sess-b", null, "resume", "sess-a"],
     // Cycle numbering is per instance, not per conversation: the receiver would read a
     // repeated <instance>:<run> as the continuation of the cycle it already published.
-    ["agent_start", "sess-b", 2, null],
+    ["agent_start", "sess-b", 2, null, null],
   ]);
-  assert.ok(!JSON.stringify(sent).includes("a.jsonl"));
+  assert.ok(!JSON.stringify(sent).includes(".jsonl"));
 });
 
 test("shutdown reports once with reason quit and disables", async () => {

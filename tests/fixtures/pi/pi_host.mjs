@@ -56,7 +56,8 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 //   | tool_approval_requested:<id> | tool_approval_resolved:<id>:<true|false>
 //   | foreign_approval:<id> | tool_execution_start:<toolName>:<id>
 //   | tool_execution_end:<toolName>:<id>[:error]
-//   | session_switch[:<id>[:<reason>]] | session_shutdown:<reason>
+//   | session_switch[:<id>[:<reason>[:<previous id>]]] | plugin_refresh
+//   | session_shutdown:<reason>
 //   | mode:<tui|rpc|print> | exit
 async function main() {
   const args = process.argv.slice(2);
@@ -141,8 +142,19 @@ async function main() {
         }
       }
       else if (command === "session_switch") {
+        // Oh My Pi switches in place on the same extension instance and names the session
+        // file it left; `<id>` equal to the current session is a same-file reload.
+        const previous = c ?? host.state.session;
         if (a) host.state.session = a;
-        await host.emit({ type: "session_switch", reason: b ?? "resume" });
+        await host.emit({
+          type: "session_switch", reason: b ?? "resume",
+          previousSessionFile: `/private/x/2026-09-13T00-00-00-000Z_${previous}.jsonl`,
+        });
+      } else if (command === "plugin_refresh") {
+        // Oh My Pi's plugin-resource refresh reloads plugin roots, agents, skills, slash
+        // commands and MCP servers and emits no extension event; it never re-instantiates an
+        // extension factory. So this host deliberately does nothing, and the tests assert
+        // that nothing is what the reporter observes.
       } else if (command === "agent_settled") await host.emit({ type: "agent_settled" });
       else if (command === "session_shutdown") await host.emit({ type: "session_shutdown", reason: a ?? "quit" });
     }
