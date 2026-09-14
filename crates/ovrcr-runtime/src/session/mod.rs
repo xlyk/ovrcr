@@ -231,22 +231,6 @@ pub(crate) struct LeaderWaitOverride<'a> {
 }
 
 impl Session {
-    /// Spawns a session without publishing it first.
-    ///
-    /// Test-only: every production spawn goes through
-    /// [`Session::spawn_registered`], which publishes the session before its
-    /// PTY reader and child waiter can emit an event the dispatcher cannot yet
-    /// route. A caller here would reintroduce that lost-output race.
-    #[cfg(test)]
-    pub(crate) fn spawn(
-        id: SessionId,
-        spec: SessionSpec,
-        size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
-    ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events.into(), None, None, None, None, None)
-    }
-
     /// Spawn a session and publish it through `register` before its PTY
     /// reader and child waiter start.
     ///
@@ -268,7 +252,7 @@ impl Session {
             spec,
             size,
             events.into(),
-            Some(register),
+            register,
             None,
             None,
             None,
@@ -291,7 +275,7 @@ impl Session {
             spec,
             size,
             events.into(),
-            None,
+            &|_| {},
             reap_hook,
             signal_hook,
             signal_result_hook,
@@ -312,7 +296,7 @@ impl Session {
             spec,
             size,
             events.into(),
-            None,
+            &|_| {},
             None,
             None,
             None,
@@ -326,7 +310,7 @@ impl Session {
         spec: SessionSpec,
         size: TerminalSize,
         events: crate::server::ReportingSender<SessionEvent>,
-        register: Option<SessionRegister<'_>>,
+        register: SessionRegister<'_>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -455,9 +439,7 @@ impl Session {
         });
 
         // Publish the session before anything can emit an event for it.
-        if let Some(register) = register {
-            register(&session);
-        }
+        register(&session);
 
         let reader_session = Arc::clone(&session);
         let reader_events = events.clone();

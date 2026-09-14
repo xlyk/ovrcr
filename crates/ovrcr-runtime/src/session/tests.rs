@@ -188,7 +188,7 @@ impl Drop for BarrierGuard {
 fn spawn_test_shell() -> Arc<Session> {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
             project: "p".into(),
@@ -201,6 +201,7 @@ fn spawn_test_shell() -> Arc<Session> {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let _ = Box::leak(Box::new(dir));
@@ -352,7 +353,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
     let dir = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(64);
     let capability = [0x37; 32];
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(700),
         SessionSpec {
             project: "p".into(),
@@ -373,6 +374,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -439,7 +441,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
 fn pause_resume_terminate_runs_term_handler() {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
             SessionId(5),
             SessionSpec {
                 project: "p".into(),
@@ -456,8 +458,7 @@ fn pause_resume_terminate_runs_term_handler() {
                 hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
-            tx,
-        )
+            tx, &|_| {})
         .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -676,7 +677,7 @@ fn terminate_retains_sigcont_permission_error_for_live_group() {
 fn pause_resume_exit_event_cannot_be_overwritten() {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
             project: "p".into(),
@@ -693,6 +694,7 @@ fn pause_resume_exit_event_cannot_be_overwritten() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -782,7 +784,7 @@ fn pause_resume_rejects_unsafe_group() {
 fn shell_round_trip_updates_the_current_screen() {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
             project: "p".into(),
@@ -795,6 +797,7 @@ fn shell_round_trip_updates_the_current_screen() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -812,7 +815,7 @@ fn shell_round_trip_updates_the_current_screen() {
 fn final_output_is_parsed_before_session_becomes_removable() {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(2),
         SessionSpec {
             project: "p".into(),
@@ -825,6 +828,7 @@ fn final_output_is_parsed_before_session_becomes_removable() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let first_event = rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -871,7 +875,7 @@ fn resize_reaches_the_child_tty() {
 fn terminate_removes_the_whole_process_group() {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(3),
         SessionSpec {
             project: "p".into(),
@@ -888,6 +892,7 @@ fn terminate_removes_the_whole_process_group() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -932,7 +937,7 @@ fn terminate_removes_job_control_subgroups() {
     // attached to it without waiting out the grace period.
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
             project: "p".into(),
@@ -945,6 +950,7 @@ fn terminate_removes_job_control_subgroups() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
+        &|_| {},
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -1135,7 +1141,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     .unwrap();
     std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o700)).unwrap();
     let (tx, rx) = mpsc::sync_channel(64);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
             project: "p".into(),
@@ -1151,6 +1157,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
             cols: 100,
         },
         tx,
+        &|_| {},
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);

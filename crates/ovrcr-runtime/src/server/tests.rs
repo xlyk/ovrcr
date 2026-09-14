@@ -2473,7 +2473,7 @@ fn spawn_live_test_session_with_hook(
 ) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         id,
         SessionSpec {
             project: "p".into(),
@@ -2490,6 +2490,7 @@ fn spawn_live_test_session_with_hook(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     (cwd, session, receiver)
@@ -2500,7 +2501,7 @@ fn spawn_exiting_test_session(
 ) -> (tempfile::TempDir, Arc<Session>, Receiver<SessionEvent>) {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         id,
         SessionSpec {
             project: "p".into(),
@@ -2513,6 +2514,7 @@ fn spawn_exiting_test_session(
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     (cwd, session, receiver)
@@ -3847,7 +3849,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
     let (_cwd, session, receiver) = {
         let cwd = tempfile::tempdir().unwrap();
         let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-        let session = Session::spawn(
+        let session = Session::spawn_registered(
             id,
             SessionSpec {
                 project: "p".into(),
@@ -3860,6 +3862,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
             },
             TerminalSize { rows: 24, cols: 80 },
             events,
+            &|_| {},
         )
         .unwrap();
         (cwd, session, receiver)
@@ -4190,7 +4193,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let capability = [0x49; 32];
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4207,6 +4210,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4461,7 +4465,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
 fn shutdown_without_kill_rejects_paused_session() {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4474,6 +4478,7 @@ fn shutdown_without_kill_rejects_paused_session() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     let dispatch_session = Arc::clone(&session);
@@ -4509,7 +4514,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     let cwd = tempfile::tempdir().unwrap();
     let (events, receiver) = mpsc::sync_channel(RAW_EVENT_QUEUE_CAPACITY);
     let id = SessionId(17);
-    let session = Session::spawn(
+    let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
             project: "p".into(),
@@ -4522,6 +4527,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
+        &|_| {},
     )
     .unwrap();
     let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
@@ -4791,7 +4797,7 @@ fn session_output_flows_while_another_session_spawns() {
     // The live session shares the server's event channel, so the fixture's
     // bridge and dispatcher apply its output and exit the way they would for
     // any session the server created.
-    let live = Session::spawn(
+    let live = Session::spawn_registered(
         live_id,
         SessionSpec {
             project: "project".into(),
@@ -4808,6 +4814,7 @@ fn session_output_flows_while_another_session_spawns() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events.clone(),
+        &|_| {},
     )
     .unwrap();
     let state = Arc::new(ServerState {
