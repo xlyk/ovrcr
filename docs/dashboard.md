@@ -43,9 +43,14 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `:` | Open the command palette |
 | `Space` | Show contextual groups, then choose an action |
 | `?` | Browse the same popup with arrows and `Enter` |
+| `N` | Toggle desktop notifications for this dashboard |
+| `S` | Toggle the ready sound for this dashboard |
 | `q` | Detach; the server and every session keep running |
 
-Other `Ctrl`-modified keys are ignored in Browse. `Esc` and `Ctrl-g` cancel a
+`N`, `S`, `R` and `[` act on a key press; a key repeat or release does nothing.
+`Alt` and `Super` do not change which action a key runs: `Alt-x` closes the pane
+that `x` closes. `Ctrl` reaches Browse only as `Ctrl-t`, whatever else is held
+with it; every other `Ctrl`-modified key is ignored. `Esc` and `Ctrl-g` cancel a
 history request that has not opened yet.
 
 ## Unread responses

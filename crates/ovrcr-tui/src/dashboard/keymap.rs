@@ -106,8 +106,19 @@ fn capture(
     key_binding(key, name, description, code, Action::Capture(code))
 }
 
-/// Arrows and back-tab are spellings of the letter keys the table lists.
-fn canonical(code: KeyCode) -> KeyCode {
+/// Browse's own modifier rule, kept from the dispatcher this table replaced:
+/// Alt, Super and Shift never select a different action, so `Alt-x` closes the
+/// pane that `x` closes, and Ctrl reaches Browse only as Ctrl-t. The key popup
+/// is stricter and matches bindings without this fold.
+fn browse_modifiers(mut key: KeyEvent) -> KeyEvent {
+    key.modifiers &= KeyModifiers::CONTROL;
+    key
+}
+
+/// Arrows and back-tab are spellings of the letter keys a `j/Down` style label
+/// names. A single-character label answers to that character alone, so an arrow
+/// never stands in for it.
+fn folded(code: KeyCode) -> KeyCode {
     match code {
         KeyCode::Left => KeyCode::Char('h'),
         KeyCode::Down => KeyCode::Char('j'),
@@ -184,13 +195,21 @@ impl KeyBinding {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             return false;
         }
-        canonical(key.code) == self.code
+        if self.key.chars().count() == 1 {
+            return key.code == self.code;
+        }
+        folded(key.code) == self.code
     }
 }
 
 impl Dashboard {
     /// The one binding the current input mode gives `key`.
     pub(super) fn key_binding_for(&self, key: KeyEvent) -> Option<KeyBinding> {
+        let key = if self.mode == InputMode::Browse {
+            browse_modifiers(key)
+        } else {
+            key
+        };
         // ponytail: rebuilds the table per key; it is already rebuilt per draw.
         keymap(self)
             .into_iter()
@@ -201,12 +220,18 @@ impl Dashboard {
     /// Run a binding's action. The key popup and the palette reach the same
     /// handlers as a bare key press.
     pub(super) fn run(&mut self, action: Action) -> DashboardAction {
-        // Opening a group stays inside the popup, so it answers before the
-        // preamble that closes the popup.
+        // Opening a group stays inside the popup: it neither closes the popup
+        // nor clears the notice, so it answers before the shared preamble.
         if let Action::Group(group) = action {
             return self.open_group(group);
         }
         self.whichkey = None;
+        // Every action but these reached its handler through `key_action`, whose
+        // press preamble clears the notice; a popup or palette row clicked with
+        // the mouse never passes that preamble, so clear it here.
+        if !matches!(action, Action::RemoveWorkspace | Action::RemoveProject) {
+            self.desktop.notice = None;
+        }
         match action {
             Action::Palette => self.open_palette(),
             Action::CreateTerminal => self.open_create_terminal(),

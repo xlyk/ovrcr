@@ -2120,10 +2120,32 @@ fn mouse_cleanup_precedes_the_replacement_set_view() {
     assert!(cleanup < set_view, "{batch:?}");
 }
 
+fn keymap_session(
+    id: u64,
+    phase: crate::protocol::SessionPhase,
+) -> crate::protocol::SessionSummary {
+    use crate::protocol::{AgentActivity, SessionSummary};
+    SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "agent".into(),
+        label: "shell".into(),
+        pid: None,
+        started_unix_ms: 0,
+        phase,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+        agent: None,
+        agent_epoch: 0,
+        unread: None,
+    }
+}
+
 /// One running session in one workspace, with an acknowledged screen: the state
 /// every Browse binding is available in.
 fn keymap_dashboard(phase: crate::protocol::SessionPhase) -> Dashboard {
-    use crate::protocol::{AgentActivity, ProjectSummary, SessionSummary, WorkspaceSummary};
+    use crate::protocol::{ProjectSummary, WorkspaceSummary};
     let mut dashboard = Dashboard::new(TerminalSize {
         rows: 40,
         cols: 120,
@@ -2135,21 +2157,7 @@ fn keymap_dashboard(phase: crate::protocol::SessionPhase) -> Dashboard {
             project: "consigint".into(),
             name: "auth".into(),
             path: "/tmp/auth".into(),
-            sessions: vec![SessionSummary {
-                id: SessionId(12),
-                project: "consigint".into(),
-                workspace: "auth".into(),
-                name: "agent".into(),
-                label: "shell".into(),
-                pid: None,
-                started_unix_ms: 0,
-                phase,
-                activity: AgentActivity::Unknown,
-                context_usage: None,
-                agent: None,
-                agent_epoch: 0,
-                unread: None,
-            }],
+            sessions: vec![keymap_session(12, phase)],
         }],
     });
     dashboard.select_session(SessionId(12));
@@ -2379,4 +2387,111 @@ fn key_popup_group_keeps_a_waiting_row_and_drops_an_inapplicable_one() {
     );
     assert!(shown(&paused, "r"));
     assert!(!shown(&paused, "p"));
+}
+
+#[test]
+fn browse_dispatch_keeps_its_own_modifier_rule() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(keymap_session(13, SessionPhase::Running));
+
+    // Alt and Super do not select a different action: Alt-j selects the next
+    // session and Alt-x runs the pane close x runs.
+    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    dashboard.key_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
+    dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+        DashboardAction::Redraw,
+        "Alt-x must reach the same action as x"
+    );
+
+    // Ctrl reaches Browse only as Ctrl-t, whatever else is held with it.
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ] {
+        let mut dashboard = keymap_dashboard(SessionPhase::Running);
+        assert_eq!(
+            dashboard.key_action(KeyEvent::new(KeyCode::Char('t'), modifiers)),
+            DashboardAction::Redraw,
+            "{modifiers:?}"
+        );
+        assert!(dashboard.tasks.is_some(), "{modifiers:?} must open tasks");
+    }
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    for code in [KeyCode::Char('n'), KeyCode::Char('x'), KeyCode::Char('q')] {
+        assert_eq!(
+            dashboard.key_action(KeyEvent::new(code, KeyModifiers::CONTROL)),
+            DashboardAction::None,
+            "{code:?}"
+        );
+    }
+    assert!(dashboard.tasks.is_none());
+}
+
+#[test]
+fn a_pending_leader_group_ignores_an_arrow_that_names_no_row() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
+    // The group lists History under h. An arrow is not that key.
+    for code in [KeyCode::Left, KeyCode::Down, KeyCode::Up, KeyCode::Right] {
+        assert_eq!(dashboard.key(code), DashboardAction::Redraw, "{code:?}");
+        assert!(
+            dashboard.whichkey.is_some(),
+            "{code:?} must leave the popup open"
+        );
+        assert!(
+            dashboard.history_begin_request.is_none(),
+            "{code:?} must run nothing"
+        );
+    }
+    dashboard.key(KeyCode::Char('h'));
+    assert!(dashboard.whichkey.is_none(), "h runs the History row");
+    assert!(dashboard.history_begin_request.is_some());
+}
+
+#[test]
+fn a_clicked_popup_row_clears_the_desktop_notice() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::backend::TestBackend;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.desktop.notice = Some("Desktop notifications unavailable".into());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| super::render::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let (column, row) = (0..40)
+        .find_map(|y| {
+            let line: String = (0..120).map(|x| buffer[(x, y)].symbol()).collect();
+            line.find("q  Detach").map(|x| (x as u16 + 1, y))
+        })
+        .expect("the popup lists Detach");
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        dashboard.event_action(crossterm::event::Event::Mouse(click)),
+        DashboardAction::Detach
+    );
+    assert!(
+        dashboard.desktop.notice.is_none(),
+        "a clicked row clears the notice a key press would have cleared"
+    );
 }
