@@ -221,6 +221,12 @@ pub struct Session {
 /// Publishes a spawning session where its own events can be dispatched.
 pub(crate) type SessionRegister<'a> = &'a dyn Fn(&Arc<Session>);
 
+/// The register for a spawn whose test does not watch publication. It still
+/// runs at the publication point, so the hook constructors below reach the
+/// PTY reader and child waiter the same way production does.
+#[cfg(test)]
+pub(crate) const NO_REGISTER: SessionRegister<'static> = &|_| {};
+
 /// Test-only control over the group-leader wait in `spawn_internal`.
 ///
 /// `None` in every production spawn, which reads its bound from the
@@ -265,7 +271,7 @@ impl Session {
             spec,
             size,
             events,
-            &|_| {},
+            NO_REGISTER,
             reap_hook,
             signal_hook,
             signal_result_hook,
@@ -286,7 +292,7 @@ impl Session {
             spec,
             size,
             events,
-            &|_| {},
+            NO_REGISTER,
             None,
             None,
             None,

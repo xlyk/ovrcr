@@ -201,7 +201,7 @@ fn spawn_test_shell() -> Arc<Session> {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let _ = Box::leak(Box::new(dir));
@@ -377,7 +377,7 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
         },
         TerminalSize { rows: 24, cols: 80 },
         events,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -461,7 +461,7 @@ fn pause_resume_terminate_runs_term_handler() {
                 hook_env: None,
             },
             TerminalSize { rows: 24, cols: 80 },
-            tx, &|_| {})
+            tx, NO_REGISTER)
         .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -697,7 +697,7 @@ fn pause_resume_exit_event_cannot_be_overwritten() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -800,7 +800,7 @@ fn shell_round_trip_updates_the_current_screen() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -831,7 +831,7 @@ fn final_output_is_parsed_before_session_becomes_removable() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let first_event = rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -895,7 +895,7 @@ fn terminate_removes_the_whole_process_group() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);
@@ -953,7 +953,7 @@ fn terminate_removes_job_control_subgroups() {
         },
         TerminalSize { rows: 24, cols: 80 },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let _cleanup = TerminationGuard(Arc::clone(&session));
@@ -1160,7 +1160,7 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
             cols: 100,
         },
         tx,
-        &|_| {},
+        NO_REGISTER,
     )
     .unwrap();
     let dispatcher = dispatch_test_events(session.clone(), rx);
