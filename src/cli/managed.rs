@@ -167,18 +167,25 @@ pub(super) fn doctor(
                             "unread": session.unread.is_some(),
                         });
                         if paused(provider, agent) {
-                            // Only name the reattach command where the provider has one.
-                            let control = if provider.recovery == "available" {
+                            let reason = agent.health.reason.as_deref().unwrap_or("unknown");
+                            // An overflow disables the extension's producer, so no boundary
+                            // frame can arrive on its own: the command is the only way out.
+                            // Elsewhere, only name the command where the provider has one.
+                            let control = if reason == "source_overflow" {
                                 format!(
-                                    "Run /ovrcr-reattach in {}, or send the next prompt",
+                                    "Run /ovrcr-reattach in {}; the next prompt alone will not recover it",
+                                    provider.display
+                                )
+                            } else if provider.recovery == "available" {
+                                format!(
+                                    "Run /ovrcr-reattach in {}, or send the next prompt — the next session boundary recovers reporting as a fresh generation",
                                     provider.display
                                 )
                             } else {
-                                "Send the next prompt".to_owned()
+                                "Send the next prompt — the next session boundary recovers reporting as a fresh generation".to_owned()
                             };
                             remediation.push(format!(
-                                "Reporting is paused for this invocation ({}): the source data this reporter delivered is no longer certain, and nothing is being applied. The native session is untouched. {control} — the next session boundary recovers reporting as a fresh generation.",
-                                agent.health.reason.as_deref().unwrap_or("unknown"),
+                                "Reporting is paused for this invocation ({reason}): the source data this reporter delivered is no longer certain, and nothing is being applied. The native session is untouched. {control}.",
                             ));
                         } else if agent.health.state == ReporterHealth::Unavailable {
                             remediation.push("Reporting is unavailable for this invocation: the transport was lost or the producer ended with its session. Start a fresh managed launch to restore reporting.".into());

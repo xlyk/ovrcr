@@ -676,7 +676,8 @@ impl Namespace {
 }
 
 /// Whether a transition names a conversation this receiver is not bound to. A frame with
-/// no `previous` carries no expectation (Oh My Pi's switches say nothing yet), and a
+/// no `previous` carries no expectation (a startup announcement, or a harness with no
+/// previous file), and a
 /// receiver with no binding has none to contradict.
 fn transition_mismatch(
     previous: Option<&str>,
