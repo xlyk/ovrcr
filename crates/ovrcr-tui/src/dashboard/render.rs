@@ -1108,7 +1108,7 @@ fn tree_line_text(
 }
 
 /// Status glyph and colour for a session row. An unavailable reporter mutes the glyph.
-fn session_status_glyph(session: &SessionSummary, now_unix_ms: u64) -> (char, Color) {
+pub(super) fn session_status_glyph(session: &SessionSummary, now_unix_ms: u64) -> (char, Color) {
     let (glyph, color) = match (&session.phase, super::ready::activity(session)) {
         (SessionPhase::Exited { .. }, _) => ('·', MUTED),
         (SessionPhase::Paused, _) => ('P', SUBTEXT),

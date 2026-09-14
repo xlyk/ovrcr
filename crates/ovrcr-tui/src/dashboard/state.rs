@@ -958,10 +958,12 @@ impl Dashboard {
         }
     }
 
+    /// A running session whose glyph animates, so the Dashboard owes it the spinner cadence.
+    /// Reads the effective activity the glyph reads: an open Input request stops the spinner.
     pub(super) fn session_is_busy(&self, id: SessionId) -> bool {
         find_session(self, id).is_some_and(|session| {
             matches!(session.phase, crate::session::SessionPhase::Running)
-                && session.activity == crate::session::AgentActivity::Busy
+                && super::ready::activity(session) == crate::session::AgentActivity::Busy
         })
     }
 

@@ -2119,3 +2119,62 @@ fn mouse_cleanup_precedes_the_replacement_set_view() {
     assert!(set_view.is_some(), "the retarget owes a view: {batch:?}");
     assert!(cleanup < set_view, "{batch:?}");
 }
+
+#[test]
+fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph() {
+    use crate::protocol::{
+        ActivitySample, AgentActivity, AgentBinding, AgentProvider, AgentSnapshot, HealthSample,
+        InputKind, InputRequest, ReporterHealth, SampleQuality,
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.hierarchy = session_hierarchy(&[1]);
+    let session = &mut dashboard.hierarchy.projects[0].workspaces[0].sessions[0];
+    // A Busy sample under one open Input request: the effective activity is WaitingInput,
+    // so the row shows `?` and the redraw cadence must not claim something is animating.
+    session.activity = AgentActivity::Busy;
+    session.agent = Some(AgentSnapshot {
+        binding: AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "invocation".into(),
+            conversation: "conversation".into(),
+            generation: 1,
+        },
+        activity: Some(ActivitySample {
+            state: AgentActivity::Busy,
+            quality: SampleQuality::Observed,
+            turn: None,
+        }),
+        metrics: None,
+        health: HealthSample {
+            state: ReporterHealth::Connected,
+            reason: None,
+        },
+        activity_revision: 1,
+        metrics_revision: 0,
+        health_revision: 0,
+        input_requests: vec![InputRequest {
+            id: "request".into(),
+            kind: InputKind::Confirm,
+        }],
+        input_revision: 1,
+    });
+    let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    assert_eq!(super::render::session_status_glyph(&summary, 0).0, '?');
+    assert!(!dashboard.session_is_busy(SessionId(1)));
+    assert_ne!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
+
+    // Closing the last request restores the activity underneath: glyph and cadence agree again.
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+        .agent
+        .as_mut()
+        .unwrap()
+        .input_requests
+        .clear();
+    let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    assert_eq!(super::render::session_status_glyph(&summary, 0).0, '⠋');
+    assert!(dashboard.session_is_busy(SessionId(1)));
+    assert_eq!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
+}
