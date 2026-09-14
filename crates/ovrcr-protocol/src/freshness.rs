@@ -35,10 +35,13 @@ pub fn is_stale(received_unix_ms: u64, now_unix_ms: u64, exited: bool) -> bool {
 /// sample `watermark` saw, the stamp already recorded when a timer replays an
 /// unchanged one.
 ///
-/// "Unchanged" is whole-sample equality, so for a `Measurement` the reporter's
-/// `source` label counts too: the same value arriving under a different source
-/// is a new reading and takes a new stamp. That is the safe direction — a
-/// reader is told the value is fresh, never that a genuinely new one is old.
+/// "Unchanged" is whole-sample equality, deliberately: for a `Measurement` the
+/// reporter's `source` label counts too, so the same value arriving under a
+/// different source is a new reading and takes a new stamp. Production runs one
+/// source per component per binding, so this only decides the ambiguous case,
+/// and it decides it the safe way — a reader is told a value is fresh, never
+/// that a genuinely new one is old. Comparing `value` alone would also leave
+/// this module knowing the shape of a protocol type it otherwise ignores.
 pub fn received_at<T: Clone + PartialEq>(
     watermark: &mut Option<(T, u64)>,
     sample: &T,

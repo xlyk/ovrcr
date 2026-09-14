@@ -923,5 +923,23 @@ mod tests {
             freshness::is_stale(changed.usage_received_unix_ms, later, true),
             "an exited session is stale whatever its stamps say"
         );
+
+        // `received_at` compares whole samples, so the reporter label counts:
+        // the same number arriving under a different source is a new reading,
+        // not a replay. Production runs one source per component per binding,
+        // so this only decides the ambiguous case, and it decides it the safe
+        // way -- a fresh reading is never reported as old.
+        let relabelled_at = later + 1_000;
+        let mut relabelled = sample(20);
+        relabelled.usage.source = "second_fixture".into();
+        let relabelled = watermarks.replace(&relabelled, relabelled_at).unwrap();
+        assert_eq!(
+            relabelled.usage_received_unix_ms, relabelled_at,
+            "a source change with an unchanged value takes a new stamp"
+        );
+        assert_eq!(
+            relabelled.context_received_unix_ms, START,
+            "and it moves nothing else"
+        );
     }
 }
