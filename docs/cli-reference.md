@@ -105,9 +105,9 @@ use `terminal kill ID`, then `terminal remove ID` when finished.
 | --- | --- |
 | `agent run --provider claude -- claude [ARGS...]` | Supervise an exact Claude Code 2.1.267 or 2.1.268 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. Exact 2.1.268 also accepts separate-token `-r UUID`. Does not start a server. |
 | `agent run pi -- pi [ARGS...]` | Supervise an interactive Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (confirmed at Pi's settled boundary), Error and Idle; creates Unread and Ready alerts. Help, version, print, RPC, JSON, export and package commands run native with reporting unavailable. |
-| `agent run omp -- omp [ARGS...]` | Supervise an interactive Oh My Pi launch (reporting arrives with #94); headless modes run native. |
+| `agent run omp -- omp [ARGS...]` | Supervise an interactive Oh My Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (observed at an end without continuation), Error and Idle; creates Unread and Ready alerts. Headless modes run native with reporting unavailable. |
 | `agent setup pi\|omp --print` | Print the managed-launch contract; nothing to write. |
-| `agent doctor pi\|omp --json [--executable PATH]` | Probe `--version` and report capabilities; no allowlist. |
+| `agent doctor pi\|omp --json [--session ID] [--executable PATH]` | Probe `--version` (tested / unverified / unknown), inspect an optional `--session` (binding, delivery, activity, health, unread) and print remediation; no server is started. |
 | `agent setup codex --print [--settings PATH]` | Print composed Codex 0.153.0 TOML with five synchronous direct-exec reporters; preserve existing values and handler order. Explicit installation and native trust review are required. See [Codex setup](codex-reporting-setup.md). |
 | `agent doctor codex --json [--settings PATH] [--executable PATH]` | Defaults to `codex`; probes only `--version` and checks supplied TOML without a server or provider conversation. Hook trust/delivery and release acceptance remain unverified. |
 | `agent setup claude --print [--settings PATH]` | Print composed JSON; migration and removal notes go to stderr. Does not write provider settings. |

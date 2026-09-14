@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { createHost, assistant } from "./fixtures/pi/pi_host.mjs";
 
 const SOURCE = resolve("src/pi-reporting-extension.mjs");
+const TRANSPORT = resolve("src/ovrcr-reporting-transport.mjs");
 const materialized = [];
 
 after(() => {
@@ -22,6 +23,8 @@ function materialize({ hang = false } = {}) {
     `#!/bin/sh\n[ "$1" = report ] && [ "$2" = pi ] && [ "$3" = --stdin ] || exit 9\ncat >> "${record}"; printf '\\n' >> "${record}"\n${hang ? "sleep 5\n" : ""}`,
   );
   chmodSync(helper, 0o700);
+  // The receiver materializes the shared transport beside the extension that imports it.
+  writeFileSync(join(dir, "ovrcr-reporting-transport.mjs"), readFileSync(TRANSPORT, "utf8"));
   const extension = join(dir, "ovrcr-pi-reporting.mjs");
   writeFileSync(extension, readFileSync(SOURCE, "utf8").replace("__OVRCR_BINARY__", JSON.stringify(helper)));
   return { extension, record };
@@ -147,4 +150,43 @@ test("queue overflow disables reporting and sends one content-free unavailable n
   assert.ok(sent.length <= 2, `helpers actually completed: ${sent.length}`);
   await host.emit({ type: "agent_settled" });
   assert.equal(frames(record).length, sent.length, "disabled after overflow");
+});
+
+test("a tool error followed by a successful assistant response is a successful cycle", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  await host.emit({ type: "agent_start" });
+  await host.emit({
+    type: "agent_end",
+    messages: [
+      assistant("toolUse"),
+      { role: "toolResult", isError: true, content: [{ type: "text", text: "secret tool output" }] },
+      assistant("stop"),
+    ],
+  });
+  await host.emit({ type: "agent_settled" });
+  const sent = frames(record);
+  assert.deepEqual(sent.map((f) => [f.event, f.run, f.outcome]), [
+    ["agent_start", 1, "none"], ["agent_end", 1, "ok"], ["agent_settled", 1, "ok"],
+  ]);
+  assert.ok(!readFileSync(record, "utf8").includes("secret tool output"));
+});
+
+test("resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension, { session: "sess-resumed" });
+  await host.emit({ type: "session_start", reason: "resume", previousSessionFile: "/private/old.jsonl" });
+  await host.emit({ type: "agent_start" });
+  await host.emit({ type: "agent_end", messages: [assistant("stop"), assistant("error")] });
+  await host.emit({ type: "agent_settled" });
+  const sent = frames(record);
+  assert.deepEqual(sent[0].event, "session_start");
+  assert.equal(sent[0].reason, "resume");
+  assert.equal(sent[0].run, null);
+  assert.ok(!("previousSessionFile" in sent[0]) && !JSON.stringify(sent[0]).includes("old.jsonl"));
+  assert.deepEqual(sent.slice(1).map((f) => [f.event, f.run, f.outcome]), [
+    ["agent_start", 1, "none"], ["agent_end", 1, "error"], ["agent_settled", 1, "error"],
+  ]);
 });

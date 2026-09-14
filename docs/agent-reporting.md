@@ -144,6 +144,33 @@ Error (the last assistant message stopped with an error) or Idle (aborted, or no
 response). Ready creates one unread identity per response cycle; review and alerts work as
 for Codex. Payloads carry identifiers and discriminants only: never prompts, responses or
 tool data. Extension dialogs, session switches and reporter recovery are later tickets.
+See [Pi reporting setup](pi-reporting-setup.md).
+
+## Oh My Pi
+
+`ovrcr agent run omp -- omp [ARGS...]` (or picking `omp` in the Dashboard) materializes the
+owned reporting extension into a private per-invocation directory and adds `-e <path>`
+beside your own extensions; nothing under `~/.omp` changes. The extension is inert without
+the private channel and outside the terminal UI, so in-process task and advisor children
+(mode `print`) and the ACP route (mode `rpc`) report nothing.
+
+Oh My Pi has no settled event. The extension reports `session_start` (Idle), `agent_start`
+(Busy), and `agent_end`: an end that declares a continuation keeps the cycle open and the
+session Busy, while an end without one closes it and publishes Ready
+(`response ready · observed`), Error or Idle from the same outcome rule as Pi. The quality
+is Observed, never Confirmed, because the stop hook may still continue after a clean end; a
+later `agent_start` then opens another cycle without acknowledging or replacing the unread
+response the earlier one created.
+
+Oh My Pi switches conversations in place on one extension instance. A `session_switch`
+re-announces the conversation with `session_start` carrying the switch reason, which rebinds
+and invalidates any cycle left open by the conversation being left. An existing unread
+response survives the switch until it is reviewed. Payloads carry identifiers and
+discriminants only — the one field added for Oh My Pi is the boolean continuation flag —
+never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
+process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
+the invocation unreported until the next managed launch (reporter recovery is #96).
+Approvals and questions (Oh My Pi exports no event for them, #95) are a later ticket.
 
 ## Context usage
 

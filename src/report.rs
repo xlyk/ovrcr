@@ -3,6 +3,7 @@ pub mod claude;
 pub mod claude_metrics;
 pub mod codex;
 pub mod collector;
+pub mod extension;
 pub mod omp;
 pub mod pi;
 
@@ -582,6 +583,9 @@ pub fn send_codex_hook(input: &[u8], deadline: Instant) -> Result<()> {
 pub fn send_pi_event(input: &[u8], deadline: Instant) -> Result<()> {
     send_payload(input, "pi", "pi-extension", deadline)
 }
+pub fn send_omp_event(input: &[u8], deadline: Instant) -> Result<()> {
+    send_payload(input, "omp", "omp-extension", deadline)
+}
 fn send_payload(
     input: &[u8],
     provider: &'static str,
@@ -714,21 +718,6 @@ pub fn reserve_invocation_for(
         Err(_) => Ok(None),
         result => result,
     }
-}
-
-/// A provider whose reporting cannot run for this invocation: release the reservation
-/// immediately, tell the operator once on stderr, and answer every callback unavailable.
-pub fn unavailable_receiver(
-    lease: Option<InvocationLease>,
-    provider: &str,
-    reason: &str,
-) -> ovrcr_runtime::agent_runner::HookHandler {
-    if let Some(lease) = lease {
-        let _ = lease.stream.shutdown(std::net::Shutdown::Both);
-        drop(lease);
-    }
-    eprintln!("{provider} reporting unavailable ({reason}); running native command");
-    Box::new(|_| b"admission-unavailable\n".to_vec())
 }
 
 fn agent_exchange(

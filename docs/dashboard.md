@@ -427,8 +427,8 @@ succeeded. Delivery keys on a new [unread](#unread-responses) identity (binding 
 turn), not on activity quality. Confirmed activity without unread does not notify.
 Only project, workspace and terminal identity appear in the alert. Prompt and
 response text are never included. The accepted Codex reporting setup is still
-required; see [Codex setup](codex-reporting-setup.md). Pi needs no setup beyond the
-managed launch.
+required; see [Codex setup](codex-reporting-setup.md). Pi and Oh My Pi need no setup
+beyond the managed launch.
 
 The active dashboard delivers alerts only when the terminal is absent from every
 visible pane. A terminal assigned to a split hidden by a small window is eligible;

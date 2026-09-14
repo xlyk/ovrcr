@@ -11,41 +11,6 @@ fn provider(name: &str) -> AgentProvider {
     }
 }
 
-fn display_name(name: &str) -> &'static str {
-    match name {
-        "codex" => "Codex",
-        "pi" => "Pi",
-        "omp" => "Oh My Pi",
-        _ => "Claude",
-    }
-}
-
-/// Pi and Oh My Pi need no settings: the managed launch loads the owned extension itself.
-fn managed_setup(name: &str) -> AppResult<()> {
-    println!(
-        "{} reporting needs no settings changes. Launch through `ovrcr agent run {name} -- {name} [ARGS...]` inside an OVRCR terminal, or pick {name} in the Dashboard agent picker. A plain `{name}` launch stays untracked.",
-        display_name(name)
-    );
-    Ok(())
-}
-
-fn managed_doctor(name: &str, executable: &std::ffi::OsStr) -> AppResult<()> {
-    let version = ovrcr::report::admission::probe_version(executable)
-        .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned());
-    let report = serde_json::json!({
-        "provider": name,
-        "probe_status": if version.is_some() { "probed" } else { "unavailable" },
-        "version": version,
-        "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
-        "capabilities": { "managed_launch": true, "reporting": if name == "pi" { "available" } else { "pending #94" } },
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&report).expect("a JSON value serializes")
-    );
-    Ok(())
-}
-
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {
     let (name, argv) = match command {
         AgentCommand::Setup {
@@ -55,7 +20,9 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         } => {
             return match provider.as_str() {
                 "codex" => super::codex_setup::setup(settings.as_deref()),
-                "pi" | "omp" => managed_setup(&provider),
+                "pi" | "omp" => super::managed::setup(
+                    super::managed::managed(&provider).expect("managed provider"),
+                ),
                 _ => super::agent_setup::setup(settings.as_deref()),
             };
         }
@@ -68,7 +35,11 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
             let executable = executable.unwrap_or_else(|| provider.clone().into());
             return match provider.as_str() {
                 "codex" => super::codex_setup::doctor(settings.as_deref(), session, &executable),
-                "pi" | "omp" => managed_doctor(&provider, &executable),
+                "pi" | "omp" => super::managed::doctor(
+                    super::managed::managed(&provider).expect("managed provider"),
+                    session,
+                    &executable,
+                ),
                 _ => super::agent_setup::doctor(settings.as_deref(), session, &executable),
             };
         }
@@ -106,11 +77,7 @@ pub(super) fn run(command: AgentCommand) -> AppResult<()> {
         Some(match name.as_str() {
             "codex" => ovrcr::report::codex::receiver(lease, native_argv),
             "pi" => ovrcr::report::pi::receiver(lease, native_argv),
-            "omp" => ovrcr::report::unavailable_receiver(
-                lease,
-                "Oh My Pi",
-                "provider reporting not implemented yet",
-            ),
+            "omp" => ovrcr::report::omp::receiver(lease, native_argv),
             _ => ovrcr::report::admission::receiver(lease, native_argv),
         })
     })
