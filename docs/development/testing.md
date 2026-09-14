@@ -11,6 +11,22 @@
 - Save attempts under distinct filenames with the command, exit status, executed counts, and tested revision. Preserve failures; never overwrite them with a passing run.
 - Separate headless, native macOS, Linux, clipboard, and provider evidence. A build or emitted OSC52 bytes does not prove native input, paste, or conversation restoration. Report unavailable checks as unverified.
 
+## The live-server fixture
+
+`tests/support/live.rs` builds the live servers the integration suites drive.
+A `Live` owns a private temporary root and, inside it, the Git repository,
+workspace root, registry file and socket its server is given; the wait for the
+socket, timed control requests through `ovrcr_protocol::client`, "project and
+workspace ready", the process groups the fixture owns and the cleanup that runs
+from `Drop` all live there, so a suite writes none of it again. Two adapters
+sit at its one seam, how the server is hosted: `Live::thread` runs `run_server`
+on a thread of the test process, for tests that reach into server state or
+change the environment the server reads; `Live::binary` spawns the compiled
+`ovrcr`, for tests that need a real process — signals, exit status, a CLI
+talking to a server it did not start. `Live::idle` hands back the paths without
+a server, for tests whose subject is start-up itself. Session, CLI and terminal
+helpers stay in the suite that needs them, wrapped around a `Live`.
+
 ## Commands and isolated acceptance
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:

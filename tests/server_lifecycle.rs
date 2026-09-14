@@ -1,7 +1,7 @@
-#[path = "support/deadline.rs"]
-mod deadline;
+#[path = "support/live.rs"]
+mod live;
 
-use deadline::wait_deadline;
+use live::{Live, group_exists, request_with_timeout, wait_deadline};
 use ovrcr::config::{Registry, load_registry, save_registry_atomic};
 use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
 use ovrcr::protocol::{
@@ -163,82 +163,27 @@ fn hook_child_report_helper() {
     }
 }
 
-struct ServerFixture {
-    root: tempfile::TempDir,
-    paths: ServerPaths,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl ServerFixture {
-    fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let paths = ServerPaths {
-            socket: root.path().join("private").join("server.sock"),
-        };
-        Self {
-            root,
-            paths,
-            thread: None,
-        }
-    }
-
-    fn start(&mut self) {
-        let registry = self.root.path().join("config.toml");
-        save_registry_atomic(&Registry::default(), &registry).unwrap();
-        let paths = self.paths.clone();
-        self.thread = Some(thread::spawn(move || run_server(paths, registry).unwrap()));
-        self.wait_for_socket();
-    }
-
-    fn wait_for_socket(&self) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if UnixStream::connect(&self.paths.socket).is_ok() {
-                return;
-            }
-            thread::park_timeout(Duration::from_millis(5));
-        }
-        panic!(
-            "server socket did not appear: {}",
-            self.paths.socket.display()
-        );
-    }
-
-    fn request(&self, request: Request) -> ServerMessage {
-        let mut stream = connect_server(&self.paths.socket).unwrap();
-        let response = client::request(&mut stream, 1, request).unwrap();
-        ServerMessage::Response {
-            request_id: 1,
-            response,
-        }
-    }
-
-    fn stop(&mut self) {
-        let response = self.request(Request::Shutdown { kill: false });
-        assert_eq!(
-            response,
-            ServerMessage::Response {
-                request_id: 1,
-                response: Response::Ok
-            }
-        );
-        let thread = self.thread.take().unwrap();
-        thread.join().unwrap();
-        assert!(!self.paths.socket.exists());
-    }
+/// Graceful stop: the server acknowledges, finishes, and removes its socket.
+fn stop(fixture: &Live) {
+    assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok
+    );
+    fixture.join();
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
 fn startup_socket_directory_is_private() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mode = std::fs::metadata(fixture.paths.socket.parent().unwrap())
+    let mode = std::fs::metadata(fixture.socket.parent().unwrap())
         .unwrap()
         .permissions()
         .mode()
         & 0o777;
     assert_eq!(mode, 0o700);
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
@@ -330,7 +275,7 @@ fn agent_hook_sequence_does_not_regress_state() {
         Response::Ok
     );
     wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: identity.session,
@@ -434,7 +379,7 @@ fn agent_hook_capability_and_exit_are_enforced() {
         }),
         Response::Ok
     );
-    assert!(wait_group_absent(first_pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(first_pgid, Duration::from_secs(2)));
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: first.session,
@@ -454,7 +399,7 @@ fn agent_hook_capability_and_exit_are_enforced() {
         Response::Ok
     );
     wait_exited_and_assert_terminal_contains(&fixture, second.session, &["HOOK_READY"]);
-    assert!(wait_group_absent(second_pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(second_pgid, Duration::from_secs(2)));
     assert!(matches!(
         fixture.request(Request::AgentReport(AgentReport {
             session: second.session,
@@ -488,7 +433,7 @@ fn agent_hook_startup_registration_is_visible() {
         Response::Ok
     );
     wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -624,7 +569,7 @@ fn agent_hook_round_trip_survives_dashboard_reconnect() {
         Response::Ok
     );
     wait_exited_and_assert_terminal_contains(&fixture, identity.session, &["HOOK_READY"]);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -725,7 +670,7 @@ fn context_report_replaces_snapshot_and_preserves_activity() {
         Response::Ok
     );
     fixture.wait_exited(identity.session);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -916,7 +861,7 @@ fn context_report_rejects_old_and_invalid_samples() {
         ));
         assert_eq!(fixture.session_summary(identity.session), exited);
     }
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -1074,7 +1019,7 @@ fn context_snapshot_survives_dashboard_reattach() {
     );
     drop(reconnect);
     fixture.wait_exited(identity.session);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     fixture.shutdown_kill();
 }
 
@@ -1089,14 +1034,12 @@ fn control_fixture_failure_cleanup_reaps_owned_child_and_server() {
     }));
     assert!(result.is_err());
     let pgid = fixture
-        .process_groups
-        .lock()
-        .unwrap()
+        .owned_groups()
         .last()
         .copied()
         .expect("failed handshake child ownership was recorded");
     drop(fixture);
-    assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     assert!(!socket.exists());
 }
 
@@ -1112,8 +1055,8 @@ fn create_private_dir(path: &Path) {
 #[test]
 fn startup_keeps_shared_existing_socket_directory_and_secures_the_socket() {
     use std::os::unix::fs::DirBuilderExt;
-    let mut fixture = ServerFixture::new();
-    let parent = fixture.paths.socket.parent().unwrap().to_path_buf();
+    let fixture = Live::idle();
+    let parent = fixture.socket.parent().unwrap().to_path_buf();
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o755)
@@ -1126,47 +1069,44 @@ fn startup_keeps_shared_existing_socket_directory_and_secures_the_socket() {
         dir_mode, 0o755,
         "startup must not modify a directory it did not create"
     );
-    let socket_mode = std::fs::metadata(&fixture.paths.socket)
+    let socket_mode = std::fs::metadata(&fixture.socket)
         .unwrap()
         .permissions()
         .mode()
         & 0o777;
     assert_eq!(socket_mode, 0o700, "the socket file itself must be private");
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn startup_refuses_symlinked_socket_directory() {
-    let fixture = ServerFixture::new();
+    let fixture = Live::idle();
     let target = fixture.root.path().join("real");
     create_private_dir(&target);
-    std::os::unix::fs::symlink(&target, fixture.paths.socket.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, fixture.socket.parent().unwrap()).unwrap();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
-    let error = run_server(fixture.paths.clone(), registry).unwrap_err();
+    let error = run_server(fixture.paths(), registry).unwrap_err();
     let message = format!("{error:#}");
     assert!(
         message.contains("server socket directory") && message.contains("symlink"),
         "unexpected error: {message}"
     );
-    assert!(!fixture.paths.socket.exists());
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
 fn startup_stale_socket_is_recovered() {
-    let mut fixture = ServerFixture::new();
-    create_private_dir(fixture.paths.socket.parent().unwrap());
-    let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
+    let fixture = Live::idle();
+    create_private_dir(fixture.socket.parent().unwrap());
+    let stale = UnixListener::bind(&fixture.socket).unwrap();
     drop(stale);
     fixture.start();
     assert!(matches!(
         fixture.request(Request::List),
-        ServerMessage::Response {
-            response: Response::Hierarchy(_),
-            ..
-        }
+        Response::Hierarchy(_)
     ));
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
@@ -1175,18 +1115,18 @@ fn startup_concurrent_attempts_leave_one_server() {
     // CLI at its own socket takes this lock, and a parallel test that spawns a
     // child would otherwise inherit this fixture's socket.
     let env_guard = env_lock();
-    let fixture = ServerFixture::new();
+    let fixture = Live::idle();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
     let executable = env!("CARGO_BIN_EXE_ovrcr");
     unsafe {
         std::env::set_var("OVRCR_SERVER_EXECUTABLE", executable);
-        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
+        std::env::set_var("OVRCR_SOCKET", &fixture.socket);
         std::env::set_var("OVRCR_CONFIG", &registry);
     }
     let mut workers = Vec::new();
     for _ in 0..2 {
-        let paths = fixture.paths.clone();
+        let paths = fixture.paths();
         workers.push(thread::spawn(move || connect_or_start(&paths)));
     }
     let mut streams = workers
@@ -1222,25 +1162,25 @@ fn startup_concurrent_attempts_leave_one_server() {
     }
     drop(env_guard);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while fixture.paths.socket.exists() && Instant::now() < deadline {
+    while fixture.socket.exists() && Instant::now() < deadline {
         thread::park_timeout(Duration::from_millis(5));
     }
-    assert!(!fixture.paths.socket.exists());
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
 fn startup_failure_reports_server_log() {
     let _env_lock = env_lock();
-    let fixture = ServerFixture::new();
+    let fixture = Live::idle();
     let registry = fixture.root.path().join("config.toml");
     std::fs::write(&registry, "[[projects]\n").unwrap();
     unsafe {
         std::env::set_var("OVRCR_SERVER_EXECUTABLE", env!("CARGO_BIN_EXE_ovrcr"));
-        std::env::set_var("OVRCR_SOCKET", &fixture.paths.socket);
+        std::env::set_var("OVRCR_SOCKET", &fixture.socket);
         std::env::set_var("OVRCR_CONFIG", &registry);
     }
     let started = Instant::now();
-    let result = connect_or_start(&fixture.paths);
+    let result = connect_or_start(&fixture.paths());
     let elapsed = started.elapsed();
     unsafe {
         std::env::remove_var("OVRCR_SERVER_EXECUTABLE");
@@ -1248,7 +1188,7 @@ fn startup_failure_reports_server_log() {
         std::env::remove_var("OVRCR_CONFIG");
     }
     let error = format!("{:#}", result.expect_err("startup must fail"));
-    let log = fixture.paths.socket.parent().unwrap().join("server.log");
+    let log = fixture.socket.parent().unwrap().join("server.log");
     assert!(
         error.contains("parse registry"),
         "error must carry the server's failure: {error}"
@@ -1272,18 +1212,18 @@ fn startup_failure_reports_server_log() {
             .unwrap()
             .contains("parse registry")
     );
-    assert!(!fixture.paths.socket.exists());
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
 fn client_with_wrong_protocol_version_is_refused() {
     use ovrcr::protocol::{PROTOCOL_VERSION, read_preamble};
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
 
     // A newer client: the server answers with its own preamble, then closes
     // the connection without serving a frame.
-    let mut stream = UnixStream::connect(&fixture.paths.socket).unwrap();
+    let mut stream = UnixStream::connect(&fixture.socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -1343,39 +1283,39 @@ fn client_with_wrong_protocol_version_is_refused() {
     );
     old_server.join().unwrap();
 
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn startup_read_only_commands_do_not_start_a_missing_server() {
-    let fixture = ServerFixture::new();
-    assert!(connect_if_running(&fixture.paths).unwrap().is_none());
-    assert!(!fixture.paths.socket.exists());
+    let fixture = Live::idle();
+    assert!(connect_if_running(&fixture.paths()).unwrap().is_none());
+    assert!(!fixture.socket.exists());
     let executable = env!("CARGO_BIN_EXE_ovrcr");
     let list = Command::new(executable)
         .arg("list")
-        .env("OVRCR_SOCKET", &fixture.paths.socket)
+        .env("OVRCR_SOCKET", &fixture.socket)
         .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
         .output()
         .unwrap();
     assert!(list.status.success());
     let shutdown = Command::new(executable)
         .arg("shutdown")
-        .env("OVRCR_SOCKET", &fixture.paths.socket)
+        .env("OVRCR_SOCKET", &fixture.socket)
         .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
         .status()
         .unwrap();
     assert!(shutdown.success());
-    assert!(!fixture.paths.socket.exists());
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
 fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
-    let fixture = ServerFixture::new();
+    let fixture = Live::idle();
     let registry = fixture.root.path().join("config.toml");
     save_registry_atomic(&Registry::default(), &registry).unwrap();
-    create_private_dir(fixture.paths.socket.parent().unwrap());
-    let stale = UnixListener::bind(&fixture.paths.socket).unwrap();
+    create_private_dir(fixture.socket.parent().unwrap());
+    let stale = UnixListener::bind(&fixture.socket).unwrap();
     drop(stale);
     let executable = env!("CARGO_BIN_EXE_ovrcr");
     let mut workers: Vec<Child> = Vec::new();
@@ -1383,7 +1323,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         workers.push(
             Command::new(executable)
                 .arg("server")
-                .env("OVRCR_SOCKET", &fixture.paths.socket)
+                .env("OVRCR_SOCKET", &fixture.socket)
                 .env("OVRCR_CONFIG", &registry)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -1410,7 +1350,7 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
         exited, 1,
         "exactly one detached server owner must survive startup"
     );
-    let mut first = connect_server(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -1449,16 +1389,16 @@ fn startup_stale_concurrent_attempts_leave_one_surviving_server() {
             .all(|worker| worker.try_wait().unwrap().is_some())
     );
     assert!(
-        !fixture.paths.socket.exists(),
+        !fixture.socket.exists(),
         "shutdown must stop the sole server"
     );
 }
 
 #[test]
 fn shutdown_disconnected_requester_still_wakes_accept() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut stream = connect_server(&fixture.paths.socket).unwrap();
+    let mut stream = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut stream,
         &ClientMessage {
@@ -1469,14 +1409,14 @@ fn shutdown_disconnected_requester_still_wakes_accept() {
     .unwrap();
     stream.shutdown(Shutdown::Both).unwrap();
     let deadline = Instant::now() + Duration::from_millis(250);
-    while fixture.paths.socket.exists() && Instant::now() < deadline {
+    while fixture.socket.exists() && Instant::now() < deadline {
         thread::park_timeout(Duration::from_millis(5));
     }
-    let completed_without_interference = !fixture.paths.socket.exists();
+    let completed_without_interference = !fixture.socket.exists();
     if !completed_without_interference {
-        let _ = UnixStream::connect(&fixture.paths.socket);
+        let _ = UnixStream::connect(&fixture.socket);
     }
-    fixture.thread.take().unwrap().join().unwrap();
+    fixture.join();
     assert!(
         completed_without_interference,
         "disconnected shutdown left accept blocked"
@@ -1494,28 +1434,6 @@ fn with_kill_grace_ms<T>(value: &str, body: impl FnOnce() -> T) -> T {
     result
 }
 
-fn register_fixture_workspace(fixture: &ControlFixture, branch: &str) {
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: branch.into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
-}
-
 fn stubborn_session_argv() -> Vec<OsString> {
     vec![
         "sh".into(),
@@ -1528,7 +1446,7 @@ fn stubborn_session_argv() -> Vec<OsString> {
 fn workspace_remove_succeeds_after_directory_deleted() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    register_fixture_workspace(&fixture, "feature/vanished-dir");
+    fixture.ready("feature/vanished-dir");
     let local = fixture.only_session_id();
     assert_eq!(
         fixture.request(Request::CloseTerminal { session: local }),
@@ -1574,7 +1492,7 @@ fn workspace_remove_succeeds_after_directory_deleted() {
 fn shutdown_without_kill_rejects_exited_record() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    register_fixture_workspace(&fixture, "feature/exited-record");
+    fixture.ready("feature/exited-record");
     let local = fixture.only_session_id();
     assert_eq!(
         fixture.request(Request::CloseTerminal { session: local }),
@@ -1606,7 +1524,7 @@ fn shutdown_without_kill_rejects_exited_record() {
 fn shutdown_kill_terminates_sessions_concurrently() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    register_fixture_workspace(&fixture, "feature/concurrent-shutdown");
+    fixture.ready("feature/concurrent-shutdown");
     // Sessions that ignore SIGHUP and SIGTERM force the full grace period
     // before SIGKILL, so a serial shutdown would cost sessions x grace.
     let mut pgids = Vec::new();
@@ -1633,7 +1551,7 @@ fn shutdown_kill_terminates_sessions_concurrently() {
 fn kill_does_not_block_dashboard_geometry() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    register_fixture_workspace(&fixture, "feature/unlocked-kill");
+    fixture.ready("feature/unlocked-kill");
     let stubborn = fixture.create_session("stubborn", stubborn_session_argv());
 
     // A dashboard registers before the kill starts.
@@ -1739,25 +1657,7 @@ fn kill_does_not_block_dashboard_geometry() {
 fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/backpressure".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/backpressure");
     let session = fixture.create_session(
         "blocked",
         vec![
@@ -1941,22 +1841,7 @@ fn control_lifecycle_enforces_every_removal_gate() {
             ..
         }
     ));
-    fixture.request(Request::AddProject {
-        name: "fixture".into(),
-        repo: fixture.repo.clone(),
-        workspace_root: fixture.workspace_root.clone(),
-    });
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/test".into(),
-                base: "main".into()
-            }
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/test");
     let local = fixture.only_session_id();
     let review = fixture.create_session("review", vec!["sh".into(), "-c".into(), "exit 0".into()]);
     assert!(matches!(
@@ -2088,25 +1973,7 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
 fn fast_exit_session_is_retained_as_exited() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/fast-exit".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/fast-exit");
     let fast = fixture.create_session(
         "fast",
         vec!["sh".into(), "-c".into(), "printf retained".into()],
@@ -2144,25 +2011,7 @@ fn fast_exit_session_is_retained_as_exited() {
 fn pause_resume_server_refuses_removal_and_late_mutation() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/pause-resume".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/pause-resume");
     let session = fixture.create_session("pause-resume", vec!["sh".into()]);
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     dashboard
@@ -2349,25 +2198,7 @@ struct PauseHarness {
 impl PauseHarness {
     fn new() -> Self {
         let fixture = ControlFixture::new_bounded();
-        assert_eq!(
-            fixture.request(Request::AddProject {
-                name: "fixture".into(),
-                repo: fixture.repo.clone(),
-                workspace_root: fixture.workspace_root.clone(),
-            }),
-            Response::Ok
-        );
-        assert_eq!(
-            fixture.request(Request::CreateWorkspace {
-                project: "fixture".into(),
-                name: "work".into(),
-                branch: BranchRequest::New {
-                    branch: "feature/task4-pause-resume".into(),
-                    base: "main".into(),
-                },
-            }),
-            Response::Ok
-        );
+        fixture.ready("feature/task4-pause-resume");
         let local = fixture.only_session_id();
         assert_eq!(
             fixture.request(Request::KillSession { session: local }),
@@ -2379,7 +2210,7 @@ impl PauseHarness {
             Response::Ok
         );
 
-        let dir = fixture._root.path().join("pause-resume");
+        let dir = fixture.root.path().join("pause-resume");
         std::fs::create_dir(&dir).unwrap();
         let control_path = dir.join("parent.sock");
         let control = UnixDatagram::bind(&control_path).unwrap();
@@ -2463,7 +2294,7 @@ impl PauseHarness {
     }
 
     fn finish(&self) {
-        if self.fixture.thread.lock().unwrap().is_some() {
+        if self.fixture.hosted() {
             assert_eq!(
                 request_with_timeout(
                     &self.fixture.socket,
@@ -2474,31 +2305,9 @@ impl PauseHarness {
                 Some(Response::Ok)
             );
             assert!(
-                self.join_bounded(Duration::from_secs(2)),
+                self.fixture.join_within(Duration::from_secs(2)),
                 "control server did not finish within cleanup deadline"
             );
-        }
-    }
-
-    fn join_bounded(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let finished = self
-                .fixture
-                .thread
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|handle| handle.is_finished())
-                .unwrap_or(true);
-            if finished {
-                let handle = self.fixture.thread.lock().unwrap().take();
-                return handle.map(|handle| handle.join().is_ok()).unwrap_or(true);
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::park_timeout(Duration::from_millis(5));
         }
     }
 }
@@ -2506,7 +2315,7 @@ impl PauseHarness {
 impl Drop for PauseHarness {
     fn drop(&mut self) {
         let mut cleanup_failed = false;
-        if self.fixture.thread.lock().unwrap().is_some() {
+        if self.fixture.hosted() {
             if request_with_timeout(
                 &self.fixture.socket,
                 999,
@@ -2521,18 +2330,18 @@ impl Drop for PauseHarness {
                     libc::kill(-*pgid, libc::SIGKILL);
                 }
             }
-            if !self.join_bounded(Duration::from_secs(2)) {
+            if !self.fixture.join_within(Duration::from_secs(2)) {
                 cleanup_failed = true;
             }
         }
         for pgid in &self.pgids {
-            if !wait_group_absent(*pgid, Duration::from_secs(2)) {
+            if !live::wait_group_absent(*pgid, Duration::from_secs(2)) {
                 cleanup_failed = true;
             }
         }
         if cleanup_failed {
             let kept =
-                std::mem::replace(&mut self.fixture._root, tempfile::tempdir().unwrap()).keep();
+                std::mem::replace(&mut self.fixture.root, tempfile::tempdir().unwrap()).keep();
             eprintln!(
                 "pause/resume fixture cleanup failed; preserved {}",
                 kept.display()
@@ -2565,18 +2374,6 @@ fn pause_session_argv(
         "--nocapture".into(),
     ]);
     argv
-}
-
-fn request_with_timeout(
-    socket: &Path,
-    request_id: u64,
-    request: Request,
-    timeout: Duration,
-) -> Option<Response> {
-    let mut stream = connect_server(socket).ok()?;
-    stream.set_read_timeout(Some(timeout)).ok()?;
-    stream.set_write_timeout(Some(timeout)).ok()?;
-    client::request(&mut stream, request_id, request).ok()
 }
 
 fn dashboard_for_session(socket: &Path, session: SessionId) -> (UnixStream, Vec<u8>) {
@@ -3284,20 +3081,6 @@ fn wait_pid_absent(pid: libc::pid_t, timeout: Duration) {
     }
 }
 
-fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let result = unsafe { libc::kill(-pgid, 0) };
-        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::yield_now();
-    }
-}
-
 fn session_summary(fixture: &ControlFixture, session: SessionId) -> ovrcr::session::SessionSummary {
     match fixture.request(Request::List) {
         Response::Hierarchy(snapshot) => snapshot
@@ -3493,7 +3276,7 @@ fn pause_resume_kill_runs_group_handlers() {
             "FINAL_DESCENDANT_AFTER_TERM",
         ],
     );
-    assert!(wait_group_absent(leader.pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(leader.pgid, Duration::from_secs(2)));
     assert_eq!(
         harness.fixture.request(Request::RemoveSession { session }),
         Response::Ok
@@ -3531,7 +3314,7 @@ fn pause_resume_kill_runs_group_handlers() {
             "FINAL_DESCENDANT_AFTER_TERM",
         ],
     );
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
         external_leader.pgid,
         Duration::from_secs(2)
     ));
@@ -3579,13 +3362,16 @@ fn pause_resume_shutdown_cleans_stopped_groups() {
         ],
         &[&first_descendant, &second_descendant],
     ));
-    assert!(wait_group_absent(first_leader.pgid, Duration::from_secs(2)));
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
+        first_leader.pgid,
+        Duration::from_secs(2)
+    ));
+    assert!(live::wait_group_absent(
         second_leader.pgid,
         Duration::from_secs(2)
     ));
     assert!(
-        harness.join_bounded(Duration::from_secs(2)),
+        harness.fixture.join_within(Duration::from_secs(2)),
         "control server did not finish after shutdown"
     );
     assert!(!harness.fixture.socket.exists());
@@ -3656,7 +3442,7 @@ fn pause_resume_control_races_body() {
             "FINAL_DESCENDANT_AFTER_TERM",
         ],
     );
-    assert!(wait_group_absent(leader.pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(leader.pgid, Duration::from_secs(2)));
     assert_eq!(
         harness.fixture.request(Request::RemoveSession { session }),
         Response::Ok
@@ -3708,7 +3494,7 @@ fn pause_resume_control_races_body() {
         reaped_terminal_markers.push("FINAL_DESCENDANT_AFTER_TERM");
     }
     wait_exited_and_assert_terminal_contains(&harness.fixture, reaped, &reaped_terminal_markers);
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
         reaped_descendant.pgid,
         Duration::from_secs(2)
     ));
@@ -4225,7 +4011,7 @@ fn history_memory_measurements() {
     );
     drop(dashboard);
 
-    let groups = fixture.process_groups.lock().unwrap().clone();
+    let groups = fixture.owned_groups();
     fixture.shutdown_kill();
     assert_eq!(
         groups.len(),
@@ -4235,7 +4021,7 @@ fn history_memory_measurements() {
     assert!(
         groups
             .iter()
-            .all(|pgid| wait_group_absent(*pgid, Duration::from_secs(2))),
+            .all(|pgid| live::wait_group_absent(*pgid, Duration::from_secs(2))),
         "memory run left an owned process group"
     );
     println!(
@@ -4331,8 +4117,8 @@ fn history_reattach_reads_retained_output() {
     drop(reattached);
 
     fixture.shutdown_kill();
-    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
-        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    for pgid in fixture.owned_groups() {
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     }
 }
 
@@ -4437,8 +4223,8 @@ fn history_frozen_page_survives_eviction_and_exit() {
     drop(dashboard);
 
     fixture.shutdown_kill();
-    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
-        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    for pgid in fixture.owned_groups() {
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     }
 }
 
@@ -4525,8 +4311,8 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
     );
     drop(dashboard);
     fixture.shutdown_kill();
-    for pgid in fixture.process_groups.lock().unwrap().iter().copied() {
-        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+    for pgid in fixture.owned_groups() {
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     }
 }
 
@@ -4536,25 +4322,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     assert_eq!(ovrcr::server::RAW_EVENT_QUEUE_CAPACITY, 64);
     assert_eq!(ovrcr::server::RAW_DISPATCH_QUEUE_CAPACITY, 64);
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/slow-dashboard".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/slow-dashboard");
     // awk emits the burst in well under a second on any runner; a shell
     // loop needs several seconds on a slow CI machine.
     let burst = fixture.create_session(
@@ -4690,25 +4458,7 @@ fn slow_dashboard_recovers_after_output_burst() {
 fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/concurrent-send".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/concurrent-send");
     let session = fixture.create_session(
         "concurrent",
         vec![
@@ -4811,25 +4561,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
 fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/resource-terminal".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/resource-terminal");
     let local = fixture.only_session_id();
     let background = fixture.create_session(
         "background",
@@ -5047,25 +4779,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
 fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/fifty-sessions".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/fifty-sessions");
     let sessions = (0..50)
         .map(|index| {
             fixture.create_session(
@@ -5197,15 +4911,21 @@ fn sessions_for_cleanup(fixture: &ControlFixture) -> Vec<SessionId> {
     }
 }
 
-struct ControlFixture {
-    _root: tempfile::TempDir,
-    repo: std::path::PathBuf,
-    workspace_root: std::path::PathBuf,
-    socket: std::path::PathBuf,
-    thread: std::sync::Mutex<Option<thread::JoinHandle<()>>>,
-    process_groups: std::sync::Mutex<Vec<libc::pid_t>>,
-    request_timeout: Option<Duration>,
-    workspace_ready: std::sync::Mutex<bool>,
+/// A live server, plus the session helpers this suite drives it with.
+struct ControlFixture(Live);
+
+impl std::ops::Deref for ControlFixture {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ControlFixture {
+    fn deref_mut(&mut self) -> &mut Live {
+        &mut self.0
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -5216,85 +4936,13 @@ struct HookIdentity {
 
 impl ControlFixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let repo = root.path().join("repo");
-        let workspace_root = root.path().join("workspaces");
-        std::fs::create_dir(&repo).unwrap();
-        std::fs::create_dir(&workspace_root).unwrap();
-        for args in [
-            vec!["init", "-b", "main"],
-            vec!["config", "user.name", "OVRCR Tests"],
-            vec!["config", "user.email", "tests@example.invalid"],
-        ] {
-            assert!(
-                Command::new("git")
-                    .args(args)
-                    .current_dir(&repo)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
-        }
-        std::fs::write(repo.join("README"), "fixture\n").unwrap();
-        assert!(
-            Command::new("git")
-                .args(["add", "README"])
-                .current_dir(&repo)
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            Command::new("git")
-                .args(["commit", "-m", "initial"])
-                .current_dir(&repo)
-                .status()
-                .unwrap()
-                .success()
-        );
-        let socket = root.path().join("server.sock");
-        let registry = root.path().join("config.toml");
-        save_registry_atomic(&ovrcr::config::Registry::default(), &registry).unwrap();
-        let paths = ServerPaths {
-            socket: socket.clone(),
-        };
-        let thread = thread::spawn(move || run_server(paths, registry).unwrap());
-        let fixture = Self {
-            _root: root,
-            repo: repo.canonicalize().unwrap(),
-            workspace_root: workspace_root.canonicalize().unwrap(),
-            socket,
-            thread: std::sync::Mutex::new(Some(thread)),
-            process_groups: std::sync::Mutex::new(Vec::new()),
-            request_timeout: None,
-            workspace_ready: std::sync::Mutex::new(false),
-        };
-        fixture.wait_socket();
-        fixture
+        Self(Live::thread())
     }
+
     fn new_bounded() -> Self {
-        let mut fixture = Self::new();
-        fixture.request_timeout = Some(Duration::from_secs(5));
-        fixture
+        Self(Live::thread().bounded())
     }
-    fn wait_socket(&self) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if UnixStream::connect(&self.socket).is_ok() {
-                return;
-            }
-            thread::park_timeout(Duration::from_millis(5));
-        }
-        panic!("control server did not start");
-    }
-    fn request(&self, request: Request) -> Response {
-        let mut stream = connect_server(&self.socket).unwrap();
-        if let Some(timeout) = self.request_timeout {
-            stream.set_read_timeout(Some(timeout)).unwrap();
-            stream.set_write_timeout(Some(timeout)).unwrap();
-        }
-        client::request(&mut stream, 1, request).unwrap()
-    }
+
     fn create_session_summary(
         &self,
         name: &str,
@@ -5324,31 +4972,8 @@ impl ControlFixture {
     }
 
     fn create_hook_child_inner(&self, name: &str, marker: &str, report: bool) -> HookIdentity {
-        let mut workspace_ready = self.workspace_ready.lock().unwrap();
-        if !*workspace_ready {
-            assert_eq!(
-                self.request(Request::AddProject {
-                    name: "fixture".into(),
-                    repo: self.repo.clone(),
-                    workspace_root: self.workspace_root.clone(),
-                }),
-                Response::Ok
-            );
-            assert_eq!(
-                self.request(Request::CreateWorkspace {
-                    project: "fixture".into(),
-                    name: "work".into(),
-                    branch: BranchRequest::New {
-                        branch: "agent-hooks".into(),
-                        base: "main".into(),
-                    },
-                }),
-                Response::Ok
-            );
-            *workspace_ready = true;
-        }
-        drop(workspace_ready);
-        let identity_path = self._root.path().join(format!("{marker}.identity"));
+        self.ready("agent-hooks");
+        let identity_path = self.root.path().join(format!("{marker}.identity"));
         let child = std::env::current_exe().unwrap();
         let script = if report {
             r#"stty -echo; OVRCR_AGENT_HOOK_IDENTITY_PATH="$1" exec "$2" --ignored --exact hook_child_report_helper --nocapture"#
@@ -5401,7 +5026,7 @@ impl ControlFixture {
 
     fn record_process_group(&self, summary: &ovrcr::session::SessionSummary) {
         if let Some(pid) = summary.pid {
-            self.process_groups.lock().unwrap().push(pid as libc::pid_t);
+            self.own(pid);
         }
     }
 
@@ -5463,7 +5088,7 @@ impl ControlFixture {
     }
 
     fn wait_identity_marker(&self, marker: &str, expected: &str) {
-        let identity_path = self._root.path().join(format!("{marker}.identity"));
+        let identity_path = self.root.path().join(format!("{marker}.identity"));
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
             if std::fs::read_to_string(&identity_path)
@@ -5507,7 +5132,7 @@ impl ControlFixture {
         }
         assert_eq!(self.request(Request::Shutdown { kill: true }), Response::Ok);
         assert!(
-            self.join_bounded(Duration::from_secs(2)),
+            self.join_within(Duration::from_secs(2)),
             "bounded fixture server did not terminate after shutdown"
         );
     }
@@ -5520,7 +5145,7 @@ impl ControlFixture {
     fn wait_exited(&self, id: SessionId) {
         let deadline = Instant::now() + wait_deadline();
         while Instant::now() < deadline {
-            let response = if self.request_timeout.is_some() {
+            let response = if self.timeout().is_some() {
                 request_with_timeout(&self.socket, 1, Request::List, Duration::from_millis(250))
             } else {
                 Some(self.request(Request::List))
@@ -5548,89 +5173,6 @@ impl ControlFixture {
             .output()
             .unwrap()
     }
-    fn join(&self) {
-        self.thread.lock().unwrap().take().unwrap().join().unwrap();
-    }
-
-    fn join_bounded(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let finished = self
-                .thread
-                .lock()
-                .unwrap()
-                .as_ref()
-                .map(|handle| handle.is_finished())
-                .unwrap_or(true);
-            if finished {
-                let handle = self.thread.lock().unwrap().take();
-                return handle.map(|handle| handle.join().is_ok()).unwrap_or(true);
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::park_timeout(Duration::from_millis(5));
-        }
-    }
-
-    fn kill_owned_groups(&self) -> bool {
-        let groups = self.process_groups.lock().unwrap().clone();
-        let mut cleaned = true;
-        for pgid in groups {
-            if !group_exists(pgid) {
-                continue;
-            }
-            if unsafe { libc::kill(-pgid, libc::SIGKILL) } != 0 && group_exists(pgid) {
-                cleaned = false;
-                continue;
-            }
-            if !wait_group_absent(pgid, Duration::from_secs(2)) {
-                cleaned = false;
-            }
-        }
-        cleaned
-    }
-}
-
-impl Drop for ControlFixture {
-    fn drop(&mut self) {
-        let mut cleanup_failed = false;
-        if self.thread.get_mut().unwrap().is_some() {
-            let shutdown = request_with_timeout(
-                &self.socket,
-                999,
-                Request::Shutdown { kill: true },
-                self.request_timeout.unwrap_or(Duration::from_secs(2)),
-            );
-            if shutdown != Some(Response::Ok) {
-                eprintln!("control fixture shutdown response: {shutdown:?}");
-                cleanup_failed = true;
-            }
-        }
-        if !self.kill_owned_groups() {
-            cleanup_failed = true;
-        }
-        if self.thread.get_mut().unwrap().is_some() && !self.join_bounded(Duration::from_secs(2)) {
-            cleanup_failed = true;
-        }
-        if !self
-            .process_groups
-            .get_mut()
-            .unwrap()
-            .iter()
-            .copied()
-            .all(|pgid| !group_exists(pgid))
-        {
-            cleanup_failed = true;
-        }
-        if cleanup_failed {
-            let kept = std::mem::replace(&mut self._root, tempfile::tempdir().unwrap()).keep();
-            eprintln!(
-                "control fixture cleanup incomplete; preserved {}",
-                kept.display()
-            );
-        }
-    }
 }
 
 fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
@@ -5646,9 +5188,9 @@ fn parse_hook_capability(value: &str) -> Option<[u8; 32]> {
 
 #[test]
 fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut first = connect_server(&fixture.paths.socket).unwrap();
+    let mut first = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut first,
         &ClientMessage {
@@ -5658,7 +5200,7 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut first).unwrap();
-    let mut second = connect_server(&fixture.paths.socket).unwrap();
+    let mut second = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut second,
         &ClientMessage {
@@ -5681,14 +5223,14 @@ fn dashboard_duplicate_hello_does_not_write_from_reader_thread() {
         }
     ));
     first.shutdown(Shutdown::Both).unwrap();
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn duplicate_dashboard_hello_uses_the_sole_writer() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5725,14 +5267,14 @@ fn duplicate_dashboard_hello_uses_the_sole_writer() {
         }
     ));
     drop(dashboard);
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn dashboard_request_id_zero_does_not_block_followup_response() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5759,32 +5301,14 @@ fn dashboard_request_id_zero_does_not_block_followup_response() {
         "request id zero must not block later dashboard responses: {response:?}"
     );
     drop(dashboard);
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/dashboard-geometry".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/dashboard-geometry");
     let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
@@ -5812,7 +5336,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
             response: Response::Ok,
         }
     ));
-    let connected_path = fixture._root.path().join("connected-size");
+    let connected_path = fixture.root.path().join("connected-size");
     let connected = fixture.create_session(
         "connected",
         vec![
@@ -5830,7 +5354,7 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
         .unwrap();
     std::io::copy(&mut dashboard, &mut std::io::sink()).unwrap();
     drop(dashboard);
-    let detached_path = fixture._root.path().join("detached-size");
+    let detached_path = fixture.root.path().join("detached-size");
     let detached = fixture.create_session(
         "detached",
         vec![
@@ -5850,9 +5374,9 @@ fn dashboard_geometry_sizes_connected_empty_and_detached_sessions() {
 
 #[test]
 fn dashboard_receives_concrete_ordinary_request_errors() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -5887,32 +5411,14 @@ fn dashboard_receives_concrete_ordinary_request_errors() {
         } if message.contains("session 99 not found")
     ));
     drop(dashboard);
-    fixture.stop();
+    stop(&fixture);
 }
 
 #[test]
 fn selection_snapshot_precedes_later_quiet_tail_output() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/select-order".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/select-order");
     let session = fixture.create_session(
         "quiet-tail",
         vec![
@@ -6241,27 +5747,9 @@ fn split_terminal_marker(
 
 #[test]
 fn split_server_two_streams_resize_resync_and_detach() {
-    let _env_lock = ENV_LOCK.lock().unwrap();
+    let _env_lock = env_lock();
     let fixture = ControlFixture::new_bounded();
-    assert_eq!(
-        fixture.request(Request::AddProject {
-            name: "fixture".into(),
-            repo: fixture.repo.clone(),
-            workspace_root: fixture.workspace_root.clone(),
-        }),
-        Response::Ok
-    );
-    assert_eq!(
-        fixture.request(Request::CreateWorkspace {
-            project: "fixture".into(),
-            name: "work".into(),
-            branch: BranchRequest::New {
-                branch: "feature/split-server-acceptance".into(),
-                base: "main".into(),
-            },
-        }),
-        Response::Ok
-    );
+    fixture.ready("feature/split-server-acceptance");
 
     let command = |side: &str| {
         vec![
@@ -6606,7 +6094,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
 
     fixture.shutdown_kill();
     for pgid in [left_pgid, right_pgid, hidden_pgid] {
-        assert!(wait_group_absent(pgid, Duration::from_secs(2)));
+        assert!(live::wait_group_absent(pgid, Duration::from_secs(2)));
     }
 }
 
@@ -6668,9 +6156,9 @@ fn select_screen_containing(
 
 #[test]
 fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
-    let mut fixture = ServerFixture::new();
+    let fixture = Live::idle();
     fixture.start();
-    let mut dashboard = connect_server(&fixture.paths.socket).unwrap();
+    let mut dashboard = connect_server(&fixture.socket).unwrap();
     write_frame(
         &mut dashboard,
         &ClientMessage {
@@ -6697,11 +6185,11 @@ fn dashboard_shutdown_acknowledges_through_writer_before_teardown() {
     );
     drop(dashboard);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while fixture.paths.socket.exists() && Instant::now() < deadline {
+    while fixture.socket.exists() && Instant::now() < deadline {
         thread::park_timeout(Duration::from_millis(5));
     }
-    fixture.thread.take().unwrap().join().unwrap();
-    assert!(!fixture.paths.socket.exists());
+    fixture.join();
+    assert!(!fixture.socket.exists());
 }
 
 #[test]
@@ -6715,10 +6203,10 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
             "relative",
             ".",
             "--workspace-root",
-            "../workspaces",
+            "../fixture-workspaces",
         ])
         .current_dir(&fixture.repo)
-        .env("OVRCR_CONFIG", fixture._root.path().join("config.toml"))
+        .env("OVRCR_CONFIG", fixture.root.path().join("config.toml"))
         .env("OVRCR_SOCKET", &fixture.socket)
         .output()
         .unwrap();
@@ -6727,7 +6215,7 @@ fn cli_resolves_relative_project_paths_against_invocation_cwd_with_existing_serv
         "relative project registration failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let registry = load_registry(&fixture._root.path().join("config.toml")).unwrap();
+    let registry = load_registry(&fixture.root.path().join("config.toml")).unwrap();
     let project = registry
         .projects
         .iter()
@@ -6888,11 +6376,10 @@ fn cli_with_output(bin: &str, config: &Path, socket: &Path, args: &[&str]) -> st
 }
 
 fn wait_for_socket(socket: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while !socket.exists() && Instant::now() < deadline {
-        thread::park_timeout(Duration::from_millis(10));
-    }
-    assert!(socket.exists(), "server socket did not appear");
+    assert!(
+        live::wait_for_socket(socket, Duration::from_secs(3)),
+        "server socket did not appear"
+    );
 }
 
 /// Connect as the dashboard, replacing one that was just dropped.
@@ -6987,19 +6474,11 @@ fn pid_exists(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
-fn group_exists(pgid: libc::pid_t) -> bool {
-    unsafe { libc::kill(-pgid, 0) == 0 }
-}
-
 fn wait_for_group_absent(pgid: libc::pid_t, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if !group_exists(pgid) {
-            return;
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
-    panic!("PTY process group {pgid} did not disappear");
+    assert!(
+        live::wait_group_absent(pgid, timeout),
+        "PTY process group {pgid} did not disappear"
+    );
 }
 
 struct CliLifecycleGuard {
@@ -7261,14 +6740,14 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
     let setup = fixture.create_hook_child("setup", "agent-supervisor-crash-setup");
     let setup_pgid = fixture.original_pgid(setup.session);
     let proxy = AdmissionProxy::new(
-        fixture._root.path().join("supervisor-watch.sock"),
+        fixture.root.path().join("supervisor-watch.sock"),
         fixture.socket.clone(),
         AdmissionFault::Passthrough,
     );
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     write_claude_exec_fixture(&native);
-    let probe = fixture._root.path().join("supervisor-crash-probe");
-    let transcript = fixture._root.path().join("supervisor-crash.jsonl");
+    let probe = fixture.root.path().join("supervisor-crash-probe");
+    let transcript = fixture.root.path().join("supervisor-crash.jsonl");
     let summary = fixture.create_session_summary(
         "agent-supervisor-crash",
         vec![
@@ -7298,7 +6777,7 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         "native fixture must own its process group"
     );
     assert_ne!(supervisor_pid, summary.pid.unwrap() as libc::pid_t);
-    fixture.process_groups.lock().unwrap().push(native_pgid);
+    fixture.own_group(native_pgid);
     let deadline = Instant::now() + Duration::from_secs(3);
     let old_snapshot = loop {
         if let Some(snapshot) = fixture.session_summary(summary.id).agent
@@ -7328,7 +6807,7 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         .expect("proxy did not observe the root binding");
     assert_eq!(old_binding, old_snapshot.binding);
     let collector_pgid = owned_collector_group(supervisor_pid);
-    fixture.process_groups.lock().unwrap().push(collector_pgid);
+    fixture.own_group(collector_pgid);
 
     assert_eq!(unsafe { libc::kill(supervisor_pid, libc::SIGKILL) }, 0);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -7347,7 +6826,7 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         thread::park_timeout(Duration::from_millis(5));
     };
     assert!(
-        wait_group_absent(collector_pgid, Duration::from_secs(2)),
+        live::wait_group_absent(collector_pgid, Duration::from_secs(2)),
         "collector group survived supervisor death"
     );
     assert_eq!(disconnected.health.state, ReporterHealth::Unavailable);
@@ -7370,8 +6849,8 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
     let identity = std::fs::read_to_string(probe.with_extension("identity")).unwrap();
     let identity: Vec<_> = identity.lines().map(str::to_owned).collect();
     let capability = parse_hook_capability(&identity[2]).unwrap();
-    let replacement_probe = fixture._root.path().join("replacement-probe");
-    let replacement_transcript = fixture._root.path().join("replacement.jsonl");
+    let replacement_probe = fixture.root.path().join("replacement-probe");
+    let replacement_transcript = fixture.root.path().join("replacement.jsonl");
     let replacement = fixture.create_session_summary(
         "agent-supervisor-replacement",
         vec![
@@ -7398,11 +6877,7 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         .collect();
     let replacement_pgid = replacement_processes[1];
     let replacement_supervisor_pid = replacement_processes[2];
-    fixture
-        .process_groups
-        .lock()
-        .unwrap()
-        .push(replacement_pgid);
+    fixture.own_group(replacement_pgid);
     let replacement_uuid =
         std::fs::read_to_string(replacement_probe.with_extension("uuid")).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -7457,7 +6932,10 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
     );
     fixture.wait_terminal_contains(replacement.id, "NATIVE_EXEC_STDIN=finish");
     fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_FINISHED=0");
-    assert!(wait_group_absent(replacement_pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(
+        replacement_pgid,
+        Duration::from_secs(2)
+    ));
     wait_pid_absent(replacement_supervisor_pid, Duration::from_secs(2));
     assert_eq!(
         fixture.request(Request::SendTerminal {
@@ -7469,13 +6947,13 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
     );
     fixture.wait_terminal_contains(replacement.id, "REPLACEMENT_OUTER_FINISHED");
     fixture.wait_exited(replacement.id);
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
         replacement.pid.unwrap() as libc::pid_t,
         Duration::from_secs(2)
     ));
 
     assert_eq!(unsafe { libc::kill(-native_pgid, libc::SIGKILL) }, 0);
-    assert!(wait_group_absent(native_pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(native_pgid, Duration::from_secs(2)));
     let callback_socket =
         PathBuf::from(std::fs::read_to_string(probe.with_extension("socket")).unwrap());
     let callback_directory = callback_socket.parent().unwrap();
@@ -7495,7 +6973,7 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         Response::Ok
     );
     fixture.wait_exited(summary.id);
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
         summary.pid.unwrap() as libc::pid_t,
         Duration::from_secs(2)
     ));
@@ -7506,14 +6984,11 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
         Response::Ok
     );
     fixture.wait_exited(setup.session);
-    assert!(wait_group_absent(setup_pgid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(setup_pgid, Duration::from_secs(2)));
     assert!(
         fixture
-            .process_groups
-            .lock()
-            .unwrap()
-            .iter()
-            .copied()
+            .owned_groups()
+            .into_iter()
             .all(|pgid| !group_exists(pgid))
     );
 }
@@ -7522,10 +6997,10 @@ fn agent_run_supervisor_sigkill_releases_reporting_watch() {
 fn agent_run_native_exec_does_not_inherit_supervisor_lease() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-exec-descriptor-setup");
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     write_claude_exec_fixture(&native);
-    let probe = fixture._root.path().join("exec-descriptor-probe");
-    let transcript = fixture._root.path().join("exec-descriptor.jsonl");
+    let probe = fixture.root.path().join("exec-descriptor-probe");
+    let transcript = fixture.root.path().join("exec-descriptor.jsonl");
     let summary = fixture.create_session_summary(
         "agent-exec-descriptor",
         vec![
@@ -7596,7 +7071,7 @@ fn agent_run_native_exec_does_not_inherit_supervisor_lease() {
         .parse::<libc::pid_t>()
         .unwrap();
     assert!(
-        wait_group_absent(native_pgid, Duration::from_secs(2)),
+        live::wait_group_absent(native_pgid, Duration::from_secs(2)),
         "native process group remained after completion"
     );
     assert_eq!(
@@ -7609,7 +7084,7 @@ fn agent_run_native_exec_does_not_inherit_supervisor_lease() {
     );
     fixture.wait_terminal_contains(summary.id, "OUTER_EXEC_FINISHED");
     fixture.wait_exited(summary.id);
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(
         summary.pid.unwrap() as libc::pid_t,
         Duration::from_secs(2)
     ));
@@ -7733,7 +7208,7 @@ fn agent_run_native_helper() {
 fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-run-setup");
-    let probe = fixture._root.path().join("native-probe");
+    let probe = fixture.root.path().join("native-probe");
     let summary = fixture.create_session_summary("agent-run", vec![
         "sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3.identity"; stty -g > "$3.before"; export OVRCR_NATIVE_PROBE="$3"; "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture; code=$?; stty -g > "$3.after"; printf 'WRAPPER_FINISHED=%s\n' "$code"; IFS= read -r done; printf SHELL_RESTORED; exit "$code""#.into(),
@@ -7925,7 +7400,7 @@ fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
         summary.pid.unwrap()
     );
     assert!(
-        wait_group_absent(pgid, Duration::from_secs(2)),
+        live::wait_group_absent(pgid, Duration::from_secs(2)),
         "native group remains"
     );
 }
@@ -7934,7 +7409,7 @@ fn agent_run_owns_native_group_and_restores_terminal_after_forwarded_term() {
 fn agent_run_runtime_kill_reaches_owned_native_group() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-kill-setup");
-    let probe = fixture._root.path().join("kill-probe");
+    let probe = fixture.root.path().join("kill-probe");
     let summary=fixture.create_session_summary("agent-kill",vec![
         "sh".into(),"-c".into(),r#"export OVRCR_NATIVE_PROBE="$3"; exec "$1" agent run --provider claude -- "$2" --ignored --exact agent_run_native_helper --nocapture"#.into(),
         "agent-kill-fixture".into(),env!("CARGO_BIN_EXE_ovrcr").into(),std::env::current_exe().unwrap().into_os_string(),probe.clone().into_os_string(),
@@ -7954,8 +7429,8 @@ fn agent_run_runtime_kill_reaches_owned_native_group() {
         Response::Ok
     );
     fixture.wait_exited(summary.id);
-    assert!(wait_group_absent(values[1], Duration::from_secs(2)));
-    assert!(wait_group_absent(
+    assert!(live::wait_group_absent(values[1], Duration::from_secs(2)));
+    assert!(live::wait_group_absent(
         summary.pid.unwrap() as i32,
         Duration::from_secs(2)
     ));
@@ -7965,9 +7440,9 @@ fn agent_run_runtime_kill_reaches_owned_native_group() {
 fn agent_run_channel_failure_releases_reservation_before_native_fallback() {
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "agent-channel-failure-setup");
-    let blocked = fixture._root.path().join("not-a-directory");
+    let blocked = fixture.root.path().join("not-a-directory");
     std::fs::write(&blocked, "blocked").unwrap();
-    let identity_path = fixture._root.path().join("fallback.identity");
+    let identity_path = fixture.root.path().join("fallback.identity");
     let summary=fixture.create_session_summary("agent-channel-failure",vec![
         "sh".into(),"-c".into(),
         r#"stty -echo; printf '%s\n%s\n%s\n' "$OVRCR_HOOK_SOCKET" "$OVRCR_SESSION_ID" "$OVRCR_HOOK_TOKEN" > "$3"; TMPDIR="$2" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-secret "$1" agent run --provider claude -- /bin/sh -c 'test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99; printf FALLBACK_READY; IFS= read -r line; exit 17'; code=$?; printf 'FALLBACK_EXIT=%s\n' "$code"; exit "$code""#.into(),
@@ -8494,7 +7969,7 @@ fn assert_agent_admission_resume(resume_flag: &str, version: &str) {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "resume-admission-setup");
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     std::fs::write(
         &native,
         format!(r#"#!/bin/sh
@@ -8523,8 +7998,8 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         ])
     };
 
-    let rejected_probe = fixture._root.path().join("wrong-source-resume-probe");
-    let rejected_transcript = fixture._root.path().join("wrong-source-resume.jsonl");
+    let rejected_probe = fixture.root.path().join("wrong-source-resume-probe");
+    let rejected_transcript = fixture.root.path().join("wrong-source-resume.jsonl");
     let rejected = make_session("wrong-source-resume", &rejected_probe, &rejected_transcript);
     fixture.record_process_group(&rejected);
     fixture.wait_terminal_contains_until(
@@ -8566,8 +8041,8 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     );
     fixture.wait_exited(rejected.id);
 
-    let probe = fixture._root.path().join("resume-admission-probe");
-    let transcript = fixture._root.path().join("resumed-root.jsonl");
+    let probe = fixture.root.path().join("resume-admission-probe");
+    let transcript = fixture.root.path().join("resumed-root.jsonl");
     let summary = make_session("resume-admission", &probe, &transcript);
     fixture.record_process_group(&summary);
     fixture.wait_terminal_contains_until(
@@ -8724,14 +8199,14 @@ fn assert_initial_admission(closing_command: &str, fault: Option<AdmissionFault>
     fixture.create_hook_child("setup", "admission-setup");
     let proxy = fault.map(|fault| {
         AdmissionProxy::new(
-            fixture._root.path().join("proxy.sock"),
+            fixture.root.path().join("proxy.sock"),
             fixture.socket.clone(),
             fault,
         )
     });
     let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
 
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     std::fs::write(&native,r#"#!/bin/sh
 if [ "$1" = --version ]; then
   test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
@@ -8741,7 +8216,7 @@ printf '%s\n' "$@" > "$OVRCR_TEST_PROBE.argv"
 OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
 "#).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join("admission-probe");
+    let probe = fixture.root.path().join("admission-probe");
     let make_session = |name: &str, probe: &std::path::Path| {
         fixture.create_session_summary(name,vec![
         "sh".into(),"-c".into(),
@@ -8932,7 +8407,7 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
             UnixStream::connect(old[0]).is_err(),
             "completed invocation endpoint remains"
         );
-        let next_probe = fixture._root.path().join("next-admission-probe");
+        let next_probe = fixture.root.path().join("next-admission-probe");
         let next = make_session("next-admission", &next_probe);
         fixture.record_process_group(&next);
         fixture.wait_terminal_contains(next.id, "ADMISSION_READY");
@@ -9005,7 +8480,7 @@ fn agent_admission_ineligible_argv_and_probe_failures_preserve_native_arguments(
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "admission-argv-setup");
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     std::fs::write(&native,r#"#!/bin/sh
 if [ "$1" = --version ]; then
   test -z "${OVRCR_AGENT_SOCKET+x}${OVRCR_AGENT_TOKEN+x}${OVRCR_HOOK_SOCKET+x}${OVRCR_SESSION_ID+x}${OVRCR_HOOK_TOKEN+x}" || exit 99
@@ -9022,7 +8497,7 @@ IFS= read -r line
 exit 19
 "#).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let blocked = fixture._root.path().join("blocked-tempdir");
+    let blocked = fixture.root.path().join("blocked-tempdir");
     std::fs::write(&blocked, "file").unwrap();
     for (index, (argument, version, mode)) in [
         ("--resume=foreign", "2.1.267", "normal"),
@@ -9040,7 +8515,7 @@ exit 19
     .into_iter()
     .enumerate()
     {
-        let probe = fixture._root.path().join(format!("argv-{index}"));
+        let probe = fixture.root.path().join(format!("argv-{index}"));
         let summary=fixture.create_session_summary(&format!("argv-{index}"),vec![
             "sh".into(),"-c".into(),
             r#"stty -echo; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_VERSION="$4" OVRCR_AGENT_SOCKET=outer-socket OVRCR_AGENT_TOKEN=outer-token; case "$6" in blocked) export TMPDIR="$7";; missing) unset OVRCR_HOOK_SOCKET OVRCR_SESSION_ID OVRCR_HOOK_TOKEN;; esac; "$1" agent run --provider claude -- "$2" "$5"; code=$?; printf 'UNCHANGED_EXIT=%s\n' "$code"; exit "$code""#.into(),
@@ -9064,7 +8539,7 @@ exit 19
                 .parse()
                 .unwrap();
             assert!(
-                wait_group_absent(pid, Duration::from_secs(2)),
+                live::wait_group_absent(pid, Duration::from_secs(2)),
                 "version probe group remained"
             );
         }
@@ -9096,19 +8571,19 @@ fn assert_claude_activity(fail_delivery: bool) {
     fixture.create_hook_child("setup", "activity-setup");
     let proxy = fail_delivery.then(|| {
         AdmissionProxy::new(
-            fixture._root.path().join("activity-proxy.sock"),
+            fixture.root.path().join("activity-proxy.sock"),
             fixture.socket.clone(),
             AdmissionFault::RejectActivity,
         )
     });
     let reporting_socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     std::fs::write(&native, r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
 OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
 "#).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join("activity-probe");
+    let probe = fixture.root.path().join("activity-probe");
     let summary = fixture.create_session_summary("activity", vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; export OVRCR_HOOK_SOCKET="$5"; export OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4"; "$1" agent run --provider claude -- "$2"; printf ACTIVITY_FINISHED; IFS= read -r done"#.into(),
@@ -9333,7 +8808,7 @@ fn fresh_pty_outer_channel_helper() {
     assert!(std::env::var_os("OVRCR_AGENT_TOKEN").is_some());
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "fresh-channel-setup");
-    let evidence = fixture._root.path().join("fresh-env");
+    let evidence = fixture.root.path().join("fresh-env");
     let summary = fixture.create_session_summary("fresh-channel", vec![
         "/bin/sh".into(), "-c".into(),
         r#"printf '%s%s' "${OVRCR_AGENT_SOCKET+x}" "${OVRCR_AGENT_TOKEN+x}" > "$2"; "$1" report activity --state busy; printf FRESH_REPORT_FINISHED; IFS= read -r done"#.into(),
@@ -9384,20 +8859,20 @@ fn assert_claude_metrics_completion(
     fixture.create_hook_child("setup", "metrics-setup");
     let proxy = lose_ack.then(|| {
         AdmissionProxy::new(
-            fixture._root.path().join("metrics-proxy.sock"),
+            fixture.root.path().join("metrics-proxy.sock"),
             fixture.socket.clone(),
             AdmissionFault::LostFinalize,
         )
     });
     let socket = proxy.as_ref().map_or(&fixture.socket, |proxy| &proxy.path);
-    let native = fixture._root.path().join("claude");
+    let native = fixture.root.path().join("claude");
     std::fs::write(&native, r#"#!/bin/sh
 if [ "$1" = --version ]; then printf '2.1.267 (Claude Code)\n'; exit; fi
 OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admission_native_helper --nocapture
 "#).unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join("metrics-probe");
-    let transcript = fixture._root.path().join("root-transcript.jsonl");
+    let probe = fixture.root.path().join("metrics-probe");
+    let transcript = fixture.root.path().join("root-transcript.jsonl");
     let summary = fixture.create_session_summary("metrics", vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; export OVRCR_HOOK_SOCKET="$5" OVRCR_TEST_PROBE="$3" OVRCR_TEST_EXECUTABLE="$4" OVRCR_TEST_TRANSCRIPT="$6" OVRCR_TEST_DELAY_TRANSCRIPT="$7"; "$1" agent run --provider claude -- "$2"; printf METRICS_FINISHED; IFS= read -r done"#.into(),
@@ -10003,10 +9478,10 @@ fn codex_session_named(
     name: &str,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
-    let native = fixture._root.path().join("codex");
+    let native = fixture.root.path().join("codex");
     std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join(format!("{name}-channel"));
+    let probe = fixture.root.path().join(format!("{name}-channel"));
     let summary = fixture.create_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
@@ -10055,7 +9530,7 @@ fn harness_session_dropping(
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
-    let native = fixture._root.path().join(harness);
+    let native = fixture.root.path().join(harness);
     let delay = if slow_version { "sleep 2; " } else { "" };
     std::fs::write(
         &native,
@@ -10063,7 +9538,7 @@ fn harness_session_dropping(
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let probe = fixture._root.path().join(format!("{name}-channel"));
+    let probe = fixture.root.path().join(format!("{name}-channel"));
     let summary = fixture.create_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$3.capability"; export OVRCR_TEST_PROBE="$3" OVRCR_HOOK_SOCKET="$4" OVRCR_TEST_DROP_SEQUENCE="$6"; "$1" agent run "$5" -- "$2"; printf 'PI_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
@@ -10362,8 +9837,8 @@ fn pi_managed_launch_preserves_argv_exit_and_environment_and_plain_launch_is_unt
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "pi-setup");
-    let native = fixture._root.path().join("pi");
-    let extension_record = fixture._root.path().join("managed-extension-path");
+    let native = fixture.root.path().join("pi");
+    let extension_record = fixture.root.path().join("managed-extension-path");
     std::fs::write(
         &native,
         format!(
@@ -10453,7 +9928,7 @@ fn codex_managed_lost_bind_receipt_recovers_before_busy() {
     use ovrcr::protocol::{AgentActivity, ReporterHealth};
     let fixture = ControlFixture::new_bounded();
     let proxy = AdmissionProxy::new(
-        fixture._root.path().join("codex-proxy.sock"),
+        fixture.root.path().join("codex-proxy.sock"),
         fixture.socket.clone(),
         AdmissionFault::LostBind,
     );
@@ -10646,7 +10121,7 @@ impl DesktopAlertDashboard {
     }
 
     fn start_for(fixture: &ControlFixture, settings: Option<&str>, sidebar: &str) -> Self {
-        let directory = fixture._root.path().join("desktop-host");
+        let directory = fixture.root.path().join("desktop-host");
         std::fs::create_dir_all(&directory).unwrap();
         let record = directory.join("calls");
         let player = directory.join(if cfg!(target_os = "macos") {
@@ -10671,7 +10146,7 @@ impl DesktopAlertDashboard {
         )
         .unwrap();
         std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let settings_path = fixture._root.path().join("dashboard.toml");
+        let settings_path = fixture.root.path().join("dashboard.toml");
         if let Some(settings) = settings {
             std::fs::write(&settings_path, settings).unwrap();
         }
@@ -10684,7 +10159,7 @@ impl DesktopAlertDashboard {
         let pair = portable_pty::native_pty_system().openpty(size).unwrap();
         let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
         command.env("OVRCR_SOCKET", &fixture.socket);
-        command.env("OVRCR_CONFIG", fixture._root.path().join("config.toml"));
+        command.env("OVRCR_CONFIG", fixture.root.path().join("config.toml"));
         command.env("OVRCR_DASHBOARD_CONFIG", settings_path);
         command.env("OVRCR_TEST_DESKTOP_RECORD", &record);
         // Never fall back to the user's real desktop tool if this fixture's
@@ -10892,7 +10367,7 @@ impl Drop for DesktopAlertDashboard {
             if group_exists(group) {
                 unsafe { libc::kill(-group, libc::SIGKILL) };
             }
-            if !wait_group_absent(group, Duration::from_secs(2)) {
+            if !live::wait_group_absent(group, Duration::from_secs(2)) {
                 eprintln!("desktop host fixture process group {group} remains");
                 assert!(
                     std::thread::panicking(),
@@ -10922,7 +10397,7 @@ impl Drop for DesktopAlertDashboard {
                 eprintln!("desktop fixture reader did not terminate");
             }
         }
-        if !wait_group_absent(self.process_group, Duration::from_secs(2)) {
+        if !live::wait_group_absent(self.process_group, Duration::from_secs(2)) {
             eprintln!(
                 "desktop fixture process group {} remains",
                 self.process_group
@@ -10956,7 +10431,7 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     let fixture = ControlFixture::new_bounded();
     let (summary, _) = codex_session(&fixture, &fixture.socket);
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
+    let config = fixture.root.path().join("config.toml");
     let id = summary.id.0.to_string();
     let mut index = 0;
     for command in ["UserPromptSubmit:root:a", "Stop:root:a"] {
@@ -11154,20 +10629,8 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         fixture.request(Request::Shutdown { kill: true }),
         Response::Ok
     );
-    fixture
-        .thread
-        .lock()
-        .unwrap()
-        .take()
-        .unwrap()
-        .join()
-        .unwrap();
-    let socket = fixture.socket.clone();
-    let registry = fixture._root.path().join("config.toml");
-    *fixture.thread.lock().unwrap() = Some(thread::spawn(move || {
-        run_server(ServerPaths { socket }, registry).unwrap();
-    }));
-    fixture.wait_socket();
+    fixture.join();
+    fixture.start();
     let Response::Inventory { sessions, registry } = fixture.request(Request::Inspect) else {
         panic!("expected inventory");
     };
@@ -11196,7 +10659,7 @@ fn pi_ready_alerts_once_creates_unread_and_explicit_review_clears_only_presented
     // session first, exactly as the managed-completion visibility test does.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
+    let config = fixture.root.path().join("config.toml");
     let mut index = 0;
     for command in [
         "session_start:sess-a",
@@ -11285,7 +10748,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
     // The Pi session must stay hidden for either alert to fire.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
+    let config = fixture.root.path().join("config.toml");
     let mut index = 0;
     for command in ["session_start:sess-a", "agent_start"] {
         pi_callback(&fixture, summary.id, &mut index, command);
@@ -11463,8 +10926,8 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
     fixture.create_hook_child("setup", "pi-setup");
     let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
-    let native = fixture._root.path().join("pi");
+    let config = fixture.root.path().join("config.toml");
+    let native = fixture.root.path().join("pi");
     let id = summary.id.0.to_string();
     let mut index = 0;
     for command in [
@@ -11958,7 +11421,7 @@ fn pi_reattach_command_recovers_a_paused_reporter() {
     // Doctor tells a paused reporter apart from a lost one and names the control.
     let doctor = cli_with_output(
         env!("CARGO_BIN_EXE_ovrcr"),
-        &fixture._root.path().join("config.toml"),
+        &fixture.root.path().join("config.toml"),
         &fixture.socket,
         &[
             "agent",
@@ -11968,7 +11431,7 @@ fn pi_reattach_command_recovers_a_paused_reporter() {
             "--session",
             &summary.id.0.to_string(),
             "--executable",
-            fixture._root.path().join("pi").to_str().unwrap(),
+            fixture.root.path().join("pi").to_str().unwrap(),
         ],
     );
     assert!(
@@ -12022,9 +11485,9 @@ fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
     fixture.create_hook_child("setup", "pi-setup");
     let (summary, _probe) = pi_session_named(&fixture, &fixture.socket, "pi-hooks");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
+    let config = fixture.root.path().join("config.toml");
     let id = summary.id.0.to_string();
-    let native = fixture._root.path().join("pi");
+    let native = fixture.root.path().join("pi");
     let doctor = |fixture: &ControlFixture| -> serde_json::Value {
         let output = cli_with_output(
             bin,
@@ -12114,10 +11577,10 @@ fn pi_managed_launch_admits_an_executable_whose_version_outlasts_the_probe() {
         ovrcr::protocol::ReporterHealth::Connected
     );
     let id = summary.id.0.to_string();
-    let native = fixture._root.path().join("pi");
+    let native = fixture.root.path().join("pi");
     let output = cli_with_output(
         env!("CARGO_BIN_EXE_ovrcr"),
-        &fixture._root.path().join("config.toml"),
+        &fixture.root.path().join("config.toml"),
         &fixture.socket,
         &[
             "agent",
@@ -12302,8 +11765,8 @@ fn omp_input_requests_wait_until_the_last_closes_and_alert_once_each() {
     // The Oh My Pi session must stay hidden for either alert to fire.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
-    let native = fixture._root.path().join("omp");
+    let config = fixture.root.path().join("config.toml");
+    let native = fixture.root.path().join("omp");
     let id = summary.id.0.to_string();
     let mut index = 0;
     let requests = |fixture: &ControlFixture| -> Vec<(String, InputKind)> {
@@ -13010,7 +12473,7 @@ fn omp_reattach_recovers_a_paused_reporter_during_an_input_wait() {
     // actually has, through the real CLI.
     let doctor = cli_with_output(
         env!("CARGO_BIN_EXE_ovrcr"),
-        &fixture._root.path().join("config.toml"),
+        &fixture.root.path().join("config.toml"),
         &fixture.socket,
         &[
             "agent",
@@ -13020,7 +12483,7 @@ fn omp_reattach_recovers_a_paused_reporter_during_an_input_wait() {
             "--session",
             &summary.id.0.to_string(),
             "--executable",
-            fixture._root.path().join("omp").to_str().unwrap(),
+            fixture.root.path().join("omp").to_str().unwrap(),
         ],
     );
     assert!(
@@ -13143,7 +12606,7 @@ fn omp_ready_alerts_once_and_creates_unread() {
     // The Oh My Pi session must stay hidden for the alert to fire.
     dashboard.select("setup", "HOOK_READY");
     let bin = env!("CARGO_BIN_EXE_ovrcr");
-    let config = fixture._root.path().join("config.toml");
+    let config = fixture.root.path().join("config.toml");
     let mut index = 0;
     for command in ["session_start:sess-a", "agent_start", "agent_end:ok"] {
         pi_callback(&fixture, summary.id, &mut index, command);
@@ -13179,8 +12642,8 @@ fn omp_managed_launch_inserts_its_extension_and_removes_it() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = ControlFixture::new_bounded();
     fixture.create_hook_child("setup", "omp-setup");
-    let native = fixture._root.path().join("omp");
-    let extension_record = fixture._root.path().join("managed-omp-extension-path");
+    let native = fixture.root.path().join("omp");
+    let extension_record = fixture.root.path().join("managed-omp-extension-path");
     std::fs::write(
         &native,
         format!(
@@ -13425,7 +12888,7 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
     );
     dashboard.send(b"\x07");
     dashboard.wait_screen(|screen| screen.contains("Desktop notifications unavailable"));
-    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
 
     std::fs::remove_file(&host_pid).unwrap();
     for command in ["UserPromptSubmit:root:c", "Stop:root:c"] {
@@ -13435,7 +12898,7 @@ fn desktop_notifications_host_failure_and_blocking_never_block_input_or_detach()
     dashboard.host_process_groups.push(blocked_pid);
     assert_eq!(unsafe { libc::getpgid(blocked_pid) }, blocked_pid);
     dashboard.detach();
-    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
 }
 
@@ -13491,7 +12954,7 @@ fn desktop_notifications_queued_completion_is_cancelled_when_its_pane_becomes_vi
         "queue released before the visible-to-hidden transition"
     );
     assert_eq!(unsafe { libc::kill(-blocked_pid, libc::SIGTERM) }, 0);
-    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
 
     // A later eligible completion on the other session is the FIFO delivery
     // barrier. Any obsolete queued invocation has a different identity and
@@ -13702,7 +13165,7 @@ fn ready_sound_is_independent_of_desktop_notifications_on_the_managed_path() {
     );
     dashboard.send(b"\x07");
     dashboard.detach();
-    assert!(wait_group_absent(blocked_pid, Duration::from_secs(2)));
+    assert!(live::wait_group_absent(blocked_pid, Duration::from_secs(2)));
     assert_eq!(fixture.session_phase(summary.id), SessionPhase::Running);
 }
 
@@ -13716,7 +13179,7 @@ fn installed_omp_managed_launch_binds_the_real_session_and_stays_idle() {
     fixture.create_hook_child("setup", "omp-setup");
     // HOME points inside the fixture, so Oh My Pi's own agent directory (`$HOME/.omp/agent`)
     // is the fixture's: the user's live ~/.omp is neither read nor written.
-    let home = fixture._root.path().join("omp-home");
+    let home = fixture.root.path().join("omp-home");
     let agent_dir = home.join(".omp/agent");
     std::fs::create_dir_all(&agent_dir).unwrap();
     // Nothing is copied in: Oh My Pi opens its terminal UI, loads extensions and announces
@@ -13789,7 +13252,7 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
     fixture.create_hook_child("setup", "pi-setup");
     // HOME and PI_CODING_AGENT_DIR both point inside the fixture: the user's live ~/.pi is
     // neither read nor written, so this check cannot depend on or disturb real settings.
-    let agent_dir = fixture._root.path().join("pi-home");
+    let agent_dir = fixture.root.path().join("pi-home");
     std::fs::create_dir_all(agent_dir.join("agent")).unwrap();
     let summary = fixture.create_session_summary(
         "pi-native",
