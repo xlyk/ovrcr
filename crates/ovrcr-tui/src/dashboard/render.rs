@@ -4,8 +4,8 @@ use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, hi
 use crate::session::{AgentActivity, SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
 use ovrcr_protocol::{
-    CostKind, HistoryColor, InputKind, MeasurementFreshness, ReporterHealth, SampleQuality,
-    SessionSummary, UsageCoverage, UsageScope,
+    CostKind, HistoryColor, InputKind, ReporterHealth, SampleQuality, SessionSummary,
+    UsageCoverage, UsageScope,
 };
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
@@ -1233,15 +1233,10 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
         UsageScope::Conversation => "conv",
         UsageScope::Invocation => "inv",
     };
-    let age = |received, freshness| {
-        if matches!(session.phase, SessionPhase::Exited { .. })
-            || now
-                .checked_sub(received)
-                .is_none_or(|age| age >= crate::context::CONTEXT_STALE_AFTER_MS)
-        {
+    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    let age = |received| {
+        if ovrcr_protocol::freshness::is_stale(received, now, exited) {
             " stale"
-        } else if freshness == MeasurementFreshness::Uncertain {
-            " uncertain"
         } else {
             ""
         }
@@ -1280,8 +1275,8 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
     let full = format!(
         "tokens {}{partial} {tokens}{}  cost {amount}{}",
         scope(usage.value.scope),
-        age(metrics.usage_received_unix_ms, usage.freshness),
-        age(metrics.cost_received_unix_ms, cost.freshness)
+        age(metrics.usage_received_unix_ms),
+        age(metrics.cost_received_unix_ms)
     );
     if Line::raw(&full).width() <= width {
         return Some(full);

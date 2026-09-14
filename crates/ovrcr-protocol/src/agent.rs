@@ -80,18 +80,13 @@ pub struct ContextSample {
     pub capacity_tokens: Option<u64>,
     pub quality: SampleQuality,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MeasurementFreshness {
-    SourceIdentified,
-    Uncertain,
-}
+/// A component value and the reporter that produced it. No provider certifies
+/// ordering, so how fresh the value is comes from its receipt stamp in
+/// [`MetricsSnapshot`], never from the provider (`crate::freshness`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Measurement<T> {
     pub value: T,
     pub source: String,
-    pub source_revision: Option<String>,
-    pub source_sequence: Option<u64>,
-    pub freshness: MeasurementFreshness,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetricsSample {
@@ -317,21 +312,7 @@ impl AgentBinding {
 }
 impl<T> Measurement<T> {
     fn validate(&self) -> Result<()> {
-        validate_agent_id(&self.source)?;
-        optional_id(&self.source_revision)?;
-        if (self.freshness == MeasurementFreshness::SourceIdentified)
-            != (self.source_revision.is_some() && self.source_sequence.is_some_and(|s| s > 0))
-        {
-            bail!(
-                "identified measurements require a source revision; uncertain measurements omit it"
-            );
-        }
-        if self.freshness == MeasurementFreshness::Uncertain
-            && (self.source_revision.is_some() || self.source_sequence.is_some())
-        {
-            bail!("uncertain measurements omit source identity and sequence");
-        }
-        Ok(())
+        validate_agent_id(&self.source)
     }
 }
 impl MetricsSample {
@@ -385,9 +366,6 @@ pub(crate) mod tests {
             Measurement {
                 value,
                 source: "fixture".into(),
-                source_revision: Some("one".into()),
-                source_sequence: Some(1),
-                freshness: MeasurementFreshness::SourceIdentified,
             }
         }
         MetricsSample {
@@ -683,10 +661,7 @@ pub(crate) mod tests {
         invalid.context.value.capacity_tokens = Some(0);
         assert!(invalid.validate().is_err());
         invalid = metrics();
-        invalid.context.source_sequence = None;
-        assert!(invalid.validate().is_err());
-        invalid = metrics();
-        invalid.context.freshness = MeasurementFreshness::Uncertain;
+        invalid.context.source = String::new();
         assert!(invalid.validate().is_err());
         assert!(serde_json::from_str::<AgentProvider>("\"UnknownProvider\"").is_err());
         assert!(serde_json::from_str::<SampleQuality>("\"Unknown\"").is_err());

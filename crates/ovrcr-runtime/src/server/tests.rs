@@ -5564,46 +5564,34 @@ mod agent_reporting {
             turn: None,
         })
     }
-    fn measurement<T>(value: T, revision: &str) -> Measurement<T> {
+    fn measurement<T>(value: T) -> Measurement<T> {
         Measurement {
             value,
             source: "fixture".into(),
-            source_revision: Some(revision.into()),
-            source_sequence: Some(1),
-            freshness: MeasurementFreshness::SourceIdentified,
         }
     }
     fn metrics() -> MetricsSample {
         MetricsSample {
             model: Some("test".into()),
-            context: measurement(
-                ContextSample {
-                    used_tokens: Some(10),
-                    capacity_tokens: Some(100),
-                    quality: SampleQuality::Confirmed,
-                },
-                "context-1",
-            ),
-            usage: measurement(
-                UsageTotals {
-                    scope: UsageScope::Conversation,
-                    coverage: UsageCoverage::Complete,
-                    input_tokens: Some(20),
-                    output_tokens: Some(30),
-                    cache_read_tokens: Some(2),
-                    cache_write_tokens: Some(3),
-                    reasoning_output_tokens: Some(4),
-                },
-                "usage-1",
-            ),
-            cost: measurement(
-                Some(UsageCost {
-                    usd_ticks: 100,
-                    kind: CostKind::Reported,
-                    scope: UsageScope::Conversation,
-                }),
-                "cost-1",
-            ),
+            context: measurement(ContextSample {
+                used_tokens: Some(10),
+                capacity_tokens: Some(100),
+                quality: SampleQuality::Confirmed,
+            }),
+            usage: measurement(UsageTotals {
+                scope: UsageScope::Conversation,
+                coverage: UsageCoverage::Complete,
+                input_tokens: Some(20),
+                output_tokens: Some(30),
+                cache_read_tokens: Some(2),
+                cache_write_tokens: Some(3),
+                reasoning_output_tokens: Some(4),
+            }),
+            cost: measurement(Some(UsageCost {
+                usd_ticks: 100,
+                kind: CostKind::Reported,
+                scope: UsageScope::Conversation,
+            })),
         }
     }
     fn rejected(response: Response) {
@@ -5716,31 +5704,39 @@ mod agent_reporting {
         assert_eq!(f.session.summary(), before);
         let mut next = metrics();
         next.usage.value.input_tokens = Some(22);
-        next.usage.source_revision = Some("usage-2".into());
-        next.usage.source_sequence = Some(2);
         assert_eq!(
             f.report(&a, 21, AgentObservation::Metrics(next.clone().into())),
             Response::Ok
         );
         let new = f.session.summary().agent.unwrap().metrics.unwrap();
         let old = before.agent.unwrap().metrics.unwrap();
+        // Only the component that changed takes the new receipt stamp.
         assert_eq!(new.context_received_unix_ms, old.context_received_unix_ms);
         assert_eq!(new.cost_received_unix_ms, old.cost_received_unix_ms);
-        let before = f.session.summary();
-        next.context.value.used_tokens = None;
-        rejected(f.report(&a, 22, AgentObservation::Metrics(next.clone().into())));
+        assert_eq!(new.usage_received_unix_ms, new.received_unix_ms);
+        // A replay of the same sample advances nothing at all.
         assert_eq!(
-            f.session.summary(),
-            before,
-            "conflict must reject whole snapshot and freshness"
+            f.report(&a, 22, AgentObservation::Metrics(next.clone().into())),
+            Response::Ok
         );
-        next.context.source_revision = Some("context-2".into());
-        next.context.source_sequence = Some(2);
-        next.cost.value = None;
-        next.cost.source_revision = Some("cost-2".into());
-        next.cost.source_sequence = Some(2);
+        let replayed = f.session.summary().agent.unwrap().metrics.unwrap();
+        assert_eq!(replayed.usage_received_unix_ms, new.usage_received_unix_ms);
         assert_eq!(
-            f.report(&a, 22, AgentObservation::Metrics(next.into())),
+            replayed.context_received_unix_ms,
+            new.context_received_unix_ms
+        );
+        next.usage.value.input_tokens = Some(21);
+        rejected(f.report(&a, 23, AgentObservation::Metrics(next.clone().into())));
+        assert_eq!(
+            f.session.summary().agent.unwrap().metrics.unwrap().sample,
+            replayed.sample,
+            "a rejected snapshot must not move any component"
+        );
+        next.usage.value.input_tokens = Some(22);
+        next.context.value.used_tokens = None;
+        next.cost.value = None;
+        assert_eq!(
+            f.report(&a, 23, AgentObservation::Metrics(next.into())),
             Response::Ok
         );
         assert_eq!(
@@ -5765,40 +5761,6 @@ mod agent_reporting {
             None
         );
     }
-    #[test]
-    fn agent_report_component_order_survives_uncertain_clear() {
-        let f = Fixture::new();
-        let auth = f.acquire();
-        let a = f.bind(&auth, None, "A", "bind");
-        let mut latest = metrics();
-        latest.context.source_revision = Some("context-2".into());
-        latest.context.source_sequence = Some(2);
-        assert_eq!(
-            f.report(&a, 1, AgentObservation::Metrics(latest.clone().into())),
-            Response::Ok
-        );
-        rejected(f.report(&a, 2, AgentObservation::Metrics(metrics().into())));
-        let mut conflicting = latest.clone();
-        conflicting.context.value.used_tokens = Some(15);
-        rejected(f.report(&a, 2, AgentObservation::Metrics(conflicting.into())));
-        let mut clear = latest.clone();
-        clear.context.value.used_tokens = None;
-        clear.context.source_revision = None;
-        clear.context.source_sequence = None;
-        clear.context.freshness = MeasurementFreshness::Uncertain;
-        assert_eq!(
-            f.report(&a, 2, AgentObservation::Metrics(clear.into())),
-            Response::Ok
-        );
-        let cleared = f.session.summary();
-        rejected(f.report(&a, 3, AgentObservation::Metrics(metrics().into())));
-        assert_eq!(f.session.summary(), cleared);
-        latest.context.source = "different-source".into();
-        latest.context.source_sequence = Some(3);
-        latest.context.source_revision = Some("context-3".into());
-        rejected(f.report(&a, 3, AgentObservation::Metrics(latest.into())));
-    }
-
     fn supervisor_connection(
         f: &Fixture,
         auth: &SupervisorAuth,
@@ -6396,15 +6358,11 @@ mod agent_reporting {
         );
         let mut unknown = metrics();
         unknown.usage.value.input_tokens = None;
-        unknown.usage.source_revision = Some("usage-2".into());
-        unknown.usage.source_sequence = Some(2);
         assert_eq!(
             f.report(&a, 2, AgentObservation::Metrics(unknown.clone().into())),
             Response::Ok
         );
         unknown.usage.value.input_tokens = Some(19);
-        unknown.usage.source_revision = Some("usage-3".into());
-        unknown.usage.source_sequence = Some(3);
         let before = f.session.summary();
         rejected(f.report(&a, 3, AgentObservation::Metrics(unknown.into())));
         assert_eq!(f.session.summary(), before);
@@ -6421,9 +6379,7 @@ mod agent_reporting {
             f.command(&auth, "lost", AgentCommand::Health(health)),
             Response::AgentOperation(AgentOperationResult::HealthUpdated)
         );
-        let mut latest = metrics();
-        latest.usage.source_revision = Some("usage-3".into());
-        latest.usage.source_sequence = Some(3);
+        let latest = metrics();
         assert_eq!(
             f.report(&a, 3, AgentObservation::Metrics(latest.into())),
             Response::Ok

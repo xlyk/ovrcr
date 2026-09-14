@@ -3,7 +3,8 @@ mod deadline;
 
 use deadline::wait_deadline;
 use ovrcr::config::{Registry, load_registry, save_registry_atomic};
-use ovrcr::context::{ContextSource, ContextUsageReport, context_is_stale};
+use ovrcr::context::{ContextSource, ContextUsageReport};
+use ovrcr::freshness;
 use ovrcr::protocol::{
     AgentReport, AgentUpdate, BranchRequest, ClientMessage, CreateSessionRequest, DashboardView,
     ErrorCode, HISTORY_ROWS, HistoryOpened, HistoryRow, HistorySnapshotId, MAX_FRAME_BYTES,
@@ -1052,7 +1053,11 @@ fn context_snapshot_survives_dashboard_reattach() {
         }
     };
     assert_eq!(exited.context_usage, Some(retained.clone()));
-    assert!(context_is_stale(&retained, retained.received_unix_ms, true));
+    assert!(freshness::is_stale(
+        retained.received_unix_ms,
+        retained.received_unix_ms,
+        true
+    ));
     assert!(matches!(
         fixture.request(context_report(
             identity.session,

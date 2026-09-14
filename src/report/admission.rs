@@ -551,18 +551,15 @@ impl Receiver {
     }
     fn empty_metrics() -> ovrcr_protocol::MetricsSample {
         use ovrcr_protocol::*;
-        fn uncertain<T>(value: T, source: &str) -> Measurement<T> {
+        fn measurement<T>(value: T, source: &str) -> Measurement<T> {
             Measurement {
                 value,
                 source: source.into(),
-                source_revision: None,
-                source_sequence: None,
-                freshness: MeasurementFreshness::Uncertain,
             }
         }
         MetricsSample {
             model: None,
-            context: uncertain(
+            context: measurement(
                 ContextSample {
                     used_tokens: None,
                     capacity_tokens: None,
@@ -570,8 +567,8 @@ impl Receiver {
                 },
                 "claude_statusline",
             ),
-            cost: uncertain(None, "claude_statusline"),
-            usage: uncertain(
+            cost: measurement(None, "claude_statusline"),
+            usage: measurement(
                 UsageTotals {
                     scope: UsageScope::Conversation,
                     coverage: UsageCoverage::Partial,

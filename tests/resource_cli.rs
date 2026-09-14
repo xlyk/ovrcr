@@ -707,7 +707,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
     use std::os::unix::net::UnixListener;
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("usage.sock");
-    let measurement = |value| json!({"value":value,"source":"fixture","source_revision":null,"source_sequence":null,"freshness":"Uncertain"});
+    let measurement = |value| json!({"value":value,"source":"fixture"});
     let mut agent = json!({
         "binding":{"provider":"Claude","invocation":"invocation-a","conversation":"conversation-a","generation":1},
         "activity":{"state":"Idle","quality":"Observed","turn":"prompt-a"},

@@ -1,8 +1,8 @@
 //! Pure Claude metrics normalization. This does not certify or read transcripts.
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
-    ContextSample, CostKind, Measurement, MeasurementFreshness, SampleQuality, UsageCost,
-    UsageCoverage, UsageScope, UsageTotals, validate_agent_id,
+    ContextSample, CostKind, Measurement, SampleQuality, UsageCost, UsageCoverage, UsageScope,
+    UsageTotals, validate_agent_id,
 };
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -35,13 +35,10 @@ fn present_raw<'de, D: serde::Deserializer<'de>>(
     Box::<RawValue>::deserialize(d).map(Some)
 }
 
-fn uncertain<T>(value: T) -> Measurement<T> {
+fn measurement<T>(value: T) -> Measurement<T> {
     Measurement {
         value,
         source: "claude_statusline".into(),
-        source_revision: None,
-        source_sequence: None,
-        freshness: MeasurementFreshness::Uncertain,
     }
 }
 
@@ -70,12 +67,12 @@ pub fn parse_claude_metrics(input: &[u8]) -> Result<ClaudeMetrics> {
     Ok(ClaudeMetrics {
         conversation: raw.session_id,
         model: context.model,
-        context: uncertain(ContextSample {
+        context: measurement(ContextSample {
             used_tokens: context.used_tokens,
             capacity_tokens: context.capacity_tokens,
             quality: SampleQuality::Observed,
         }),
-        cost: uncertain(cost),
+        cost: measurement(cost),
     })
 }
 
@@ -311,7 +308,7 @@ fn token(record: &Value, field: &str) -> Result<Option<u64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ovrcr_protocol::{CostKind, MeasurementFreshness, UsageCoverage, UsageScope};
+    use ovrcr_protocol::{CostKind, UsageCoverage, UsageScope};
     use serde_json::json;
 
     fn record(message: &str, request: &str, input: u64) -> Value {
@@ -335,9 +332,7 @@ mod tests {
         assert_eq!(sample.model.as_deref(), Some("model"));
         assert_eq!(sample.context.value.used_tokens, Some(80));
         assert_eq!(sample.context.value.capacity_tokens, Some(100));
-        assert_eq!(sample.context.freshness, MeasurementFreshness::Uncertain);
-        assert_eq!(sample.context.source_revision, None);
-        assert_eq!(sample.context.source_sequence, None);
+        assert_eq!(sample.context.source, "claude_statusline");
         let cost = sample.cost.value.unwrap();
         assert_eq!(cost.usd_ticks, 2_385_982_000);
         assert_eq!(cost.kind, CostKind::Estimated);

@@ -1,8 +1,6 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-pub const CONTEXT_STALE_AFTER_MS: u64 = 300_000;
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextSource {
@@ -129,16 +127,6 @@ pub fn parse_claude_context(bytes: &[u8]) -> Result<ContextUsageReport> {
     Ok(report)
 }
 
-pub fn context_is_stale(sample: &ContextUsageSnapshot, now_ms: u64, exited: bool) -> bool {
-    if exited {
-        return true;
-    }
-    match now_ms.checked_sub(sample.received_unix_ms) {
-        Some(age_ms) => age_ms >= CONTEXT_STALE_AFTER_MS,
-        None => true,
-    }
-}
-
 pub fn format_context(sample: Option<&ContextUsageSnapshot>, now_ms: u64, exited: bool) -> String {
     let Some(sample) = sample else {
         return "—".to_owned();
@@ -154,7 +142,7 @@ pub fn format_context(sample: Option<&ContextUsageSnapshot>, now_ms: u64, exited
         }
         _ => "—".to_owned(),
     };
-    if context_is_stale(sample, now_ms, exited) {
+    if crate::freshness::is_stale(sample.received_unix_ms, now_ms, exited) {
         format!("{percentage}~")
     } else {
         percentage
