@@ -4,9 +4,7 @@ use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
 use crate::session::{SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
-use ovrcr_protocol::{
-    CostKind, HistoryColor, SessionSummary, UsageCoverage, UsageScope,
-};
+use ovrcr_protocol::{CostKind, HistoryColor, SessionSummary, UsageCoverage, UsageScope};
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};

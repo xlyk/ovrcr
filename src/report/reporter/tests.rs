@@ -465,9 +465,6 @@ fn metrics() -> ovrcr_protocol::MetricsSample {
         Measurement {
             value,
             source: "test".into(),
-            source_revision: None,
-            source_sequence: None,
-            freshness: MeasurementFreshness::Uncertain,
         }
     }
     MetricsSample {
