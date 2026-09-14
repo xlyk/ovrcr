@@ -1,3 +1,6 @@
+#[path = "support/live.rs"]
+mod live;
+
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -148,10 +151,10 @@ fn alive(pid: i32) -> bool {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.raw(&["shutdown", "--kill"]);
-        let end = Instant::now() + Duration::from_secs(8);
-        while self.root.path().join("server.sock").exists() && Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        live::wait_for_absent(
+            &self.root.path().join("server.sock"),
+            Duration::from_secs(8),
+        );
     }
 }
 
@@ -346,14 +349,7 @@ fn git_runs_fetch_remote_head_keep_files_and_preserve_branches_on_cleanup() {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     };
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "Fixture"],
-        vec!["config", "user.email", "fixture@example.invalid"],
-        vec!["commit", "--allow-empty", "-m", "initial"],
-    ] {
-        git(&remote, &args);
-    }
+    live::init_repo(&remote);
     git(
         f.root.path(),
         &["clone", remote.to_str().unwrap(), repo.to_str().unwrap()],
@@ -518,11 +514,10 @@ fn shutdown_finishes_even_when_final_state_persistence_fails() {
         !result.status.success(),
         "persistence fault must be reported"
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while f.root.path().join("server.sock").exists() {
-        assert!(Instant::now() < deadline, "server left half-stopped");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        live::wait_for_absent(&f.root.path().join("server.sock"), Duration::from_secs(5)),
+        "server left half-stopped"
+    );
     fs::remove_dir(&state).unwrap();
     fs::rename(&backup, &state).unwrap();
     f.call(&["task", "concurrency", "3"]);
@@ -542,11 +537,10 @@ fn signal_shutdown_cleans_up_despite_final_state_write_failure() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("server.sock").exists() {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(live::wait_for_socket(
+        &f.root.path().join("server.sock"),
+        Duration::from_secs(5)
+    ));
     let task = f.task("signal-fault", "HOLD");
     let id = f.start(&task);
     f.wait(&id, "Running");
@@ -584,14 +578,7 @@ fn git_task_fixture(f: &Fixture) -> (std::path::PathBuf, String) {
     let workspaces = f.root.path().join("workspaces");
     fs::create_dir(&repo).unwrap();
     fs::create_dir(&workspaces).unwrap();
-    for args in [
-        vec!["init", "-b", "main"],
-        vec!["config", "user.name", "Fixture"],
-        vec!["config", "user.email", "fixture@example.invalid"],
-        vec!["commit", "--allow-empty", "-m", "base"],
-    ] {
-        git(&repo, &args);
-    }
+    live::init_repo(&repo);
     git(&repo, &["remote", "add", "origin", repo.to_str().unwrap()]);
     f.call(&[
         "project",

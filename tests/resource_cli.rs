@@ -1,38 +1,34 @@
-use ovrcr::protocol::{
-    ClientMessage, Request, Response, ServerMessage, connect_server, read_frame, write_frame,
-};
+#[path = "support/live.rs"]
+mod live;
+
+use live::Live;
+use ovrcr::protocol::{Request, Response};
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
-struct Fixture {
-    root: tempfile::TempDir,
-    pgids: Vec<i32>,
+/// A live server hosted by the compiled `ovrcr` binary, plus the CLI helpers
+/// this suite drives it with.
+struct Fixture(Live);
+
+impl std::ops::Deref for Fixture {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.0
+    }
 }
 
 impl Fixture {
     fn new() -> Self {
-        let fixture = Self {
-            root: tempfile::tempdir().unwrap(),
-            pgids: Vec::new(),
-        };
-        std::fs::create_dir(fixture.root.path().join("repo")).unwrap();
-        std::fs::create_dir(fixture.root.path().join("workspaces")).unwrap();
-        for args in [
-            vec!["init", "-b", "main"],
-            vec!["config", "user.name", "OVRCR Tests"],
-            vec!["config", "user.email", "tests@example.invalid"],
-            vec!["commit", "--allow-empty", "-m", "fixture"],
-        ] {
-            fixture.git(&args);
-        }
+        let fixture = Self(Live::binary());
         fixture.ok(&[
             "project",
             "add",
             "fixture",
-            fixture.root.path().join("repo").to_str().unwrap(),
+            fixture.repo.to_str().unwrap(),
             "--workspace-root",
-            fixture.root.path().join("workspaces").to_str().unwrap(),
+            fixture.workspace_root.to_str().unwrap(),
         ]);
         fixture.ok(&[
             "workspace",
@@ -49,24 +45,11 @@ impl Fixture {
         fixture
     }
 
-    fn git(&self, args: &[&str]) {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(self.root.path().join("repo"))
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+        Command::new(&self.executable)
             .args(args)
-            .env("OVRCR_CONFIG", self.root.path().join("config.toml"))
-            .env("OVRCR_SOCKET", self.root.path().join("server.sock"))
+            .env("OVRCR_CONFIG", &self.config)
+            .env("OVRCR_SOCKET", &self.socket)
             .env("SHELL", "/bin/sh")
             .output()
             .unwrap()
@@ -90,23 +73,7 @@ impl Fixture {
     }
 
     fn sessions(&self) -> Vec<SessionSummary> {
-        let mut stream = connect_server(self.root.path().join("server.sock")).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request: Request::List,
-            },
-        )
-        .unwrap();
-        let ServerMessage::Response {
-            response: Response::Hierarchy(snapshot),
-            ..
-        } = read_frame(&mut stream).unwrap()
-        else {
+        let Response::Hierarchy(snapshot) = self.request(Request::List) else {
             panic!("expected hierarchy")
         };
         snapshot
@@ -118,13 +85,8 @@ impl Fixture {
     }
 
     fn capture(&mut self) {
-        for summary in self.sessions() {
-            if let Some(pid) = summary.pid {
-                let pgid = unsafe { libc::getpgid(pid as i32) };
-                if pgid > 1 && !self.pgids.contains(&pgid) {
-                    self.pgids.push(pgid);
-                }
-            }
+        for pgid in self.session_groups() {
+            self.own_group(pgid);
         }
     }
 
@@ -144,16 +106,15 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let out = self.run(&["shutdown", "--kill"]);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while self.root.path().join("server.sock").exists() && Instant::now() < deadline {
-            std::thread::yield_now();
-        }
+        let stopped = live::wait_for_absent(&self.socket, Duration::from_secs(5));
+        let reaped = self.join_within(Duration::from_secs(5)).is_finished();
         let clean = out.status.success()
-            && !self.root.path().join("server.sock").exists()
+            && stopped
+            && reaped
             && self
-                .pgids
-                .iter()
-                .all(|pgid| unsafe { libc::kill(-*pgid, 0) } == -1);
+                .owned_groups()
+                .into_iter()
+                .all(|pgid| !live::group_exists(pgid));
         if !clean {
             eprintln!("cleanup failed: {}", String::from_utf8_lossy(&out.stderr));
             assert!(
@@ -312,7 +273,7 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     for session in fixture.sessions() {
         fixture.ok(&["terminal", "close", &session.id.0.to_string()]);
     }
-    let worktree = fixture.root.path().join("workspaces/demo");
+    let worktree = fixture.workspace_root.join("demo");
     std::fs::write(worktree.join("dirty"), "preserve me").unwrap();
     let dirty = fixture.run(&[
         "workspace",
@@ -339,7 +300,10 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "demo",
     ]);
     assert!(!worktree.exists());
-    fixture.git(&["show-ref", "--verify", "refs/heads/feature/demo"]);
+    live::git(
+        &fixture.repo,
+        &["show-ref", "--verify", "refs/heads/feature/demo"],
+    );
     fixture.ok(&["project", "delete", "fixture"]);
 }
 
@@ -419,7 +383,7 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
         .iter()
         .any(|session| session.id == SessionId(numeric_id));
     assert!(record_removed, "closed session record remains");
-    let group_absent = wait_group_absent(original_pgid, Duration::from_secs(2));
+    let group_absent = live::wait_group_absent(original_pgid, Duration::from_secs(2));
     eprintln!(
         "paused close cleanup: original_pid={original_pid} original_pgid={original_pgid} record_removed={record_removed} original_pgid_absent={group_absent} before_fixture_teardown=true"
     );
@@ -427,20 +391,6 @@ fn pause_resume_resource_cli_preserves_input_and_close_contract() {
         group_absent,
         "original managed PGID {original_pgid} remains after paused close"
     );
-}
-
-fn wait_group_absent(pgid: libc::pid_t, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let result = unsafe { libc::kill(-pgid, 0) };
-        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::yield_now();
-    }
 }
 
 #[test]
@@ -673,7 +623,7 @@ while [ ! -e "$5" ]; do sleep 0.01; done
         stale_inspection["context_usage"]
     );
     assert_eq!(stale_record["context_stale"], true);
-    let group_absent = wait_group_absent(original_pgid, Duration::from_secs(2));
+    let group_absent = live::wait_group_absent(original_pgid, Duration::from_secs(2));
     eprintln!(
         "context inventory cleanup: original_pgid={original_pgid} original_pgid_absent={group_absent} before_fixture_teardown=true"
     );
