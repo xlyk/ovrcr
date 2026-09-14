@@ -1,14 +1,20 @@
 //! How old a sample is, and when it counts as stale.
 //!
-//! One authority for the whole product: the runtime stamps each component of a
-//! metrics snapshot through [`received_at`], and the Dashboard, `session list`,
-//! `session context` and `session usage` read that stamp through [`age_ms`] and
-//! [`is_stale`]. Providers do not certify ordering, so the stamp is the only
-//! provenance a reader gets.
+//! One authority for managed agent reporting: the runtime stamps each component
+//! of a metrics snapshot through [`received_at`], and the Dashboard,
+//! `session list`, `session context` and `session usage` read that stamp through
+//! [`age_ms`] and [`is_stale`]. Providers do not certify ordering, so the stamp
+//! is the only provenance a reader gets.
 //!
 //! A timer replay of an unchanged provider sample keeps its stamp; only a
 //! sample that actually differs advances it. A live session whose totals keep
 //! moving therefore never goes stale.
+//!
+//! One receipt stamp is still kept elsewhere: the legacy unbound `report
+//! context` path in `ovrcr-runtime`'s `session::AgentUpdate::Context` stores the
+//! arrival time of every accepted report, so a replay advances it there. It
+//! reads the five-minute rule from [`is_stale`] but does not use
+//! [`received_at`]. Folding that second store in is out of this module's scope.
 
 /// A sample this old or older is stale.
 pub const STALE_AFTER_MS: u64 = 300_000;
@@ -28,6 +34,11 @@ pub fn is_stale(received_unix_ms: u64, now_unix_ms: u64, exited: bool) -> bool {
 /// The receipt stamp for `sample`: `now_unix_ms` when it differs from the last
 /// sample `watermark` saw, the stamp already recorded when a timer replays an
 /// unchanged one.
+///
+/// "Unchanged" is whole-sample equality, so for a `Measurement` the reporter's
+/// `source` label counts too: the same value arriving under a different source
+/// is a new reading and takes a new stamp. That is the safe direction — a
+/// reader is told the value is fresh, never that a genuinely new one is old.
 pub fn received_at<T: Clone + PartialEq>(
     watermark: &mut Option<(T, u64)>,
     sample: &T,

@@ -320,10 +320,10 @@ capacity is unknown is still a stored sample; a later complete report replaces i
 
 ### Freshness
 
-Samples are kept in memory with their receipt time. A replay of an unchanged
-sample keeps the receipt time it already had; only a changed value takes a new
-one. Freshness is advisory and uses
-the wall clock: a clock earlier than the receipt marks the sample stale, and
+Samples are kept in memory with their receipt time, which this legacy path sets
+to the arrival time of every accepted report: a replay of an unchanged sample
+does advance it here, unlike the managed component ages above. Freshness is
+advisory and uses the wall clock: a clock earlier than the receipt marks the sample stale, and
 wall-clock changes may shorten or extend its apparent freshness. A sample is fresh
 while its receipt age is under five minutes. At five minutes or more, or as soon as
 its session exits, inspection returns `stale: true` and terminal inventory returns
