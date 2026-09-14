@@ -4,10 +4,9 @@ use super::copy::{
 };
 use super::event_loop::DASHBOARD_IDLE_REDRAW_INTERVAL;
 use super::input::{encode_key, encode_mouse, is_browse_key};
-use super::render::{
-    METADATA_HEIGHT, SPINNER_INTERVAL, sidebar_area, tree_line_at, tree_line_count, tree_row_start,
-};
+use super::render::{METADATA_HEIGHT, sidebar_area, tree_line_at, tree_line_count, tree_row_start};
 use super::settings::DashboardSettings;
+use super::status::SPINNER_INTERVAL;
 use super::view_handshake::{Acknowledged, Desire, RequestedView};
 use super::{Dashboard, DashboardAction, InputMode, KeyEncoding, TreeRow, history_view_size};
 use crate::protocol::{
@@ -958,11 +957,10 @@ impl Dashboard {
         }
     }
 
+    /// A session whose glyph animates, so the Dashboard owes it the spinner cadence. It and
+    /// the drawn glyph come out of one decision in `status`, so they cannot disagree.
     pub(super) fn session_is_busy(&self, id: SessionId) -> bool {
-        find_session(self, id).is_some_and(|session| {
-            matches!(session.phase, crate::session::SessionPhase::Running)
-                && session.activity == crate::session::AgentActivity::Busy
-        })
+        find_session(self, id).is_some_and(super::status::busy)
     }
 
     pub(super) fn redraw_interval(&self) -> Duration {

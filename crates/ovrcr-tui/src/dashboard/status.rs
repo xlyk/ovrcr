@@ -1,0 +1,547 @@
+//! One status value for a session: the glyph the sidebar row draws and the process, paused,
+//! activity, Unread and elapsed clauses both pane headers lay out. Which clause a session
+//! gets, and its wording, live here once, so the sidebar and the two metadata lines cannot
+//! disagree about the same session; an Unread clause replaces a header line outright, and
+//! each surface arranges and clips the rest for its own width. The value carries the glyph's
+//! colour, because the colour is part of what the status says; text styles, widths and
+//! clipping stay with the renderer. Readiness itself is still decided in [`super::ready`].
+use super::render::{GREEN, MUTED, RED, SUBTEXT, TEAL, YELLOW};
+use ovrcr_protocol::{
+    AgentActivity, AgentSnapshot, InputKind, ReporterHealth, SampleQuality, SessionPhase,
+    SessionSummary,
+};
+use ratatui::style::Color;
+use std::time::Duration;
+
+const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_FRAME_MS: u64 = 100;
+/// How long one spinner frame stands: the redraw cadence the Dashboard owes a busy session.
+pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAME_MS);
+
+/// The glyph and colour a session holds still at, or `None` when its glyph is a moving
+/// spinner frame — the one state that needs the clock. [`busy`] and [`SessionStatus::of`]
+/// both read this, so the redraw cadence and the drawn glyph are a single decision.
+fn fixed_glyph(session: &SessionSummary) -> Option<(char, Color)> {
+    Some(match (&session.phase, super::ready::activity(session)) {
+        (SessionPhase::Exited { .. }, _) => ('·', MUTED),
+        (SessionPhase::Paused, _) => ('P', SUBTEXT),
+        (_, AgentActivity::Unknown) => ('-', MUTED),
+        (_, AgentActivity::Idle) => (' ', MUTED),
+        (_, AgentActivity::WaitingInput) => ('?', YELLOW),
+        (_, AgentActivity::Error) => ('!', RED),
+        (_, AgentActivity::ResponseReady) => ('✓', TEAL),
+        (SessionPhase::Running, AgentActivity::Busy) => return None,
+    })
+}
+
+/// A session whose glyph is a spinner frame, so the Dashboard owes it the spinner cadence.
+/// The clock picks which frame, never whether there is one, so this needs no clock.
+pub(super) fn busy(session: &SessionSummary) -> bool {
+    fixed_glyph(session).is_none()
+}
+
+/// What one session says about itself.
+pub(super) struct SessionStatus {
+    /// Sidebar glyph and its colour. An unavailable reporter mutes the colour.
+    pub glyph: char,
+    pub color: Color,
+    pub exited: bool,
+    pub paused: bool,
+    /// A Ready observation is present: the headers give its wording the whole line.
+    pub ready: bool,
+    /// The managed process: its pid, `closed` after exit, or `—`.
+    pub pid: String,
+    pub elapsed: String,
+    /// The activity clause the headers append, leading space included: ` busy observed`,
+    /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
+    pub activity: String,
+    /// The Unread clause, which replaces a header line outright when present.
+    pub unread: Option<String>,
+}
+
+impl SessionStatus {
+    pub(super) fn of(session: &SessionSummary, now_unix_ms: u64) -> Self {
+        let exited = matches!(session.phase, SessionPhase::Exited { .. });
+        let (glyph, color) = fixed_glyph(session).unwrap_or((
+            SPINNER_FRAMES
+                [((now_unix_ms / SPINNER_FRAME_MS) % SPINNER_FRAMES.len() as u64) as usize],
+            GREEN,
+        ));
+        Self {
+            glyph,
+            color: if session.agent.as_ref().is_some_and(unavailable) {
+                MUTED
+            } else {
+                color
+            },
+            exited,
+            paused: matches!(session.phase, SessionPhase::Paused),
+            ready: super::ready::ready(session).is_some(),
+            pid: if exited {
+                "closed".to_string()
+            } else {
+                session
+                    .pid
+                    .map_or_else(|| "—".to_string(), |pid| pid.to_string())
+            },
+            elapsed: format_elapsed_at(session.started_unix_ms, now_unix_ms),
+            activity: activity_clause(session),
+            unread: session.unread.as_ref().map(|_| unread_clause(session)),
+        }
+    }
+}
+
+fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
+    let minutes = now_unix_ms.saturating_sub(started_unix_ms) / 60_000;
+    let days = minutes / (24 * 60);
+    let hours = minutes / 60 % 24;
+    let minutes = minutes % 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h{minutes:02}")
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+/// The reporter is not currently connected. Callers differ on what a session with no agent
+/// at all means: the glyph has nothing to mute (`is_some_and`), while an Unread with no
+/// reporter behind it has nobody left to confirm it and reads Unavailable (`is_none_or`).
+fn unavailable(agent: &AgentSnapshot) -> bool {
+    agent.health.state == ReporterHealth::Unavailable
+}
+
+fn unread_clause(session: &SessionSummary) -> String {
+    let health = if session.agent.as_ref().is_none_or(unavailable) {
+        " Unavailable"
+    } else {
+        ""
+    };
+    // Unread names the reporting provider's own state, so a session without one says nothing
+    // more; the rollup fallback below belongs to the live activity label alone.
+    let activity = session
+        .agent
+        .as_ref()
+        .map_or_else(String::new, |agent| provider_clause(session, agent))
+        .replace(" unavailable", "");
+    format!("Unread{health}{activity}")
+}
+
+fn activity_clause(session: &SessionSummary) -> String {
+    let Some(agent) = &session.agent else {
+        return match session.activity {
+            AgentActivity::Unknown => " unknown",
+            AgentActivity::Idle => " idle",
+            AgentActivity::Busy => " busy",
+            AgentActivity::WaitingInput => " waiting input",
+            AgentActivity::Error => " error",
+            AgentActivity::ResponseReady => " response ready",
+        }
+        .to_owned();
+    };
+    provider_clause(session, agent)
+}
+
+fn provider_clause(session: &SessionSummary, agent: &AgentSnapshot) -> String {
+    // An open Input request outranks whatever is underneath it, exactly as
+    // AgentSnapshot::effective_activity does.
+    if let Some(request) = agent.input_requests.first() {
+        return format!(
+            " input needed · {}",
+            match request.kind {
+                InputKind::Select => "select",
+                InputKind::Confirm => "confirm",
+                InputKind::Input => "input",
+                InputKind::Editor => "editor",
+                InputKind::Custom => "custom",
+                InputKind::Approval => "approval",
+            }
+        );
+    }
+    if let Some(activity) = super::ready::ready(session) {
+        let quality = quality(activity.quality);
+        let health = if unavailable(agent) {
+            " unavailable"
+        } else {
+            ""
+        };
+        return format!("{health} response ready · {quality}");
+    }
+    if unavailable(agent) {
+        return " unavailable".into();
+    }
+    let Some(activity) = &agent.activity else {
+        return " unknown".into();
+    };
+    let state = match activity.state {
+        AgentActivity::Unknown => "unknown",
+        AgentActivity::Idle => "idle",
+        AgentActivity::Busy => "busy",
+        AgentActivity::WaitingInput => "waiting",
+        AgentActivity::Error => "error",
+        AgentActivity::ResponseReady => "response ready",
+    };
+    format!(" {state} {}", quality(activity.quality))
+}
+
+fn quality(quality: SampleQuality) -> &'static str {
+    match quality {
+        SampleQuality::Confirmed => "confirmed",
+        SampleQuality::Observed => "observed",
+        SampleQuality::Estimated => "estimated",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ovrcr_protocol::{
+        ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputRequest,
+        ReadyObservation, SessionId,
+    };
+
+    fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
+        SessionSummary {
+            id: SessionId(1),
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "s".into(),
+            label: "claude/sonnet".into(),
+            pid: Some(42),
+            started_unix_ms: 0,
+            phase,
+            activity: AgentActivity::Unknown,
+            context_usage: None,
+            agent_epoch: 1,
+            unread: None,
+            agent,
+        }
+    }
+
+    fn agent(
+        state: AgentActivity,
+        quality: SampleQuality,
+        health: ReporterHealth,
+        requests: Vec<InputKind>,
+    ) -> AgentSnapshot {
+        AgentSnapshot {
+            binding: AgentBinding {
+                provider: AgentProvider::Pi,
+                invocation: "i".into(),
+                conversation: "c".into(),
+                generation: 1,
+            },
+            activity: Some(ActivitySample {
+                state,
+                quality,
+                turn: Some("t".into()),
+            }),
+            metrics: None,
+            health: HealthSample {
+                state: health,
+                reason: None,
+            },
+            activity_revision: 1,
+            metrics_revision: 0,
+            health_revision: 0,
+            input_requests: requests
+                .into_iter()
+                .enumerate()
+                .map(|(index, kind)| InputRequest {
+                    id: format!("request-{index}"),
+                    kind,
+                })
+                .collect(),
+            input_revision: 1,
+        }
+    }
+
+    /// Phase x effective activity x reporter health, at the glyph and the activity clause.
+    #[test]
+    fn status_table() {
+        use AgentActivity::*;
+        use ReporterHealth::*;
+        use SampleQuality::*;
+        let running = SessionPhase::Running;
+        let exited = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        // Eight columns per row: phase, agent snapshot, then the expected glyph, glyph
+        // colour, activity clause, pid text, ready and paused. `exited` is checked against
+        // the pid text and `busy` against the glyph, so neither needs a column of its own;
+        // the Unread clause has its own test below.
+        let cases = [
+            (
+                running.clone(),
+                None,
+                '-',
+                MUTED,
+                " unknown",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(Unknown, Observed, Connected, vec![])),
+                '-',
+                MUTED,
+                " unknown observed",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(Idle, Confirmed, Connected, vec![])),
+                ' ',
+                MUTED,
+                " idle confirmed",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(Busy, Observed, Connected, vec![])),
+                '⠋',
+                GREEN,
+                " busy observed",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(WaitingInput, Estimated, Connected, vec![])),
+                '?',
+                YELLOW,
+                " waiting estimated",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(Error, Observed, Connected, vec![])),
+                '!',
+                RED,
+                " error observed",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(ResponseReady, Confirmed, Connected, vec![])),
+                '✓',
+                TEAL,
+                " response ready · confirmed",
+                "42",
+                true,
+                false,
+            ),
+            // An unavailable reporter mutes the glyph and says so in the clause.
+            (
+                running.clone(),
+                Some(agent(Busy, Observed, Unavailable, vec![])),
+                '⠋',
+                MUTED,
+                " unavailable",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(ResponseReady, Observed, Unavailable, vec![])),
+                '✓',
+                MUTED,
+                " unavailable response ready · observed",
+                "42",
+                true,
+                false,
+            ),
+            // An open Input request outranks the activity underneath it, glyph included.
+            (
+                running.clone(),
+                Some(agent(Busy, Observed, Connected, vec![InputKind::Confirm])),
+                '?',
+                YELLOW,
+                " input needed · confirm",
+                "42",
+                false,
+                false,
+            ),
+            (
+                running.clone(),
+                Some(agent(
+                    ResponseReady,
+                    Observed,
+                    Connected,
+                    vec![InputKind::Approval, InputKind::Select],
+                )),
+                '?',
+                YELLOW,
+                " input needed · approval",
+                "42",
+                true,
+                false,
+            ),
+            // Phase outranks every activity.
+            (
+                SessionPhase::Paused,
+                Some(agent(Busy, Observed, Connected, vec![])),
+                'P',
+                SUBTEXT,
+                " busy observed",
+                "42",
+                false,
+                true,
+            ),
+            (
+                exited.clone(),
+                Some(agent(Busy, Observed, Connected, vec![])),
+                '·',
+                MUTED,
+                " busy observed",
+                "closed",
+                false,
+                false,
+            ),
+            (
+                exited,
+                Some(agent(ResponseReady, Observed, Connected, vec![])),
+                '·',
+                MUTED,
+                " response ready · observed",
+                "closed",
+                true,
+                false,
+            ),
+        ];
+        for (phase, snapshot, glyph, color, activity, pid, ready, paused) in cases {
+            let session = session(phase.clone(), snapshot);
+            let status = SessionStatus::of(&session, 0);
+            let case = format!("{phase:?} {activity}");
+            assert_eq!(status.glyph, glyph, "{case}");
+            assert_eq!(status.color, color, "{case}");
+            assert_eq!(status.activity, activity, "{case}");
+            assert_eq!(status.pid, pid, "{case}");
+            assert_eq!(status.ready, ready, "{case}");
+            assert_eq!(status.paused, paused, "{case}");
+            assert_eq!(status.exited, pid == "closed", "{case}");
+            assert_eq!(status.unread, None, "{case}");
+            // The redraw cadence and the glyph read the same activity.
+            assert_eq!(
+                busy(&session),
+                SPINNER_FRAMES.contains(&status.glyph),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn unread_outranks_the_activity_and_keeps_reporter_health() {
+        let mut ready = session(
+            SessionPhase::Running,
+            Some(agent(
+                AgentActivity::ResponseReady,
+                SampleQuality::Observed,
+                ReporterHealth::Connected,
+                Vec::new(),
+            )),
+        );
+        ready.unread = Some(ReadyObservation {
+            binding: ready.agent.as_ref().unwrap().binding.clone(),
+            turn: Some("t".into()),
+            activity_revision: 1,
+        });
+        assert_eq!(
+            SessionStatus::of(&ready, 0).unread.as_deref(),
+            Some("Unread response ready · observed")
+        );
+        ready.agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
+        assert_eq!(
+            SessionStatus::of(&ready, 0).unread.as_deref(),
+            Some("Unread Unavailable response ready · observed")
+        );
+        // Without a reporting provider there is no clause to add, only the health word.
+        ready.agent = None;
+        assert_eq!(
+            SessionStatus::of(&ready, 0).unread.as_deref(),
+            Some("Unread Unavailable")
+        );
+
+        // An open Input request outranks the Ready sample inside the Unread clause too, and
+        // the glyph goes with it while the Unread itself stands.
+        let mut waiting = session(
+            SessionPhase::Running,
+            Some(agent(
+                AgentActivity::ResponseReady,
+                SampleQuality::Observed,
+                ReporterHealth::Connected,
+                vec![InputKind::Confirm],
+            )),
+        );
+        waiting.unread = Some(ReadyObservation {
+            binding: waiting.agent.as_ref().unwrap().binding.clone(),
+            turn: Some("t".into()),
+            activity_revision: 1,
+        });
+        let status = SessionStatus::of(&waiting, 0);
+        assert_eq!(
+            status.unread.as_deref(),
+            Some("Unread input needed · confirm")
+        );
+        assert_eq!(status.glyph, '?');
+
+        // An unavailable reporter under a sample that is not Ready says ` unavailable` in the
+        // activity clause; Unread already carries the health word, so it is not repeated.
+        let snapshot = waiting.agent.as_mut().unwrap();
+        snapshot.input_requests.clear();
+        snapshot.activity = Some(ActivitySample {
+            state: AgentActivity::Busy,
+            quality: SampleQuality::Observed,
+            turn: None,
+        });
+        snapshot.health.state = ReporterHealth::Unavailable;
+        let status = SessionStatus::of(&waiting, 0);
+        assert_eq!(status.activity, " unavailable");
+        assert_eq!(status.unread.as_deref(), Some("Unread Unavailable"));
+    }
+
+    #[test]
+    fn elapsed_rolls_up_from_minutes_to_days() {
+        for (now, expected) in [
+            (0, "0m"),
+            (59_000, "0m"),
+            (60_000, "1m"),
+            (3_600_000, "1h00"),
+            (3_660_000, "1h01"),
+            (86_400_000, "1d 0h"),
+            (90_000_000, "1d 1h"),
+        ] {
+            let session = session(SessionPhase::Running, None);
+            assert_eq!(SessionStatus::of(&session, now).elapsed, expected, "{now}");
+        }
+    }
+
+    #[test]
+    fn the_spinner_frame_advances_with_the_clock() {
+        let session = session(
+            SessionPhase::Running,
+            Some(agent(
+                AgentActivity::Busy,
+                SampleQuality::Observed,
+                ReporterHealth::Connected,
+                Vec::new(),
+            )),
+        );
+        for (now, frame) in [(0, '⠋'), (100, '⠙'), (900, '⠏'), (1000, '⠋')] {
+            assert_eq!(SessionStatus::of(&session, now).glyph, frame, "{now}");
+        }
+    }
+}

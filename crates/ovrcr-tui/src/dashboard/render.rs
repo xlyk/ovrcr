@@ -1,11 +1,11 @@
 use super::copy::{CopyPoint, CopySelection};
 use super::state::{find_session, find_workspace, history_page_covers};
+use super::status::SessionStatus;
 use super::{Dashboard, HistoryView, InputMode, PaneRects, PaneState, TreeRow, history_view_size};
-use crate::session::{AgentActivity, SessionPhase, TerminalSize};
+use crate::session::{SessionPhase, TerminalSize};
 use crate::task_tui::draw_tasks;
 use ovrcr_protocol::{
-    CostKind, HistoryColor, InputKind, MeasurementFreshness, ReporterHealth, SampleQuality,
-    SessionSummary, UsageCoverage, UsageScope,
+    CostKind, HistoryColor, MeasurementFreshness, SessionSummary, UsageCoverage, UsageScope,
 };
 use ovrcr_terminal::vt100;
 use ratatui::Frame;
@@ -79,8 +79,6 @@ pub(super) const YELLOW: Color = Color::Rgb(249, 226, 175);
 pub(super) const RED: Color = Color::Rgb(243, 139, 168);
 pub(super) const SURFACE0: Color = Color::Rgb(49, 50, 68);
 pub(super) const SURFACE2: Color = Color::Rgb(88, 91, 112);
-pub(super) const SPINNER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-const SPINNER_FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub fn render_terminal(frame: &mut Frame<'_>, area: Rect, screen: &vt100::Screen, focused: bool) {
     let (rows, cols) = screen.size();
@@ -534,69 +532,44 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 ))
             },
             |session| {
-                if session.unread.is_some() {
+                let status = SessionStatus::of(session, now_unix_ms);
+                let width = usize::from(rect.metadata.width);
+                if let Some(unread) = &status.unread {
                     return Line::from(Span::styled(
-                        clip_text(&unread_status(session), usize::from(rect.metadata.width)),
+                        clip_text(unread, width),
                         Style::default().fg(TEAL),
                     ));
                 }
-                let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
-                    "closed".to_string()
-                } else {
-                    session
-                        .pid
-                        .map_or_else(|| "—".to_string(), |pid| pid.to_string())
-                };
-                if super::ready::ready(session).is_some() {
-                    let paused = if matches!(session.phase, SessionPhase::Paused) {
-                        " paused"
-                    } else {
-                        ""
-                    };
+                if status.ready {
+                    let paused = if status.paused { " paused" } else { "" };
                     let mut text = clip_text(
-                        &format!("pid: {pid}{paused}{}", provider_activity(session)),
-                        usize::from(rect.metadata.width),
+                        &format!("pid: {}{paused}{}", status.pid, status.activity),
+                        width,
                     );
                     append_metadata_field(
                         &mut text,
-                        &format!(
-                            "elapsed: {}",
-                            format_elapsed_at(session.started_unix_ms, now_unix_ms)
-                        ),
+                        &format!("elapsed: {}", status.elapsed),
                         rect.metadata.width,
                     );
                     return Line::from(Span::styled(text, Style::default().fg(TEAL)));
                 }
-                let activity = if matches!(session.phase, SessionPhase::Exited { .. })
-                    && super::ready::ready(session).is_none()
-                {
+                // An exited session keeps its process and elapsed fields but drops the
+                // live activity label.
+                let activity = if status.exited {
                     Span::raw("")
                 } else {
-                    let label = if session.agent.is_some() {
-                        format!("agent{}", provider_activity(session))
-                    } else {
-                        match session.activity {
-                            AgentActivity::Unknown => "agent unknown",
-                            AgentActivity::Idle => "agent idle",
-                            AgentActivity::Busy => "agent busy",
-                            AgentActivity::WaitingInput => "agent waiting input",
-                            AgentActivity::Error => "agent error",
-                            AgentActivity::ResponseReady => "agent response ready",
-                        }
-                        .to_owned()
-                    };
-                    Span::styled(format!("  {label}"), Style::default().fg(TEAL))
+                    Span::styled(
+                        format!("  agent{}", status.activity),
+                        Style::default().fg(TEAL),
+                    )
                 };
                 Line::from(vec![
                     Span::styled("pid: ", Style::default().fg(MUTED)),
-                    Span::styled(pid, Style::default().fg(TEAL)),
+                    Span::styled(status.pid, Style::default().fg(TEAL)),
                     Span::styled("  elapsed: ", Style::default().fg(MUTED)),
-                    Span::styled(
-                        format_elapsed_at(session.started_unix_ms, now_unix_ms),
-                        Style::default().fg(TEAL),
-                    ),
+                    Span::styled(status.elapsed, Style::default().fg(TEAL)),
                     activity,
-                    if matches!(session.phase, SessionPhase::Paused) {
+                    if status.paused {
                         Span::styled("  paused", Style::default().fg(PEACH))
                     } else {
                         Span::raw("")
@@ -796,44 +769,36 @@ fn render_split_metadata(
     } else {
         format!("{prefix}loading {name}")
     };
-    let ready_agent = session
-        .filter(|session| super::ready::ready(session).is_some())
-        .and_then(|session| session.agent.as_ref());
-    if let Some(session) = session
-        && (dashboard.pane_ready(pane) || ready_agent.is_some())
+    let status = session.map(|session| SessionStatus::of(session, now_unix_ms));
+    if let Some(status) = &status
+        && (dashboard.pane_ready(pane) || status.ready)
     {
-        let pid = if matches!(session.phase, SessionPhase::Exited { .. }) {
-            "closed".to_string()
-        } else {
-            session
-                .pid
-                .map_or_else(|| "—".to_string(), |pid| pid.to_string())
-        };
-        if ready_agent.is_some() {
+        if status.ready {
             // Reserve process and health status before clipping activity quality.
             // At intermediate widths, identity/geometry yields to these statuses.
-            let status = format!("pid: {pid}{}", provider_activity(session));
-            let with_identity = format!("{text}  {status}");
+            let field = format!("pid: {}{}", status.pid, status.activity);
+            let with_identity = format!("{text}  {field}");
             text = if Line::raw(&with_identity).width() <= usize::from(rect.metadata.width) {
                 with_identity
             } else {
-                clip_text(&status, usize::from(rect.metadata.width))
+                clip_text(&field, usize::from(rect.metadata.width))
             };
         } else {
-            append_metadata_field(&mut text, &format!("pid: {pid}"), rect.metadata.width);
+            append_metadata_field(
+                &mut text,
+                &format!("pid: {}", status.pid),
+                rect.metadata.width,
+            );
         }
         append_metadata_field(
             &mut text,
-            &format!(
-                "elapsed: {}",
-                format_elapsed_at(session.started_unix_ms, now_unix_ms)
-            ),
+            &format!("elapsed: {}", status.elapsed),
             rect.metadata.width,
         );
     }
-    if let Some(session) = session.filter(|session| session.unread.is_some()) {
+    if let Some(unread) = status.as_ref().and_then(|status| status.unread.as_deref()) {
         // Keep both unread and reporting availability ahead of names, PID and geometry.
-        text = clip_text(&unread_status(session), usize::from(rect.metadata.width));
+        text = clip_text(unread, usize::from(rect.metadata.width));
     }
     let style = if focused {
         Style::default().fg(CRUST).bg(MAUVE)
@@ -1028,14 +993,15 @@ fn tree_line_text(
                     style,
                 );
             };
+            let status = SessionStatus::of(session, now_unix_ms);
             if session.name == "local" {
                 // A shell is quiet unless a hook reports real activity inside it.
-                let (glyph, glyph_color) = match session_status_glyph(session, now_unix_ms) {
+                let (glyph, glyph_color) = match (status.glyph, status.color) {
                     ('-' | ' ', _) => ('$', SUBTEXT),
-                    status => status,
+                    reported => reported,
                 };
                 let subtext = Style::default().fg(SUBTEXT);
-                let unread = if session.unread.is_some() { " ●" } else { "" };
+                let unread = if status.unread.is_some() { " ●" } else { "" };
                 (
                     vec![
                         Span::raw(SESSION_INDENT),
@@ -1055,8 +1021,7 @@ fn tree_line_text(
                     Vec::new(),
                 )
             } else {
-                let exited = matches!(session.phase, SessionPhase::Exited { .. });
-                let (glyph, glyph_color) = session_status_glyph(session, now_unix_ms);
+                let (exited, glyph, glyph_color) = (status.exited, status.glyph, status.color);
                 let mut name_style = Style::default().fg(TEXT);
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
@@ -1067,7 +1032,7 @@ fn tree_line_text(
                     .map_or(session.label.as_str(), |(_, model)| model)
                     .trim();
                 let model_cells = Line::raw(model).width();
-                let unread = if session.unread.is_some() { "● " } else { "" };
+                let unread = if status.unread.is_some() { "● " } else { "" };
                 let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
                 // Name width when the model is shown: two cells of gap and one trailing cell.
                 let name_width_with_model = width.saturating_sub(name_column + model_cells + 3);
@@ -1107,28 +1072,6 @@ fn tree_line_text(
     (compose_row(left, fill, right, width, selected), style)
 }
 
-/// Status glyph and colour for a session row. An unavailable reporter mutes the glyph.
-fn session_status_glyph(session: &SessionSummary, now_unix_ms: u64) -> (char, Color) {
-    let (glyph, color) = match (&session.phase, super::ready::activity(session)) {
-        (SessionPhase::Exited { .. }, _) => ('·', MUTED),
-        (SessionPhase::Paused, _) => ('P', SUBTEXT),
-        (_, AgentActivity::Unknown) => ('-', MUTED),
-        (_, AgentActivity::Idle) => (' ', MUTED),
-        (_, AgentActivity::WaitingInput) => ('?', YELLOW),
-        (_, AgentActivity::Error) => ('!', RED),
-        (_, AgentActivity::ResponseReady) => ('✓', TEAL),
-        (SessionPhase::Running, AgentActivity::Busy) => (
-            SPINNER_FRAMES[((now_unix_ms / 100) % SPINNER_FRAMES.len() as u64) as usize],
-            GREEN,
-        ),
-    };
-    let unavailable = session
-        .agent
-        .as_ref()
-        .is_some_and(|agent| agent.health.state == ReporterHealth::Unavailable);
-    (glyph, if unavailable { MUTED } else { color })
-}
-
 /// Compose one `width`-cell sidebar row: `left`, the `fill` glyph across the gap,
 /// then `right`. A selected row replaces its first cell with a mauve bar.
 fn compose_row(
@@ -1157,71 +1100,6 @@ fn compose_row(
     spans.push(Span::styled(fill.content.repeat(gap), fill.style));
     spans.extend(right);
     Line::from(spans)
-}
-
-fn unread_status(session: &SessionSummary) -> String {
-    let unavailable = session
-        .agent
-        .as_ref()
-        .is_none_or(|agent| agent.health.state == ReporterHealth::Unavailable);
-    let health = if unavailable { " Unavailable" } else { "" };
-    let activity = provider_activity(session);
-    let activity = activity.replace(" unavailable", "");
-    format!("Unread{health}{activity}")
-}
-
-fn provider_activity(session: &SessionSummary) -> String {
-    let Some(agent) = &session.agent else {
-        return String::new();
-    };
-    // An open Input request outranks whatever is underneath it, exactly as
-    // AgentSnapshot::effective_activity does.
-    if let Some(request) = agent.input_requests.first() {
-        return format!(
-            " input needed · {}",
-            match request.kind {
-                InputKind::Select => "select",
-                InputKind::Confirm => "confirm",
-                InputKind::Input => "input",
-                InputKind::Editor => "editor",
-                InputKind::Custom => "custom",
-                InputKind::Approval => "approval",
-            }
-        );
-    }
-    if let Some(activity) = super::ready::ready(session) {
-        let quality = match activity.quality {
-            SampleQuality::Confirmed => "confirmed",
-            SampleQuality::Observed => "observed",
-            SampleQuality::Estimated => "estimated",
-        };
-        let health = if agent.health.state == ReporterHealth::Unavailable {
-            " unavailable"
-        } else {
-            ""
-        };
-        return format!("{health} response ready · {quality}");
-    }
-    if agent.health.state == ReporterHealth::Unavailable {
-        return " unavailable".into();
-    }
-    let Some(activity) = &agent.activity else {
-        return " unknown".into();
-    };
-    let state = match activity.state {
-        AgentActivity::Unknown => "unknown",
-        AgentActivity::Idle => "idle",
-        AgentActivity::Busy => "busy",
-        AgentActivity::WaitingInput => "waiting",
-        AgentActivity::Error => "error",
-        AgentActivity::ResponseReady => "response ready",
-    };
-    let quality = match activity.quality {
-        SampleQuality::Confirmed => "confirmed",
-        SampleQuality::Observed => "observed",
-        SampleQuality::Estimated => "estimated",
-    };
-    format!(" {state} {quality}")
 }
 
 fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<String> {
@@ -1351,20 +1229,6 @@ pub(super) fn clip_text(text: &str, width: usize) -> String {
     }
     clipped.push('…');
     clipped
-}
-
-fn format_elapsed_at(started_unix_ms: u64, now_unix_ms: u64) -> String {
-    let minutes = now_unix_ms.saturating_sub(started_unix_ms) / 60_000;
-    let days = minutes / (24 * 60);
-    let hours = minutes / 60 % 24;
-    let minutes = minutes % 60;
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h{minutes:02}")
-    } else {
-        format!("{minutes}m")
-    }
 }
 
 pub fn actual_drawn_inner_rect(area: Rect) -> Rect {
