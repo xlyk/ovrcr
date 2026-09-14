@@ -120,9 +120,6 @@ fn measure<T>(value: T) -> Measurement<T> {
     Measurement {
         value,
         source: "synthetic-load".into(),
-        source_revision: None,
-        source_sequence: None,
-        freshness: MeasurementFreshness::Uncertain,
     }
 }
 fn sample(index: usize, tick: u64, usage: UsageTotals) -> MetricsSample {

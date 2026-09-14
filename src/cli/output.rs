@@ -1,5 +1,5 @@
 use ovrcr::config::{ProjectRecord, WorkspaceRecord};
-use ovrcr::context::context_is_stale;
+use ovrcr::freshness;
 use ovrcr::protocol::Response;
 use ovrcr::session::{AgentActivity, SessionPhase, SessionSummary};
 use serde_json::{Value, json};
@@ -99,8 +99,8 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "measurement_age_ms": measurement_age_ms(session, now_unix_ms),
         "context_usage": session.context_usage,
         "context_stale": session.context_usage.as_ref().map(|sample| {
-            context_is_stale(
-                sample,
+            freshness::is_stale(
+                sample.received_unix_ms,
                 now_unix_ms,
                 matches!(session.phase, SessionPhase::Exited { .. }),
             )
@@ -122,9 +122,9 @@ pub(super) fn measurement_age_ms(session: &SessionSummary, now: u64) -> Value {
         .and_then(|agent| agent.metrics.as_ref())
         .map_or(Value::Null, |metrics| {
             json!({
-                "context": now.checked_sub(metrics.context_received_unix_ms),
-                "usage": now.checked_sub(metrics.usage_received_unix_ms),
-                "cost": now.checked_sub(metrics.cost_received_unix_ms),
+                "context": freshness::age_ms(metrics.context_received_unix_ms, now),
+                "usage": freshness::age_ms(metrics.usage_received_unix_ms, now),
+                "cost": freshness::age_ms(metrics.cost_received_unix_ms, now),
             })
         })
 }

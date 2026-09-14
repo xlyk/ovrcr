@@ -1310,17 +1310,162 @@ fn panic_hook_ignores_non_main_threads() {
 }
 
 #[test]
+fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
+    use crate::protocol::*;
+    use ratatui::backend::TestBackend;
+    let now = 1_000_000;
+    fn measurement<T>(value: T) -> Measurement<T> {
+        Measurement {
+            value,
+            source: "claude_statusline".into(),
+        }
+    }
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 180,
+    });
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "p".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "p".into(),
+            name: "w".into(),
+            path: "/tmp/w".into(),
+            sessions: vec![SessionSummary {
+                id: SessionId(1),
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "claude".into(),
+                label: "claude".into(),
+                pid: Some(1),
+                // Ten minutes of session, one second since the latest sample.
+                started_unix_ms: now - 600_000,
+                phase: SessionPhase::Running,
+                activity: AgentActivity::Busy,
+                context_usage: None,
+                agent: Some(AgentSnapshot {
+                    binding: AgentBinding {
+                        provider: AgentProvider::Claude,
+                        invocation: "invocation".into(),
+                        conversation: "conversation".into(),
+                        generation: 1,
+                    },
+                    activity: Some(ActivitySample {
+                        state: AgentActivity::Idle,
+                        quality: SampleQuality::Observed,
+                        turn: None,
+                    }),
+                    metrics: Some(MetricsSnapshot {
+                        sample: MetricsSample {
+                            model: None,
+                            context: measurement(ContextSample {
+                                used_tokens: Some(10),
+                                capacity_tokens: Some(100),
+                                quality: SampleQuality::Observed,
+                            }),
+                            usage: measurement(UsageTotals {
+                                scope: UsageScope::Conversation,
+                                coverage: UsageCoverage::Partial,
+                                input_tokens: Some(711_653),
+                                output_tokens: Some(1),
+                                cache_read_tokens: None,
+                                cache_write_tokens: None,
+                                reasoning_output_tokens: None,
+                            }),
+                            cost: measurement(Some(UsageCost {
+                                usd_ticks: 4_700_000_000,
+                                kind: CostKind::Estimated,
+                                scope: UsageScope::Conversation,
+                            })),
+                        },
+                        received_unix_ms: now - 1_000,
+                        context_received_unix_ms: now - 1_000,
+                        usage_received_unix_ms: now - 1_000,
+                        cost_received_unix_ms: now - 1_000,
+                    }),
+                    health: HealthSample {
+                        state: ReporterHealth::Connected,
+                        reason: None,
+                    },
+                    activity_revision: 1,
+                    metrics_revision: 1,
+                    health_revision: 1,
+                    input_requests: Vec::new(),
+                    input_revision: 0,
+                }),
+                agent_epoch: 1,
+                unread: None,
+            }],
+        }],
+    });
+    dashboard.select_session(SessionId(1));
+    // The renderer only reads the receipt stamp the runtime handed it; that the
+    // stamp advances when a value changes is pinned by the runtime regression
+    // changed_measurement_advances_its_receipt_stamp_while_a_replay_keeps_it.
+    let drawn = |dashboard: &Dashboard, width: u16| -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, dashboard, now))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    };
+    let fresh = drawn(&dashboard, 180);
+    assert!(
+        fresh.contains("tokens conv partial 711654  cost conv estimate $0.47"),
+        "a stamp one second old carries no label: {fresh}"
+    );
+    assert!(!fresh.contains("stale"), "{fresh}");
+
+    // Narrowing tiers: `est` first, then `tok` with one separator space dropped.
+    let est = drawn(&dashboard, 88);
+    assert!(
+        est.contains("tokens conv partial 711654  cost conv est $0.47"),
+        "{est}"
+    );
+    let tok = drawn(&dashboard, 86);
+    assert!(
+        tok.contains("tok conv partial 711654 cost conv est $0.47"),
+        "{tok}"
+    );
+
+    // Both sides of the five-minute boundary, on the stamp the runtime handed us.
+    let age = |dashboard: &mut Dashboard, age_ms: u64| {
+        let metrics = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .agent
+            .as_mut()
+            .unwrap()
+            .metrics
+            .as_mut()
+            .unwrap();
+        metrics.usage_received_unix_ms = now - age_ms;
+        metrics.cost_received_unix_ms = now - age_ms;
+    };
+    age(&mut dashboard, freshness::STALE_AFTER_MS - 1);
+    let almost = drawn(&dashboard, 180);
+    assert!(!almost.contains("stale"), "one millisecond short: {almost}");
+    age(&mut dashboard, freshness::STALE_AFTER_MS);
+    let stale = drawn(&dashboard, 180);
+    assert_eq!(
+        stale.matches(" stale").count(),
+        2,
+        "usage and cost each label their own age: {stale}"
+    );
+}
+
+#[test]
 fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
-    use crate::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
+    use crate::protocol::context::{ContextSource, ContextUsageReport, ContextUsageSnapshot};
     use crate::protocol::*;
     use ratatui::backend::TestBackend;
     fn measurement<T>(value: T) -> Measurement<T> {
         Measurement {
             value,
             source: "fixture".into(),
-            source_revision: Some("1".into()),
-            source_sequence: Some(1),
-            freshness: MeasurementFreshness::SourceIdentified,
         }
     }
     let now = 400_000;
@@ -1624,7 +1769,6 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
     agent.health.state = ReporterHealth::Unavailable;
     let metrics = agent.metrics.as_mut().unwrap();
     metrics.sample.cost.value.as_mut().unwrap().kind = CostKind::Estimated;
-    metrics.sample.context.freshness = MeasurementFreshness::Uncertain;
     let text = drawn(&dashboard, now, 180);
     for expected in ["agent unavailable", "estimate $0.00"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
@@ -1672,18 +1816,16 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         let metrics = session.agent.as_mut().unwrap().metrics.as_mut().unwrap();
         metrics.sample.usage.value.input_tokens = Some(82_589);
         metrics.sample.usage.value.output_tokens = Some(1);
-        metrics.sample.usage.freshness = MeasurementFreshness::Uncertain;
         metrics.sample.cost.value.as_mut().unwrap().usd_ticks = 600_000_000;
-        metrics.sample.cost.freshness = MeasurementFreshness::Uncertain;
         metrics.usage_received_unix_ms = now;
         metrics.cost_received_unix_ms = now;
     }
     let text = drawn(&dashboard, now, 166);
     assert_eq!(
-        text.matches("tok conv partial 82590 uncertain cost conv est $0.06 uncertain")
+        text.matches("tokens conv partial 82590  cost conv estimate $0.06")
             .count(),
         2,
-        "62-column split metrics must preserve scope, values, and uncertainty: {text}"
+        "62-column split metrics must preserve scope and values, with no stale label: {text}"
     );
     dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
         .agent

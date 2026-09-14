@@ -3,7 +3,6 @@ pub mod task_tui;
 
 pub(crate) use ovrcr_protocol as protocol;
 pub(crate) use ovrcr_protocol as session;
-pub(crate) use ovrcr_protocol::context;
 
 pub use ovrcr_protocol::task::{TaskRequest, TaskResponse};
 

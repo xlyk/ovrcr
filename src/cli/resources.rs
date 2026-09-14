@@ -1,6 +1,6 @@
 use anyhow::Context;
 use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
-use ovrcr::context::context_is_stale;
+use ovrcr::freshness;
 use ovrcr::protocol::{BranchRequest, CreateSessionRequest, ErrorCode, Request, Response};
 use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
 use serde_json::json;
@@ -259,7 +259,7 @@ pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {
         "stale": session
             .context_usage
             .as_ref()
-            .map(|sample| context_is_stale(sample, now_unix_ms, exited)),
+            .map(|sample| freshness::is_stale(sample.received_unix_ms, now_unix_ms, exited)),
     }))
 }
 

@@ -118,8 +118,10 @@ use `terminal kill ID`, then `terminal remove ID` when finished.
 | `report claude-statusline --stdin-json [--render-command COMMAND]` | Attempt managed context/cost reporting while rendering the status line. An external renderer receives the original input bytes. |
 
 Terminal inventory includes the same agent snapshot and independent measurement
-ages as `session usage`. Unknown observations and unavailable ages are JSON
-`null`; zero usage or cost is a known value. The `agent` snapshot contains distinct
+ages as `session usage`. Each component age counts from the last sample whose
+value changed, not from the last delivery, and `context_stale` reports the same
+five-minute rule over the context component's age. Unknown observations and
+unavailable ages are JSON `null`; zero usage or cost is a known value. The `agent` snapshot contains distinct
 binding, activity, metrics, and reporter health. Token and cost scopes must be
 interpreted independently. No provider capability or private launcher lease is
 included.
