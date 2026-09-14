@@ -81,14 +81,17 @@ fn split_delivery_snapshots_precede_increments() {
     let left = SessionId(1);
     let right = SessionId(2);
     for session in [left, right] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session,
-                revision: 1,
-                bytes: b"old".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 1,
+                    bytes: b"old".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     let view = DashboardView {
         revision: 2,
@@ -105,14 +108,17 @@ fn split_delivery_snapshots_precede_increments() {
         focused: Some(right),
     };
     assert!(sink.replace_view(&view, 10, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: right,
-            revision: 2,
-            bytes: b"new".to_vec(),
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: right,
+                revision: 2,
+                bytes: b"new".to_vec(),
+            }),
+            completion: None,
         }),
-        completion: None,
-    }));
+        Enqueue::Queued
+    );
     for (session, bytes) in [(left, b"LEFT".as_slice()), (right, b"RIGHT".as_slice())] {
         assert!(matches!(
             sink.next(),
@@ -149,13 +155,16 @@ fn split_delivery_snapshots_precede_increments() {
 
     let sink = DashboardSink::new();
     for _ in 0..62 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 1,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     assert!(!sink.replace_view(&view, 11, vec![b"LEFT".to_vec(), b"RIGHT".to_vec()]));
     assert!(sink.next().is_none());
@@ -165,23 +174,29 @@ fn split_delivery_snapshots_precede_increments() {
 fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: SessionId(1),
+                    revision: 1,
+                    bytes: vec![b'x'; 32],
+                }),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
+    }
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
                 session: SessionId(1),
                 revision: 1,
-                bytes: vec![b'x'; 32],
+                bytes: vec![b'y'; 32],
             }),
             completion: None,
-        }));
-    }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: SessionId(1),
-            revision: 1,
-            bytes: vec![b'y'; 32],
         }),
-        completion: None,
-    }));
+        Enqueue::Queued
+    );
     let snapshot = sink.reporting_snapshot();
     assert_eq!(snapshot.message_items + snapshot.dirty_items, 1);
     assert_eq!(snapshot.dirty_items, 1);
@@ -211,60 +226,78 @@ fn split_delivery_dirty_revisions_are_isolated() {
     let first = SessionId(1);
     let second = SessionId(2);
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 1,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 1,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     for (session, bytes) in [
         (first, b"first".as_slice()),
         (second, b"second".as_slice()),
         (SessionId(3), b"interleaved".as_slice()),
     ] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 1,
+                    bytes: bytes.to_vec(),
+                }),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
+    }
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
-                session,
+                session: first,
                 revision: 1,
-                bytes: bytes.to_vec(),
+                bytes: b"first-replaced".to_vec(),
             }),
             completion: None,
-        }));
-    }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: first,
-            revision: 1,
-            bytes: b"first-replaced".to_vec(),
         }),
-        completion: None,
-    }));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: second,
-            revision: 1,
-            bytes: b"second-replaced".to_vec(),
-        }),
-        completion: None,
-    }));
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::Output {
-            session: second,
-            revision: 1,
-            bytes: b"second-dirty".to_vec(),
-        }),
-        completion: None,
-    }));
-    for _ in 0..2 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 3,
-                response: Response::Ok,
-            },
+        Enqueue::Queued
+    );
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: second,
+                revision: 1,
+                bytes: b"second-replaced".to_vec(),
+            }),
             completion: None,
-        }));
+        }),
+        Enqueue::Queued
+    );
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::Output {
+                session: second,
+                revision: 1,
+                bytes: b"second-dirty".to_vec(),
+            }),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 3,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let view = DashboardView {
         revision: 2,
@@ -339,23 +372,29 @@ fn split_delivery_dirty_revisions_are_isolated() {
         sink.dirty_sent(revision, session);
     }
     for _ in 0..(DASHBOARD_QUEUE - 3) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Response {
-                request_id: 2,
-                response: Response::Ok,
-            },
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Response {
+                    request_id: 2,
+                    response: Response::Ok,
+                },
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     for session in [first, second] {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session,
-                revision: 2,
-                bytes: b"new".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session,
+                    revision: 2,
+                    bytes: b"new".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     assert!(
         sink.dirty_keys()
@@ -809,10 +848,13 @@ fn set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames() {
     // the view cannot be published without evicting a queued lifecycle frame.
     let lifecycle = ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy()));
     for _ in 0..(DASHBOARD_QUEUE - 2) {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: lifecycle.clone(),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: lifecycle.clone(),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
@@ -1346,13 +1388,16 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
 #[test]
 fn terminal_delivery_is_final_entry_and_closing_stays_sticky() {
     let sink = DashboardSink::new();
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Response {
-            request_id: 1,
-            response: Response::Ok,
-        },
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Response {
+                request_id: 1,
+                response: Response::Ok,
+            },
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     let (completion, result) = mpsc::sync_channel(1);
     assert!(matches!(
         sink.enqueue_terminal(DashboardOutbound {
@@ -1948,14 +1993,17 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
         let _ = write_started.try_send(());
     }));
     for revision in 1..=4 {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session: first_id,
-                revision,
-                bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: first_id,
+                    revision,
+                    bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
     writer_entered
         .recv_timeout(Duration::from_secs(10))
@@ -2065,17 +2113,20 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
     // A frame larger than the socket buffer parks the writer while this client
     // is not reading, so the terminal frame stays queued behind it. Keep it
     // small enough to drain well inside the handler's close timeout.
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: response_message(
-            72,
-            Response::TerminalText {
-                session: first_id,
-                size: TerminalSize { rows: 24, cols: 80 },
-                text: "x".repeat(32 * 1024),
-            },
-        ),
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: response_message(
+                72,
+                Response::TerminalText {
+                    session: first_id,
+                    size: TerminalSize { rows: 24, cols: 80 },
+                    text: "x".repeat(32 * 1024),
+                },
+            ),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     write_frame(
         &mut client_stream,
         &ClientMessage {
@@ -3125,12 +3176,13 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let mut queue_filled = true;
     if parser_was_held {
         for _ in 0..DASHBOARD_QUEUE {
-            if !sink.enqueue_queued(DashboardOutbound {
+            if sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
                     projects: Vec::new(),
                 })),
                 completion: None,
-            }) {
+            }) != Enqueue::Queued
+            {
                 queue_filled = false;
                 break;
             }
@@ -3289,12 +3341,15 @@ fn dashboard_overflow_closes_affected_connection() {
         .unwrap();
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-                projects: Vec::new()
-            },)),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                },)),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     let identity = Arc::new(());
     let state = test_state(Some(sink), Some((identity, server_stream)));
@@ -3316,21 +3371,27 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     // into a dirty marker rather than evict a dashboard that is keeping up.
     let sink = DashboardSink::new();
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::Output {
-                session: SessionId(2),
-                revision: 7,
-                bytes: b"x".to_vec(),
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::Output {
+                    session: SessionId(2),
+                    revision: 7,
+                    bytes: b"x".to_vec(),
+                }),
+                completion: None,
             }),
-            completion: None,
-        }));
+            Enqueue::Queued
+        );
     }
-    assert!(sink.enqueue_queued(DashboardOutbound {
-        message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-            projects: Vec::new()
-        })),
-        completion: None,
-    }));
+    assert_eq!(
+        sink.enqueue(DashboardOutbound {
+            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                projects: Vec::new()
+            })),
+            completion: None,
+        }),
+        Enqueue::Queued
+    );
     assert!(matches!(
         queued_dashboard_message(&sink),
         ServerMessage::Event(ServerEvent::HierarchyChanged(_))
@@ -3344,12 +3405,15 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     ));
     // Messages that cannot be coalesced still evict once they fill the queue.
     for _ in 0..DASHBOARD_QUEUE {
-        assert!(sink.enqueue_queued(DashboardOutbound {
-            message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
-                projects: Vec::new()
-            })),
-            completion: None,
-        }));
+        assert_eq!(
+            sink.enqueue(DashboardOutbound {
+                message: ServerMessage::Event(ServerEvent::HierarchyChanged(HierarchySnapshot {
+                    projects: Vec::new()
+                })),
+                completion: None,
+            }),
+            Enqueue::Queued
+        );
     }
     assert!(matches!(
         sink.enqueue(DashboardOutbound {
