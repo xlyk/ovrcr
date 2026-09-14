@@ -8885,6 +8885,10 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
         );
         thread::park_timeout(Duration::from_millis(5));
     };
+    // A component's receipt stamp moves only when its value does. Variants that
+    // never change the context value carry this stamp through to finalize; the
+    // compact sequence below changes it twice and updates it.
+    let mut context_stamp = before.metrics.as_ref().unwrap().context_received_unix_ms;
     if kill_collector {
         assert_eq!(
             fixture.request(Request::SendTerminal {
@@ -9016,14 +9020,28 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
                 1 => {
                     assert_eq!(metrics.sample.context.value.used_tokens, None);
                     assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                    assert!(
+                        metrics.context_received_unix_ms >= context_stamp,
+                        "post-compaction unknown occupancy is a new reading"
+                    );
+                    context_stamp = metrics.context_received_unix_ms;
                 }
                 2 => {
                     assert_eq!(metrics.sample.context.value.used_tokens, Some(20));
                     assert_eq!(metrics.sample.context.value.capacity_tokens, Some(100));
+                    assert!(
+                        metrics.context_received_unix_ms >= context_stamp,
+                        "the restored occupancy is a new reading, not a replay"
+                    );
+                    context_stamp = metrics.context_received_unix_ms;
                 }
                 _ => unreachable!(),
             }
         }
+        assert!(
+            context_stamp > before.metrics.as_ref().unwrap().context_received_unix_ms,
+            "the compact sequence changed the context value twice, so its stamp moved"
+        );
     }
     if clear {
         for (index, command) in ["clear", "grow-transcript", "statusline-unknown", "root"]
@@ -9081,10 +9099,9 @@ OVRCR_TEST_UUID="$2" exec "$OVRCR_TEST_EXECUTABLE" --ignored --exact agent_admis
     );
     assert_eq!(metrics.sample.usage.value.input_tokens, Some(10));
     assert_eq!(metrics.sample.cost.value.unwrap().usd_ticks, 2_500_000_000);
-    assert_eq!(
-        metrics.context_received_unix_ms,
-        before.metrics.unwrap().context_received_unix_ms
-    );
+    // Finalize resends the last sample with only usage coverage changed, so it
+    // must not restamp a component it did not touch.
+    assert_eq!(metrics.context_received_unix_ms, context_stamp);
     if let Some(proxy) = &proxy {
         assert!(
             proxy
