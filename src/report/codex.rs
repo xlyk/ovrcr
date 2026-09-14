@@ -248,7 +248,12 @@ impl Receiver {
         let Some(lease) = &mut self.lease else {
             return false;
         };
-        match lease.bind(ovrcr_protocol::AgentProvider::Codex, conversation, deadline) {
+        match lease.bind(
+            ovrcr_protocol::AgentProvider::Codex,
+            conversation,
+            deadline,
+            false,
+        ) {
             Some(true) => {
                 self.revision = 0;
                 true

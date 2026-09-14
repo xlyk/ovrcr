@@ -509,18 +509,22 @@ impl InvocationLease {
     /// Bind this reservation to `conversation` for `provider`. `Some(true)`: newly bound
     /// (callers reset their revision); `Some(false)`: already bound to it; `None`: refused
     /// or unreachable. Half the remaining budget goes to the command, the rest to the
-    /// receipt re-read that recovers a lost reply.
+    /// receipt re-read that recovers a lost reply. `force` asks for a fresh reporting
+    /// generation on the conversation already bound — the recovery a paused reporter
+    /// makes at a trustworthy boundary — instead of short-circuiting as already bound.
     pub(crate) fn bind(
         &mut self,
         provider: ovrcr_protocol::AgentProvider,
         conversation: &str,
         deadline: Instant,
+        force: bool,
     ) -> Option<bool> {
         use ovrcr_protocol::{AgentCommand, AgentOperationResult};
-        if self
-            .binding
-            .as_ref()
-            .is_some_and(|b| b.conversation == conversation)
+        if !force
+            && self
+                .binding
+                .as_ref()
+                .is_some_and(|b| b.conversation == conversation)
         {
             return Some(false);
         }
