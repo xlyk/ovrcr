@@ -1,0 +1,112 @@
+=== O15 ownership: fixture processes before cleanup 2026-09-14T09:03:57Z ===
+30049 30039 30039 tee /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.AlQ1oA/evidence/27-omp-cleanup.json
+43734 43731     1 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+90876 90870     1 /bin/sh /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.AlQ1oA/alertwatch.sh
+53276 53276 43759 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run omp -- /Users/xlyk/.local/bin/omp
+53324 53324 53276 /Users/xlyk/.local/bin/omp -e /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-cbaef9910763af4eb97c633dcfb0d485f3db27421821cfab74631ebff9871a37/ovrcr-omp-reporting.mjs
+83998 83998 43759 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run omp -- /Users/xlyk/.local/bin/omp
+84111 84111 83998 /Users/xlyk/.local/bin/omp -e /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-04a5130fbfdce38487e8785c49f34093fdc4f7d618b69765752cc63dae5f6df4/ovrcr-omp-reporting.mjs
+84007 84007 43759 /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi
+--- demo root ---
+.
+..
+.server.lock
+config.tasks
+config.toml
+repositories
+server.log
+server.sock
+workspaces
+--- materialized extension dirs ---
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-04a5130fbfdce38487e8785c49f34093fdc4f7d618b69765752cc63dae5f6df4
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-omp-cbaef9910763af4eb97c633dcfb0d485f3db27421821cfab74631ebff9871a37
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-29e16e34821a8ec99597aa86905c578ca4768d4c2977385a3ba58e142a6f6d52
+--- omp ps inside the fixture ---
+project /Users/xlyk/Code/ovrcr/.worktrees/pi-omp-phase5 — broker not running
+  no processes
+
+Use --all to include other projects and global services.
+# O15: kill omp-2 (SIGTERM through the supervisor) — it holds an historical Unread
+2026-09-14T09:04:11Z
+{"id": 12, "name": "omp-2", "phase": "running", "activity": "idle", "unread": {"activity_revision": 3, "binding": {"conversation": "01a09f24-2e31-707a-ad45-597eeb687605", "generation": 1, "invocation": "7be958d34c591ee22235c02ba670a26a4790dcd73b1d2a64bcb62bb299958a10", "provider": "Omp"}, "turn": "7755f580ca871d3b962121001386d52e:1"}, "q": "Observed", "state": "Idle", "turn": "7755f580ca871d3b962121001386d52e:2", "gen": 1, "conv": "01a09f24", "inv": "7be958d3", "health": {"reason": null, "state": "Connected"}, "reqs": [], "arev": 7, "irev": 6, "hrev": 0}
+{"ok":true}
+# after kill
+[{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":1,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43792,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241419,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":2,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43821,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241514,"unread":null,"workspace":"auth-handoff"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":3,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43862,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241608,"unread":null,"workspace":"pipeline-progress-v2"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":4,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43891,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241702,"unread":null,"workspace":"scope-quality"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":5,"label":"claude / sonnet-4","measurement_age_ms":null,"name":"implement lifecycle cleanup","phase":"running","pid":43894,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241717,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":6,"label":"codex / gpt-5.4","measurement_age_ms":null,"name":"review websocket shutdown","phase":"running","pid":43896,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241727,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":7,"label":"pi / grok-4.6","measurement_age_ms":null,"name":"plan snapshot restore","phase":"running","pid":43898,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241739,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":8,"label":"grok / grok-4.6","measurement_age_ms":null,"name":"review auth handoff","phase":"running","pid":43900,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241751,"unread":null,"workspace":"auth-handoff"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":9,"label":"claude / opus-4","measurement_age_ms":null,"name":"build pipeline progress","phase":"running","pid":43903,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241763,"unread":null,"workspace":"pipeline-progress-v2"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":10,"label":"codex / gpt-5.4","measurement_age_ms":null,"name":"review scope quality","phase":"running","pid":43905,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241775,"unread":null,"workspace":"scope-quality"},{"activity":"response_ready","agent":{"activity":{"quality":"Observed","state":"ResponseReady","turn":"75d191d1261e2ab822f6b36627519eff:12"},"activity_revision":3,"binding":{"conversation":"01a09f22-bad0-7534-a457-e527c0c8c187","generation":8,"invocation":"1d4f00bdc6aaee7b9119772396f04e5644f69a4fb84f81b6f5db6790d3ed40ba","provider":"Omp"},"health":{"reason":null,"state":"Connected"},"health_revision":0,"input_requests":[],"input_revision":0,"metrics":null,"metrics_revision":0},"agent_epoch":1,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":11,"label":"omp","measurement_age_ms":null,"name":"omp-1","phase":"running","pid":53276,"project":"consigint","reporting_unavailable":false,"started_unix_ms":1789374356286,"unread":{"activity_revision":3,"binding":{"conversation":"01a09f22-bad0-7534-a457-e527c0c8c187","generation":8,"invocation":"1d4f00bdc6aaee7b9119772396f04e5644f69a4fb84f81b6f5db6790d3ed40ba","provider":"Omp"},"turn":"75d191d1261e2ab822f6b36627519eff:12"},"workspace":"auth-handoff"},{"activity":"idle","agent":{"activity":{"quality":"Observed","state":"Idle","turn":"7755f580ca871d3b962121001386d52e:2"},"activity_revision":7,"binding":{"conversation":"01a09f24-2e31-707a-ad45-597eeb687605","generation":1,"invocation":"7be958d34c591ee22235c02ba670a26a4790dcd73b1d2a64bcb62bb299958a10","provider":"Omp"},"health":{"reason":"capability_revoked","state":"Unavailable"},"health_revision":0,"input_requests":[],"input_revision":6,"metrics":null,"metrics_revision":0},"agent_epoch":1,"context_stale":null,"context_usage":null,"exit_code":143,"exit_signal":null,"id":12,"label":"ovrcr","measurement_age_ms":null,"name":"omp-2","phase":"exited","pid":null,"project":"consigint","reporting_unavailable":true,"started_unix_ms":1789376342421,"unread":{"activity_revision":3,"binding":{"conversation":"01a09f24-2e31-707a-ad45-597eeb687605","generation":1,"invocation":"7be958d34c591ee22235c02ba670a26a4790dcd73b1d2a64bcb62bb299958a10","provider":"Omp"},"turn":"7755f580ca871d3b962121001386d52e:1"},"workspace":"auth-handoff"},{"activity":"idle","agent":{"activity":{"quality":"Observed","state":"Idle","turn":null},"activity_revision":1,"binding":{"conversation":"01a09f24-2bbb-76f2-a558-77761353d79f","generation":1,"invocation":"502d6a1592d58e1cf4af9ae5c5f4963af403a17941edde36f107561f851107e7","provider":"Pi"},"health":{"reason":null,"state":"Connected"},"health_revision":0,"input_requests":[],"input_revision":0,"metrics":null,"metrics_revision":0},"agent_epoch":1,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":13,"label":"ovrcr","measurement_age_ms":null,"name":"pi-1","phase":"running","pid":84007,"project":"consigint","reporting_unavailable":false,"started_unix_ms":1789376342430,"unread":null,"workspace":"worktree-lifecycle"}]
+# doctor for the exited omp-2
+{
+  "binding": {
+    "generation": 1,
+    "provider": "Omp"
+  },
+  "capabilities": {
+    "approvals": "available",
+    "managed_launch": true,
+    "metrics": "absent",
+    "questions": "available_tool_lifetime",
+    "recovery": "available",
+    "reporting": "available"
+  },
+  "executable": "omp",
+  "known_incompatibilities": [],
+  "lifecycle": {
+    "activity": "Idle",
+    "delivery": "lost",
+    "extension": "loaded_and_bound",
+    "health": "Unavailable",
+    "input_requests": [],
+    "unread": true,
+    "work_seen": false
+  },
+  "probe_status": "probed",
+  "provider": "omp",
+  "remediation": [
+    "Reporting is unavailable for this invocation: the transport was lost or the producer ended with its session. Start a fresh managed launch to restore reporting."
+  ],
+  "session_status": "bound",
+  "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+  "tested_versions": [
+    "18.1.19"
+  ],
+  "version": "18.1.19",
+  "version_status": "tested"
+}
+# O15: graceful close of omp-1 and pi-1
+2026-09-14T09:04:36Z
+{"ok":true}
+{"ok":true}
+# after close
+[{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":1,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43792,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241419,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":2,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43821,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241514,"unread":null,"workspace":"auth-handoff"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":3,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43862,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241608,"unread":null,"workspace":"pipeline-progress-v2"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":4,"label":"zsh","measurement_age_ms":null,"name":"local","phase":"running","pid":43891,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241702,"unread":null,"workspace":"scope-quality"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":5,"label":"claude / sonnet-4","measurement_age_ms":null,"name":"implement lifecycle cleanup","phase":"running","pid":43894,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241717,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":6,"label":"codex / gpt-5.4","measurement_age_ms":null,"name":"review websocket shutdown","phase":"running","pid":43896,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241727,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":7,"label":"pi / grok-4.6","measurement_age_ms":null,"name":"plan snapshot restore","phase":"running","pid":43898,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241739,"unread":null,"workspace":"worktree-lifecycle"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":8,"label":"grok / grok-4.6","measurement_age_ms":null,"name":"review auth handoff","phase":"running","pid":43900,"project":"consigint","reporting_unavailable":null,"started_unix_ms":1789374241751,"unread":null,"workspace":"auth-handoff"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":9,"label":"claude / opus-4","measurement_age_ms":null,"name":"build pipeline progress","phase":"running","pid":43903,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241763,"unread":null,"workspace":"pipeline-progress-v2"},{"activity":"unknown","agent":null,"agent_epoch":0,"context_stale":null,"context_usage":null,"exit_code":null,"exit_signal":null,"id":10,"label":"codex / gpt-5.4","measurement_age_ms":null,"name":"review scope quality","phase":"running","pid":43905,"project":"spacelift-agent","reporting_unavailable":null,"started_unix_ms":1789374241775,"unread":null,"workspace":"scope-quality"},{"activity":"idle","agent":{"activity":{"quality":"Observed","state":"Idle","turn":"7755f580ca871d3b962121001386d52e:2"},"activity_revision":7,"binding":{"conversation":"01a09f24-2e31-707a-ad45-597eeb687605","generation":1,"invocation":"7be958d34c591ee22235c02ba670a26a4790dcd73b1d2a64bcb62bb299958a10","provider":"Omp"},"health":{"reason":"capability_revoked","state":"Unavailable"},"health_revision":0,"input_requests":[],"input_revision":6,"metrics":null,"metrics_revision":0},"agent_epoch":1,"context_stale":null,"context_usage":null,"exit_code":143,"exit_signal":null,"id":12,"label":"ovrcr","measurement_age_ms":null,"name":"omp-2","phase":"exited","pid":null,"project":"consigint","reporting_unavailable":true,"started_unix_ms":1789376342421,"unread":{"activity_revision":3,"binding":{"conversation":"01a09f24-2e31-707a-ad45-597eeb687605","generation":1,"invocation":"7be958d34c591ee22235c02ba670a26a4790dcd73b1d2a64bcb62bb299958a10","provider":"Omp"},"turn":"7755f580ca871d3b962121001386d52e:1"},"workspace":"auth-handoff"}]
+--- materialized dirs ---
+none
+# GUI window closed 2026-09-14T09:05:09Z
+--- launcher log ---
+--- demo root present? ---
+ls: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-qZCSb0: No such file or directory
+absent
+--- fixture processes ---
+none
+# O15 PID/PGID ownership check 2026-09-14T09:05:23Z
+pid 43734 ESRCH
+pid 53276 ESRCH
+pid 53324 ESRCH
+pid 83998 ESRCH
+pid 84111 ESRCH
+pid 84007 ESRCH
+pid 43759 ESRCH
+pid 90876 ESRCH
+pid 308 ESRCH
+pgid 43731 ESRCH
+pgid 53276 ESRCH
+pgid 83998 ESRCH
+pgid 84111 ESRCH
+pgid 84007 ESRCH
+pgid 90870 ESRCH
+--- omp ps inside the fixture ---
+project /Users/xlyk/Code/ovrcr/.worktrees/pi-omp-phase5 — broker not running
+  no processes
+
+Use --all to include other projects and global services.
+--- ${TMPDIR}ovrcr-omp-* ---
+absent
+--- ${TMPDIR}ovrcr-gui-* ---
+absent

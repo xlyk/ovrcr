@@ -1,0 +1,11 @@
+# O4 explicit review of the presented Unread (turn :4)
+2026-09-14T08:36:07Z
+expected={"activity_revision": 9, "binding": {"conversation": "01a09f05-df15-74d5-919e-df2f3ac8593f", "generation": 1, "invocation": "1d4f00bdc6aaee7b9119772396f04e5644f69a4fb84f81b6f5db6790d3ed40ba", "provider": "Omp"}, "turn": "75d191d1261e2ab822f6b36627519eff:4"}
+{"ok":true}
+exit=0
+# after
+{"id": 11, "name": "omp-1", "phase": "running", "activity": "response_ready", "unread": null, "q": "Observed", "state": "ResponseReady", "turn": "75d191d1261e2ab822f6b36627519eff:4", "gen": 1, "conv": "01a09f05", "inv": "1d4f00bd", "health": {"reason": null, "state": "Connected"}, "reqs": [], "arev": 9, "irev": 0, "hrev": 0}
+# repeat the same acknowledgement (must be harmless)
+{"ok":true}
+exit=0
+{"id": 11, "name": "omp-1", "phase": "running", "activity": "response_ready", "unread": null, "q": "Observed", "state": "ResponseReady", "turn": "75d191d1261e2ab822f6b36627519eff:4", "gen": 1, "conv": "01a09f05", "inv": "1d4f00bd", "health": {"reason": null, "state": "Connected"}, "reqs": [], "arev": 9, "irev": 0, "hrev": 0}
