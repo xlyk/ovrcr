@@ -39,7 +39,7 @@ pub(super) const OMP: Managed = Managed {
     reporting: "available",
     approvals: "available",
     questions: "available_tool_lifetime",
-    recovery: "pending #96",
+    recovery: "available",
 };
 
 /// The reasons a receiver pauses *and this provider can come back from*: live reporting is
@@ -251,14 +251,14 @@ mod tests {
             assert!(paused(&PI, &snapshot(Some(reason))), "{reason}");
             assert!(paused(&OMP, &snapshot(Some(reason))), "{reason}");
         }
-        // An overflow disables the producer inside the extension, so nothing the harness
-        // does can end it: only a provider with a reattach control can recover from one.
+        // An overflow disables the producer inside the extension, so no source boundary can
+        // end it on its own: only a provider whose extension registers a reattach command
+        // can recover from one. Both providers register `/ovrcr-reattach` (#91, #96).
         assert!(paused(&PI, &snapshot(Some("source_overflow"))));
-        assert!(
-            !paused(&OMP, &snapshot(Some("source_overflow"))),
-            "Oh My Pi has no reattach command: an overflow is a lost reporter, not a pause"
-        );
+        assert!(paused(&OMP, &snapshot(Some("source_overflow"))));
+        // A reason with no recovery path, and a healthy reporter, are still not a pause.
         assert!(!paused(&PI, &snapshot(Some("collector_unavailable"))));
+        assert!(!paused(&OMP, &snapshot(Some("collector_unavailable"))));
         assert!(!paused(&PI, &snapshot(None)));
         let mut connected = snapshot(None);
         connected.health.state = ReporterHealth::Connected;
