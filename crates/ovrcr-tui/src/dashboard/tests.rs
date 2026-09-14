@@ -2162,7 +2162,7 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
         input_revision: 1,
     });
     let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
-    assert_eq!(super::render::session_status_glyph(&summary, 0).0, '?');
+    assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '?');
     assert!(!dashboard.session_is_busy(SessionId(1)));
     assert_ne!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
 
@@ -2174,7 +2174,7 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
         .input_requests
         .clear();
     let summary = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
-    assert_eq!(super::render::session_status_glyph(&summary, 0).0, '⠋');
+    assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '⠋');
     assert!(dashboard.session_is_busy(SessionId(1)));
     assert_eq!(dashboard.redraw_interval(), super::render::SPINNER_INTERVAL);
 }

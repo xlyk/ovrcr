@@ -40,6 +40,10 @@ _Avoid_: the dashboard slot, the sink, the view subscription as separate things
 The Dashboard's exchange with the server that acknowledges a view: one `SetView` in flight, snapshots matched by request, revision, and session, readiness granted by a complete final `Ok`.
 _Avoid_: pane ready as a flag anyone sets
 
+**Session status**:
+What one session says about itself on screen, decided once per draw: the row's glyph, the process, paused, effective activity, Unread and elapsed clauses, in that precedence. The sidebar row, both pane headers, and the spinner redraw cadence read the same value.
+_Avoid_: the raw rollup activity, the glyph on its own, a per-renderer reading
+
 **Retarget**:
 Any change to what a pane shows: split, focus, close, select, container, cleared, resize, or server removal. Each names which releases apply.
 _Avoid_: calling the release steps individually

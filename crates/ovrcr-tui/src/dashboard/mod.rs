@@ -12,6 +12,7 @@ mod ready;
 mod render;
 mod settings;
 mod state;
+mod status;
 mod terminal_guard;
 #[cfg(test)]
 mod tests;
