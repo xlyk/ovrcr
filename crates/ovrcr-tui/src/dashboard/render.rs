@@ -1234,7 +1234,7 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
         UsageScope::Invocation => "inv",
     };
     let exited = matches!(session.phase, SessionPhase::Exited { .. });
-    let age = |received| {
+    let stale_label = |received| {
         if ovrcr_protocol::freshness::is_stale(received, now, exited) {
             " stale"
         } else {
@@ -1275,8 +1275,8 @@ fn provider_metrics(session: &SessionSummary, now: u64, width: usize) -> Option<
     let full = format!(
         "tokens {}{partial} {tokens}{}  cost {amount}{}",
         scope(usage.value.scope),
-        age(metrics.usage_received_unix_ms),
-        age(metrics.cost_received_unix_ms)
+        stale_label(metrics.usage_received_unix_ms),
+        stale_label(metrics.cost_received_unix_ms)
     );
     if Line::raw(&full).width() <= width {
         return Some(full);

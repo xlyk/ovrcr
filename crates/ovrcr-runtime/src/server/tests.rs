@@ -5719,7 +5719,8 @@ mod agent_reporting {
             f.report(&a, 22, AgentObservation::Metrics(next.clone().into())),
             Response::Ok
         );
-        let replayed = f.session.summary().agent.unwrap().metrics.unwrap();
+        let before = f.session.summary();
+        let replayed = before.agent.clone().unwrap().metrics.unwrap();
         assert_eq!(replayed.usage_received_unix_ms, new.usage_received_unix_ms);
         assert_eq!(
             replayed.context_received_unix_ms,
@@ -5728,9 +5729,9 @@ mod agent_reporting {
         next.usage.value.input_tokens = Some(21);
         rejected(f.report(&a, 23, AgentObservation::Metrics(next.clone().into())));
         assert_eq!(
-            f.session.summary().agent.unwrap().metrics.unwrap().sample,
-            replayed.sample,
-            "a rejected snapshot must not move any component"
+            f.session.summary(),
+            before,
+            "a rejected snapshot must not move any component, receipt stamp or revision"
         );
         next.usage.value.input_tokens = Some(22);
         next.context.value.used_tokens = None;

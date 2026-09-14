@@ -1310,7 +1310,7 @@ fn panic_hook_ignores_non_main_threads() {
 }
 
 #[test]
-fn provider_metrics_stay_fresh_when_a_changed_sample_arrives_after_five_minutes() {
+fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
     use crate::protocol::*;
     use ratatui::backend::TestBackend;
     let now = 1_000_000;
@@ -1364,14 +1364,18 @@ fn provider_metrics_stay_fresh_when_a_changed_sample_arrives_after_five_minutes(
                             }),
                             usage: measurement(UsageTotals {
                                 scope: UsageScope::Conversation,
-                                coverage: UsageCoverage::Complete,
-                                input_tokens: Some(20),
-                                output_tokens: Some(10),
+                                coverage: UsageCoverage::Partial,
+                                input_tokens: Some(711_653),
+                                output_tokens: Some(1),
                                 cache_read_tokens: None,
                                 cache_write_tokens: None,
                                 reasoning_output_tokens: None,
                             }),
-                            cost: measurement(None),
+                            cost: measurement(Some(UsageCost {
+                                usd_ticks: 4_700_000_000,
+                                kind: CostKind::Estimated,
+                                scope: UsageScope::Conversation,
+                            })),
                         },
                         received_unix_ms: now - 1_000,
                         context_received_unix_ms: now - 1_000,
@@ -1394,22 +1398,63 @@ fn provider_metrics_stay_fresh_when_a_changed_sample_arrives_after_five_minutes(
         }],
     });
     dashboard.select_session(SessionId(1));
-    let mut terminal = Terminal::new(TestBackend::new(180, 24)).unwrap();
-    terminal
-        .draw(|frame| super::draw_dashboard_at(frame, &dashboard, now))
-        .unwrap();
-    let text: String = terminal
-        .backend()
-        .buffer()
-        .content
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect();
+    // The renderer only reads the receipt stamp the runtime handed it; that the
+    // stamp advances when a value changes is pinned by the runtime regression
+    // changed_measurement_advances_its_receipt_stamp_while_a_replay_keeps_it.
+    let drawn = |dashboard: &Dashboard, width: u16| -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| super::draw_dashboard_at(frame, dashboard, now))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    };
+    let fresh = drawn(&dashboard, 180);
     assert!(
-        text.contains("tokens conv 30  cost \u{2014}"),
-        "a sample received a second ago carries no provenance label: {text}"
+        fresh.contains("tokens conv partial 711654  cost conv estimate $0.47"),
+        "a stamp one second old carries no label: {fresh}"
     );
-    assert!(!text.contains("stale"), "{text}");
+    assert!(!fresh.contains("stale"), "{fresh}");
+
+    // Narrowing tiers: `est` first, then `tok` with one separator space dropped.
+    let est = drawn(&dashboard, 88);
+    assert!(
+        est.contains("tokens conv partial 711654  cost conv est $0.47"),
+        "{est}"
+    );
+    let tok = drawn(&dashboard, 86);
+    assert!(
+        tok.contains("tok conv partial 711654 cost conv est $0.47"),
+        "{tok}"
+    );
+
+    // Both sides of the five-minute boundary, on the stamp the runtime handed us.
+    let age = |dashboard: &mut Dashboard, age_ms: u64| {
+        let metrics = dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .agent
+            .as_mut()
+            .unwrap()
+            .metrics
+            .as_mut()
+            .unwrap();
+        metrics.usage_received_unix_ms = now - age_ms;
+        metrics.cost_received_unix_ms = now - age_ms;
+    };
+    age(&mut dashboard, freshness::STALE_AFTER_MS - 1);
+    let almost = drawn(&dashboard, 180);
+    assert!(!almost.contains("stale"), "one millisecond short: {almost}");
+    age(&mut dashboard, freshness::STALE_AFTER_MS);
+    let stale = drawn(&dashboard, 180);
+    assert_eq!(
+        stale.matches(" stale").count(),
+        2,
+        "usage and cost each label their own age: {stale}"
+    );
 }
 
 #[test]
