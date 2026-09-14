@@ -41,7 +41,7 @@ The Dashboard's exchange with the server that acknowledges a view: one `SetView`
 _Avoid_: pane ready as a flag anyone sets
 
 **Session status**:
-What one session says about itself on screen, decided once per draw: the row's glyph, the process, paused, effective activity, Unread and elapsed clauses, in that precedence. The sidebar row, both pane headers, and the spinner redraw cadence read the same value.
+What one session says about itself on screen, decided once per draw: the row's glyph and the process, paused, effective activity, Unread and elapsed clauses. An Unread clause replaces a header line outright; each surface arranges and clips the rest for its own width. The sidebar row, both pane headers, and the spinner redraw cadence read the same value.
 _Avoid_: the raw rollup activity, the glyph on its own, a per-renderer reading
 
 **Retarget**:
