@@ -25,7 +25,7 @@ An open request for a human answer, identified by binding, namespace and request
 _Avoid_: Unread, a Ready observation, a tool call, or an alert as the request
 
 **Producer**:
-The admitted extension instance whose source sequence fences its events; retired by an observed shutdown or replaced by an admitted successor.
+The admitted extension instance whose source sequence fences its events; retired by an observed shutdown or replaced by an admitted successor. In Oh My Pi one producer spans every in-place session switch, so a switch is a new binding, not a new producer.
 _Avoid_: the conversation, the binding, the native process
 
 **Reporting generation**:

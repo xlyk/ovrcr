@@ -327,6 +327,62 @@ identity the receiver has already published.
 Ordinary handlers are awaited sequentially under a 30 s budget and shutdown handlers in
 parallel under a 2 s budget, both far above the transport's 900 ms per-event deadline.
 
+### Transitions and recovery
+
+`session_switch` is emitted from exactly three sites, and its `reason` is exactly `new`
+(from `newSession`), `fork` (from `fork`) or `resume` (from `switchSession`); every one of
+them carries `previousSessionFile`. There is no `tree` or `reload` reason. A same-file
+reload is `switchSession` called with the file the session is already on — `reload()` reads
+`this.sessionFile` and passes it straight back — so it emits `reason: "resume"` and the
+session id does not change; the branch it takes internally logs a session reload. A session
+file is named `<timestamp>_<sessionId>.jsonl` and Oh My Pi parses the id back out of that
+name itself (taking the text after the last `_`, minus the extension), which is why OVRCR
+reads `previous` out of the file name as an id and never carries the timestamp or the
+directory. Every transition first emits a cancellable `session_before_switch`, and the
+`session_switch` emit is downstream of the `if (handled?.cancel) return false` that gates
+it; OVRCR deliberately does not subscribe to `session_before_switch`, so a cancelled
+transition produces nothing at all.
+
+The plugin-resource refresh (`reloadPlugins`) re-resolves plugin roots, rebuilds the agents
+cache, refreshes skill and slash-command state and restarts MCP servers. It emits no
+extension event and never touches the extension runner, which is assigned once per process;
+a factory replacement in Oh My Pi therefore only happens across a process restart, which is
+a new managed launch and a new receiver. `session_tree` exists and is emitted in place with
+`{ newLeafId, oldLeafId, summaryEntry, fromExtension }`, gated on
+`hasHandlers("session_tree")`; `session_compact` is separate, also in place, and is
+deliberately not subscribed because it preserves the conversation binding. OVRCR reports
+only `idle` from `session_tree` and never the leaf ids or the summary entry.
+
+`registerCommand(name, options)` stores a command on the extension, and a slash line in the
+input resolves it and runs `handler(argumentString, commandContext)`; the command context
+is the ordinary extension context plus `getContextUsage`, `waitForIdle`, `newSession`,
+`branch`, `navigateTree`, `switchSession`, `reload` and `compact`, and the ordinary context
+already carries `ui`, `mode`, `sessionManager` and `isIdle`. So `/ovrcr-reattach` is a real
+command in 18.1.19, and it calls only the transport's `reattach()` and `ctx.ui.notify`: it
+never calls `reload()`, `switchSession()`, `newSession()` or `navigateTree()`, because #88
+forbids a conversation reload as a reporting-reconnection substitute.
+
+The automated proof is three managed lifecycle tests over the real CLI, PTY, private socket
+and receiver: `omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer`
+(switch, compaction, A→B→A, same-file reload with the generation unchanged, a plugin refresh
+whose session summary is byte-identical, tree navigation, and a switch naming an unknown
+conversation that pauses and then recovers),
+`omp_source_gap_pauses_then_recovers_at_the_next_boundary` (a lost frame, the hole, a pause
+that applies nothing while the native session keeps answering, and one recovery at the next
+`agent_start`), and `omp_reattach_recovers_a_paused_reporter_during_an_input_wait` (doctor
+reporting `paused_recoverable` and naming `/ovrcr-reattach`, the command recovering while a
+question is open, and an old question's close failing to clear a newer one).
+
+Three gaps are stated rather than hidden. There is no Oh My Pi old-producer lifecycle test:
+Oh My Pi never replaces its extension factory in-process, so a second instance is
+unreachable at that seam, and the fence is pinned by the shared receiver unit test
+`admit_fences_gaps_retired_producers_and_an_unobserved_replacement`. There is no Oh My Pi
+`source_overflow` lifecycle test: reaching the bound needs 257 PTY round trips, so the
+doctor consequence is pinned by `a_pause_is_recoverable_only_where_the_provider_has_a_way_out_of_it`
+and the mechanism itself is Pi's, already covered. There is no Oh My Pi lost-bind-receipt
+test: the `InvocationLease::operation_status` recovery path is shared and is covered by the
+Codex lifecycle test. Native acceptance against an installed Oh My Pi stays #97.
+
 ### Approvals and questions
 
 An earlier reading of this binary recorded approvals and questions as unobservable. That is
