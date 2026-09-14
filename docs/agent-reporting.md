@@ -145,7 +145,8 @@ response). Ready creates one unread identity per response cycle; review and aler
 for Codex. An extension dialog's outer prompt span is reported as an
 [input request](dashboard.md#input-requests): the session waits, whatever activity was
 underneath is kept and restored on close, and a background request can raise one
-**OVRCR · input needed** alert. Payloads carry identifiers and discriminants only: never
+**OVRCR · input needed** alert. Pi has no approval or question surface of its own
+beyond these dialogs. Payloads carry identifiers and discriminants only: never
 prompts, responses, tool data or prompt titles. Session switches and reporter recovery
 are later tickets.
 See [Pi reporting setup](pi-reporting-setup.md).
@@ -174,7 +175,37 @@ discriminants only — the one field added for Oh My Pi is the boolean continuat
 never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
 process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
 the invocation unreported until the next managed launch (reporter recovery is #96).
-Approvals and questions (Oh My Pi exports no event for them, #95) are a later ticket.
+
+### Approvals and questions
+
+Oh My Pi reports two kinds of [input request](dashboard.md#input-requests), both
+only for the interactive root conversation. A native tool-approval prompt opens
+`approval:<tool call id>` on `tool_approval_requested` and closes it on
+`tool_approval_resolved`, whether the answer was allow, deny or a cancellation —
+a denial closes that one approval and is not by itself a failed run. Approval
+events carry the session id they belong to, and OVRCR reports only those whose id
+is the interactive root's, so an in-process task or advisor child cannot open or
+close a root request.
+
+A question is the ask tool's own execution: `question:<tool call id>` opens at
+`tool_execution_start` with `toolName` `ask` and closes at `tool_execution_end`,
+whatever the outcome — answered, redirected to chat, cancelled, timed out,
+aborted or errored. One execution is one request however many surfaces it walks,
+so a multi-question form, a selector and an editor fallback are all the same
+request. **This is tool lifetime, not dialog visibility**: the request opens a
+moment before the dialog is visible, and it covers a question queued behind
+another dialog. OVRCR claims no visibility beyond that, and there is no version
+gate. Tool events carry no session id at all, so what keeps in-process children
+silent is the same terminal-UI check that silences the rest of their reporting.
+
+Frames carry the namespace, the request identity and the kind. The approval
+reason, the question text, the answer and every tool argument or result stay
+inside Oh My Pi.
+
+**Side effect:** registering the two approval handlers disables Oh My Pi's
+speculative read execution. Its speculation gate refuses while any tool lifecycle
+handler is registered, so a managed launch trades that optimization for approval
+reporting.
 
 ## Context usage
 

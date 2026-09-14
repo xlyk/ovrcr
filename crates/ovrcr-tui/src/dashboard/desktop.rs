@@ -170,24 +170,25 @@ impl Dashboard {
             });
         }
         // The second lane, consumed on the same terms: answering is not a review, so this
-        // never reads or writes Unread.
-        let new_request = self.unread.observe_request(session);
-        if !initial
-            && self.alert_channels() != 0
-            && new_request
-            && !self.desktop_session_visible(session.id)
-            && self.desktop.pending.len() < QUEUE_CAPACITY
-            && let Some(request) = input_live(session)
-        {
-            self.desktop.pending.push_back(Notification {
-                session: session.id,
-                alert: Alert::Input {
-                    binding: session.agent.as_ref().unwrap().binding.clone(),
-                    request: request.clone(),
-                },
-                title: "OVRCR · input needed",
-                body: identity_body(session),
-            });
+        // never reads or writes Unread. Several requests can be open at once, and each
+        // newly seen one is its own alert.
+        let new_requests = self.unread.observe_request(session);
+        if !initial && self.alert_channels() != 0 && !self.desktop_session_visible(session.id) {
+            let binding = session.agent.as_ref().map(|agent| agent.binding.clone());
+            for request in new_requests {
+                if self.desktop.pending.len() >= QUEUE_CAPACITY {
+                    break;
+                }
+                let Some(binding) = binding.clone() else {
+                    break;
+                };
+                self.desktop.pending.push_back(Notification {
+                    session: session.id,
+                    alert: Alert::Input { binding, request },
+                    title: "OVRCR · input needed",
+                    body: identity_body(session),
+                });
+            }
         }
     }
 
@@ -280,8 +281,10 @@ fn notification_matches_session(notification: &Notification, session: &SessionSu
                             .is_some_and(|activity| activity.turn == unread.turn)
                 })
         }
+        // Membership, not identity: the alert stays valid while its request is one of the
+        // session's open ones, whatever else opened or closed alongside it.
         Alert::Input { binding, request } => {
-            input_live(session).is_some_and(|live| live.id == request.id)
+            input_live(session).iter().any(|live| live.id == request.id)
                 && session
                     .agent
                     .as_ref()
@@ -540,7 +543,7 @@ mod tests {
                             activity_revision: revision,
                             metrics_revision: 0,
                             health_revision: 0,
-                            input_request: None,
+                            input_requests: Vec::new(),
                             input_revision: 0,
                         }),
                     }],
@@ -554,19 +557,29 @@ mod tests {
             kind,
         }
     }
-    /// `snapshot()` with an Input request open on the same agent; the underlying activity
-    /// sample is untouched, exactly as the runtime publishes it.
-    fn snapshot_with_request(
+    /// `snapshot()` with a set of Input requests open on the same agent; the underlying
+    /// activity sample is untouched, exactly as the runtime publishes it.
+    fn snapshot_with_requests(
         revision: u64,
         turn: &str,
         state: AgentActivity,
-        open: Option<InputRequest>,
+        open: &[InputRequest],
     ) -> HierarchySnapshot {
         let mut hierarchy = snapshot(revision, turn, state);
         let agent = session(&mut hierarchy).agent.as_mut().unwrap();
-        agent.input_request = open;
+        agent.input_requests = open.to_vec();
         agent.input_revision = revision;
         hierarchy
+    }
+    fn request_ids(d: &Dashboard) -> Vec<String> {
+        d.desktop
+            .pending
+            .iter()
+            .map(|n| match &n.alert {
+                Alert::Input { request, .. } => request.id.clone(),
+                Alert::Ready(_) => "ready".into(),
+            })
+            .collect()
     }
     fn titles(d: &Dashboard) -> Vec<&'static str> {
         d.desktop.pending.iter().map(|n| n.title).collect()
@@ -576,11 +589,11 @@ mod tests {
         let mut d = dashboard();
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert_eq!(d.desktop.pending.len(), 1);
@@ -591,11 +604,11 @@ mod tests {
         );
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 3,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert_eq!(
@@ -605,11 +618,11 @@ mod tests {
         );
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 4,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p2", InputKind::Confirm)),
+                &[request("p2", InputKind::Confirm)],
             ),
         );
         assert_eq!(
@@ -621,11 +634,11 @@ mod tests {
         d.desktop.pending.clear();
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 5,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p2", InputKind::Confirm)),
+                &[request("p2", InputKind::Confirm)],
             ),
         );
         assert!(
@@ -639,17 +652,17 @@ mod tests {
         let (received, _failed) = stub_host(&mut d);
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert_eq!(d.desktop.pending.len(), 1);
         deliver(
             &mut d,
-            snapshot_with_request(3, "a", AgentActivity::Busy, None),
+            snapshot_with_requests(3, "a", AgentActivity::Busy, &[]),
         );
         assert!(
             d.desktop.pending.is_empty(),
@@ -659,11 +672,11 @@ mod tests {
         assert!(received.try_recv().is_err());
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 4,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p2", InputKind::Editor)),
+                &[request("p2", InputKind::Editor)],
             ),
         );
         d.emit_desktop_notifications();
@@ -671,7 +684,7 @@ mod tests {
         assert_eq!(delivery.state.load(Ordering::Acquire), DELIVERY_ACTIVE);
         deliver(
             &mut d,
-            snapshot_with_request(5, "a", AgentActivity::Busy, None),
+            snapshot_with_requests(5, "a", AgentActivity::Busy, &[]),
         );
         assert_eq!(
             delivery.state.load(Ordering::Acquire),
@@ -694,20 +707,20 @@ mod tests {
         let (received, _failed) = stub_host(&mut d);
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert_eq!(d.desktop.pending.len(), 1);
         assert_eq!(input_generation(&d.desktop.pending[0]), 1);
-        let mut rebound = snapshot_with_request(
+        let mut rebound = snapshot_with_requests(
             3,
             "a",
             AgentActivity::Busy,
-            Some(request("p1", InputKind::Select)),
+            &[request("p1", InputKind::Select)],
         );
         session(&mut rebound)
             .agent
@@ -742,19 +755,19 @@ mod tests {
         let (received, _failed) = stub_host(&mut d);
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert_eq!(d.desktop.pending.len(), 1);
-        let mut lost = snapshot_with_request(
+        let mut lost = snapshot_with_requests(
             3,
             "a",
             AgentActivity::Busy,
-            Some(request("p1", InputKind::Select)),
+            &[request("p1", InputKind::Select)],
         );
         session(&mut lost).agent.as_mut().unwrap().health.state = ReporterHealth::Unavailable;
         d.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
@@ -776,11 +789,11 @@ mod tests {
         d.key(KeyCode::Char('N'));
         d.handle_server_message(ServerMessage::Response {
             request_id: 1,
-            response: Response::Hierarchy(snapshot_with_request(
+            response: Response::Hierarchy(snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             )),
         });
         assert!(
@@ -789,21 +802,21 @@ mod tests {
         );
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 3,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert!(d.desktop.pending.is_empty(), "reconnect does not replay");
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 4,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p2", InputKind::Input)),
+                &[request("p2", InputKind::Input)],
             ),
         );
         assert_eq!(d.desktop.pending.len(), 1, "a genuinely new request alerts");
@@ -814,11 +827,11 @@ mod tests {
         d.select_session(SessionId(1));
         deliver(
             &mut d,
-            snapshot_with_request(
+            snapshot_with_requests(
                 2,
                 "a",
                 AgentActivity::Busy,
-                Some(request("p1", InputKind::Select)),
+                &[request("p1", InputKind::Select)],
             ),
         );
         assert!(d.desktop.pending.is_empty(), "visible focused pane");
@@ -828,7 +841,7 @@ mod tests {
         let mut d = dashboard();
         let mut hierarchy = snapshot(2, "a", AgentActivity::ResponseReady);
         let agent = session(&mut hierarchy).agent.as_mut().unwrap();
-        agent.input_request = Some(request("p1", InputKind::Select));
+        agent.input_requests = vec![request("p1", InputKind::Select)];
         agent.input_revision = 2;
         deliver(&mut d, hierarchy.clone());
         assert_eq!(
@@ -845,6 +858,94 @@ mod tests {
         assert_eq!(
             d.desktop.pending[0].session, d.desktop.pending[1].session,
             "both alerts identify the same session"
+        );
+    }
+    #[test]
+    fn desktop_several_open_requests_alert_once_each_and_close_independently() {
+        let approval = request("approval:c1", InputKind::Approval);
+        let question = request("question:q1", InputKind::Select);
+        let mut d = dashboard();
+        deliver(
+            &mut d,
+            snapshot_with_requests(2, "a", AgentActivity::Busy, std::slice::from_ref(&approval)),
+        );
+        assert_eq!(request_ids(&d), ["approval:c1"]);
+        deliver(
+            &mut d,
+            snapshot_with_requests(
+                3,
+                "a",
+                AgentActivity::Busy,
+                &[approval.clone(), question.clone()],
+            ),
+        );
+        assert_eq!(
+            request_ids(&d),
+            ["approval:c1", "question:q1"],
+            "each newly opened request is its own alert"
+        );
+        // Closing one drops only its own pending alert: membership, not identity.
+        deliver(
+            &mut d,
+            snapshot_with_requests(4, "a", AgentActivity::Busy, std::slice::from_ref(&question)),
+        );
+        assert_eq!(request_ids(&d), ["question:q1"]);
+        deliver(
+            &mut d,
+            snapshot_with_requests(5, "a", AgentActivity::Busy, &[question]),
+        );
+        assert_eq!(
+            request_ids(&d),
+            ["question:q1"],
+            "a republication of the remaining set alerts nothing new"
+        );
+    }
+    #[test]
+    fn desktop_a_reconnect_baseline_with_several_open_requests_never_replays() {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 24,
+            cols: 120,
+        });
+        d.key(KeyCode::Char('N'));
+        let open = [
+            request("approval:c1", InputKind::Approval),
+            request("question:q1", InputKind::Select),
+        ];
+        d.handle_server_message(ServerMessage::Response {
+            request_id: 1,
+            response: Response::Hierarchy(snapshot_with_requests(
+                2,
+                "a",
+                AgentActivity::Busy,
+                &open,
+            )),
+        });
+        assert!(
+            d.desktop.pending.is_empty(),
+            "a whole set open at attach is a baseline"
+        );
+        deliver(
+            &mut d,
+            snapshot_with_requests(3, "a", AgentActivity::Busy, &open),
+        );
+        assert!(d.desktop.pending.is_empty(), "reconnect does not replay");
+        deliver(
+            &mut d,
+            snapshot_with_requests(
+                4,
+                "a",
+                AgentActivity::Busy,
+                &[
+                    open[0].clone(),
+                    open[1].clone(),
+                    request("approval:c2", InputKind::Approval),
+                ],
+            ),
+        );
+        assert_eq!(
+            request_ids(&d),
+            ["approval:c2"],
+            "only the request that genuinely joined the set alerts"
         );
     }
     fn session(snapshot: &mut HierarchySnapshot) -> &mut SessionSummary {

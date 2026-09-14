@@ -43,6 +43,9 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 // stdin grammar: session_start[:<id>[:<reason>]] | agent_start
 //   | agent_end:<ok|error|aborted|none>[:continue] | agent_settled
 //   | ui_prompt_start:<kind> | ui_prompt_end:<kind>
+//   | tool_approval_requested:<id> | tool_approval_resolved:<id>:<true|false>
+//   | foreign_approval:<id> | tool_execution_start:<toolName>:<id>
+//   | tool_execution_end:<toolName>:<id>[:error]
 //   | session_switch[:<id>[:<reason>]] | session_shutdown:<reason>
 //   | mode:<tui|rpc|print> | exit
 async function main() {
@@ -58,7 +61,7 @@ async function main() {
   process.stdout.write("PI_NATIVE_READY\n");
   let index = 0;
   for await (const line of createInterface({ input: process.stdin })) {
-    const [command, a, b] = line.split(":");
+    const [command, a, b, c] = line.split(":");
     if (command === "exit") process.exit(17);
     if (host) {
       if (command === "mode") host.state.mode = a;
@@ -72,6 +75,37 @@ async function main() {
       } else if (command === "ui_prompt_start" || command === "ui_prompt_end") {
         // The title is a deliberate secret: no frame may carry it.
         await host.emit({ type: command, reason: "ui_prompt", kind: a, title: "PROMPT_TITLE_SECRET" });
+      } else if (command === "tool_approval_requested") {
+        // The reason is a deliberate secret: no frame may carry it.
+        await host.emit({
+          type: "tool_approval_requested", sessionId: host.state.session, toolName: "bash",
+          toolCallId: a, reason: "APPROVAL_REASON_SECRET", approvalMode: "always-ask",
+        });
+      } else if (command === "tool_approval_resolved") {
+        const approved = b !== "false";
+        await host.emit({
+          type: "tool_approval_resolved", sessionId: host.state.session, toolName: "bash",
+          toolCallId: a, approved, ...(approved ? {} : { reason: "denied by user" }),
+        });
+      } else if (command === "foreign_approval") {
+        // An in-process task or advisor child: its own session id, never the root's.
+        await host.emit({
+          type: "tool_approval_requested", sessionId: "other-session", toolName: "bash",
+          toolCallId: a, approvalMode: "always-ask",
+        });
+      } else if (command === "tool_execution_start") {
+        await host.emit({
+          type: "tool_execution_start", toolCallId: b, toolName: a,
+          args: { question: "QUESTION_TEXT_SECRET" }, intent: "ask the user",
+        });
+      } else if (command === "tool_execution_end") {
+        await host.emit({
+          // `isError` distinguishes an answered end from a timed-out, aborted or failed
+          // one. The extension never reads it: the tool's end closes the request whatever
+          // the outcome was.
+          type: "tool_execution_end", toolCallId: b, toolName: a,
+          result: { text: "ANSWER_SECRET" }, isError: c === "error",
+        });
       } else if (command === "session_switch") {
         if (a) host.state.session = a;
         await host.emit({ type: "session_switch", reason: b ?? "resume" });

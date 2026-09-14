@@ -50,10 +50,10 @@ export default function (pi) {
   // never read.
   pi.on("ui_prompt_start", (event, ctx) => {
     producer.prompt += 1;
-    return report("input_open", ctx, { request_id: `${producer.instance}:p${producer.prompt}`, kind: event.kind });
+    return report("input_open", ctx, { namespace: "prompt", request_id: `${producer.instance}:p${producer.prompt}`, kind: event.kind });
   });
   pi.on("ui_prompt_end", (_event, ctx) =>
-    report("input_close", ctx, { request_id: `${producer.instance}:p${producer.prompt}` }));
+    report("input_close", ctx, { namespace: "prompt", request_id: `${producer.instance}:p${producer.prompt}` }));
   pi.on("session_shutdown", (event, ctx) => {
     const sent = report("session_shutdown", ctx, { reason: event.reason });
     producer.disabled = true; // Pi re-runs factories after replacement or reload

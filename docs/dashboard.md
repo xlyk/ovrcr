@@ -84,24 +84,44 @@ hook configuration.
 
 ## Input requests
 
-A managed Pi terminal reports an input request while one of its extension
-dialogs is on screen: a select, confirm, input, editor or custom prompt. Pi
-coalesces nested prompts into one outer span, so one dialog is one request, and
-the request identity is scoped to the producer instance and the accepted
-binding.
+A managed terminal reports the human answers it is waiting for. Each request is
+identified by its binding, its namespace and its own identity, and several can be
+open at once:
 
-While a request is open the terminal's effective activity is `waiting_input`,
+| Namespace | Source | Kinds |
+| --- | --- | --- |
+| `prompt` | A Pi extension dialog's outer prompt span | select, confirm, input, editor, custom |
+| `approval` | An Oh My Pi native tool-approval prompt, keyed by tool call id | approval |
+| `question` | An Oh My Pi ask-tool execution, keyed by tool call id | select |
+
+Pi coalesces nested prompts into one outer span, so one dialog is one request.
+An Oh My Pi question is the ask tool's lifetime, not the dialog's visibility: it
+opens a moment before the dialog appears and covers a question queued behind
+another one. At most 32 requests are open per binding; a producer that would
+exceed that drops the new request rather than stopping reporting.
+
+While any request is open the terminal's effective activity is `waiting_input`,
 whatever was underneath it — Busy, Idle, Error or Ready — stays recorded in
-`agent.activity`, and closing the request restores it. The request travels in
-the same publication as the activity sample, so the two are never seen apart.
+`agent.activity`, and closing the last one restores it. The requests travel in
+the same publication as the activity sample, so the two are never seen apart,
+and the set is published whole rather than as a stream of deltas.
 
 An input request is not a response. It never creates, clears or retargets an
 [unread](#unread-responses) response, and answering one is not a review. Reporter
-loss forgets the open request and keeps the unread response. Only the request
-identity and its kind leave the extension; the prompt title, question and answer
-never do.
+loss forgets every open request and keeps the unread response. Only the request
+identity, its namespace and its kind leave the extension; the prompt title, the
+approval reason, the question and the answer never do.
 
-Read `agent.input_request` from a terminal's JSON row for the open request.
+Each newly opened request may raise one **OVRCR · input needed** alert, once.
+Closing a request cancels its queued alert and leaves the others; a set already
+open when the Dashboard attaches or reconnects is a baseline and never replays.
+Cancellation only reaches an alert that has not been sent yet, so a request that
+opens and closes before its dialog is ever drawn — an Oh My Pi approval resolved
+in the same tick as its request, or an ask execution aborted with no interactive
+UI — can still deliver one alert for a wait you will not find on screen.
+
+Read `agent.input_requests` from a terminal's JSON row for the open set, oldest
+first. The metadata line labels the oldest one.
 
 ## Copy keys
 

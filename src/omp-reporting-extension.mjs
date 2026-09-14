@@ -55,6 +55,35 @@ export default function (omp) {
     producer.open = false;
     return Promise.all([end, settled]).then(([, sent]) => sent);
   });
+  // Root-only: task and advisor sessions run in this same process and their approval
+  // events carry their own session id (or ""), never the interactive root's.
+  const root = (event, ctx) =>
+    Boolean(event?.sessionId) && event.sessionId === ctx.sessionManager.getSessionId();
+  const request = (ns, id) => `${ns}:${id}`;
+
+  // Registering these two handlers disables Oh My Pi's speculative read execution
+  // (its gate refuses speculation while any tool lifecycle handler is registered).
+  omp.on("tool_approval_requested", (event, ctx) =>
+    root(event, ctx)
+      ? report("input_open", ctx, { namespace: "approval", request_id: request("approval", event.toolCallId), kind: "approval" })
+      : Promise.resolve(false));
+  omp.on("tool_approval_resolved", (event, ctx) =>
+    root(event, ctx)
+      ? report("input_close", ctx, { namespace: "approval", request_id: request("approval", event.toolCallId) })
+      : Promise.resolve(false));
+  // A question is the ask tool's lifetime, never dialog visibility: the request opens with
+  // the tool, a moment before the dialog, and covers a question queued behind another
+  // dialog. Tool events carry no session id, so the mode guard in report() is what keeps
+  // in-process children silent. `args` and `result` are never read.
+  omp.on("tool_execution_start", (event, ctx) =>
+    event?.toolName === "ask"
+      ? report("input_open", ctx, { namespace: "question", request_id: request("question", event.toolCallId), kind: "select" })
+      : Promise.resolve(false));
+  omp.on("tool_execution_end", (event, ctx) =>
+    event?.toolName === "ask"
+      ? report("input_close", ctx, { namespace: "question", request_id: request("question", event.toolCallId) })
+      : Promise.resolve(false));
+
   omp.on("session_shutdown", (_event, ctx) => {
     const sent = report("session_shutdown", ctx, { reason: "quit" });
     producer.disabled = true; // shutdown handlers run in parallel under a 2 s budget

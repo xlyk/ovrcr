@@ -7,7 +7,7 @@
 use super::{HOOK_INPUT_LIMIT, InvocationLease};
 use ovrcr_protocol::{
     ActivitySample, AgentActivity, AgentObservation, AgentProvider, InputKind, InputRequest,
-    ProviderReport, SampleQuality, validate_agent_id,
+    MAX_INPUT_REQUESTS, ProviderReport, SampleQuality, validate_agent_id,
 };
 use ovrcr_runtime::agent_runner::{HookEvent, HookHandler, private_identifier};
 use std::{
@@ -135,9 +135,11 @@ struct Receiver {
     producer: Option<(String, u64)>,
     /// The open response cycle: the harness run counter and the identity published as `turn`.
     current: Option<(u64, String)>,
-    /// The active Input request, by identity. Bound: one slot, exact for Pi's coalesced
-    /// outer prompt span (#95's Oh My Pi approvals need a set).
-    open_request: Option<String>,
+    /// The open Input requests, oldest first, bounded by `MAX_INPUT_REQUESTS`. Every
+    /// mutation republishes the whole set, so the runtime never merges deltas. The kind
+    /// travels with the id because only the `prompt` namespace's kind comes from the
+    /// payload; `approval` and `question` are fixed by their namespace.
+    open_requests: Vec<(String, InputKind)>,
     seen: HashSet<String>,
     charged_bytes: usize,
     revision: u64,
@@ -152,7 +154,7 @@ impl Receiver {
             extension_dir: None,
             producer: None,
             current: None,
-            open_request: None,
+            open_requests: Vec::new(),
             seen: HashSet::new(),
             charged_bytes: 0,
             revision: 0,
@@ -161,7 +163,7 @@ impl Receiver {
     fn disable(&mut self) {
         self.disabled = true;
         self.current = None;
-        self.open_request = None;
+        self.open_requests.clear();
         if let Some(lease) = self.lease.take() {
             let _ = lease.stream.shutdown(std::net::Shutdown::Both);
             drop(lease);
@@ -222,13 +224,10 @@ impl Receiver {
                 // re-announces with session_start): whatever cycle was open belongs to the
                 // conversation being left, so it is invalidated before the new binding.
                 self.current = None;
-                // The runtime must see the dialog close against the binding that owned it, so
-                // the request is published closed while that binding is still current.
-                if self.open_request.take().is_some() {
-                    let closed = self.publish_observation(AgentObservation::Input(None), deadline);
-                    if closed.as_slice() == UNAVAILABLE {
-                        return closed;
-                    }
+                // The runtime must see the dialogs close against the binding that owned
+                // them, so the set is published empty while that binding is still current.
+                if let Some(closed) = self.retire_requests(deadline) {
+                    return closed;
                 }
                 if !self.bind(session, deadline) {
                     self.disable();
@@ -311,12 +310,8 @@ impl Receiver {
                     // a dialog left open is published closed before the producer retires:
                     // otherwise a re-admitted producer that binds the same conversation reuses
                     // the same snapshot and keeps a stale WaitingInput with nothing on screen.
-                    if self.open_request.take().is_some() {
-                        let closed =
-                            self.publish_observation(AgentObservation::Input(None), deadline);
-                        if closed.as_slice() == UNAVAILABLE {
-                            return closed;
-                        }
+                    if let Some(closed) = self.retire_requests(deadline) {
+                        return closed;
                     }
                     self.producer = None;
                     self.current = None;
@@ -324,37 +319,29 @@ impl Receiver {
                 return IGNORED.to_vec();
             }
             "input_open" => {
-                let (Some(id), Some(kind)) = (
+                let (Some(id), Some(namespace)) = (
                     payload["request_id"]
                         .as_str()
                         .filter(|s| validate_agent_id(s).is_ok()),
-                    input_kind(payload["kind"].as_str()),
+                    namespace_of(
+                        payload["namespace"].as_str(),
+                        payload["request_id"].as_str(),
+                    ),
                 ) else {
                     return IGNORED.to_vec();
                 };
-                if self.open_request.as_deref() == Some(id) {
+                // The kind of an approval or a question follows from its namespace; only a
+                // prompt carries its own, and it must still be one this protocol knows.
+                let Some(kind) = namespace.kind(payload["kind"].as_str()) else {
                     return IGNORED.to_vec();
-                }
-                // Pi coalesces nested prompts into one span; a different id while one is open
-                // is a replacement, published as such. Bound: one slot (#95's approvals need a set).
-                self.open_request = Some(id.to_owned());
-                return self.publish_observation(
-                    AgentObservation::Input(Some(InputRequest {
-                        id: id.to_owned(),
-                        kind,
-                    })),
-                    deadline,
-                );
+                };
+                return self.open_request(id, kind, deadline);
             }
             "input_close" => {
                 let Some(id) = payload["request_id"].as_str() else {
                     return IGNORED.to_vec();
                 };
-                if self.open_request.as_deref() != Some(id) {
-                    return IGNORED.to_vec();
-                }
-                self.open_request = None;
-                return self.publish_observation(AgentObservation::Input(None), deadline);
+                return self.close_request(id, deadline);
             }
             "unavailable" => {
                 self.disable();
@@ -394,6 +381,50 @@ impl Receiver {
             deadline,
         )
     }
+    /// Insert-if-absent, then publish the whole set. A repeated open of a known id and the
+    /// opening past the bound are both IGNORED before any mutation: overflow drops the new
+    /// request, it never disables reporting.
+    fn open_request(&mut self, id: &str, kind: InputKind, deadline: Instant) -> Vec<u8> {
+        if self.open_requests.iter().any(|(open, _)| open == id)
+            || self.open_requests.len() >= MAX_INPUT_REQUESTS
+        {
+            return IGNORED.to_vec();
+        }
+        self.open_requests.push((id.to_owned(), kind));
+        self.publish_requests(deadline)
+    }
+    /// Remove-if-present, then publish the whole set. A close for an id this receiver never
+    /// admitted is IGNORED: a late subscriber's unmatched close changes nothing.
+    fn close_request(&mut self, id: &str, deadline: Instant) -> Vec<u8> {
+        let before = self.open_requests.len();
+        self.open_requests.retain(|(open, _)| open != id);
+        if self.open_requests.len() == before {
+            return IGNORED.to_vec();
+        }
+        self.publish_requests(deadline)
+    }
+    fn publish_requests(&mut self, deadline: Instant) -> Vec<u8> {
+        let requests = self
+            .open_requests
+            .iter()
+            .map(|(id, kind)| InputRequest {
+                id: id.clone(),
+                kind: *kind,
+            })
+            .collect();
+        self.publish_observation(AgentObservation::Input(requests), deadline)
+    }
+    /// Publishes the empty set for a producer that is about to retire or rebind, while the
+    /// binding that owned the requests is still current. `Some` is the caller's early
+    /// return: the publish failed and the receiver disabled itself.
+    fn retire_requests(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+        if self.open_requests.is_empty() {
+            return None;
+        }
+        self.open_requests.clear();
+        let closed = self.publish_requests(deadline);
+        (closed.as_slice() == UNAVAILABLE).then_some(closed)
+    }
     fn publish_observation(&mut self, observation: AgentObservation, deadline: Instant) -> Vec<u8> {
         let Some(lease) = &self.lease else {
             self.disable();
@@ -424,8 +455,47 @@ fn input_kind(value: Option<&str>) -> Option<InputKind> {
         "input" => InputKind::Input,
         "editor" => InputKind::Editor,
         "custom" => InputKind::Custom,
+        "approval" => InputKind::Approval,
         _ => return None,
     })
+}
+
+/// Which surface issued a request. The id carries the namespace so the runtime, the
+/// Dashboard and a later close cannot confuse one surface's request identity with
+/// another's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Namespace {
+    Prompt,
+    Approval,
+    Question,
+}
+
+impl Namespace {
+    /// An approval and a question are what their namespace says they are; only a prompt
+    /// reports its own kind, and it may not claim to be an approval.
+    fn kind(self, payload: Option<&str>) -> Option<InputKind> {
+        match self {
+            Namespace::Approval => Some(InputKind::Approval),
+            Namespace::Question => Some(InputKind::Select),
+            Namespace::Prompt => match input_kind(payload)? {
+                InputKind::Approval => None,
+                kind => Some(kind),
+            },
+        }
+    }
+}
+
+/// The namespace a frame declares, checked against the id that carries it. `approval` and
+/// `question` ids are namespace-prefixed; a prompt's id is the producer's own (Pi's
+/// `<instance>:p<n>`), so a missing namespace means `prompt` and no prefix is required.
+fn namespace_of(declared: Option<&str>, id: Option<&str>) -> Option<Namespace> {
+    let (namespace, prefix) = match declared {
+        None | Some("prompt") => return Some(Namespace::Prompt),
+        Some("approval") => (Namespace::Approval, "approval:"),
+        Some("question") => (Namespace::Question, "question:"),
+        Some(_) => return None,
+    };
+    id?.starts_with(prefix).then_some(namespace)
 }
 
 /// The accept loop can exit, or its thread be abandoned, without a disabling callback:
@@ -642,6 +712,149 @@ mod tests {
         }
         serde_json::to_vec(&value).unwrap()
     }
+    fn namespaced_event(
+        instance: &str,
+        sequence: u64,
+        name: &str,
+        namespace: &str,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&input_event(instance, sequence, name, request_id, kind))
+                .unwrap();
+        value["payload"]["namespace"] = namespace.into();
+        serde_json::to_vec(&value).unwrap()
+    }
+    fn ids(receiver: &Receiver) -> Vec<&str> {
+        receiver
+            .open_requests
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+    #[test]
+    fn the_request_set_keeps_its_order_and_removes_only_the_closed_member() {
+        // A lease-less receiver cannot publish, so this drives the state through the
+        // helpers directly: the publication path is covered by the lifecycle tests.
+        let mut receiver = unbound();
+        assert_eq!(
+            receiver.open_request("approval:c1", InputKind::Approval, Instant::now()),
+            b"admission-unavailable\n",
+            "a lease-less publish is UNAVAILABLE exactly as before"
+        );
+        assert_eq!(
+            ids(&receiver),
+            Vec::<&str>::new(),
+            "disabling clears the set"
+        );
+
+        let mut receiver = unbound();
+        receiver.open_requests = vec![
+            ("approval:c1".into(), InputKind::Approval),
+            ("question:q1".into(), InputKind::Select),
+        ];
+        assert_eq!(
+            receiver.open_request("approval:c1", InputKind::Approval, Instant::now()),
+            b"admission-ignored\n",
+            "a repeated open of a known id never mutates the set"
+        );
+        assert_eq!(ids(&receiver), ["approval:c1", "question:q1"]);
+        assert_eq!(
+            receiver.close_request("question:zz", Instant::now()),
+            b"admission-ignored\n",
+            "an unknown close never mutates the set"
+        );
+        assert_eq!(ids(&receiver), ["approval:c1", "question:q1"]);
+        assert!(!receiver.disabled && receiver.revision == 0);
+    }
+    #[test]
+    fn the_thirty_third_open_is_ignored_without_disabling() {
+        let mut receiver = unbound();
+        receiver.open_requests = (0..MAX_INPUT_REQUESTS)
+            .map(|n| (format!("approval:c{n}"), InputKind::Approval))
+            .collect();
+        assert_eq!(
+            receiver.open_request("approval:overflow", InputKind::Approval, Instant::now()),
+            b"admission-ignored\n"
+        );
+        assert_eq!(receiver.open_requests.len(), MAX_INPUT_REQUESTS);
+        assert!(
+            !receiver.disabled,
+            "the bound drops the new request, it never disables reporting"
+        );
+        assert_eq!(receiver.revision, 0);
+    }
+    #[test]
+    fn an_open_whose_namespace_and_id_disagree_is_ignored() {
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        for (sequence, namespace, id, kind) in [
+            // The prefix must match the declared namespace.
+            (2, "approval", "question:c1", Some("approval")),
+            (3, "question", "approval:q1", Some("select")),
+            (4, "approval", "c1", Some("approval")),
+            // An unknown namespace is not a namespace.
+            (5, "dialog", "dialog:c1", Some("select")),
+            // A prompt may not claim to be an approval.
+            (6, "prompt", "a:p1", Some("approval")),
+        ] {
+            assert_eq!(
+                receiver.handle(
+                    &namespaced_event("a", sequence, "input_open", namespace, id, kind),
+                    true,
+                    Instant::now()
+                ),
+                b"admission-ignored\n",
+                "{namespace} / {id}"
+            );
+        }
+        assert!(receiver.open_requests.is_empty());
+        assert_eq!(receiver.revision, 0);
+        assert!(!receiver.disabled);
+    }
+    #[test]
+    fn an_approval_or_question_namespace_fixes_the_kind_it_publishes() {
+        // The kind follows the namespace, so a mislabelled payload cannot make an approval
+        // look like a select in the Dashboard.
+        let mut receiver = unbound();
+        receiver.producer = Some(("a".into(), 1));
+        assert_eq!(
+            receiver.handle(
+                &namespaced_event(
+                    "a",
+                    2,
+                    "input_open",
+                    "approval",
+                    "approval:c1",
+                    Some("select")
+                ),
+                true,
+                Instant::now()
+            ),
+            b"admission-unavailable\n",
+            "no lease: the publish fails after the set is admitted"
+        );
+        assert_eq!(
+            namespace_of(Some("approval"), Some("approval:c1"))
+                .unwrap()
+                .kind(Some("select")),
+            Some(InputKind::Approval)
+        );
+        assert_eq!(
+            namespace_of(Some("question"), Some("question:q1"))
+                .unwrap()
+                .kind(Some("confirm")),
+            Some(InputKind::Select)
+        );
+        assert_eq!(
+            namespace_of(None, Some("a:p1"))
+                .unwrap()
+                .kind(Some("editor")),
+            Some(InputKind::Editor),
+            "a missing namespace is a prompt and keeps its own kind"
+        );
+    }
     #[test]
     fn input_close_for_an_unknown_or_stale_request_is_ignored() {
         let mut receiver = unbound();
@@ -655,8 +868,8 @@ mod tests {
             b"admission-ignored\n",
             "no request is open"
         );
-        assert!(receiver.open_request.is_none());
-        receiver.open_request = Some("a:p1".into());
+        assert!(receiver.open_requests.is_empty());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &input_event("a", 3, "input_close", "a:p2", None),
@@ -666,7 +879,7 @@ mod tests {
             b"admission-ignored\n",
             "a close only closes its own request"
         );
-        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(ids(&receiver), ["a:p1"]);
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -690,7 +903,7 @@ mod tests {
                 "{id:?} {kind:?}"
             );
         }
-        assert!(receiver.open_request.is_none());
+        assert!(receiver.open_requests.is_empty());
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -698,7 +911,7 @@ mod tests {
     fn a_repeated_open_for_the_same_request_is_ignored_before_any_mutation() {
         let mut receiver = unbound();
         receiver.producer = Some(("a".into(), 1));
-        receiver.open_request = Some("a:p1".into());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &input_event("a", 2, "input_open", "a:p1", Some("select")),
@@ -707,7 +920,7 @@ mod tests {
             ),
             b"admission-ignored\n"
         );
-        assert_eq!(receiver.open_request.as_deref(), Some("a:p1"));
+        assert_eq!(ids(&receiver), ["a:p1"]);
         assert_eq!(receiver.revision, 0);
         assert!(!receiver.disabled);
     }
@@ -727,12 +940,12 @@ mod tests {
             ),
             b"admission-ignored\n"
         );
-        assert!(receiver.producer.is_none() && receiver.open_request.is_none());
+        assert!(receiver.producer.is_none() && receiver.open_requests.is_empty());
         assert!(!receiver.disabled);
         // An open request is published closed first; with no lease that publish cannot
         // happen, so the receiver disables itself rather than retiring behind a stale dialog.
         receiver.producer = Some(("a".into(), 2));
-        receiver.open_request = Some("a:p1".into());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         shutdown["payload"]["sequence"] = 3.into();
         assert_eq!(
             receiver.handle(
@@ -742,11 +955,11 @@ mod tests {
             ),
             b"admission-unavailable\n"
         );
-        assert!(receiver.open_request.is_none() && receiver.disabled);
+        assert!(receiver.open_requests.is_empty() && receiver.disabled);
         // The same ordering on the conversation-switch path.
         let mut receiver = unbound();
         receiver.producer = Some(("a".into(), 1));
-        receiver.open_request = Some("a:p1".into());
+        receiver.open_requests = vec![("a:p1".into(), InputKind::Select)];
         assert_eq!(
             receiver.handle(
                 &event("a", 2, "session_start", None, "none"),
@@ -755,7 +968,7 @@ mod tests {
             ),
             b"admission-unavailable\n"
         );
-        assert!(receiver.open_request.is_none() && receiver.disabled);
+        assert!(receiver.open_requests.is_empty() && receiver.disabled);
     }
     #[test]
     fn a_re_announced_conversation_invalidates_the_open_cycle() {

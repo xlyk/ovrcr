@@ -10785,10 +10785,14 @@ impl DesktopAlertDashboard {
                 TITLES.iter().any(|title| call.contains(title)),
                 "title missing: {call}"
             );
-            assert!(
-                !call.contains("PROMPT_TITLE_SECRET"),
-                "prompt title: {call}"
-            );
+            for secret in [
+                "PROMPT_TITLE_SECRET",
+                "APPROVAL_REASON_SECRET",
+                "QUESTION_TEXT_SECRET",
+                "ANSWER_SECRET",
+            ] {
+                assert!(!call.contains(secret), "{secret}: {call}");
+            }
             assert!(!call.contains("CALLBACK"));
             assert!(!call.contains("OVRCR_HOOK_TOKEN"));
             assert!(!call.contains("OVRCR_AGENT_TOKEN"));
@@ -11252,7 +11256,11 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
     let waiting = fixture.session_summary(summary.id);
     assert_eq!(waiting.activity, AgentActivity::WaitingInput);
     let agent = waiting.agent.as_ref().expect("bound");
-    let first_request = agent.input_request.clone().expect("an open Input request");
+    let first_request = agent
+        .input_requests
+        .first()
+        .cloned()
+        .expect("an open Input request");
     assert_eq!(first_request.kind, InputKind::Select);
     assert_eq!(
         agent.activity.as_ref().unwrap().state,
@@ -11280,7 +11288,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .unwrap()
         .clone();
     assert_eq!(row["activity"], "waiting_input");
-    assert_eq!(row["agent"]["input_request"]["kind"], "Select");
+    assert_eq!(row["agent"]["input_requests"][0]["kind"], "Select");
     assert_eq!(row["unread"], serde_json::Value::Null);
     assert!(
         !row.to_string().contains("PROMPT_TITLE_SECRET"),
@@ -11291,7 +11299,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
     pi_callback(&fixture, summary.id, &mut index, "ui_prompt_end:select");
     let answered = fixture.session_summary(summary.id);
     assert_eq!(answered.activity, AgentActivity::Busy);
-    assert_eq!(answered.agent.as_ref().unwrap().input_request, None);
+    assert!(answered.agent.as_ref().unwrap().input_requests.is_empty());
     assert_eq!(
         dashboard.wait_alert_titles(1, summary.id, "pi-hooks"),
         [INPUT],
@@ -11305,8 +11313,9 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .agent
         .as_ref()
         .unwrap()
-        .input_request
-        .clone()
+        .input_requests
+        .first()
+        .cloned()
         .unwrap();
     assert_ne!(second_request.id, first_request.id);
     assert_eq!(
@@ -11336,8 +11345,8 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
             .agent
             .as_ref()
             .unwrap()
-            .input_request
-            .as_ref()
+            .input_requests
+            .first()
             .unwrap()
             .kind,
         InputKind::Confirm
@@ -11399,7 +11408,7 @@ fn pi_input_request_shows_waiting_alerts_once_and_restores_the_underlying_activi
         .as_ref()
         .expect("the snapshot outlives the reporter");
     assert_eq!(agent.health.state, ReporterHealth::Unavailable);
-    assert_eq!(agent.input_request, None);
+    assert!(agent.input_requests.is_empty());
     assert_eq!(lost.unread, Some(unread), "reporter loss keeps Unread");
     dashboard.detach();
 }
@@ -11430,8 +11439,8 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
             .agent
             .as_ref()
             .unwrap()
-            .input_request
-            .as_ref()
+            .input_requests
+            .first()
             .unwrap()
             .kind,
         InputKind::Select
@@ -11459,7 +11468,10 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
     );
     let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
     assert_eq!(doctor["lifecycle"]["activity"], "WaitingInput");
-    assert_eq!(doctor["lifecycle"]["input_request"], "Select");
+    assert_eq!(
+        doctor["lifecycle"]["input_requests"],
+        serde_json::json!(["Select"])
+    );
 
     // A reload retires the producer. The dialog goes with the native session, so the
     // close is published against the binding that owned it before the producer retires:
@@ -11468,7 +11480,8 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
     let retired = fixture.session_summary(summary.id);
     let agent = retired.agent.as_ref().expect("the binding is retained");
     assert_eq!(
-        agent.input_request, None,
+        agent.input_requests,
+        Vec::new(),
         "a retiring producer must not leave a stale dialog behind"
     );
     assert_eq!(
@@ -11702,6 +11715,320 @@ fn omp_managed_extension_reports_observed_ready_continuations_switches_and_child
         Response::Ok
     );
     fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
+fn omp_input_requests_wait_until_the_last_closes_and_alert_once_each() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    const READY: &str = "OVRCR · response ready";
+    const INPUT: &str = "OVRCR · input needed";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "omp-setup");
+    let (summary, _probe) = omp_session_named(&fixture, &fixture.socket, "omp-hooks");
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "omp-hooks",
+    );
+    // The Oh My Pi session must stay hidden for either alert to fire.
+    dashboard.select("setup", "HOOK_READY");
+    let bin = env!("CARGO_BIN_EXE_ovrcr");
+    let config = fixture._root.path().join("config.toml");
+    let native = fixture._root.path().join("omp");
+    let id = summary.id.0.to_string();
+    let mut index = 0;
+    let requests = |fixture: &ControlFixture| -> Vec<(String, InputKind)> {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("bound")
+            .input_requests
+            .into_iter()
+            .map(|request| (request.id, request.kind))
+            .collect()
+    };
+    for command in ["session_start:sess-a", "agent_start"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+
+    // A native approval: WaitingInput, with Busy still recorded underneath.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c1",
+    );
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    assert_eq!(
+        requests(&fixture),
+        [("approval:c1".to_owned(), InputKind::Approval)]
+    );
+    assert_eq!(
+        waiting
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .state,
+        AgentActivity::Busy,
+        "a wait never overwrites the underlying sample"
+    );
+    assert_eq!(waiting.unread, None, "a request is not a response");
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "omp-hooks"),
+        [INPUT]
+    );
+
+    // The ask tool's execution opens a second, independently identified request.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_execution_start:ask:q1",
+    );
+    assert_eq!(
+        requests(&fixture),
+        [
+            ("approval:c1".to_owned(), InputKind::Approval),
+            ("question:q1".to_owned(), InputKind::Select),
+        ],
+        "both surfaces are open at once, oldest first"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "omp-hooks"),
+        [INPUT, INPUT],
+        "the question is its own alert"
+    );
+    let listed = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &["terminal", "list", "--json"],
+    );
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let row = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == summary.id.0)
+        .unwrap()
+        .clone();
+    assert_eq!(row["activity"], "waiting_input");
+    assert_eq!(row["agent"]["input_requests"][0]["kind"], "Approval");
+    assert_eq!(row["agent"]["input_requests"][1]["kind"], "Select");
+    assert_eq!(row["unread"], serde_json::Value::Null);
+    for secret in ["APPROVAL_REASON_SECRET", "QUESTION_TEXT_SECRET"] {
+        assert!(
+            !row.to_string().contains(secret),
+            "{secret} never leaves the extension: {row}"
+        );
+    }
+    // Doctor names both surfaces and the question's tool-lifetime approximation.
+    let doctor = cli_with_output(
+        bin,
+        &config,
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "omp",
+            "--json",
+            "--session",
+            &id,
+            "--executable",
+            native.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["lifecycle"]["activity"], "WaitingInput");
+    assert_eq!(
+        doctor["lifecycle"]["input_requests"],
+        serde_json::json!(["Approval", "Select"])
+    );
+    assert_eq!(doctor["capabilities"]["approvals"], "available");
+    assert_eq!(
+        doctor["capabilities"]["questions"],
+        "available_tool_lifetime"
+    );
+
+    // A denial closes only its own approval; the question keeps the session waiting.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_resolved:c1:false",
+    );
+    let partial = fixture.session_summary(summary.id);
+    assert_eq!(
+        partial.activity,
+        AgentActivity::WaitingInput,
+        "a denial is not the end of the wait, and not a failed run"
+    );
+    assert_eq!(
+        requests(&fixture),
+        [("question:q1".to_owned(), InputKind::Select)]
+    );
+    assert_eq!(
+        partial
+            .agent
+            .as_ref()
+            .unwrap()
+            .activity
+            .as_ref()
+            .unwrap()
+            .state,
+        AgentActivity::Busy,
+        "the underlying sample is still what it was"
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "omp-hooks"),
+        [INPUT, INPUT],
+        "closing one member is not an alert"
+    );
+
+    // The ask tool ending closes the last request, whatever its outcome: this end carries
+    // `isError`, which the extension never reads.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_execution_end:ask:q1:error",
+    );
+    let restored = fixture.session_summary(summary.id);
+    assert_eq!(restored.activity, AgentActivity::Busy);
+    assert!(requests(&fixture).is_empty());
+
+    // The same tool call id after its close is a new request, and alerts again.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c1",
+    );
+    assert_eq!(
+        requests(&fixture),
+        [("approval:c1".to_owned(), InputKind::Approval)]
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(3, summary.id, "omp-hooks"),
+        [INPUT, INPUT, INPUT]
+    );
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_resolved:c1:true",
+    );
+    assert!(requests(&fixture).is_empty());
+
+    // An in-process task or advisor child's approval carries its own session id.
+    pi_callback(&fixture, summary.id, &mut index, "foreign_approval:x");
+    assert!(
+        requests(&fixture).is_empty(),
+        "a child cannot open a root request"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+
+    // The response cycle finishes: Ready and Unread are the other lane entirely.
+    pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    let unread = ready.unread.clone().expect("observed Ready is unread");
+    assert_eq!(
+        dashboard.wait_alert_titles(4, summary.id, "omp-hooks"),
+        [INPUT, INPUT, INPUT, READY]
+    );
+
+    // A request on top of Ready: WaitingInput, Unread untouched, restored on close.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c2",
+    );
+    let over_ready = fixture.session_summary(summary.id);
+    assert_eq!(over_ready.activity, AgentActivity::WaitingInput);
+    assert_eq!(over_ready.unread, Some(unread.clone()));
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_resolved:c2:true",
+    );
+    let after = fixture.session_summary(summary.id);
+    assert_eq!(after.activity, AgentActivity::ResponseReady);
+    assert_eq!(after.unread, Some(unread.clone()));
+
+    // A conversation switch with a request open: the set is published empty against the
+    // binding that owned it, then the new conversation binds at a fresh generation.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c3",
+    );
+    assert_eq!(
+        requests(&fixture),
+        [("approval:c3".to_owned(), InputKind::Approval)]
+    );
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "session_switch:sess-b:resume",
+    );
+    let switched = fixture.session_summary(summary.id);
+    assert!(
+        requests(&fixture).is_empty(),
+        "the dialogs went with the conversation being left"
+    );
+    let binding = switched.agent.as_ref().unwrap().binding.clone();
+    assert_eq!(
+        (binding.conversation.as_str(), binding.generation),
+        ("sess-b", 2)
+    );
+    assert_eq!(switched.activity, AgentActivity::Idle);
+    assert_eq!(
+        switched.unread,
+        Some(unread.clone()),
+        "a switch is not a review"
+    );
+
+    // A reporter that is gone cannot vouch for the dialog it left open; Unread survives.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c4",
+    );
+    assert_eq!(requests(&fixture).len(), 1);
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    let lost = fixture.session_summary(summary.id);
+    let agent = lost
+        .agent
+        .as_ref()
+        .expect("the snapshot outlives the reporter");
+    assert_eq!(agent.health.state, ReporterHealth::Unavailable);
+    assert!(agent.input_requests.is_empty());
+    assert_eq!(lost.unread, Some(unread), "reporter loss keeps Unread");
+    dashboard.detach();
 }
 
 #[test]

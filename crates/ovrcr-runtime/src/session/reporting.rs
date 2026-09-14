@@ -71,7 +71,7 @@ impl ReportingState {
             }
             // A reporter that is gone cannot vouch for a visible dialog; the request is
             // unknown until a fresh authoritative event.
-            snapshot.input_request = None;
+            snapshot.input_requests.clear();
         }
     }
     pub fn lost(&mut self, reason: &str) {
@@ -142,14 +142,15 @@ impl ReportingState {
                 snapshot.health_revision = report.revision;
                 // A reporter that is gone cannot vouch for a visible dialog.
                 if health.state == ReporterHealth::Unavailable {
-                    snapshot.input_request = None;
+                    snapshot.input_requests.clear();
                 }
             }
-            AgentObservation::Input(request) => {
+            AgentObservation::Input(requests) => {
                 if report.revision <= snapshot.input_revision {
                     bail!("stale input revision");
                 }
-                snapshot.input_request = request.clone();
+                // The set is published whole: the snapshot is replaced, never merged.
+                snapshot.input_requests = requests.clone();
                 snapshot.input_revision = report.revision;
             }
         }
@@ -406,7 +407,7 @@ impl Session {
                     activity_revision: 0,
                     metrics_revision: 0,
                     health_revision: 0,
-                    input_request: None,
+                    input_requests: Vec::new(),
                     input_revision: 0,
                 });
                 AgentOperationResult::Bound(binding)
@@ -573,7 +574,7 @@ mod tests {
                     activity_revision: 0,
                     metrics_revision: 0,
                     health_revision: 0,
-                    input_request: None,
+                    input_requests: Vec::new(),
                     input_revision: 0,
                 }),
                 ..Default::default()
@@ -620,7 +621,7 @@ mod tests {
                 activity_revision: 0,
                 metrics_revision: 0,
                 health_revision: 0,
-                input_request: None,
+                input_requests: Vec::new(),
                 input_revision: 0,
             }),
             ..Default::default()
@@ -646,15 +647,20 @@ mod tests {
     fn input(
         binding: &AgentBinding,
         revision: u64,
-        request: Option<(&str, InputKind)>,
+        requests: &[(&str, InputKind)],
     ) -> ProviderReport {
         ProviderReport {
             binding: binding.clone(),
             revision,
-            observation: AgentObservation::Input(request.map(|(id, kind)| InputRequest {
-                id: id.into(),
-                kind,
-            })),
+            observation: AgentObservation::Input(
+                requests
+                    .iter()
+                    .map(|(id, kind)| InputRequest {
+                        id: (*id).into(),
+                        kind: *kind,
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -681,18 +687,15 @@ mod tests {
         let unread = reporting.unread().expect("Confirmed Ready is unread");
 
         reporting
-            .apply(
-                &input(&binding, 3, Some(("a:p1", InputKind::Select))),
-                false,
-            )
+            .apply(&input(&binding, 3, &[("a:p1", InputKind::Select)]), false)
             .unwrap();
         let snapshot = reporting.snapshot.as_ref().unwrap();
         assert_eq!(
-            snapshot.input_request,
-            Some(InputRequest {
+            snapshot.input_requests,
+            vec![InputRequest {
                 id: "a:p1".into(),
                 kind: InputKind::Select,
-            })
+            }]
         );
         assert_eq!(
             snapshot.activity.as_ref().unwrap().state,
@@ -706,17 +709,14 @@ mod tests {
 
         let before = reporting.snapshot.clone();
         let stale = reporting
-            .apply(
-                &input(&binding, 3, Some(("a:p1", InputKind::Select))),
-                false,
-            )
+            .apply(&input(&binding, 3, &[("a:p1", InputKind::Select)]), false)
             .unwrap_err();
         assert_eq!(stale.to_string(), "stale input revision");
         assert_eq!(reporting.snapshot, before, "a stale open changes nothing");
 
-        reporting.apply(&input(&binding, 4, None), false).unwrap();
+        reporting.apply(&input(&binding, 4, &[]), false).unwrap();
         let snapshot = reporting.snapshot.as_ref().unwrap();
-        assert_eq!(snapshot.input_request, None);
+        assert!(snapshot.input_requests.is_empty());
         assert_eq!(
             snapshot.effective_activity(),
             AgentActivity::ResponseReady,
@@ -725,10 +725,7 @@ mod tests {
         assert_eq!(reporting.unread(), Some(unread.clone()));
 
         reporting
-            .apply(
-                &input(&binding, 5, Some(("a:p2", InputKind::Editor))),
-                false,
-            )
+            .apply(&input(&binding, 5, &[("a:p2", InputKind::Editor)]), false)
             .unwrap();
         reporting
             .apply(
@@ -750,7 +747,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unavailable_health_report_clears_the_open_input_request() {
+    fn a_published_request_set_replaces_the_snapshot_and_waits_for_its_last_member() {
         let (mut reporting, binding) = pi_state();
         reporting
             .apply(
@@ -760,9 +757,68 @@ mod tests {
             .unwrap();
         reporting
             .apply(
-                &input(&binding, 2, Some(("a:p1", InputKind::Select))),
+                &input(
+                    &binding,
+                    2,
+                    &[
+                        ("approval:c1", InputKind::Approval),
+                        ("question:q1", InputKind::Select),
+                    ],
+                ),
                 false,
             )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot
+                .input_requests
+                .iter()
+                .map(|request| request.id.as_str())
+                .collect::<Vec<_>>(),
+            ["approval:c1", "question:q1"],
+            "the set is stored in the published order, oldest first"
+        );
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+
+        // One member closing publishes the remainder whole: still waiting.
+        reporting
+            .apply(
+                &input(&binding, 3, &[("question:q1", InputKind::Select)]),
+                false,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot.input_requests,
+            vec![InputRequest {
+                id: "question:q1".into(),
+                kind: InputKind::Select,
+            }],
+            "the snapshot is replaced by the new set, never merged with the old one"
+        );
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+
+        reporting.apply(&input(&binding, 4, &[]), false).unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert!(snapshot.input_requests.is_empty());
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::Busy,
+            "the last close restores what was underneath"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_health_report_clears_the_open_input_request() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(&binding, 1, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(&input(&binding, 2, &[("a:p1", InputKind::Select)]), false)
             .unwrap();
         reporting
             .apply(
@@ -779,7 +835,7 @@ mod tests {
             .unwrap();
         let snapshot = reporting.snapshot.as_ref().unwrap();
         assert_eq!(snapshot.health.state, ReporterHealth::Unavailable);
-        assert_eq!(snapshot.input_request, None);
+        assert!(snapshot.input_requests.is_empty());
         assert_eq!(
             snapshot.effective_activity(),
             AgentActivity::Busy,
@@ -799,7 +855,14 @@ mod tests {
                 true,
             )
             .unwrap();
-        assert_eq!(reporting.snapshot.as_ref().unwrap().input_request, None);
+        assert!(
+            reporting
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .input_requests
+                .is_empty()
+        );
     }
 
     #[test]
@@ -818,10 +881,7 @@ mod tests {
             .unwrap();
         let unread = reporting.unread().expect("Confirmed Ready is unread");
         reporting
-            .apply(
-                &input(&binding, 2, Some(("a:p1", InputKind::Confirm))),
-                false,
-            )
+            .apply(&input(&binding, 2, &[("a:p1", InputKind::Confirm)]), false)
             .unwrap();
         reporting.lost("supervisor_disconnected");
         let snapshot = reporting.snapshot.as_ref().unwrap();
@@ -831,7 +891,8 @@ mod tests {
             Some("supervisor_disconnected")
         );
         assert_eq!(
-            snapshot.input_request, None,
+            snapshot.input_requests,
+            Vec::new(),
             "a reporter that is gone cannot vouch for a visible dialog"
         );
         assert_eq!(
