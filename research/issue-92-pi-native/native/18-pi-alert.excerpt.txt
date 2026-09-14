@@ -1,0 +1,26 @@
+Task-specific excerpt only. No full Notification Center capture is committed: it would
+contain the user's unrelated notifications (same rule as research/issue-59-desktop-alerts).
+
+Observation method: OVRCR delivers alerts as `osascript -e 'display notification ...'`
+and the sound as `afplay /System/Library/Sounds/Glass.aiff`
+(crates/ovrcr-tui/src/dashboard/desktop.rs host_command / the Glass path). A 30 ms process
+sampler recorded each dispatch with its argv. This records DISPATCH, not display: a
+successful host command does not prove the banner was drawn or the sound audible --
+Focus/Do Not Disturb, notification permission and output volume decide that, and macOS may
+silently suppress osascript notifications. That caveat is the same one issue-59 recorded.
+
+Both alert kinds, each with exactly one Glass sound, both panes hidden at the time:
+
+  2026-09-14T07:45:31.339Z NOTIFICATION  consigint / worktree-lifecycle / pi-child (#14) OVRCR · response ready
+  2026-09-14T07:45:31.512Z SOUND afplay
+  2026-09-14T07:46:49.985Z NOTIFICATION  consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+  2026-09-14T07:46:50.142Z SOUND afplay
+  2026-09-14T07:46:56.120Z NOTIFICATION  consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+  2026-09-14T07:46:56.201Z SOUND afplay
+
+The body carries only project / workspace / terminal name and id. No response text, no
+prompt text, no model name, no path.
+
+Per-identity deduplication: the three request identities p3 (Select), p4 (Confirm) and
+p5 (Confirm) each produced exactly one alert. While p5 stayed open across ~40 further
+snapshots no further alert was dispatched for it.

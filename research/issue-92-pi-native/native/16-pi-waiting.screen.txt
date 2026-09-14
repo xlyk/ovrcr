@@ -1,0 +1,10 @@
+  ovrcr-gate-dialog.mjs, ovrcr-pi-reporting.mjs
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ OVRCR gate: pick one
+ → one
+   two
+   three
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+$0.000 (sub) 0.0%/128k (auto)                                                (openai-codex) gpt-5.3-codex-spark • thinking off

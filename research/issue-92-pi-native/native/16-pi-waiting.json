@@ -1,0 +1,22 @@
+# P11 — real Pi extension dialog (ctx.ui.select) -> WaitingInput
+## before
+{"t":"2026-09-14T07:43:19Z","activity":"idle","state":"Idle","input_requests":[],"input_revision":0,"unread_turn":null}
+{"t":"2026-09-14T07:43:19Z","activity":"idle","state":"Idle","input_requests":[],"input_revision":0,"unread_turn":null}
+{"t":"2026-09-14T07:43:20Z","activity":"waiting_input","state":"Idle","input_requests":[{"id":"b70abde9e501047ed59de4817212eeb9:p1","kind":"Select"}],"input_revision":2,"unread_turn":null}
+## doctor while the dialog is open
+{
+  "lifecycle": {
+    "activity": "WaitingInput",
+    "delivery": "observed",
+    "extension": "loaded_and_bound",
+    "health": "Connected",
+    "input_requests": [
+      "Select"
+    ],
+    "unread": false,
+    "work_seen": false
+  }
+}
+
+## /gate-confirm -> kind Confirm (pane NOT visible; alert expected)
+{"t":"2026-09-14T07:44:20Z","activity":"waiting_input","input_requests":[{"id":"b70abde9e501047ed59de4817212eeb9:p2","kind":"Confirm"}],"input_revision":4}

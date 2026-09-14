@@ -1,0 +1,42 @@
+{
+  "activity": "idle",
+  "agent": {
+    "activity": {
+      "quality": "Observed",
+      "state": "Idle",
+      "turn": null
+    },
+    "activity_revision": 1,
+    "binding": {
+      "conversation": "01a09ee8-eb59-74c7-a1ef-7e4bbc85b570",
+      "generation": 1,
+      "invocation": "5354bc15dac1ba9e1e6721bafbd3f7b1a5b68d0f0194ccfeb7cd7ccd390eb664",
+      "provider": "Pi"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "input_requests": [],
+    "input_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "agent_epoch": 1,
+  "context_stale": null,
+  "context_usage": null,
+  "exit_code": null,
+  "exit_signal": null,
+  "id": 11,
+  "label": "pi",
+  "measurement_age_ms": null,
+  "name": "pi-1",
+  "phase": "running",
+  "pid": 96467,
+  "project": "consigint",
+  "reporting_unavailable": false,
+  "started_unix_ms": 1789372459436,
+  "unread": null,
+  "workspace": "auth-handoff"
+}

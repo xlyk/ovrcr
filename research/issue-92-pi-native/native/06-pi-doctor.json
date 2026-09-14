@@ -1,0 +1,35 @@
+{
+  "binding": {
+    "generation": 1,
+    "provider": "Pi"
+  },
+  "capabilities": {
+    "approvals": "available",
+    "managed_launch": true,
+    "metrics": "absent",
+    "questions": "unavailable_no_provider_surface",
+    "recovery": "available",
+    "reporting": "available"
+  },
+  "executable": "pi",
+  "known_incompatibilities": [],
+  "lifecycle": {
+    "activity": "Idle",
+    "delivery": "observed",
+    "extension": "loaded_and_bound",
+    "health": "Connected",
+    "input_requests": [],
+    "unread": false,
+    "work_seen": false
+  },
+  "probe_status": "probed",
+  "provider": "pi",
+  "remediation": [],
+  "session_status": "bound",
+  "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+  "tested_versions": [
+    "0.85.1"
+  ],
+  "version": "0.85.1",
+  "version_status": "tested"
+}

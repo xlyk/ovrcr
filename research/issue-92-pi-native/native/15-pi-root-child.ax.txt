@@ -1,0 +1,16 @@
+Accessibility dump for window 15748 (OVRCR GUI, dev.ovrcr.gui), captured with the
+computer-use MCP in background app mode.
+
+The helper publishes the dashboard as a single AXTextArea named "OVRCR terminal"
+covering [0,32 1100x900]; the per-row text of the sidebar and panes is withheld from
+the accessibility tree by this window, so AX cannot be used to assert row text here.
+This matches the note in the project memory for this app. The rendered text assertions
+in this evidence set therefore come from `ovrcr terminal read --json` (the server's own
+rendered screen), and the visual assertions from the screencapture PNGs beside this file.
+
+Actionable elements reported:
+[0]  AXTextArea/AXUnknown   [0,32 1100x900] "OVRCR terminal"
+[50] AXButton/AXCloseButton [8,8 16x16]
+[51] AXButton/AXFullScreenButton [54,8 16x16]
+[52] AXButton/AXMinimizeButton [31,8 16x16]
+(54 elements total, 4 actionable; the accessibility walk is truncated by the window.)

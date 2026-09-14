@@ -1,0 +1,79 @@
+# P14a — native source gap (spontaneous, no OVRCR_TEST_DROP_SEQUENCE)
+Mechanism: NOT injected. The gap appeared on its own while Pi streamed the 200-line
+count of the P8 cancellation prompt, on a host at load ~85 (14 cores). No test-only
+environment variable was set at any point in this run; `OVRCR_TEST_DROP_SEQUENCE` is
+absent from the fixture environment (proof below).
+## fixture env has no test hook
+## snapshot at the gap
+{
+  "activity": "busy",
+  "agent": {
+    "activity": {
+      "quality": "Observed",
+      "state": "Busy",
+      "turn": "9034ab57db9e910bf253774e1104b9e0:5"
+    },
+    "activity_revision": 10,
+    "binding": {
+      "conversation": "01a09ecc-48b6-707e-a1c5-384a817f9c02",
+      "generation": 1,
+      "invocation": "c17dbeb19238218519c654d3b6a84b172bad81d3cdabb14c5331f83e9732439e",
+      "provider": "Pi"
+    },
+    "health": {
+      "reason": "source_gap",
+      "state": "Unavailable"
+    },
+    "health_revision": 11,
+    "input_requests": [],
+    "input_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  }
+}
+## doctor at the gap
+{
+  "binding": {
+    "generation": 1,
+    "provider": "Pi"
+  },
+  "capabilities": {
+    "approvals": "available",
+    "managed_launch": true,
+    "metrics": "absent",
+    "questions": "unavailable_no_provider_surface",
+    "recovery": "available",
+    "reporting": "available"
+  },
+  "executable": "pi",
+  "known_incompatibilities": [],
+  "lifecycle": {
+    "activity": "Busy",
+    "delivery": "paused_recoverable",
+    "extension": "loaded_and_bound",
+    "health": "Unavailable",
+    "input_requests": [],
+    "unread": false,
+    "work_seen": true
+  },
+  "probe_status": "probed",
+  "provider": "pi",
+  "remediation": [
+    "Reporting is paused for this invocation (source_gap): the source data this reporter delivered is no longer certain, and nothing is being applied. The native session is untouched. Run /ovrcr-reattach in Pi, or send the next prompt — the next session boundary recovers reporting as a fresh generation."
+  ],
+  "session_status": "bound",
+  "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+  "tested_versions": [
+    "0.85.1"
+  ],
+  "version": "0.85.1",
+  "version_status": "tested"
+}
+## native pi process still alive
+  PID  PGID STAT COMMAND
+35793 35793 Ss   /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent r
+
+## SECOND gap and second reattach (defect 2 evidence: the gap recurred on the very next prompt)
+### state after the DELTA prompt completed on screen but was never reported
+{"activity":"idle","state":"Idle","health":{"reason":"source_gap","state":"Unavailable"},"gen":2,"unread":null}
+host load at the second gap:  0:37  up 8 days, 15:59, 6 users, load averages: 22.95 63.47 66.79

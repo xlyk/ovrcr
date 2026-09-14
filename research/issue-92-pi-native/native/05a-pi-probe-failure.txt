@@ -1,0 +1,60 @@
+# P1 attempt 1 — RETAINED FAILURE (2026-09-14T07:11:34Z)
+
+Dashboard picker launch of pi succeeded (terminal id 11, name pi-1, agent label "pi"),
+but the pane printed: "Pi reporting unavailable (version probe unavailable); running native command"
+and doctor reported probe_status=unavailable / version_status=unknown / session_status=unbound.
+
+## Cause
+src/report/admission.rs probe_command() bounds the `<exe> --version` probe at
+Duration::from_secs(1). On this host `pi --version` (a Node ESM script) takes 8-11s wall
+clock while the workstation is at load ~88 on 14 cores; user CPU is only 0.45s, so the
+cost is scheduling/IO wait, not work.
+
+## Measurements
+ 0:11  up 8 days, 15:33, 6 users, load averages: 82.99 68.05 36.38
+hw.ncpu=14
+--- pi --version, fixture HOME, 3 runs (real/user/sys seconds) ---
+0.85.1 real 6.36 user 0.46 sys 0.07 
+0.85.1 real 9.06 user 0.46 sys 0.07 
+0.85.1 real 6.24 user 0.45 sys 0.07 
+--- top CPU consumers at the time of the failure ---
+  PID  %CPU  PGID COMM
+44098 118.6 44089 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper
+74797  78.3 74791 ./ovrcr-gui
+  169  54.6   169 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer
+44208  29.1 44089 /Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)
+ 2269  10.5 44089 /Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)
+  182   8.0   182 /usr/sbin/coreaudiod
+65080   7.5 65080 /Applications/screenpipe.app/Contents/MacOS/screenpipe-app
+
+## CORRECTION, recorded after re-measuring at low host load
+
+The first diagnosis above blamed V8 evaluating Pi's ~153 MB bundle. That is wrong as the
+dominant cause. Measured again in the same fixture HOME once the workstation quietened:
+
+    load averages: 7.77 11.03 27.68
+    0.85.1 real 0.21 user 0.21 sys 0.02
+    0.85.1 real 0.21 user 0.21 sys 0.02
+    0.85.1 real 0.20 user 0.21 sys 0.02
+    0.85.1 real 0.21 user 0.21 sys 0.02
+    0.85.1 real 0.26 user 0.28 sys 0.02
+
+The same command that took 6-11 s at load 85-90 takes 0.21 s at load 7.8 on the same
+14-core machine: a 30-50x difference with identical user CPU. The probe is not fighting Pi's
+startup cost, it is fighting scheduler starvation.
+
+So the correct statement of the finding is:
+
+  OVRCR gates the whole Pi reporting feature on a fixed 1 s wall-clock `<exe> --version`
+  probe (src/report/admission.rs probe_command: `Instant::now() + Duration::from_secs(1)`),
+  and src/report/extension.rs receiver() disables reporting outright when it returns None.
+  On an idle-to-moderate host the probe passes with ~5x headroom. On a heavily loaded host
+  it fails, and the user gets "Pi reporting unavailable (version probe unavailable);
+  running native command" with no Ready, no Unread and no alerts for the rest of that
+  session -- exactly when a busy machine makes background Ready alerts most valuable.
+  The same class of fixed sub-second budget appears in the reporting transport
+  (src/ovrcr-reporting-transport.mjs `deadlineMs = 900`, see Defect 2).
+
+This is NOT reproducible on an idle machine. It reproduced reliably here at load 85-90 and
+not at all at load 7-16. Both P1 attempts are retained: attempt 1 (failed, load ~88) and the
+final attempt (passed, load ~7, real binary, no shim) in 05-pi-bound.json / 06-pi-doctor.json.

@@ -1,0 +1,20 @@
+# 04 launch shape (recorded 2026-09-14T07:04:18Z)
+gui_pid=74797 gui_pgid=74791
+demo_root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gG36Fr   (GUI Demo::start owns OVRCR_CONFIG/OVRCR_SOCKET; src/gui.rs:256-257 overrides the exported values)
+fixture_root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.hBK8Z5
+--- probe inside OVRCR terminal 1 (consigint/worktree-lifecycle local) ---
+worktree-lifecycle › printf "FIXHOME=%s\n" "$HOME"; printf "CFG=%s SOCK=%s DASH=%s\n" "$OVRCR_CONFIG" "$OVRCR_SOCKET" "$OVRCR_DASHBOARD_CONFIG"; /bin/ls -a "$HOME"
+FIXHOME=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.hBK8Z5/home
+CFG=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gG36Fr/config.toml SOCK=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gG36Fr/server.sock DASH=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.hBK8Z5/dashboard.toml
+.       ..      .pi
+worktree-lifecycle › 
+  PID  PGID COMMAND
+27772 27772 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run pi -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.hBK8Z5/bin/pi
+
+## FINAL P1 (unmodified picker, real /Users/xlyk/.local/bin/pi, host load ~7)
+ 0:55  up 8 days, 16:17, 6 users, load averages: 16.68 11.95 26.03
+96467 96467 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run pi -- /Users/xlyk/.local/bin/pi
+materialized extension dir:
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-c9c3a390acf883c11fc8fdbbb49075b3cd67aa124b95acf8b9ae395bfe4dff90
+ovrcr-pi-reporting.mjs
+ovrcr-reporting-transport.mjs

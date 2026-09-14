@@ -1,0 +1,5 @@
+# P11b — answering the dialog closes the request, restores the underlying activity, creates no Unread
+## dialog open
+{"t":"2026-09-14T07:44:10Z","activity":"waiting_input","state":"Idle","input_requests":[{"id":"b70abde9e501047ed59de4817212eeb9:p1","kind":"Select"}],"input_revision":2,"unread":null}
+{"t":"2026-09-14T07:44:10Z","activity":"idle","state":"Idle","input_requests":[],"input_revision":3,"unread":null}
+{"activity":"idle","input_requests":[]}

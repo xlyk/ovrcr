@@ -1,0 +1,7 @@
+# P5 — explicit review clears the presented Unread
+## before
+{"activity":"response_ready","unread_turn":"9034ab57db9e910bf253774e1104b9e0:4"}
+## mark-reviewed with the current unread
+{"ok":true}
+## after
+{"activity":"response_ready","state":"ResponseReady","unread":null}

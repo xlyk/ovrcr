@@ -1,0 +1,14 @@
+$ROOT/home/.pi/agent
+$ROOT/home/.pi/agent/settings.json
+$ROOT/home/.pi/agent/bin
+$ROOT/home/.pi/agent/models-store.json
+$ROOT/home/.pi/agent/sessions
+$ROOT/home/.pi/agent/auth.json
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-auth-handoff--
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-worktree-lifecycle--
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gG36Fr-workspaces-consigint-auth-handoff--
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-auth-handoff--/2026-09-14T07-48-09-083Z_01a09ee3-42fb-704f-960a-c45c4eeea9c3.jsonl
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-auth-handoff--/2026-09-14T07-17-44-902Z_01a09ec7-6d3c-7053-bfe1-cf0494a61cbc.jsonl
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-auth-handoff--/2026-09-14T07-23-03-223Z_01a09ecc-48b6-707e-a1c5-384a817f9c02.jsonl
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-auth-handoff--/2026-09-14T07-47-35-289Z_01a09ee2-bef9-704f-960a-c45ac0aa27bd.jsonl
+$ROOT/home/.pi/agent/sessions/--private-var-folders-j9-h6rlffxd1r794s9g9ps_52t40000gn-T-ovrcr-gui-gDDTB6-workspaces-consigint-worktree-lifecycle--/2026-09-14T07-44-57-580Z_01a09ee0-56eb-73ab-802a-3c9d9ed82a00.jsonl

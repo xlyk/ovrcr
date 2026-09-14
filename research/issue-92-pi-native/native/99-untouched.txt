@@ -1,0 +1,76 @@
+# §1.5 untouched check, run 2026-09-14T07:51:22Z
+
+## newer-than-marker under ~/.pi (the directory this gate read from)
+/Users/xlyk/.pi/agent
+# find exit=0
+
+## newer-than-marker under ~/.omp
+/Users/xlyk/.omp/logs
+/Users/xlyk/.omp/logs/omp.2026-09-14.24141.log
+/Users/xlyk/.omp/logs/omp.2026-09-14.70841.log
+/Users/xlyk/.omp/logs/.omp.85766-audit.json
+/Users/xlyk/.omp/logs/.omp.24141-audit.json
+/Users/xlyk/.omp/logs/.omp.70841-audit.json
+/Users/xlyk/.omp/logs/omp.2026-09-14.85766.log
+# (listing truncated at 40 lines if longer)
+
+## caveats
+- The check proves mtime, not "not read". Copying ~/.pi/agent/auth.json with `cp` does
+  not change its mtime, which is the point.
+- Nothing from ~/.omp was copied or used: #92 is the Pi gate and #97 is out of scope here.
+  Kyle's own Oh My Pi sessions (pids 24141, 65178, 85766, running since before this window)
+  stayed alive for the whole run and were never signalled, so any path listed under ~/.omp
+  above is his live omp writing to its own directory, not this gate. No `omp` process was
+  started, stopped or inspected by this run.
+- No `pi` process outside the fixture was alive during the window: `pgrep '^pi$'` was empty
+  at the start and the only pi processes during the run were the fixture's own.
+- PI_CODING_AGENT_DIR was never exported. HOME alone did the isolation.
+
+## RESULT: FAILED for ~/.pi — read this before trusting anything else here
+
+`find ~/.pi -newer marker-before` printed one path:
+
+    /Users/xlyk/.pi/agent
+
+That is the DIRECTORY's own mtime (2026-09-14 00:14:09, marker 2026-09-13 23:59:16).
+`find ~/.pi/agent -mindepth 1 -newer marker-before` printed NOTHING: every entry inside
+still carries its pre-run mtime --
+
+    auth.json         Sep  9 17:15
+    models-store.json Sep  9 17:15
+    settings.json     Sep 10 15:56
+    trust.json        Sep  1 16:24
+    sessions/         Sep  9 17:15
+    extensions/       Sep  9 14:52
+    skills/           Sep 10 10:38
+    git/              Sep 10 15:56
+    npm/              Aug 27 21:42
+
+A directory mtime moves when an entry is created or removed, so a file was created inside
+~/.pi/agent and removed again at 00:14:09. No entry persisted and no existing file was
+modified.
+
+CAUSE — mine, not OVRCR's. While characterising the failed --version probe (Defect 1) I
+timed and sampled the real Pi binary against the REAL home rather than the fixture home:
+
+    /usr/bin/time -p /Users/xlyk/.local/bin/pi --version          (~00:11-00:12)
+    cd /tmp && /Users/xlyk/.local/bin/pi --version & sample $P    (~00:14)
+
+The last of those matches the directory mtime. Starting pi with HOME=~ let it create and
+remove a transient file in its own agent directory. That breaks the runbook's hard rule
+"Nothing is written to ~/.pi". It should have been measured only as
+`env HOME="$ROOT/home" ... pi --version`, which is how the other measurements in
+05a-pi-probe-failure.txt were taken.
+
+Scope of the breach: one transient entry in ~/.pi/agent, created and removed by Pi itself.
+No credential, session, setting or trust file was written, changed or deleted; none of
+their mtimes moved. Nothing was printed from any of them. The fixture run itself
+(everything from 04-launch-shape.txt onward) used HOME=$ROOT/home throughout and is not
+implicated.
+
+## ~/.omp
+Seven paths are newer than the marker. Nothing in this gate copied from, started, signalled
+or read ~/.omp: #92 is the Pi gate and #97 is out of scope. Kyle's own Oh My Pi processes
+(pids 24141, 65178, 85766, all started before this window) ran for its whole duration and
+are the writers. They were deliberately left alone rather than killed, which the runbook's
+"run with no other instance alive" precondition would have required for an OMP gate.
