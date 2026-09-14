@@ -5,6 +5,7 @@ mod event_loop;
 mod git_hints;
 mod hints;
 mod input;
+mod keymap;
 mod outbox;
 mod palette;
 pub(crate) mod picker;

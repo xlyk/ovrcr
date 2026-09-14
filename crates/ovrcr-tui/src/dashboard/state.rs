@@ -14,7 +14,6 @@ use crate::protocol::{
     Request, Response, ServerEvent, ServerMessage,
 };
 use crate::session::{SessionId, SessionPhase, TerminalSize};
-use crate::task_tui::TasksView;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -1045,6 +1044,20 @@ impl Dashboard {
         self.ensure_selection_visible(&rows);
     }
 
+    // A container selection can retain a wire-focused pane, but actions still
+    // target the selected container until the user selects a session again.
+    pub(super) fn creation_context(&self) -> (String, String) {
+        match &self.selected_container {
+            Some(TreeRow::Project { name }) => (name.clone(), String::new()),
+            Some(TreeRow::Workspace { project, name }) => (project.clone(), name.clone()),
+            _ => self
+                .focused_session()
+                .and_then(|id| find_session(self, id))
+                .map(|s| (s.project.clone(), s.workspace.clone()))
+                .unwrap_or_default(),
+        }
+    }
+
     pub(crate) fn select_session(&mut self, id: SessionId) {
         self.selected_container = None;
         if let Some(index) = self.panes.iter().position(|pane| pane.session == Some(id)) {
@@ -1110,88 +1123,20 @@ impl Dashboard {
         }
         match self.mode {
             InputMode::Browse => {
-                if is_browse_key(key) && self.history_begin_request.is_some() {
+                // Esc and Ctrl-g cancel a history request that has not opened
+                // yet; neither is a binding of its own. Ctrl reaches Browse only
+                // as Ctrl-t, so it blocks the Esc half.
+                let cancels_history = is_browse_key(key)
+                    || (key.code == KeyCode::Esc && !key.modifiers.contains(KeyModifiers::CONTROL));
+                if cancels_history && self.history_begin_request.is_some() {
                     if let Some(begin) = self.history_begin_request.as_mut() {
                         begin.cancelled = true;
                     }
                     return DashboardAction::EnterBrowse;
                 }
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if key.code == KeyCode::Char('t') {
-                        if let Some(begin) = self.history_begin_request.as_mut() {
-                            begin.cancelled = true;
-                        }
-                        self.cancel_mouse_gesture();
-                        let (project, _) = self.creation_context();
-                        self.tasks = Some(TasksView::with_projects(&self.hierarchy, &project));
-                        return DashboardAction::Redraw;
-                    }
-                    return DashboardAction::None;
-                }
-                match key.code {
-                    KeyCode::Char(':') => self.open_palette(),
-                    KeyCode::Char('n') => self.open_create_terminal(),
-                    KeyCode::Char('N') if key.kind == KeyEventKind::Press => {
-                        self.toggle_desktop_notifications()
-                    }
-                    KeyCode::Char('S') if key.kind == KeyEventKind::Press => {
-                        self.toggle_ready_sound()
-                    }
-                    KeyCode::Char('w') => self.open_create_workspace(),
-                    KeyCode::Char('a') => self.open_register_project(),
-                    KeyCode::Char('X') => self.open_close_terminal(),
-                    KeyCode::Char('t') => self.ctrl('t'),
-                    KeyCode::Esc if self.history_begin_request.is_some() => {
-                        if let Some(begin) = self.history_begin_request.as_mut() {
-                            begin.cancelled = true;
-                        }
-                        DashboardAction::EnterBrowse
-                    }
-                    KeyCode::Char('q') => DashboardAction::Detach,
-                    KeyCode::Char('[') if key.kind == KeyEventKind::Press => self.begin_copy(),
-                    KeyCode::PageUp => self.begin_history_request(false),
-                    KeyCode::Char('p') => self.pause_request(true),
-                    KeyCode::Char('r') => self.pause_request(false),
-                    KeyCode::Char('R') if key.kind == KeyEventKind::Press => {
-                        self.mark_reviewed_request()
-                    }
-                    KeyCode::Char('v') => {
-                        self.split_pane();
-                        DashboardAction::Redraw
-                    }
-                    KeyCode::Char('x') => {
-                        self.close_focused_pane();
-                        DashboardAction::Redraw
-                    }
-                    KeyCode::Tab => {
-                        if self.panes.len() == 2 {
-                            self.focus_pane((self.focused_pane + 1) % 2);
-                        }
-                        DashboardAction::Redraw
-                    }
-                    KeyCode::BackTab => {
-                        if self.panes.len() == 2 {
-                            self.focus_pane((self.focused_pane + 1) % 2);
-                        }
-                        DashboardAction::Redraw
-                    }
-                    KeyCode::Enter => {
-                        if self.input_is_allowed() {
-                            self.mode = InputMode::Terminal;
-                            DashboardAction::Redraw
-                        } else {
-                            self.refuse_input()
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.move_selection(1);
-                        self.request_selected()
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.move_selection(-1);
-                        self.request_selected()
-                    }
-                    _ => DashboardAction::None,
+                match self.key_binding_for(key) {
+                    Some(binding) => self.run(binding.action),
+                    None => DashboardAction::None,
                 }
             }
             InputMode::Terminal => {
@@ -1219,7 +1164,7 @@ impl Dashboard {
         }
     }
 
-    fn begin_copy(&mut self) -> DashboardAction {
+    pub(super) fn begin_copy(&mut self) -> DashboardAction {
         if let Some(begin) = self.history_begin_request.as_mut() {
             begin.cancelled = true;
         }
@@ -1246,7 +1191,7 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    fn copy_key_action(&mut self, key: KeyEvent) -> DashboardAction {
+    pub(super) fn copy_key_action(&mut self, key: KeyEvent) -> DashboardAction {
         if key.kind == KeyEventKind::Release {
             return DashboardAction::None;
         }
@@ -1357,7 +1302,7 @@ impl Dashboard {
         });
     }
 
-    fn begin_history_request(&mut self, at_tail: bool) -> DashboardAction {
+    pub(super) fn begin_history_request(&mut self, at_tail: bool) -> DashboardAction {
         let Some(session) = self.action_session() else {
             return DashboardAction::None;
         };
@@ -1387,7 +1332,7 @@ impl Dashboard {
         })
     }
 
-    fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
+    pub(super) fn history_key_action(&mut self, key: KeyEvent) -> DashboardAction {
         let exit_key = (key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('g' | 'G')))
             || matches!(key.code, KeyCode::Esc | KeyCode::Char('q'));
@@ -2628,7 +2573,7 @@ impl Dashboard {
         self.drained_action()
     }
 
-    fn pause_request(&mut self, paused: bool) -> DashboardAction {
+    pub(super) fn pause_request(&mut self, paused: bool) -> DashboardAction {
         let Some(session) = self.action_session().and_then(|id| find_session(self, id)) else {
             self.set_error("No session selected");
             return DashboardAction::Redraw;
@@ -3073,7 +3018,7 @@ impl Dashboard {
         outgoing
     }
 
-    fn mark_reviewed_request(&mut self) -> DashboardAction {
+    pub(super) fn mark_reviewed_request(&mut self) -> DashboardAction {
         let Some(session) = self.action_session() else {
             return DashboardAction::None;
         };
@@ -3121,7 +3066,7 @@ impl Dashboard {
                 .is_some_and(|view| view.focused == Some(session))
     }
 
-    fn refuse_input(&mut self) -> DashboardAction {
+    pub(super) fn refuse_input(&mut self) -> DashboardAction {
         let refusal: String = match self.selected_phase() {
             Some(SessionPhase::Paused) => "Session paused; press r to resume".into(),
             Some(SessionPhase::Exited { .. }) => "Session exited".into(),

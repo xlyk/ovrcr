@@ -8,6 +8,10 @@ Synchronous terminal multiplexer. One server owner, one active dashboard, fifty 
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product
 
+**Key binding**:
+The dashboard's one entry for a key in an input mode: its label, its action, and the reason it is unavailable. Dispatch, the footer, the key popup and the palette read that one entry, so a hint cannot disagree with what the key does.
+_Avoid_: the reporting binding, a hint list per consumer
+
 **Ready**:
 The accepted root observation of a completed response cycle from a supported readiness provider (Codex, Pi, Oh My Pi), identified by binding, cycle identity (the `turn` field), and activity revision.
 _Avoid_: Confirmed activity as a success claim, Claude observations, a desktop alert

@@ -107,38 +107,38 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
         }],
     });
     dashboard.select_session(SessionId(12));
-    let groups = super::hints::key_hints(&dashboard);
+    let groups = super::keymap::keymap(&dashboard);
     let workspace = groups
         .iter()
-        .flat_map(|g| &g.hints)
+        .flat_map(|g| &g.keys)
         .find(|h| h.key == "w")
         .unwrap();
     assert!(workspace.description.contains("consigint"));
     let session = groups.iter().find(|g| g.title == "Session").unwrap();
-    let close = session.hints.iter().find(|h| h.key == "X").unwrap();
+    let close = session.keys.iter().find(|h| h.key == "X").unwrap();
     assert!(close.description.contains("agent (#12)"));
     assert!(close.description.contains("auth-handoff"));
     assert!(close.description.contains("confirmation"));
-    let resume = session.hints.iter().find(|h| h.key == "r").unwrap();
-    assert!(!resume.enabled);
+    let resume = session.keys.iter().find(|h| h.key == "r").unwrap();
+    assert!(!resume.enabled());
     assert!(resume.description.contains("not paused"));
     assert!(
         session
-            .hints
+            .keys
             .iter()
-            .filter(|h| h.enabled)
+            .filter(|h| h.enabled())
             .all(|h| h.description.contains("agent (#12)"))
     );
     dashboard.panes[0].session = None;
-    let groups = super::hints::key_hints(&dashboard);
+    let groups = super::keymap::keymap(&dashboard);
     assert!(
         groups
             .iter()
             .find(|g| g.title == "Session")
             .unwrap()
-            .hints
+            .keys
             .iter()
-            .all(|h| !h.enabled && h.description.contains("no session selected"))
+            .all(|h| !h.enabled() && h.description.contains("no session selected"))
     );
 }
 
@@ -1843,9 +1843,9 @@ fn ready_sound_action_is_opt_in_and_discoverable() {
         cols: 120,
     });
     let names = |dashboard: &Dashboard| -> Vec<(String, String)> {
-        super::hints::key_hints(dashboard)
+        super::keymap::keymap(dashboard)
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .map(|hint| (hint.key.to_string(), hint.name.to_string()))
             .collect()
     };
@@ -1866,19 +1866,19 @@ fn desktop_notification_action_is_opt_in_and_discoverable() {
         cols: 120,
     });
     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
-    let hints = super::hints::key_hints(&dashboard);
+    let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .any(|hint| { hint.name == "Disable desktop notifications" && hint.key == "N" })
     );
     assert_eq!(dashboard.key(KeyCode::Char('N')), DashboardAction::Redraw);
-    let hints = super::hints::key_hints(&dashboard);
+    let hints = super::keymap::keymap(&dashboard);
     assert!(
         hints
             .iter()
-            .flat_map(|group| &group.hints)
+            .flat_map(|group| &group.keys)
             .any(|hint| { hint.name == "Enable desktop notifications" && hint.key == "N" })
     );
 }
@@ -2319,4 +2319,418 @@ fn an_open_input_request_agrees_between_the_busy_predicate_and_the_status_glyph(
     assert_eq!(super::status::SessionStatus::of(&summary, 0).glyph, '⠋');
     assert!(dashboard.session_is_busy(SessionId(1)));
     assert_eq!(dashboard.redraw_interval(), super::status::SPINNER_INTERVAL);
+}
+
+fn keymap_session(
+    id: u64,
+    phase: crate::protocol::SessionPhase,
+) -> crate::protocol::SessionSummary {
+    use crate::protocol::{AgentActivity, SessionSummary};
+    SessionSummary {
+        id: SessionId(id),
+        project: "consigint".into(),
+        workspace: "auth".into(),
+        name: "agent".into(),
+        label: "shell".into(),
+        pid: None,
+        started_unix_ms: 0,
+        phase,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+        agent: None,
+        agent_epoch: 0,
+        unread: None,
+    }
+}
+
+/// One running session in one workspace, with an acknowledged screen: the state
+/// every Browse binding is available in.
+fn keymap_dashboard(phase: crate::protocol::SessionPhase) -> Dashboard {
+    use crate::protocol::{ProjectSummary, WorkspaceSummary};
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "consigint".into(),
+        workspaces: vec![WorkspaceSummary {
+            project: "consigint".into(),
+            name: "auth".into(),
+            path: "/tmp/auth".into(),
+            sessions: vec![keymap_session(12, phase)],
+        }],
+    });
+    dashboard.select_session(SessionId(12));
+    dashboard.install_screen(SessionId(12), &[]);
+    dashboard
+}
+
+fn binding_named(dashboard: &Dashboard, key: &str) -> super::keymap::KeyBinding {
+    super::keymap::keymap(dashboard)
+        .into_iter()
+        .flat_map(|group| group.keys)
+        .find(|binding| binding.key == key)
+        .unwrap_or_else(|| panic!("no binding for {key}"))
+}
+
+#[test]
+fn keymap_gives_each_key_in_a_mode_exactly_one_binding() {
+    use super::keymap::{Action, KeyBinding, keymap};
+    // Ctrl-g is the one binding whose key carries a modifier.
+    let event = |binding: &KeyBinding| match binding.action {
+        Action::Browse => KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+        _ => KeyEvent::new(binding.code, KeyModifiers::NONE),
+    };
+    let mut dashboard = keymap_dashboard(crate::protocol::SessionPhase::Running);
+    for mode in [InputMode::Browse, InputMode::Copy, InputMode::History] {
+        dashboard.mode = mode;
+        let groups = keymap(&dashboard);
+        let bindings: Vec<&KeyBinding> = groups.iter().flat_map(|group| &group.keys).collect();
+        assert!(!bindings.is_empty(), "{mode:?} lists no keys");
+        for binding in &bindings {
+            let matched: Vec<_> = bindings
+                .iter()
+                .filter(|other| other.matches(event(binding)))
+                .collect();
+            assert_eq!(
+                matched.len(),
+                1,
+                "{mode:?} {} resolves to {} bindings",
+                binding.key,
+                matched.len()
+            );
+            assert_eq!(
+                matched[0].action, binding.action,
+                "{mode:?} {}",
+                binding.key
+            );
+        }
+    }
+    dashboard.mode = InputMode::Browse;
+    for (event, action) in [
+        (
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            Action::NextSession,
+        ),
+        (
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            Action::PreviousSession,
+        ),
+        (
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+            Action::OtherPane,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            Action::Tasks,
+        ),
+        (
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            Action::Tasks,
+        ),
+    ] {
+        assert_eq!(
+            dashboard
+                .key_binding_for(event)
+                .map(|binding| binding.action),
+            Some(action),
+            "{event:?}"
+        );
+    }
+    // Other Ctrl-modified keys stay unbound in Browse.
+    for code in [KeyCode::Char('n'), KeyCode::Char('q'), KeyCode::Char('g')] {
+        assert!(
+            dashboard
+                .key_binding_for(KeyEvent::new(code, KeyModifiers::CONTROL))
+                .is_none(),
+            "{code:?}"
+        );
+    }
+    // Toggles and one-shot captures wait for a press.
+    for code in [
+        KeyCode::Char('R'),
+        KeyCode::Char('N'),
+        KeyCode::Char('S'),
+        KeyCode::Char('['),
+    ] {
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            assert!(
+                dashboard
+                    .key_binding_for(KeyEvent::new_with_kind(code, KeyModifiers::NONE, kind))
+                    .is_none(),
+                "{code:?} {kind:?}"
+            );
+        }
+        assert!(
+            dashboard
+                .key_binding_for(KeyEvent::new(code, KeyModifiers::NONE))
+                .is_some(),
+            "{code:?}"
+        );
+    }
+}
+
+#[test]
+fn keymap_reasons_name_the_condition_that_disables_a_key() {
+    use crate::protocol::SessionPhase;
+    let reason = |dashboard: &Dashboard, key: &str| binding_named(dashboard, key).reason;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    for key in ["Enter", "p", "X", "[", "PageUp", "n", "w", "a", "q", ":"] {
+        assert_eq!(reason(&dashboard, key), None, "{key} on a ready session");
+    }
+    assert_eq!(reason(&dashboard, "r"), Some("not paused"));
+    assert_eq!(reason(&dashboard, "R"), Some("no unread response"));
+    assert_eq!(reason(&dashboard, "x"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "Tab/Shift-Tab"), Some("only one pane"));
+    assert_eq!(reason(&dashboard, "v"), Some("no other visible session"));
+
+    dashboard.install_unready(SessionId(12));
+    for key in ["Enter", "[", "PageUp"] {
+        assert_eq!(
+            reason(&dashboard, key),
+            Some("waiting for acknowledged screen"),
+            "{key} before an ack"
+        );
+    }
+
+    let mut paused = keymap_dashboard(SessionPhase::Paused);
+    assert_eq!(reason(&paused, "Enter"), Some("session is not running"));
+    assert_eq!(reason(&paused, "p"), Some("not running"));
+    assert_eq!(reason(&paused, "r"), None);
+
+    paused.panes[0].session = None;
+    for key in ["Enter", "p", "r", "R", "X", "[", "PageUp"] {
+        assert_eq!(reason(&paused, key), Some("no session selected"), "{key}");
+    }
+
+    let empty = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    assert_eq!(
+        reason(&empty, "n"),
+        Some("no workspace available; register a project first")
+    );
+    assert_eq!(reason(&empty, "w"), Some("no project registered"));
+    assert_eq!(reason(&empty, "a"), None);
+}
+
+#[test]
+fn key_popup_groups_take_their_keys_from_the_table() {
+    use super::keymap::{Action, keymap};
+    let dashboard = keymap_dashboard(crate::protocol::SessionPhase::Running);
+    let bindings: Vec<_> = keymap(&dashboard)
+        .into_iter()
+        .flat_map(|group| group.keys)
+        .collect();
+    let slots: Vec<_> = bindings
+        .iter()
+        .filter_map(|binding| {
+            binding
+                .group
+                .map(|slot| (slot.group, slot.key, binding.action))
+        })
+        .collect();
+    for expected in [
+        ('t', "Enter", Action::Focus),
+        ('t', "p", Action::Pause),
+        ('t', "r", Action::Resume),
+        ('t', "R", Action::MarkReviewed),
+        ('t', "x", Action::CloseTerminal),
+        ('t', "c", Action::CopyScreen),
+        ('t', "h", Action::History),
+        ('w', "n", Action::CreateTerminal),
+        ('p', "n", Action::CreateWorkspace),
+        ('p', "a", Action::RegisterProject),
+        ('v', "t/Ctrl-t", Action::Tasks),
+        ('v', "x", Action::ClosePane),
+    ] {
+        assert!(
+            slots.contains(&expected),
+            "missing {expected:?} in {slots:?}"
+        );
+    }
+    // A group row answers to the group's key, and the bare key keeps its own action.
+    let close = bindings
+        .into_iter()
+        .find(|binding| binding.action == Action::CloseTerminal)
+        .unwrap();
+    let bare = KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE);
+    let grouped = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(close.matches(bare) && !close.matches(grouped));
+    let close = close.with_group_key("x");
+    assert!(close.matches(grouped) && !close.matches(bare));
+    assert_eq!(close.action, Action::CloseTerminal);
+    assert_eq!(
+        dashboard
+            .key_binding_for(grouped)
+            .map(|binding| binding.action),
+        Some(Action::ClosePane)
+    );
+}
+
+#[test]
+fn key_popup_group_keeps_a_waiting_row_and_drops_an_inapplicable_one() {
+    use crate::protocol::SessionPhase;
+    let shown = |dashboard: &Dashboard, key: &str| binding_named(dashboard, key).shown_in_group();
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    assert!(shown(&dashboard, "Enter"));
+    dashboard.install_unready(SessionId(12));
+    assert!(
+        shown(&dashboard, "Enter"),
+        "a pane still waiting for its screen keeps the dimmed row"
+    );
+    let paused = keymap_dashboard(SessionPhase::Paused);
+    assert!(
+        !shown(&paused, "Enter"),
+        "a paused session drops Focus from the group"
+    );
+    assert!(shown(&paused, "r"));
+    assert!(!shown(&paused, "p"));
+}
+
+#[test]
+fn browse_dispatch_keeps_its_own_modifier_rule() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(keymap_session(13, SessionPhase::Running));
+
+    // Alt and Super do not select a different action: Alt-j selects the next
+    // session and Alt-x runs the pane close x runs.
+    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    dashboard.key_action(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::ALT));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(13)));
+    dashboard.key_action(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(12)));
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+        DashboardAction::Redraw,
+        "Alt-x must reach the same action as x"
+    );
+
+    // Ctrl reaches Browse only as Ctrl-t, whatever else is held with it.
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ] {
+        let mut dashboard = keymap_dashboard(SessionPhase::Running);
+        assert_eq!(
+            dashboard.key_action(KeyEvent::new(KeyCode::Char('t'), modifiers)),
+            DashboardAction::Redraw,
+            "{modifiers:?}"
+        );
+        assert!(dashboard.tasks.is_some(), "{modifiers:?} must open tasks");
+    }
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    for code in [KeyCode::Char('n'), KeyCode::Char('x'), KeyCode::Char('q')] {
+        assert_eq!(
+            dashboard.key_action(KeyEvent::new(code, KeyModifiers::CONTROL)),
+            DashboardAction::None,
+            "{code:?}"
+        );
+    }
+    assert!(dashboard.tasks.is_none());
+
+    // The popup claims Space and ? only unmodified, so a modified one runs
+    // nothing rather than opening the popup.
+    for code in [KeyCode::Char(' '), KeyCode::Char('?')] {
+        for modifiers in [
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL,
+        ] {
+            assert_eq!(
+                dashboard.key_action(KeyEvent::new(code, modifiers)),
+                DashboardAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert!(dashboard.whichkey.is_none(), "{code:?} {modifiers:?}");
+        }
+    }
+    assert_eq!(dashboard.key(KeyCode::Char(' ')), DashboardAction::Redraw);
+    assert!(
+        dashboard.whichkey.is_some(),
+        "the unmodified key still opens the popup"
+    );
+
+    // Ctrl blocks the Esc that cancels a history request, as it blocks every
+    // Browse key but Ctrl-t.
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::PageUp);
+    assert!(dashboard.history_begin_request.is_some());
+    assert_eq!(
+        dashboard.key_action(KeyEvent::new(KeyCode::Esc, KeyModifiers::CONTROL)),
+        DashboardAction::None
+    );
+    assert!(
+        !dashboard.history_begin_request.as_ref().unwrap().cancelled,
+        "Ctrl-Esc must leave the pending request alone"
+    );
+    assert_eq!(dashboard.key(KeyCode::Esc), DashboardAction::EnterBrowse);
+    assert!(dashboard.history_begin_request.as_ref().unwrap().cancelled);
+}
+
+#[test]
+fn a_pending_leader_group_ignores_an_arrow_that_names_no_row() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.key(KeyCode::Char('t'));
+    // The group lists History under h. An arrow is not that key.
+    for code in [KeyCode::Left, KeyCode::Down, KeyCode::Up, KeyCode::Right] {
+        assert_eq!(dashboard.key(code), DashboardAction::Redraw, "{code:?}");
+        assert!(
+            dashboard.whichkey.is_some(),
+            "{code:?} must leave the popup open"
+        );
+        assert!(
+            dashboard.history_begin_request.is_none(),
+            "{code:?} must run nothing"
+        );
+    }
+    dashboard.key(KeyCode::Char('h'));
+    assert!(dashboard.whichkey.is_none(), "h runs the History row");
+    assert!(dashboard.history_begin_request.is_some());
+}
+
+#[test]
+fn a_clicked_popup_row_clears_the_desktop_notice() {
+    use super::DashboardAction;
+    use crate::protocol::SessionPhase;
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::backend::TestBackend;
+    let mut dashboard = keymap_dashboard(SessionPhase::Running);
+    dashboard.key(KeyCode::Char(' '));
+    dashboard.desktop.notice = Some("Desktop notifications unavailable".into());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| super::render::draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let (column, row) = (0..40)
+        .find_map(|y| {
+            let line: String = (0..120).map(|x| buffer[(x, y)].symbol()).collect();
+            line.find("q  Detach").map(|x| (x as u16 + 1, y))
+        })
+        .expect("the popup lists Detach");
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        dashboard.event_action(crossterm::event::Event::Mouse(click)),
+        DashboardAction::Detach
+    );
+    assert!(
+        dashboard.desktop.notice.is_none(),
+        "a clicked row clears the notice a key press would have cleared"
+    );
 }
