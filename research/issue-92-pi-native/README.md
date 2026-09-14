@@ -11,6 +11,13 @@ operator, and several criteria could not be exercised. Read
 and [Retained failed and unrun attempts](#retained-failed-and-unrun-attempts) before
 treating anything below as a pass.
 
+> **A second pass was run on 2026-09-14 at the merged phase-5 head `df45b59`, on an idle
+> machine.** It closed cancellation, compaction, `/tree`, reload, detach/reattach,
+> visible-pane suppression, the reconnect baseline and the compact-layout captures, and
+> re-verified both defects. Everything below this line is the **first pass** and is left
+> exactly as it was written; see [Second pass](#second-pass-df45b59-idle-machine) for what
+> moved and for the current acceptance matrix.
+
 ## Revisions
 
 | Thing | Value |
@@ -309,3 +316,243 @@ Nothing was deleted or relabelled.
 - No claim that the full workspace suite, the doctests or any hosted check passed at this
   revision: they were not executed here.
 - No claim that `~/.pi` was left untouched. The directory's mtime moved; see above.
+
+---
+
+# Second pass (`df45b59`, idle machine)
+
+Run 2026-09-14 to close what the first pass left open. Everything above this line is the
+first pass and is unchanged. Items the first pass already met — AC1, the extension dialog,
+the alert basics, `/new` / `/resume` / `/fork`, exit and cleanup — were **not re-run**; they
+are cited from the first pass.
+
+## Revisions
+
+| Thing | Value |
+| --- | --- |
+| Revision under test | `df45b5937e4098cb518238333249b3087bfe1b16` — merge of `8aa52d9` (first-pass evidence) and `62b1c77` (phase-5 head) |
+| Merge commit | `git merge --no-ff feature/pi-omp-phase5`, clean, no conflicts |
+| Built binaries | `ovrcr` `a2cdd6cc17a3c0b193ea11a662f835e36b24d99ea305f26d355eb3dcdfab90c8`, `ovrcr-gui` `3b2b531ba09a8ac7e82923e85cbe0d8e39d57bc0eb05c849f9abf7e5ff52e173`, built 2026-09-14T09:16:52Z |
+| Provider / model | Pi `0.85.1`, `openai-codex/gpt-5.3-codex-spark`, thinking off |
+| Host load | 3.3 → 8.0 throughout (first pass ranged 7 → 90) |
+| Fixture root | a fresh `$TMPDIR/ovrcr-native-gates.*`, removed after the evidence was copied out |
+
+`native/30-root.txt`, `native/31-binaries.txt`.
+
+The picker's `pi` entry carried a `[[agents]]` argv override appending
+`-e $ROOT/ovrcr-gate-dialog.mjs`, as the first pass did for P11, so the dialog commands were
+available. `argv[0]` of the managed inner command is still the real
+`/Users/xlyk/.local/bin/pi`, so the admission probe under test is the real one.
+
+## Turn ledger
+
+Budget 8, hard cap 8. **6 spent.**
+
+| # | Item | Prompt (verbatim) | Outcome | Artifact |
+| --- | --- | --- | --- | --- |
+| 1 | AC3 visible Ready | `Reply with the single word: GOLF` | Busy → ResponseReady with the pane visible: Unread set, **no alert dispatched** | `34-visible-suppression.json` |
+| 2 | AC2 cancellation att. 1 | `Count slowly from 1 to 200, one number per line.` | **Failed attempt** — Return then Escape as two calls; response completed to 200 | `39-cancel.json` |
+| 3 | AC2 cancellation att. 2 | same | **Failed attempt** — submit delayed 0.4 s; completed | `39-cancel.json` |
+| 4 | AC2 cancellation att. 3 | same | **Failed attempt** — submit delayed 1.3 s; completed. This one measured the Busy window at **1.71 s**, which is what made the next attempt work | `39-cancel.json` |
+| 5 | AC2 cancellation att. 4 | same | **PASSED** — submit delayed 2.5 s so the Escape round trip landed inside Busy. Busy at dt=0.22, **Idle at dt=0.65, no ResponseReady, no new Unread**; Pi printed "Operation aborted" | `39-cancel.json`, `.jpg` |
+| 6 | AC2 compaction | `/compact` | **PASSED** — real compaction, "Compacted from 2,566 tokens" | `40-compaction.json` |
+
+Free (no model turn): the picker launch, both dialog open/close pairs, both dashboard
+disconnects and reattaches, `/reload`, both `/tree` navigations, the compact-layout capture,
+and every snapshot and doctor call.
+
+## Per-item results
+
+### AC2 — cancellation: **PASSED**
+
+The first pass could not deliver an Escape at all. This pass established why and then beat
+it. `ovrcr terminal send` is a bracketed-paste channel, so it can never carry a control key;
+the Escape has to come from the GUI, and a computer-use round trip is about as long as the
+whole turn. Attempt 3 measured the Busy window precisely — 0.22 s to 1.71 s after submit —
+and attempt 4 used a 2.5 s delayed submit so the in-flight Escape landed inside it.
+
+```
+dt=0.22 activity=busy  state=Busy  turn=…:4 unread=…:3
+dt=0.44 activity=busy  state=Busy  turn=…:4 unread=…:3
+dt=0.65 activity=idle  state=Idle  turn=…:4 unread=…:3
+```
+
+Activity returned to Idle, there was **no** `response_ready` for turn `:4` and **no** new
+Unread — the Unread stayed on the earlier turn `:3`. Doctor read
+`activity: "Idle", work_seen: false, unread: true`. Pi's transcript shows "Operation aborted"
+with the count truncated far short of 200.
+
+### AC2 — compaction: **PASSED**
+
+The first pass recorded compaction as open because Pi refused with "Nothing to compact
+(session too small)". That refusal is Pi's own guard, not OVRCR's: compaction walks back
+until `compaction.keepRecentTokens` (default 20000) is reached, and the whole session was
+~2.4k tokens, so nothing lay outside the retained window. Lowering `keepRecentTokens` to 400
+in the **fixture** `settings.json` (never the real `~/.pi`) and reloading gave it something
+to summarise, and `/compact` then really ran: "Compacted from 2,566 tokens".
+
+Across the whole compaction OVRCR published **zero** Busy samples and **zero**
+`response_ready` samples. `activity` stayed `idle`, `activity_revision` stayed 14, and the
+binding did not move (generation 1, same conversation, same invocation). The pre-existing
+Unread survived. Compaction is not reported as an assistant cycle, which is what
+`docs/pi-reporting-setup.md` requires.
+
+### AC2 — provider retry: **OPEN**
+
+Not induced. A provider-side retry needs a transient upstream failure. The only failure this
+account can force is a hard model refusal, which settles as Error (first pass,
+`14-pi-error.json`), not a retry. Forcing a real retry would mean driving the provider to a
+rate limit — neither tiny nor within the turn budget. `43-defect-reverify.txt`.
+
+### AC3 — visible-pane suppression: **PASSED**, both kinds
+
+With the Pi pane visible in terminal mode:
+
+- `/gate-select` opened a real request (`activity: "waiting_input"`, one `Select`) and **no
+  alert was dispatched**.
+- The GOLF prompt went Busy → ResponseReady with the Unread set, and **no alert was
+  dispatched**.
+
+The alert sampler ran continuously across both and recorded nothing between the
+before- and after-marks. `34-visible-suppression.json`.
+
+### AC3 — reconnect baseline: **PASSED**, twice
+
+Set up with an Unread on `pi-1` (#11) and an open `Select` request on `pi-b` (#12), then the
+dashboard connection was broken twice:
+
+1. **Abrupt** — the dashboard TUI was killed (`SIGTERM`); the GUI showed "Dashboard exited:
+   Terminated by Terminated: 15" and its own **Restart dashboard** control was clicked.
+2. **Graceful** — the restarted dashboard came up in browse mode, so `q` Detach was reachable
+   this time; the GUI showed "Dashboard exited: Success", then Restart dashboard again.
+
+After both: **no alert of any kind was dispatched by the reconnect**. Both sessions stayed
+`running` and `Connected`, `pi-1` kept its Unread and `pi-b` kept its open request, and no new
+Ready appeared.
+
+**Old-event rejection** is asserted from the revisions, which are the thing a replay would
+move: `pi-1` `activity_revision` 5 / `input_revision` 3 and `pi-b` `activity_revision` 1 /
+`input_revision` 2 were identical before the first disconnect and after the second reattach.
+
+The positive half also holds: a genuinely new request after the reconnect, with the pane not
+visible, dispatched exactly one alert —
+`consigint / worktree-lifecycle / pi-b (#12) OVRCR · input needed` plus one Glass sound.
+`36-reconnect-baseline.json`, `36-detached.jpg`, `36-reattached.jpg`, `37-graceful-detach.jpg`.
+
+Ctrl-g is still not deliverable through computer-use background input (`app_key` offers only
+return/escape/backspace/delete/cmd+a), which is why the first disconnect had to be abrupt.
+The graceful `q` path was reachable only because the restarted dashboard happened to come up
+in browse mode. Both mechanisms are recorded for what they are.
+
+### AC3 — compact layout captures: **PASSED**
+
+The window was resized from 1100×932 to 522×932 by dragging its bottom-right corner
+(`app_drag`), captured, and the drag back was clamped by the tool, so the rest of the pass ran
+at 524 px — which incidentally exercised every later step in the compact form. Nothing
+clipped or overlapped: the header read "Unread response ready · confirmed", the sidebar row
+carried the unread bullet and the agent label, the full prompt/response exchange and Pi's
+status line were legible, and the footer was intact. `35-tiny-layout.jpg`,
+`35-tiny-layout.screen.txt`, `35-tiny-layout.ax.txt`.
+
+The accessibility limitation is unchanged and is restated in the dump: this window publishes
+the whole dashboard as one `AXTextArea` and withholds per-row text, so rendered-text
+assertions come from `ovrcr terminal read --json` and visual ones from the captures.
+
+The Response-ready alert title was already captured in the first pass
+(`consigint / worktree-lifecycle / pi-child (#14) OVRCR · response ready`) and was not re-run.
+
+### AC4 — `/tree`: **PASSED**
+
+Run twice, using the tree's own type-to-search because arrow keys are not deliverable.
+
+1. Accepting the node already current: Pi replied "Already at this point" and OVRCR was
+   unchanged — `idle`, `activity_revision` 14, Unread still `:3`, generation 1.
+2. Searching "Count slowly", selecting a different node and answering Pi's "Summarize branch?"
+   with "No summary" (so no model call): **`activity` became `unknown`** (`state: "Unknown"`,
+   `activity_revision` 14 → 15) — exactly the runbook's `cycle_invalidated` expectation that
+   activity is `idle` when Pi's `isIdle()` says so and `unknown` otherwise. No in-flight cycle
+   became Ready, the pre-existing Unread `:3` survived, and the binding did not move.
+
+A confirming observation: while Pi's **built-in** "Summarize branch?" dialog was on screen,
+OVRCR published **no** input request (`input_requests: []`). Built-in Pi dialogs are not
+`ctx.ui.*` extension dialogs, which is precisely the documented boundary — Pi has no approval
+surface and the only WaitingInput source is a `ctx.ui.*` dialog. `42-tree.json`, `42-tree.jpg`.
+
+### AC4 — same-file reload: **PASSED**
+
+`/reload` reloaded keybindings, extensions, skills, prompts, themes and context files. OVRCR
+invalidated the cycle and published a blank snapshot (`activity: "idle"`, `turn: null`,
+`activity_revision` 13 → 14) while keeping the same binding — generation 1, same conversation,
+same invocation — and the pre-existing Unread survived. No historical response was replayed as
+Ready. `41-reload.json`.
+
+### Defect re-verification at low load
+
+Both defect sites are **unchanged** at `df45b59`: `src/report/admission.rs` still bounds the
+probe at `Duration::from_secs(1)` and `src/ovrcr-reporting-transport.mjs` still sets
+`deadlineMs = 900`.
+
+- **Defect 1** — the **first** picker launch of this pass bound with no shim and no
+  workaround: `probe_status: "probed"`, `version_status: "tested"`, `session_status: "bound"`,
+  `reporting_unavailable: false`, at load 5.4. Confirmed load-dependent, not fixed.
+- **Defect 2** — **no frame dropped anywhere in this pass.** Every snapshot across four
+  200-line streamed responses, a cancellation, a real compaction, a reload, two dashboard
+  disconnects and two tree navigations reported `health: "Connected"`; there is not a single
+  `Unavailable` or `source_gap` in this pass's evidence. Confirmed load-dependent, not fixed.
+
+`43-defect-reverify.txt`.
+
+## Untouched check — second pass
+
+Recorded as two separate facts, per the #97 run's finding.
+
+| Check | Result |
+| --- | --- |
+| **A) contents** — `find ~/.pi/agent -mindepth 1 -newer marker` | **EMPTY** |
+| **B) directory** — `find ~/.pi -newer marker` | `/Users/xlyk/.pi/agent` (the directory's own mtime) |
+| `~/.omp` | newer paths present; nothing in this pass copied from, started, signalled or read `~/.omp` — Kyle's own `omp` processes are the writers |
+| `HOME` during the run | `$ROOT/home` for **every** `pi` invocation, the version print included |
+| `PI_CODING_AGENT_DIR` | never exported |
+| Fixture received the writes | 10 paths under `$ROOT/home/.pi` |
+
+This is a different result from the first pass, and the difference matters. In the first pass
+the operator had timed the real Pi binary against the **real** home, which was a genuine
+breach. In this pass every `pi` invocation ran under the fixture HOME and the directory mtime
+still moved while nothing inside changed — reproducing the #97 observation that Pi 0.85.1
+touches its real `~/.pi/agent` directory at startup even under a foreign HOME. The bump is
+Pi's behaviour, not OVRCR's and not the operator's, and the combined
+`find ~/.pi -newer marker` can never come back empty on a machine where Pi has run at all.
+
+No file under `~/.pi` was written, changed, deleted or read out; no live provider settings
+were modified. `45-untouched.txt`.
+
+## Cleanup — second pass
+
+Launcher exit 0; no `ovrcr-gui` or fixture processes remain; the demo root, its socket and all
+`$TMPDIR/ovrcr-pi-*` extension dirs are absent; every recorded PID and PGID is ESRCH; `$ROOT`
+removed after the evidence was copied out. `44-cleanup.txt`.
+
+## Updated acceptance matrix
+
+First-pass results are in brackets where they moved.
+
+| Criterion | Result |
+| --- | --- |
+| AC1 — picker, two distinct responses, Busy/Ready, explicit review, earlier Unread survives, stale ack rejected | **passed** (first pass; re-confirmed incidentally by this pass's picker launch) |
+| AC2 — continuation, retry, compaction, failure, cancellation, root/child isolation, real extension-dialog WaitingInput | **partly open** *(was partly open)* — continuation, failure→Error, root/child isolation and the real dialog passed in the first pass; **cancellation and compaction now passed**; only **provider retry stays OPEN** |
+| AC3 — enabled Response ready and Input needed, preferences, visible-pane suppression, duplicate suppression, closure, reconnect baselines, tiny and normal screenshots/AX | **partly open** *(was partly open)* — alerts, preferences, dedup and closure passed in the first pass; **visible-pane suppression, both reconnect baselines and the compact-layout captures now passed**; only **actual display and audibility stays OPEN**, by the ticket's own caveat |
+| AC4 — new/resume/fork/tree/reload, bounded reattachment, old-event rejection, detach/reattach, output/exit/signals, owned cleanup, no replay, no live settings modified | **passed** *(was defect + partly open)* — `/new`, `/resume`, `/fork`, reattachment, exit, signals and cleanup passed in the first pass; **`/tree`, reload, detach/reattach and old-event rejection now passed**. The reattachment defect (Defect 2) is a load-dependent robustness finding, not a failure of this criterion's behaviour. The "no live settings modified" half is now clean — see the untouched check above |
+| AC5 — native Linux | **open** — no Linux host reachable |
+| AC6 — isolated-host fifty-session replay | **open / not run** — needs a new `#[ignore]`d test, and this is not an isolated host |
+| AC7 — workspace tests, lint, formatting, wire compatibility, hosted checks | **partly open** — first-pass counts at `af41fef` stand; **not re-run at `df45b59`**, so no count is claimed at the merged head. Hosted checks still require a push |
+| AC8 — support/setup/removal/doctor documentation | **not run** — no documentation work in scope for either pass |
+| AC9 — evidence records revisions, commands, counts, PID/PGID ownership, cleanup; no OMP/merge/release claims | **passed** |
+
+## Claims explicitly NOT made — second pass
+
+- No claim that either defect is fixed. Both code sites are unchanged; both simply do not
+  reproduce on an idle machine.
+- No claim that the automated gates pass at `df45b59`: they were run at `af41fef` only.
+- No claim that a dispatched `osascript` notification was displayed or that a Glass sound was
+  heard.
+- No Oh My Pi claim, no Linux claim, no push, PR, merge or release.
