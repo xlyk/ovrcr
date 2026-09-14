@@ -747,6 +747,68 @@ mod tests {
     }
 
     #[test]
+    fn a_published_request_set_replaces_the_snapshot_and_waits_for_its_last_member() {
+        let (mut reporting, binding) = pi_state();
+        reporting
+            .apply(
+                &activity(&binding, 1, AgentActivity::Busy, SampleQuality::Observed),
+                false,
+            )
+            .unwrap();
+        reporting
+            .apply(
+                &input(
+                    &binding,
+                    2,
+                    &[
+                        ("approval:c1", InputKind::Approval),
+                        ("question:q1", InputKind::Select),
+                    ],
+                ),
+                false,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot
+                .input_requests
+                .iter()
+                .map(|request| request.id.as_str())
+                .collect::<Vec<_>>(),
+            ["approval:c1", "question:q1"],
+            "the set is stored in the published order, oldest first"
+        );
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+
+        // One member closing publishes the remainder whole: still waiting.
+        reporting
+            .apply(
+                &input(&binding, 3, &[("question:q1", InputKind::Select)]),
+                false,
+            )
+            .unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert_eq!(
+            snapshot.input_requests,
+            vec![InputRequest {
+                id: "question:q1".into(),
+                kind: InputKind::Select,
+            }],
+            "the snapshot is replaced by the new set, never merged with the old one"
+        );
+        assert_eq!(snapshot.effective_activity(), AgentActivity::WaitingInput);
+
+        reporting.apply(&input(&binding, 4, &[]), false).unwrap();
+        let snapshot = reporting.snapshot.as_ref().unwrap();
+        assert!(snapshot.input_requests.is_empty());
+        assert_eq!(
+            snapshot.effective_activity(),
+            AgentActivity::Busy,
+            "the last close restores what was underneath"
+        );
+    }
+
+    #[test]
     fn an_unavailable_health_report_clears_the_open_input_request() {
         let (mut reporting, binding) = pi_state();
         reporting

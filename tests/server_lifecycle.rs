@@ -11464,7 +11464,10 @@ fn pi_reload_closes_the_open_request_before_retiring_the_producer() {
     );
     let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
     assert_eq!(doctor["lifecycle"]["activity"], "WaitingInput");
-    assert_eq!(doctor["lifecycle"]["input_request"], "Select");
+    assert_eq!(
+        doctor["lifecycle"]["input_requests"],
+        serde_json::json!(["Select"])
+    );
 
     // A reload retires the producer. The dialog goes with the native session, so the
     // close is published against the binding that owned it before the producer retires:
