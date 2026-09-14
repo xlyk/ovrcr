@@ -10,8 +10,9 @@
 //! What every provider shares is this mechanism, not a uniform use of it. Each receiver
 //! still chooses which parts it needs, and the choices differ:
 //!
-//! - Pi and Oh My Pi pause and recover; Codex and Claude never call [`Reporter::health`]
-//!   for a pause, and Codex has no health to report at all.
+//! - Only Pi and Oh My Pi pause: they stop applying frames where the Producer fence
+//!   finds a hole, and recover with a forced rebind. Claude reports health for something
+//!   else — whether its transcript reader is working — and Codex reports none at all.
 //! - Claude settles its accounting at exit through [`Reporter::finalize`]; every other
 //!   receiver takes the default [`Frames::finish`], which disables and lets the closed
 //!   connection release the reservation.
@@ -181,7 +182,9 @@ impl Reporter {
         self.lease.as_ref()?.binding.as_ref()
     }
 
-    /// Whether this reporter is applying nothing until a trustworthy source boundary.
+    /// Whether a reason is currently reported as this reporter's health. The extension
+    /// receivers read it as their own gate — they apply nothing until a trustworthy
+    /// source boundary rebinds — which is why they are the only ones that ask.
     pub fn paused(&self) -> bool {
         self.paused.is_some()
     }
@@ -364,9 +367,11 @@ impl Reporter {
         None
     }
 
-    /// Publish this reporter's own health over the supervisor connection. `Some` is the
-    /// reason it stopped applying events and keeps the lease, the binding and the native
-    /// session; `None` reports it healthy again. `false` means the report could not be
+    /// Publish this reporter's own health over the supervisor connection, and set the
+    /// reason [`Reporter::paused`] reports. `Some` names what is uncertain while the
+    /// lease, the binding and the native session all hold — for the extension receivers
+    /// a hole in the frames they stop applying, for Claude a transcript reader that is
+    /// not working; `None` reports it healthy again. `false` means the report could not be
     /// delivered and the reporter disabled itself. A reporter that never bound has no
     /// health to report and says so without sending anything.
     pub fn health(&mut self, reason: Option<&str>, deadline: Instant) -> bool {

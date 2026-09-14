@@ -383,8 +383,10 @@ test `admit_fences_gaps_retired_producers_and_an_unobserved_replacement`. There 
 `source_overflow` lifecycle test: reaching the bound needs 257 PTY round trips, so the
 doctor consequence is pinned by `a_pause_is_recoverable_only_where_the_provider_has_a_way_out_of_it`
 and the mechanism itself is Pi's, already covered. There is no Oh My Pi lost-bind-receipt
-test: the bind-receipt recovery is the shared `Reporter::bind` path, covered by the Codex
-lifecycle test and by `a_lost_bind_receipt_is_re_read_and_the_bind_is_never_issued_twice`. Native acceptance against an installed Oh My Pi stays #97.
+test: Oh My Pi and Codex take the same receipt policy, `Reporter::bind_or_disable`, which
+re-reads a lost reply inside the same call because that boundary gets no second attempt;
+it is covered by the Codex lifecycle test and by
+`a_receiver_with_no_second_chance_re_reads_the_lost_receipt_in_the_same_call`. Native acceptance against an installed Oh My Pi stays #97.
 
 ### Approvals and questions
 
