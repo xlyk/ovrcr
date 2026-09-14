@@ -13,19 +13,22 @@ pub(super) fn activity(session: &SessionSummary) -> AgentActivity {
         .map_or(session.activity, |agent| agent.effective_activity())
 }
 
-/// The open Input request of a running, connected, supported session: the one identity the
-/// Dashboard may deliver as an Input needed alert.
-pub(super) fn input_live(session: &SessionSummary) -> Option<&InputRequest> {
+/// The open Input requests of a running, connected, supported session: the identities the
+/// Dashboard may deliver as Input needed alerts. Empty for anything else.
+pub(super) fn input_live(session: &SessionSummary) -> &[InputRequest] {
+    const NONE: &[InputRequest] = &[];
     if session.phase != SessionPhase::Running {
-        return None;
+        return NONE;
     }
-    let agent = session.agent.as_ref()?;
+    let Some(agent) = session.agent.as_ref() else {
+        return NONE;
+    };
     if !agent.binding.provider.supports_readiness()
         || agent.health.state != ReporterHealth::Connected
     {
-        return None;
+        return NONE;
     }
-    agent.input_requests.first()
+    &agent.input_requests
 }
 
 pub(super) fn ready(session: &SessionSummary) -> Option<&ActivitySample> {
