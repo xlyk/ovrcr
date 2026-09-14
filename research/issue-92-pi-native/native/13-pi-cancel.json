@@ -1,0 +1,36 @@
+# P8 attempt 2 — cancellation (Esc) during a long response
+## before
+{"t":"2026-09-14T07:37:42Z","activity":"idle","state":"Idle","turn":null,"health":"Connected","gen":3,"unread_turn":null}
+{"t":"2026-09-14T07:37:42Z","activity":"idle","state":"Idle","turn":null,"health":"Connected","gen":3,"unread_turn":null}
+{"t":"2026-09-14T07:37:43Z","activity":"busy","state":"Busy","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":null}
+## ESC sent here
+{"t":"2026-09-14T07:37:44Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:45Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:46Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:47Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:48Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:49Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:50Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:51Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:52Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:53Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:54Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:55Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:57Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:58Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:37:59Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:00Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:01Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:02Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:03Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:04Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:05Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:06Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:07Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:08Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:09Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:10Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:11Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:12Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:13Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}
+{"t":"2026-09-14T07:38:14Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:1","health":"Connected","gen":3,"unread_turn":"9034ab57db9e910bf253774e1104b9e0:1"}

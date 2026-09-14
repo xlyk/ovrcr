@@ -1,0 +1,14 @@
+$ OVRCR_TEST_OMP_EXECUTABLE=/Users/xlyk/.local/bin/omp cargo test -p ovrcr --test server_lifecycle -- --ignored --exact installed_omp_managed_launch_binds_the_real_session_and_stays_idle
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/server_lifecycle.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/server_lifecycle-12b32790fbf296fb)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxTKKNg/repo/.git/
+[main (root-commit) 9a1ce21] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test installed_omp_managed_launch_binds_the_real_session_and_stays_idle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 6.21s
+
+exit=0

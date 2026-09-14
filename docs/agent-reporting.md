@@ -153,8 +153,10 @@ prompts, responses, tool data or prompt titles.
 
 Pi replaces the whole extension factory when a session is replaced (new, resume, fork) and
 when extensions reload. The producer that shut down is retired, and its successor's
-`session_start` binds the conversation now in the foreground as a fresh reporting
-generation: blank activity, no requests, and the server-owned unread response untouched.
+`session_start` binds the conversation now in the foreground. A replacement is a fresh
+reporting generation: blank activity, no requests, and the server-owned unread response
+untouched. An extension reload keeps the same conversation and therefore the same
+generation; its open cycle and requests were already closed by the retiring producer.
 The announcement names the conversation it left by id, so a transition OVRCR never saw is
 detected rather than assumed. Returning to an earlier conversation is a new generation too,
 never the reuse of the old one, and every later frame from a retired producer is ignored
@@ -182,6 +184,10 @@ See [Pi reporting setup](pi-reporting-setup.md).
 
 ## Oh My Pi
 
+Native macOS evidence for Oh My Pi reporting is recorded in
+[research/issue-97-omp-native](../research/issue-97-omp-native/README.md); see the support
+record's "Native verification" section for what it proves and what stays open.
+
 `ovrcr agent run omp -- omp [ARGS...]` (or picking `omp` in the Dashboard) materializes the
 owned reporting extension into a private per-invocation directory and adds `-e <path>`
 beside your own extensions; nothing under `~/.omp` changes. The extension is inert without
@@ -189,25 +195,56 @@ the private channel and outside the terminal UI, so in-process task and advisor 
 (mode `print`) and the ACP route (mode `rpc`) report nothing.
 
 Oh My Pi has no settled event. The extension reports `session_start` (Idle), `agent_start`
-(Busy), and `agent_end`: an end that declares a continuation keeps the cycle open and the
-session Busy, while an end without one closes it and publishes Ready
-(`response ready · observed`), Error or Idle from the same outcome rule as Pi. The quality
-is Observed, never Confirmed, because the stop hook may still continue after a clean end; a
-later `agent_start` then opens another cycle without acknowledging or replacing the unread
-response the earlier one created.
+(Busy), `agent_end`, `session_switch`, `session_tree` and `session_shutdown`: an end that
+declares a continuation keeps the cycle open and the session Busy, while an end without one
+closes it and publishes Ready (`response ready · observed`), Error or Idle from the same
+outcome rule as Pi. The quality is Observed, never Confirmed, because the stop hook may
+still continue after a clean end; a later `agent_start` then opens another cycle without
+acknowledging or replacing the unread response the earlier one created. Payloads carry
+identifiers and discriminants only — the one field added for Oh My Pi is the boolean
+continuation flag — never prompts, responses or tool data.
+
+### Transitions and recovery
 
 Oh My Pi switches conversations in place on one extension instance. A `session_switch`
-re-announces the conversation with `session_start` carrying the switch reason, which rebinds
-and invalidates any cycle left open by the conversation being left. An existing unread
-response survives the switch until it is reviewed. Payloads carry identifiers and
-discriminants only — the one field added for Oh My Pi is the boolean continuation flag —
-never prompts, responses or tool data. Any `session_shutdown` ends reporting for that
-process: Oh My Pi does not re-run extension factories, so a reload or replacement leaves
-the invocation unreported until the next managed launch (reporter recovery is #96). The
-bounded delivery queue overflowing ends it the same way: Oh My Pi has no reattach command,
-so that invocation stays unreported until the next managed launch, and doctor reports it as
-a lost reporter rather than a recoverable pause. A source gap or an unobserved producer
-replacement does pause and recover at the next `agent_start`, as for Pi.
+(`new`, `resume`, `fork`) re-announces the conversation with `session_start` carrying the
+switch reason and the conversation it left, named by id, so a transition OVRCR never saw
+pauses with `transition_mismatch` rather than being assumed; a cancelled transition emits
+nothing and rebinds nothing. A switch to another conversation is a fresh reporting
+generation, and returning to an earlier one is a new generation too, never the reuse of the
+old. A same-file reload keeps the generation: Oh My Pi's `reload()` switches to the file it
+is already on, so the conversation did not change and there is no other binding to check —
+but it still abandons the cycle it interrupted and closes any request left open.
+Compaction inside the same conversation changes nothing. A plugin-resource refresh changes
+nothing either: it reloads plugin roots, agents, skills, slash commands and MCP servers, but
+never re-instantiates an extension factory, so no shutdown or start is reported and no
+rebind happens. Tree navigation abandons the response cycle it was in
+(`cycle_invalidated`): activity falls back to what Oh My Pi's own API answers — Idle when it
+says the session is idle, otherwise Unknown — and a historical response is never replayed as
+a new Ready. An existing unread response survives every one of these. Updating the
+extension's own code still needs a native restart, and reporter reattachment is not a
+conversation reload.
+
+When live reporting stops being certain, the reporter pauses instead of ending: a hole in
+the source sequence (`source_gap`), a producer replaced without its shutdown being observed
+(`producer_replaced`), the extension's own bounded queue overflowing (`source_overflow`), or
+a transition naming a conversation OVRCR is not bound to (`transition_mismatch`). A paused
+reporter publishes health `Unavailable` with that reason, keeps its lease and its binding,
+applies nothing, and leaves the native session running; the open request set is cleared,
+because a reporter that is unsure cannot vouch for a dialog. Nothing is inferred from
+silence, idleness, empty queues or elapsed time, and no timer retries.
+
+Recovery is one forced rebind at a trustworthy boundary: the next `session_start` or
+`agent_start`, or `/ovrcr-reattach`, the command the extension registers and you type in Oh
+My Pi. Each recovery is a fresh generation that starts blank: activity comes only from Oh My
+Pi's public API — Unknown while it says the session is not idle — the cycle identity waits
+for a genuine later cycle, and restored requests and responses raise no alerts while later
+genuine ones alert normally. A reattach during a response does not restore that response's
+cycle, so the in-flight response will not become Ready; the next prompt reports normally. An
+earlier unread response survives. Because Oh My Pi has that command, a bounded-queue
+overflow is a recoverable pause for it too, ended by `/ovrcr-reattach`. Any
+`session_shutdown` still ends reporting for that process, and only a fresh managed launch
+brings it back.
 
 ### Approvals and questions
 

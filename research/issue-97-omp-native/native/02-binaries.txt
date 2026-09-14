@@ -1,0 +1,10 @@
+assembled_utc=2026-09-14T08:21:23Z
+dd0b73418dc3ab9e516bd79857cb79a6abbdfbc99d05c70a8441e4a192c39c03  /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+8f4b2bf3879b55354375145a225b999fab0aab8c7ec7e4c42334a8d266fdaf8d  /Users/xlyk/Code/ovrcr/.worktrees/ticket-97-omp-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+omp_path=/Users/xlyk/.local/bin/omp
+pi_path=/Users/xlyk/.local/bin/pi
+omp_version=omp/18.1.19
+pi_version=0.85.1
+ProductName:		macOS ProductVersion:		26.5.2 BuildVersion:		25F84 
+arm64
+14

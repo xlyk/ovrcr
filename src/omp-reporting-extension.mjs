@@ -6,7 +6,7 @@
 // that Ready as Observed because the stop hook may still continue — a later agent_start
 // then opens a new cycle. Session switches happen in place on this same instance, so a
 // switch re-announces the conversation with session_start.
-import { createReporter, outcomeOf } from "./ovrcr-reporting-transport.mjs";
+import { createReporter, idOf, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
 // Replaced with the JSON-encoded absolute path of the supervising ovrcr binary when the
 // receiver materializes this file for one invocation.
@@ -14,7 +14,7 @@ const OVRCR_BINARY = __OVRCR_BINARY__;
 
 export default function (omp) {
   if (!process.env.OVRCR_AGENT_SOCKET || !process.env.OVRCR_AGENT_TOKEN) return;
-  const { producer, report, flush } = createReporter({
+  const { producer, report, flush, reattach } = createReporter({
     binary: OVRCR_BINARY,
     helperArgs: ["report", "omp", "--stdin"],
   });
@@ -24,17 +24,18 @@ export default function (omp) {
   // `<instance>:<run>` identity as the continuation of a cycle it has already published.
   let issued = 0;
 
-  function announce(ctx, reason) {
+  // `previous` is the conversation this announcement says it left, as an id: an Oh My Pi
+  // switch carries `previousSessionFile`, and the receiver pauses on a switch that names a
+  // conversation OVRCR is not bound to. Startup carries none, which is no expectation.
+  function announce(ctx, reason, previous) {
     producer.run = 0; // an announcement belongs to no cycle
     producer.open = false;
     producer.outcome = "none";
-    // No `previous`: an Oh My Pi switch states no expectation about the conversation it
-    // leaves, and the receiver reads a missing one as exactly that.
-    return report("session_start", ctx, { reason, previous: null });
+    return report("session_start", ctx, { reason, previous });
   }
 
-  omp.on("session_start", (_event, ctx) => announce(ctx, "startup"));
-  omp.on("session_switch", (event, ctx) => announce(ctx, event.reason));
+  omp.on("session_start", (_event, ctx) => announce(ctx, "startup", null));
+  omp.on("session_switch", (event, ctx) => announce(ctx, event.reason, idOf(event.previousSessionFile)));
   omp.on("agent_start", (_event, ctx) => {
     // A start inside an open cycle is a continuation: same run, outcome so far kept.
     if (!producer.open) {
@@ -86,9 +87,30 @@ export default function (omp) {
       ? report("input_close", ctx, { namespace: "question", request_id: request("question", event.toolCallId) })
       : Promise.resolve(false));
 
+  // Tree navigation moves the conversation to a node this producer never reported: the
+  // response cycle it was in the middle of is gone, and the only activity that survives is
+  // what Oh My Pi's own API answers. Historical responses are never replayed as new ones.
+  // Compaction is deliberately not subscribed: it preserves the conversation binding.
+  omp.on("session_tree", (_event, ctx) => {
+    producer.open = false;
+    producer.outcome = "none";
+    return report("cycle_invalidated", ctx, { idle: Boolean(ctx.isIdle?.()) });
+  });
+
   omp.on("session_shutdown", (_event, ctx) => {
     const sent = flush("session_shutdown", ctx, { reason: "quit" });
     producer.disabled = true; // shutdown handlers run in parallel under a 2 s budget
     return sent;
+  });
+
+  // The explicit reattachment action: it runs inside the already-loaded extension, so it
+  // never needs a fresh native launch to restore reporting for this same session — and it
+  // never reloads the conversation, which #88 forbids as a reconnection substitute.
+  omp.registerCommand("ovrcr-reattach", {
+    description: "Reattach OVRCR reporting for this session",
+    handler: async (_args, ctx) => {
+      const ok = await reattach(ctx, { idle: Boolean(ctx.isIdle?.()) });
+      ctx.ui?.notify?.(ok ? "OVRCR reporting reattached" : "OVRCR reporting is unavailable", ok ? "info" : "warning");
+    },
   });
 }

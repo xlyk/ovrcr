@@ -1,0 +1,58 @@
+# 45 — §1.5 untouched check, second pass, 2026-09-14T09:34:15Z
+
+Recorded as two separate facts, per the #97 run's finding that Pi 0.85.1 bumps the
+real ~/.pi/agent directory mtime at startup even under a foreign HOME.
+
+## A) CONTENTS — `find ~/.pi/agent -mindepth 1 -newer marker` (must be empty)
+(end of A)
+
+## B) DIRECTORY ITSELF — `find ~/.pi -newer marker`
+/Users/xlyk/.pi/agent
+(end of B)
+
+## entry mtimes under ~/.pi/agent (names and times only)
+Sep 14 02:32 .
+Aug 3 11:55 ..
+Sep 9 17:15 auth.json
+Sep 9 14:52 extensions
+Sep 10 15:56 git
+Sep 9 17:15 models-store.json
+Aug 27 21:42 npm
+Sep 9 17:15 sessions
+Sep 10 15:56 settings.json
+Sep 10 10:38 skills
+Sep 1 16:24 trust.json
+
+## ~/.omp
+newer-than-marker path count: 0
+Nothing in this pass copied from, started, signalled or read ~/.omp. Kyle's own omp
+processes (24141, 65178, 85766, all older than this window) are the writers.
+
+## isolation positives
+HOME during the run: $ROOT/home
+PI_CODING_AGENT_DIR: never exported
+every pi invocation in this pass, including the --version characterisation in
+31-binaries.txt, ran with HOME=$ROOT/home
+fixture writes (find $ROOT/home/.pi -newer marker | wc -l): 10
+
+## RESULT
+
+A) CONTENTS: EMPTY. Nothing inside ~/.pi/agent was created, modified or removed. Every
+   entry keeps a pre-run mtime.
+B) DIRECTORY: /Users/xlyk/.pi/agent's own mtime moved again.
+
+Attribution, and it is different from the first pass. In the first pass the operator had
+timed the real Pi binary against the REAL home, which was a genuine breach of "nothing is
+written to ~/.pi". In THIS pass every single `pi` invocation ran with HOME=$ROOT/home --
+the fixture launch, the version print in 31-binaries.txt, and every managed session -- and
+the directory mtime still moved while nothing inside it changed.
+
+That reproduces the #97 run's observation: Pi 0.85.1 touches its real ~/.pi/agent directory
+at startup even under a foreign HOME. The bump is Pi's behaviour, not OVRCR's and not the
+operator's. The A/B split is the honest way to record it, because the combined
+`find ~/.pi -newer marker` can never come back empty on a machine where Pi has been started
+at all -- it reports the directory, not a write to any file in it.
+
+Conclusion for this pass: no file under ~/.pi was written, changed, deleted or read out;
+no live provider settings were modified; the directory-mtime line is attributable to Pi's
+own startup and is recorded rather than absorbed.

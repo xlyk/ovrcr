@@ -1,0 +1,4 @@
+ 2:16  up 8 days, 17:39, 6 users, load averages: 3.54 4.04 4.67
+root=/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//ovrcr-native-gates.7TtcGj
+created_utc=2026-09-14T09:16:52Z
+pass=2

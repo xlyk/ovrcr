@@ -186,7 +186,7 @@ pub(super) enum WorkspaceCommand {
 
 #[derive(Subcommand)]
 pub(super) enum TerminalCommand {
-    /// Mark one observed Codex response reviewed. Changes unread only.
+    /// Mark one observed agent response reviewed. Changes unread only.
     MarkReviewed {
         id: u64,
         /// Exact non-null unread object from `terminal list --json`.

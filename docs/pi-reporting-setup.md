@@ -47,7 +47,7 @@ arguments or results, titles or credentials.
   `unavailable_no_provider_surface` for Pi, which has no question surface beyond
   its dialogs, and `available_tool_lifetime` for Oh My Pi, whose question request
   spans the ask tool's execution rather than the dialog's visibility; `recovery`
-  is available for Pi (a source boundary or `/ovrcr-reattach`) and `metrics` is
+  is available for both (a source boundary or `/ovrcr-reattach`) and `metrics` is
   absent by design.
 
 ## Removal
@@ -58,14 +58,18 @@ stop reporting.
 
 ## Boundaries
 
+Native macOS evidence for this setup is recorded in
+[research/issue-92-pi-native](../research/issue-92-pi-native/README.md); the support record's
+"Native verification" section says what it proves, what stays open, and how it was isolated.
+
 `WaitingInput` is extension-dialog-only: Pi exposes no other visible question surface,
 and a tool call is not an input request. OVRCR does not open dialogs of its own to
 probe for one. A long-running response is never declared failed because no end event
 has arrived.
 
-A session replacement or an extension reload rebinds the conversation now in the
-foreground as a fresh reporting generation; compaction inside one conversation changes
-nothing; tree navigation drops the cycle it was in. When what this reporter delivered
+A session replacement (new, resume, fork) rebinds the conversation now in the foreground
+as a fresh reporting generation; an extension reload re-admits the same conversation and
+keeps its generation; compaction inside one conversation changes nothing; tree navigation drops the cycle it was in. When what this reporter delivered
 stops being certain — a hole in its source sequence, a producer replaced without its
 shutdown being observed, its own queue overflowing, or a transition naming a
 conversation OVRCR is not bound to — reporting pauses rather than ends: health goes

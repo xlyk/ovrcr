@@ -1,0 +1,3 @@
+{"error":{"code":"Conflict","message":"Ready observation changed; inspect the unread response before reviewing it"}}
+exit=1
+{"activity":"response_ready","unread_turn":"9034ab57db9e910bf253774e1104b9e0:2"}

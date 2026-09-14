@@ -72,6 +72,11 @@ fn materialize_extension(harness: &Harness) -> std::io::Result<(PathBuf, PathBuf
     Ok((dir, path))
 }
 
+/// Admission is a reservation, eligible argv and an interactive terminal — nothing about
+/// the executable itself. The launch does not probe `--version`: a non-runnable executable
+/// already fails visibly in the native launch, and a bounded probe on a loaded machine
+/// times out and disables reporting for an executable that was perfectly fine. Version
+/// stays a doctor diagnostic.
 pub fn receiver(
     harness: &'static Harness,
     lease: Option<InvocationLease>,
@@ -83,8 +88,6 @@ pub fn receiver(
         Some("unsupported launch arguments".to_owned())
     } else if unsafe { libc::isatty(0) != 1 || libc::isatty(1) != 1 } {
         Some("interactive terminal required".to_owned())
-    } else if super::admission::probe_version(&argv[0]).is_none() {
-        Some("version probe unavailable".to_owned())
     } else {
         None
     };
@@ -676,7 +679,8 @@ impl Namespace {
 }
 
 /// Whether a transition names a conversation this receiver is not bound to. A frame with
-/// no `previous` carries no expectation (Oh My Pi's switches say nothing yet), and a
+/// no `previous` carries no expectation (a startup announcement, or a harness with no
+/// previous file), and a
 /// receiver with no binding has none to contradict.
 fn transition_mismatch(
     previous: Option<&str>,

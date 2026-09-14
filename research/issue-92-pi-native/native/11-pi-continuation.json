@@ -1,0 +1,8 @@
+# P6 attempt 2 — queued follow-up during a response is one cycle
+## before (unread from the previous settled turn must survive the new Busy)
+{"t":"2026-09-14T07:25:42Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:3","unread_turn":"9034ab57db9e910bf253774e1104b9e0:3","rev":7}
+## tight samples after send
+{"t":"2026-09-14T07:25:42Z","activity":"busy","state":"Busy","turn":"9034ab57db9e910bf253774e1104b9e0:4","unread_turn":"9034ab57db9e910bf253774e1104b9e0:3","rev":8}
+## <-- queued second prompt sent here, while Busy
+{"t":"2026-09-14T07:25:46Z","activity":"busy","state":"Busy","turn":"9034ab57db9e910bf253774e1104b9e0:4","unread_turn":"9034ab57db9e910bf253774e1104b9e0:3","rev":8}
+{"t":"2026-09-14T07:25:50Z","activity":"response_ready","state":"ResponseReady","turn":"9034ab57db9e910bf253774e1104b9e0:4","unread_turn":"9034ab57db9e910bf253774e1104b9e0:4","rev":9}

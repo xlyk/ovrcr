@@ -1,0 +1,5 @@
+P9 (Error at settled) was produced naturally, not synthetically: the first prompt sent to
+openai-codex/gpt-5.4-mini was refused by the provider with
+  "Codex error: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account."
+OVRCR settled the cycle as Error. No response_ready, no unread, no Ready-as-success claim.
+This consumed one attempted turn (turn 1 in the ledger) and zero completion tokens.

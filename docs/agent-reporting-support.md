@@ -254,8 +254,10 @@ The [macOS native acceptance](../research/codex-response-ready-acceptance/native
 Pi 0.85.1 was installed locally and its extension declarations were the research anchor for
 this slice: the in-process extension host, the `session_start` / `agent_start` / `agent_end`
 / `agent_settled` / `session_shutdown` events, and the session manager's session identity.
-Tested versions are evidence, not an allowlist; the managed launch probes the executable but
-does not pin a release, so ordinary Pi upgrades stay enabled.
+Tested versions are evidence, not an allowlist; the managed launch does not probe the
+executable at all and does not pin a release, so ordinary Pi upgrades stay enabled. Doctor
+still runs the bounded `--version` probe as a diagnostic and reports `probe_status` and
+`version_status` from it.
 
 Ready quality is `Confirmed` because `agent_settled` has a single emission point after
 retries, automatic compaction and queued continuations have finished, so it marks the real
@@ -309,8 +311,9 @@ because no extension type declarations survive compilation. The extension loader
 `.mjs` with relative sibling imports, which is why the shared delivery module
 (`ovrcr-reporting-transport.mjs`) is materialized beside the provider extension, and an
 explicit `-e <path>` merges with discovered extensions (`--no-extensions` is never passed).
-Tested versions are evidence, not an allowlist; the managed launch probes the executable but
-does not pin a release.
+Tested versions are evidence, not an allowlist; the managed launch does not probe the
+executable at all and does not pin a release. Doctor still runs the bounded `--version`
+probe as a diagnostic and reports `probe_status` and `version_status` from it.
 
 The lifecycle differs from Pi in three ways, and the extension normalizes all three onto Pi's
 vocabulary rather than changing the receiver: there is no settled event, so an `agent_end`
@@ -326,6 +329,62 @@ identity the receiver has already published.
 
 Ordinary handlers are awaited sequentially under a 30 s budget and shutdown handlers in
 parallel under a 2 s budget, both far above the transport's 900 ms per-event deadline.
+
+### Transitions and recovery
+
+`session_switch` is emitted from exactly three sites, and its `reason` is exactly `new`
+(from `newSession`), `fork` (from `fork`) or `resume` (from `switchSession`); every one of
+them carries `previousSessionFile`. There is no `tree` or `reload` reason. A same-file
+reload is `switchSession` called with the file the session is already on — `reload()` reads
+`this.sessionFile` and passes it straight back — so it emits `reason: "resume"` and the
+session id does not change; the branch it takes internally logs a session reload. A session
+file is named `<timestamp>_<sessionId>.jsonl` and Oh My Pi parses the id back out of that
+name itself (taking the text after the last `_`, minus the extension), which is why OVRCR
+reads `previous` out of the file name as an id and never carries the timestamp or the
+directory. Every transition first emits a cancellable `session_before_switch`, and the
+`session_switch` emit is downstream of the `if (handled?.cancel) return false` that gates
+it; OVRCR deliberately does not subscribe to `session_before_switch`, so a cancelled
+transition produces nothing at all.
+
+The plugin-resource refresh (`reloadPlugins`) re-resolves plugin roots, rebuilds the agents
+cache, refreshes skill and slash-command state and restarts MCP servers. It emits no
+extension event and never touches the extension runner, which is assigned once per process;
+a factory replacement in Oh My Pi therefore only happens across a process restart, which is
+a new managed launch and a new receiver. `session_tree` exists and is emitted in place with
+`{ newLeafId, oldLeafId, summaryEntry, fromExtension }`, gated on
+`hasHandlers("session_tree")`; `session_compact` is separate, also in place, and is
+deliberately not subscribed because it preserves the conversation binding. OVRCR reports
+only `idle` from `session_tree` and never the leaf ids or the summary entry.
+
+`registerCommand(name, options)` stores a command on the extension, and a slash line in the
+input resolves it and runs `handler(argumentString, commandContext)`; the command context
+is the ordinary extension context plus `getContextUsage`, `waitForIdle`, `newSession`,
+`branch`, `navigateTree`, `switchSession`, `reload` and `compact`, and the ordinary context
+already carries `ui`, `mode`, `sessionManager` and `isIdle`. So `/ovrcr-reattach` is a real
+command in 18.1.19, and it calls only the transport's `reattach()` and `ctx.ui.notify`: it
+never calls `reload()`, `switchSession()`, `newSession()` or `navigateTree()`, because #88
+forbids a conversation reload as a reporting-reconnection substitute.
+
+The automated proof is three managed lifecycle tests over the real CLI, PTY, private socket
+and receiver: `omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer`
+(switch, compaction, A→B→A, same-file reload with the generation unchanged, a plugin refresh
+whose session summary is byte-identical, tree navigation, and a switch naming an unknown
+conversation that pauses and then recovers),
+`omp_source_gap_pauses_then_recovers_at_the_next_boundary` (a lost frame, the hole, a pause
+that applies nothing while the native session keeps answering, and one recovery at the next
+`agent_start`), and `omp_reattach_recovers_a_paused_reporter_during_an_input_wait` (doctor
+reporting `paused_recoverable` and naming `/ovrcr-reattach`, the command recovering while a
+question is open, and an old question's close failing to clear a newer one).
+
+Three gaps are stated rather than hidden. There is no Oh My Pi old-producer lifecycle test:
+Oh My Pi never replaces its extension factory in-process, so a second instance is
+unreachable at that seam, and the fence is pinned by the shared receiver unit test
+`admit_fences_gaps_retired_producers_and_an_unobserved_replacement`. There is no Oh My Pi
+`source_overflow` lifecycle test: reaching the bound needs 257 PTY round trips, so the
+doctor consequence is pinned by `a_pause_is_recoverable_only_where_the_provider_has_a_way_out_of_it`
+and the mechanism itself is Pi's, already covered. There is no Oh My Pi lost-bind-receipt
+test: the `InvocationLease::operation_status` recovery path is shared and is covered by the
+Codex lifecycle test. Native acceptance against an installed Oh My Pi stays #97.
 
 ### Approvals and questions
 
@@ -401,3 +460,66 @@ Native acceptance against an installed Oh My Pi is tracked by #97. The opt-in
 `installed_omp_managed_launch_binds_the_real_session_and_stays_idle` test is `#[ignore]`
 and requires `OVRCR_TEST_OMP_EXECUTABLE` plus an isolated `HOME`; it never writes to the
 user's `~/.omp`.
+
+## Native verification, 2026-09-14
+
+Native macOS evidence for the shipped Pi and Oh My Pi reporting lives in
+[research/issue-92-pi-native](../research/issue-92-pi-native/README.md) (Pi 0.85.1; first pass
+at `af41fef`, second pass at `df45b59` on an idle machine) and
+[research/issue-97-omp-native](../research/issue-97-omp-native/README.md) (Oh My Pi 18.1.19 at
+`ee3cc05`). Each record lists revisions, commands, the per-turn ledger, PID/PGID ownership and
+the cleanup check, and keeps failed attempts. Three kinds of evidence are kept distinct and
+must not be read as one another:
+
+- Native provider evidence: the installed binary launched from the Dashboard picker inside an
+  isolated `HOME` that holds read-only copies of the user's credentials, driven through the real
+  managed PTY, private socket, receiver and shipped Dashboard. This is what the two records
+  above contain, and it exists for macOS only.
+- Automated fixtures: the Node hosts and the lifecycle suites, which run the real extensions
+  and the real receiver against a fake `pi`/`omp` executable. They run on macOS and on Linux in
+  CI and are the only Linux coverage.
+- Open gates: native Linux runs of either provider, the isolated-host fifty-session replay, and
+  hosted check counts at the verified revision are recorded as open in both records; nothing
+  here claims them.
+
+What the native runs established beyond the automated suites, per record: two distinct
+responses per provider with Busy, Ready (Confirmed for Pi, Observed for Oh My Pi), explicit
+review, an earlier Unread surviving new work and a stale acknowledgement rejected, with the
+first session launched from the Dashboard picker and later ones created with the picker's
+exact argv; a real Pi extension dialog, and a real Oh My Pi approval and ask-tool question, as
+Input requests; both alert kinds with identity-only bodies on both providers, where the
+Response-ready notification title was captured on Pi and Oh My Pi's Ready is evidenced by its
+sound; visible-pane suppression on both; reconnect baselines and Dashboard detach and reattach
+on Pi; `/new`, `/resume`, `/fork` and `/tree` on both with the expected generations; Pi's
+`/reload` (an extension reload: same conversation, generation unchanged) and Oh My Pi's
+`/reload` (a plugin-resource refresh: summary byte-identical); a source gap — spontaneous on Pi
+under load, forced on Oh My Pi — pausing as `paused_recoverable` and `/ovrcr-reattach`, typed
+into the real TUI, recovering it on both, and on Oh My Pi also on a healthy reporter; Pi
+cancellation and compaction; exit, signals and owned cleanup on both. Pi's built-in dialogs
+(for example the branch summary prompt) publish no request, which is the documented
+extension-only boundary. Still open per record: a Pi provider retry (no cheap way to induce
+one) and Pi's Ctrl-D exit; Oh My Pi's registered stop hook, compaction and advisor paths, its
+fallback dialog (not reachable from the TUI), an explicit Deny row, two requests open at once,
+reattach during an open wait, a same-file session reload (no slash command in 18.1.19),
+Dashboard detach and reattach and the reconnect baseline, the Response-ready notification
+title, and sub-frame tool-lifetime ordering; real Claude and Codex turns in the mixed-provider
+step (only Pi and Oh My Pi credentials were authorised); and actual display or audibility of
+alerts, which the records observe but cannot prove.
+
+Two load-dependent limits were seen while a build ran alongside the first Pi pass (load average
+above 30 on 14 cores) and did not reproduce on an idle machine: the one-second `--version`
+admission probe timed out, so the launch fell back to a plain native command with no reporting,
+and the 900 ms helper deadline dropped frames, which paused reporting until the next boundary.
+The launch-time probe was removed in this branch after that observation: it proved only that
+the executable answered within a second, which a loaded machine can deny an executable that is
+perfectly fine, and a non-runnable executable still fails visibly in the native launch. Doctor
+keeps the probe as a diagnostic. The 900 ms helper deadline is unchanged and remains the spec's
+budget, recorded here as an operating limit rather than a defect in the reviewed code.
+
+Isolation for native runs is by `HOME` alone. Pi 0.85.1 appears to bump the modification
+time of the real `~/.pi/agent` directory at startup even under a foreign `HOME`: both records
+saw it, as a correlation rather than a proof; the first Pi pass also timed the real binary
+against the real home once, recorded there as an operator breach. No file inside that
+directory changed in either record, and every credential copy stayed inside the fixture.
+`PI_CODING_AGENT_DIR` must never be exported for these runs because Oh My Pi honours the same
+variable.

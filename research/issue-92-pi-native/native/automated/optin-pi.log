@@ -1,0 +1,29 @@
+### opt-in installed Pi, REAL binary (expected to expose Defect 1)
+2026-09-14T07:52:59Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/server_lifecycle.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/server_lifecycle-12b32790fbf296fb)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpswVOXP/repo/.git/
+[main (root-commit) cc37a0c] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test installed_pi_managed_launch_binds_the_real_session_and_stays_idle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 2.17s
+
+### opt-in installed Pi, via the fixture --version shim
+2026-09-14T07:53:01Z
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/server_lifecycle.rs (/Users/xlyk/Code/ovrcr/target/debug/deps/server_lifecycle-12b32790fbf296fb)
+
+running 1 test
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpaSH6kN/repo/.git/
+[main (root-commit) 7c8f511] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test installed_pi_managed_launch_binds_the_real_session_and_stays_idle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 1.95s
+
+2026-09-14T07:53:03Z

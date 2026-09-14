@@ -1,0 +1,51 @@
+{
+  "activity": "response_ready",
+  "agent": {
+    "activity": {
+      "quality": "Confirmed",
+      "state": "ResponseReady",
+      "turn": "9034ab57db9e910bf253774e1104b9e0:1"
+    },
+    "activity_revision": 3,
+    "binding": {
+      "conversation": "01a09ecc-48b6-707e-a1c5-384a817f9c02",
+      "generation": 1,
+      "invocation": "c17dbeb19238218519c654d3b6a84b172bad81d3cdabb14c5331f83e9732439e",
+      "provider": "Pi"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "input_requests": [],
+    "input_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "agent_epoch": 1,
+  "context_stale": null,
+  "context_usage": null,
+  "exit_code": null,
+  "exit_signal": null,
+  "id": 12,
+  "label": "pi",
+  "measurement_age_ms": null,
+  "name": "pi-1",
+  "phase": "running",
+  "pid": 35793,
+  "project": "consigint",
+  "reporting_unavailable": false,
+  "started_unix_ms": 1789370577746,
+  "unread": {
+    "activity_revision": 3,
+    "binding": {
+      "conversation": "01a09ecc-48b6-707e-a1c5-384a817f9c02",
+      "generation": 1,
+      "invocation": "c17dbeb19238218519c654d3b6a84b172bad81d3cdabb14c5331f83e9732439e",
+      "provider": "Pi"
+    },
+    "turn": "9034ab57db9e910bf253774e1104b9e0:1"
+  },
+  "workspace": "auth-handoff"
+}

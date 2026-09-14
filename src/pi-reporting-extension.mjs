@@ -8,7 +8,7 @@
 // This extension owns that span: `run` advances on the first `agent_start` of a cycle and
 // holds until settled, so a continuation reports work without opening a new cycle.
 // Bounded delivery lives in the transport module materialized beside this file.
-import { createReporter, outcomeOf } from "./ovrcr-reporting-transport.mjs";
+import { createReporter, idOf, outcomeOf } from "./ovrcr-reporting-transport.mjs";
 
 // Replaced with the JSON-encoded absolute path of the supervising ovrcr binary when the
 // receiver materializes this file for one invocation.
@@ -20,13 +20,6 @@ export default function (pi) {
     binary: OVRCR_BINARY,
     helperArgs: ["report", "pi", "--stdin"],
   });
-
-  // The conversation a transition left, as its identity alone: Pi names a session file
-  // `<timestamp>_<session id>.jsonl` while it binds the bare session id, so this takes the
-  // trailing id and nothing else — never the timestamp, never the directory, never
-  // anything inside the file. Anchored, so a name no bounded id can be read out of yields
-  // null (no expectation) instead of a truncation that would contradict a healthy binding.
-  const idOf = (file) => file?.match(/(?:^|[/_])([A-Za-z0-9][A-Za-z0-9.-]{0,63})\.jsonl$/)?.[1] ?? null;
 
   pi.on("session_start", (event, ctx) => {
     producer.run = 0;

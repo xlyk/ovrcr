@@ -1,0 +1,12 @@
+ pi v0.85.1
+ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+[Extensions]
+  ovrcr-pi-reporting.mjs
+ Reply with the single word: ALPHA
+ Error: Codex error: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+$0.000 (sub) 0.0%/272k (auto)                                                       (openai-codex) gpt-5.4-mini • thinking off

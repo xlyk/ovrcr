@@ -1,0 +1,5 @@
+--- alert dispatch sampler (30ms) start 2026-09-14T09:17:40.450303+00:00 ---
+2026-09-14T09:22:20.329216+00:00 NOTIFICATION pid=41943 :: consigint / worktree-lifecycle / pi-b (#12) OVRCR · input needed
+2026-09-14T09:22:20.407397+00:00 SOUND afplay pid=41949
+2026-09-14T09:24:17.841780+00:00 NOTIFICATION pid=52986 :: consigint / worktree-lifecycle / pi-b (#12) OVRCR · input needed
+2026-09-14T09:24:17.982771+00:00 SOUND afplay pid=52994

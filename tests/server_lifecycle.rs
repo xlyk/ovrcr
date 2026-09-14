@@ -10038,11 +10038,12 @@ fn harness_session_named(
     harness: &str,
     version_line: &str,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    harness_session_dropping(fixture, socket, name, harness, version_line, 0)
+    harness_session_dropping(fixture, socket, name, harness, version_line, 0, false)
 }
 
 /// `drop_sequence` is the source sequence whose helper the transport never spawns: the
 /// frame is lost exactly as a helper killed at its deadline loses one. 0 drops nothing.
+/// `slow_version` makes `--version` outlast the bounded diagnostic probe's one second.
 fn harness_session_dropping(
     fixture: &ControlFixture,
     socket: &Path,
@@ -10050,13 +10051,15 @@ fn harness_session_dropping(
     harness: &str,
     version_line: &str,
     drop_sequence: u64,
+    slow_version: bool,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
     let native = fixture._root.path().join(harness);
+    let delay = if slow_version { "sleep 2; " } else { "" };
     std::fs::write(
         &native,
-        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version_line}\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then {delay}printf '{version_line}\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -10105,7 +10108,24 @@ fn pi_session_dropping(
     name: &str,
     drop_sequence: u64,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    harness_session_dropping(fixture, socket, name, "pi", "0.85.1", drop_sequence)
+    harness_session_dropping(fixture, socket, name, "pi", "0.85.1", drop_sequence, false)
+}
+
+fn omp_session_dropping(
+    fixture: &ControlFixture,
+    socket: &Path,
+    name: &str,
+    drop_sequence: u64,
+) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
+    harness_session_dropping(
+        fixture,
+        socket,
+        name,
+        "omp",
+        "omp/18.1.19",
+        drop_sequence,
+        false,
+    )
 }
 
 fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, command: &str) {
@@ -12063,6 +12083,65 @@ fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
     );
 }
 
+/// The managed launch does not probe the executable: a `--version` slower than the
+/// bounded diagnostic probe's one second — what a loaded machine produced during the
+/// native Pi run — must still be admitted and bound. Doctor keeps the probe, so it
+/// reports the same launch as bound with an unavailable probe.
+#[test]
+fn pi_managed_launch_admits_an_executable_whose_version_outlasts_the_probe() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = harness_session_dropping(
+        &fixture,
+        &fixture.socket,
+        "pi-hooks",
+        "pi",
+        "0.85.1",
+        0,
+        true,
+    );
+    let mut index = 0;
+    pi_callback(&fixture, summary.id, &mut index, "session_start:sess-a");
+    let agent = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("the inserted extension bound the launch");
+    assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+    assert_eq!(agent.binding.conversation, "sess-a");
+    assert_eq!(
+        agent.health.state,
+        ovrcr::protocol::ReporterHealth::Connected
+    );
+    let id = summary.id.0.to_string();
+    let native = fixture._root.path().join("pi");
+    let output = cli_with_output(
+        env!("CARGO_BIN_EXE_ovrcr"),
+        &fixture._root.path().join("config.toml"),
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "pi",
+            "--json",
+            "--session",
+            &id,
+            "--executable",
+            native.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["lifecycle"]["extension"], "loaded_and_bound");
+    assert_eq!(report["session_status"], "bound");
+    assert_eq!(report["probe_status"], "unavailable");
+    assert_eq!(report["version_status"], "unknown");
+}
+
 #[test]
 fn omp_managed_extension_reports_observed_ready_continuations_switches_and_child_inertness() {
     let _guard = env_lock();
@@ -12518,6 +12597,536 @@ fn omp_input_requests_wait_until_the_last_closes_and_alert_once_each() {
     assert!(agent.input_requests.is_empty());
     assert_eq!(lost.unread, Some(unread), "reporter loss keeps Unread");
     dashboard.detach();
+}
+
+#[test]
+fn omp_in_place_transitions_rebind_reload_and_refresh_without_a_new_producer() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "omp-setup");
+    let (summary, _probe) = omp_session_named(&fixture, &fixture.socket, "omp-hooks");
+    let agent = |fixture: &ControlFixture| {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("the session stays bound across every in-place transition")
+    };
+    let binding = |fixture: &ControlFixture| {
+        let agent = agent(fixture);
+        (agent.binding.conversation.clone(), agent.binding.generation)
+    };
+    let mut index = 0;
+
+    // 1. The startup announcement binds the conversation Oh My Pi opened with.
+    pi_callback(&fixture, summary.id, &mut index, "session_start:sess-a");
+    assert_eq!(binding(&fixture), ("sess-a".to_owned(), 1));
+    let started = agent(&fixture);
+    assert_eq!(
+        started.activity.as_ref().unwrap().state,
+        AgentActivity::Idle
+    );
+    assert_eq!(started.health.state, ReporterHealth::Connected);
+
+    // 2-3. One response cycle, settled by an end that declares no continuation.
+    pi_callback(&fixture, summary.id, &mut index, "agent_start");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    let u1 = ready.unread.clone().expect("the observed Ready is unread");
+
+    // 4. An approval is standing open when the conversation changes underneath it.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c1",
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    let waiting = agent(&fixture);
+    assert_eq!(waiting.input_requests.len(), 1);
+    assert_eq!(waiting.input_requests[0].id, "approval:c1");
+    assert_eq!(waiting.input_requests[0].kind, InputKind::Approval);
+
+    // 5. A switch to another conversation, in place on this same producer: the dialogs go
+    //    with the conversation being left, and the new one binds a fresh generation. The
+    //    switch names `sess-a`, which is the conversation this receiver is bound to, so it
+    //    is the transition the receiver expected and must not pause.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "session_switch:sess-b:resume:sess-a",
+    );
+    let switched = agent(&fixture);
+    assert_eq!(
+        switched.input_requests,
+        Vec::new(),
+        "the dialogs went with the conversation being left"
+    );
+    assert_eq!(binding(&fixture), ("sess-b".to_owned(), 2));
+    assert_eq!(switched.health.state, ReporterHealth::Connected);
+    assert_eq!(switched.health.reason, None);
+    let sample = switched
+        .activity
+        .as_ref()
+        .expect("the announcement is Idle");
+    assert_eq!(sample.state, AgentActivity::Idle);
+    assert_eq!(
+        sample.turn, None,
+        "the cycle of the conversation left behind is gone"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(u1.clone()),
+        "a switch is not a review"
+    );
+
+    // 6. Compaction happens inside the same conversation: this extension does not
+    //    subscribe to it at all, so nothing about the binding or the generation moves.
+    let compacted_from = fixture.session_summary(summary.id);
+    pi_callback(&fixture, summary.id, &mut index, "session_compact");
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        compacted_from,
+        "same-conversation compaction preserves the binding"
+    );
+
+    // 7. A -> B -> A is a third generation, never the reuse of the first.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "session_switch:sess-a:resume:sess-b",
+    );
+    assert_eq!(binding(&fixture), ("sess-a".to_owned(), 3));
+
+    // 8. A same-file reload: Oh My Pi's `reload()` switches to the file it is already on,
+    //    so the conversation does not change. There is no other binding to check and no
+    //    generation to spend — but the cycle it interrupted is still abandoned.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "session_switch:sess-a:resume:sess-a",
+    );
+    let reloaded = agent(&fixture);
+    assert_eq!(
+        binding(&fixture),
+        ("sess-a".to_owned(), 3),
+        "a reload does not change the conversation, so it does not change the generation"
+    );
+    assert_eq!(
+        reloaded.activity.as_ref().unwrap().state,
+        AgentActivity::Idle
+    );
+    assert_eq!(reloaded.activity.as_ref().unwrap().turn, None);
+    assert_eq!(reloaded.health.state, ReporterHealth::Connected);
+    assert_eq!(fixture.session_summary(summary.id).unread, Some(u1.clone()));
+
+    // 9. A plugin-resource refresh reloads plugin roots, agents, skills, slash commands
+    //    and MCP servers and never re-instantiates an extension factory: Oh My Pi emits no
+    //    event for it, so no shutdown, no start and no rebind may be fabricated.
+    let refreshed_from = fixture.session_summary(summary.id);
+    pi_callback(&fixture, summary.id, &mut index, "plugin_refresh");
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        refreshed_from,
+        "a plugin-resource refresh is not a lifecycle event"
+    );
+
+    // 10-11. Tree navigation abandons the cycle it was in: what is true afterwards is only
+    //    what Oh My Pi's own API answers, and a historical response is never replayed.
+    pi_callback(&fixture, summary.id, &mut index, "idle:false");
+    pi_callback(&fixture, summary.id, &mut index, "agent_start");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Busy
+    );
+    pi_callback(&fixture, summary.id, &mut index, "session_tree");
+    let navigated = agent(&fixture);
+    assert_eq!(
+        navigated.activity.as_ref().unwrap().state,
+        AgentActivity::Unknown,
+        "a working session that navigated is not idle and not Ready"
+    );
+    assert_eq!(navigated.activity.as_ref().unwrap().turn, None);
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        Some(u1.clone()),
+        "navigation replays no response"
+    );
+    pi_callback(&fixture, summary.id, &mut index, "idle:true");
+    pi_callback(&fixture, summary.id, &mut index, "session_tree");
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Idle
+    );
+
+    // 12. The next genuine cycle Readies on the same binding: one producer survived every
+    //     in-place transition, the reload and the refresh.
+    for command in ["agent_start", "agent_end:ok"] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let later = fixture.session_summary(summary.id);
+    assert_eq!(later.activity, AgentActivity::ResponseReady);
+    assert_eq!(later.agent.as_ref().unwrap().binding.generation, 3);
+    assert_ne!(
+        later.unread,
+        Some(u1),
+        "a genuine later cycle is a new Unread"
+    );
+    let u2 = later.unread.clone().expect("the later Ready is unread");
+
+    // 13. A switch that names a conversation this receiver is not bound to: a transition
+    //     happened that it never saw, so it pauses instead of rebinding.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "session_switch:sess-c:resume:sess-zzz",
+    );
+    let mismatched = agent(&fixture);
+    assert_eq!(mismatched.health.state, ReporterHealth::Unavailable);
+    assert_eq!(
+        mismatched.health.reason.as_deref(),
+        Some("transition_mismatch")
+    );
+    assert_eq!(
+        binding(&fixture),
+        ("sess-a".to_owned(), 3),
+        "a paused receiver keeps the binding it had"
+    );
+    assert_eq!(mismatched.input_requests, Vec::new());
+    assert_eq!(fixture.session_summary(summary.id).unread, Some(u2.clone()));
+
+    // 14. The next trustworthy boundary recovers it once, as a fresh generation.
+    pi_callback(&fixture, summary.id, &mut index, "agent_start");
+    let recovered = agent(&fixture);
+    assert_eq!(binding(&fixture), ("sess-c".to_owned(), 4));
+    assert_eq!(recovered.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        recovered.activity.as_ref().unwrap().state,
+        AgentActivity::Busy
+    );
+    assert_eq!(fixture.session_summary(summary.id).unread, Some(u2));
+
+    // 15-16. Shutdown ends the reporter; Unread outlives it.
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(agent(&fixture).health.state, ReporterHealth::Unavailable);
+    assert!(fixture.session_summary(summary.id).unread.is_some());
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
+fn omp_source_gap_pauses_then_recovers_at_the_next_boundary() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "omp-setup");
+    // Sequence 4 is the approval's close below: its helper is never spawned, so the frame
+    // is lost exactly as a helper killed at its deadline loses one.
+    let (summary, _probe) = omp_session_dropping(&fixture, &fixture.socket, "omp-hooks", 4);
+    let agent = |fixture: &ControlFixture| {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("a paused reporter keeps its binding")
+    };
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",       // 1
+        "agent_start",                // 2
+        "tool_approval_requested:c1", // 3
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    let waiting = fixture.session_summary(summary.id);
+    assert_eq!(waiting.activity, AgentActivity::WaitingInput);
+    assert_eq!(agent(&fixture).input_requests.len(), 1);
+    assert_eq!(agent(&fixture).input_requests[0].kind, InputKind::Approval);
+    assert_eq!(waiting.unread, None, "a request is not a response");
+
+    // 4: the close is lost. The snapshot does not move, and the request still stands.
+    let unmoved = fixture.session_summary(summary.id);
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_resolved:c1:true",
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        unmoved,
+        "a frame that never arrived changes nothing"
+    );
+
+    // 5: the hole is visible, and what this reporter says is no longer certain.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c2",
+    );
+    let paused = agent(&fixture);
+    assert_eq!(paused.health.state, ReporterHealth::Unavailable);
+    assert_eq!(paused.health.reason.as_deref(), Some("source_gap"));
+    assert_eq!(
+        paused.input_requests,
+        Vec::new(),
+        "a paused reporter cannot vouch for the dialog it last saw"
+    );
+    assert_eq!(
+        paused.binding.conversation, "sess-a",
+        "a paused receiver keeps its binding"
+    );
+    assert_eq!(paused.binding.generation, 1);
+
+    // The native session is untouched: it keeps answering, and nothing it says is applied.
+    let quiet = fixture.session_summary(summary.id);
+    pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
+    assert_eq!(
+        fixture.session_summary(summary.id),
+        quiet,
+        "a non-boundary event while paused applies nothing"
+    );
+
+    // The next trustworthy boundary recovers: one fresh generation, nothing restored.
+    pi_callback(&fixture, summary.id, &mut index, "agent_start");
+    let recovered = agent(&fixture);
+    assert_eq!(recovered.binding.conversation, "sess-a");
+    assert_eq!(recovered.binding.generation, 2);
+    assert_eq!(recovered.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        recovered.activity.as_ref().unwrap().state,
+        AgentActivity::Busy
+    );
+    assert_eq!(recovered.input_requests, Vec::new());
+
+    // A later genuine response cycle Readies and is Unread normally.
+    pi_callback(&fixture, summary.id, &mut index, "agent_end:ok");
+    let ready = fixture.session_summary(summary.id);
+    assert_eq!(ready.activity, AgentActivity::ResponseReady);
+    let unread = ready.unread.expect("the cycle after a recovery is unread");
+    assert_eq!(unread.binding.generation, 2);
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(agent(&fixture).health.state, ReporterHealth::Unavailable);
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
+}
+
+#[test]
+fn omp_reattach_recovers_a_paused_reporter_during_an_input_wait() {
+    let _guard = env_lock();
+    use ovrcr::protocol::{AgentActivity, InputKind, ReporterHealth};
+    const INPUT: &str = "OVRCR · input needed";
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "omp-setup");
+    // Sequence 4 is the approval's open below: the frame is lost, and the close that
+    // follows it is the hole.
+    let (summary, _probe) = omp_session_dropping(&fixture, &fixture.socket, "omp-hooks", 4);
+    let mut dashboard = DesktopAlertDashboard::start_for(
+        &fixture,
+        Some("desktop_notifications = true\n"),
+        "omp-hooks",
+    );
+    // The Oh My Pi session must stay hidden for an Input-needed alert to fire.
+    dashboard.select("setup", "HOOK_READY");
+    let agent = |fixture: &ControlFixture| {
+        fixture
+            .session_summary(summary.id)
+            .agent
+            .expect("a paused reporter keeps its binding")
+    };
+    let requests = |fixture: &ControlFixture| -> Vec<(String, InputKind)> {
+        agent(fixture)
+            .input_requests
+            .into_iter()
+            .map(|request| (request.id, request.kind))
+            .collect()
+    };
+    let mut index = 0;
+    for command in [
+        "session_start:sess-a",        // 1
+        "agent_start",                 // 2
+        "tool_execution_start:ask:q1", // 3
+    ] {
+        pi_callback(&fixture, summary.id, &mut index, command);
+    }
+    assert_eq!(
+        requests(&fixture),
+        [("question:q1".to_owned(), InputKind::Select)]
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(1, summary.id, "omp-hooks"),
+        [INPUT]
+    );
+    // 4: the approval's open is lost. 5: the close that follows is the hole, and the
+    // question the user is looking at is no longer something this reporter can vouch for.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_requested:c1",
+    );
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_approval_resolved:c1:true",
+    );
+    let paused = agent(&fixture);
+    assert_eq!(paused.health.state, ReporterHealth::Unavailable);
+    assert_eq!(paused.health.reason.as_deref(), Some("source_gap"));
+    assert_eq!(
+        paused.input_requests,
+        Vec::new(),
+        "the runtime clears the standing set when a reporter goes uncertain"
+    );
+
+    // Doctor tells a paused reporter apart from a lost one and names the control Oh My Pi
+    // actually has, through the real CLI.
+    let doctor = cli_with_output(
+        env!("CARGO_BIN_EXE_ovrcr"),
+        &fixture._root.path().join("config.toml"),
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "omp",
+            "--json",
+            "--session",
+            &summary.id.0.to_string(),
+            "--executable",
+            fixture._root.path().join("omp").to_str().unwrap(),
+        ],
+    );
+    assert!(
+        doctor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(doctor["lifecycle"]["delivery"], "paused_recoverable");
+    assert_eq!(doctor["lifecycle"]["health"], "Unavailable");
+    assert_eq!(doctor["capabilities"]["recovery"], "available");
+    let remediation = doctor["remediation"].to_string();
+    assert!(remediation.contains("/ovrcr-reattach"), "{doctor}");
+    assert!(remediation.contains("Oh My Pi"), "{doctor}");
+
+    // The recovery control is usable while delivery is paused: it runs inside the
+    // extension that is already loaded, with no fresh native launch and no reload of the
+    // conversation.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "run_command:ovrcr-reattach",
+    );
+    let recovered = agent(&fixture);
+    assert_eq!(recovered.binding.conversation, "sess-a");
+    assert_eq!(recovered.binding.generation, 2);
+    assert_eq!(recovered.health.state, ReporterHealth::Connected);
+    assert_eq!(
+        recovered.activity.as_ref().unwrap().state,
+        AgentActivity::Idle,
+        "recovery baselines activity from the extension's own API, never from silence"
+    );
+    assert_eq!(recovered.input_requests, Vec::new());
+    assert_eq!(
+        fixture.session_summary(summary.id).unread,
+        None,
+        "a reattach reviews nothing and invents no response"
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NOTICE=[info] OVRCR reporting reattached");
+
+    // An old request cannot clear a newer one after reattachment: a genuinely new question
+    // opens and alerts, the *old* question's close arrives late, and the new one stands.
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_execution_start:ask:q2",
+    );
+    assert_eq!(
+        requests(&fixture),
+        [("question:q2".to_owned(), InputKind::Select)]
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "omp-hooks"),
+        [INPUT, INPUT],
+        "the question opened after the reattach alerts once; nothing is replayed"
+    );
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_execution_end:ask:q1",
+    );
+    assert_eq!(
+        requests(&fixture),
+        [("question:q2".to_owned(), InputKind::Select)],
+        "a close for a request this generation never opened cannot clear a newer one"
+    );
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::WaitingInput
+    );
+    assert_eq!(
+        dashboard.wait_alert_titles(2, summary.id, "omp-hooks"),
+        [INPUT, INPUT],
+        "a stale close is not an alert"
+    );
+    pi_callback(
+        &fixture,
+        summary.id,
+        &mut index,
+        "tool_execution_end:ask:q2",
+    );
+    assert_eq!(requests(&fixture), []);
+    assert_eq!(
+        fixture.session_summary(summary.id).activity,
+        AgentActivity::Idle,
+        "closing the last request restores the underlying activity"
+    );
+    pi_callback(&fixture, summary.id, &mut index, "session_shutdown:quit");
+    assert_eq!(agent(&fixture).health.state, ReporterHealth::Unavailable);
+    dashboard.detach();
+    assert_eq!(
+        fixture.request(Request::SendTerminal {
+            session: summary.id,
+            text: "exit".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    fixture.wait_terminal_contains(summary.id, "PI_NATIVE_EXIT=17");
 }
 
 #[test]

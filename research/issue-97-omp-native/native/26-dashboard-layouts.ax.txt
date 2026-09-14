@@ -1,0 +1,24 @@
+# Accessibility state of the OVRCR GUI dashboard window (window_id 15780), captured with
+# mcp__computer-use__app_screenshot / app_ax_find during the #97 native run.
+#
+# TINY layout (640x460 window, PTY 56x29):
+#   [0]  AXTextArea/AXUnknown  [0,32 640x428]  "OVRCR terminal"
+#   [34] AXButton/AXCloseButton      [8,8 16x16]
+#   [35] AXButton/AXFullScreenButton [54,8 16x16]
+#   [36] AXButton/AXMinimizeButton   [31,8 16x16]
+#   38 elements total, 4 actionable.
+#
+# NORMAL layout (1100x932 frame, PTY 126x66):
+#   [0]  AXTextArea/AXUnknown  [0,32 1100x900] "OVRCR terminal"
+#   [50] AXButton/AXCloseButton      [8,8 16x16]
+#   [51] AXButton/AXFullScreenButton [54,8 16x16]
+#   [52] AXButton/AXMinimizeButton   [31,8 16x16]
+#   54 elements total, 4 actionable; the accessibility walk is reported truncated.
+#
+# LIMITATION, recorded exactly as issue 92 recorded it: this helper publishes the whole
+# dashboard as ONE AXTextArea named "OVRCR terminal" and withholds the row text, so the
+# accessibility tree cannot assert rendered rows, sidebar entries, dialog options or the
+# header. Rendered-text assertions in this record therefore come from
+# `ovrcr terminal read --json` (the server's own rendered screen) and the visual
+# assertions from the screencaptures beside this file. Correct text alone does not prove
+# rendering, which is why both were captured.

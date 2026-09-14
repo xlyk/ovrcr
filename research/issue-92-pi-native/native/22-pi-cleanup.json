@@ -1,0 +1,107 @@
+# fixture process inventory 2026-09-14T07:49:03Z
+{"id":1,"name":"local","pid":25967,"phase":"running"}
+{"id":2,"name":"local","pid":25989,"phase":"running"}
+{"id":3,"name":"local","pid":26029,"phase":"running"}
+{"id":4,"name":"local","pid":26071,"phase":"running"}
+{"id":5,"name":"implement lifecycle cleanup","pid":26076,"phase":"running"}
+{"id":6,"name":"review websocket shutdown","pid":26088,"phase":"running"}
+{"id":7,"name":"plan snapshot restore","pid":26097,"phase":"running"}
+{"id":8,"name":"review auth handoff","pid":26115,"phase":"running"}
+{"id":9,"name":"build pipeline progress","pid":26138,"phase":"running"}
+{"id":10,"name":"review scope quality","pid":26175,"phase":"running"}
+{"id":13,"name":"pi-root","pid":16864,"phase":"running"}
+{"id":14,"name":"pi-child","pid":31611,"phase":"running"}
+25749 25701 25701 ./ovrcr-gui
+25802 25701 25749 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr server
+58074 57979 58072 ugrep -G --ignore-files --hidden -I --exclude-dir=.git --exclude-dir=.svn --exclude-dir=.hg --exclude-dir=.bzr --exclude-dir=.jj --exclude-dir=.sl -E ovrcr-gui|Ma
+26177 26177 25749 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+16864 16864 25802 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run pi -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//
+31611 31611 25802 /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr agent run pi -- /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T//
+
+# P15 — native exit by signal (pi-child #14) and graceful close (pi-root #13)
+## ext dirs before
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-8630be8fc3e8df4a1f6af70d83f256ee1f01ecc3a04ddd38aed649d42523b37a
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-d6e23b2e5a76c5af55f072eb08e0479bec6a50ffdf6669c77315f6721fdfc634
+## unread on pi-child before the signal
+{"activity":"response_ready","unread_turn":"217eea361674a2aded5579eec8573260:1","health":"Connected"}
+## SIGTERM to the managed pi leader 31611
+## pi-child after SIGTERM
+{"phase":"exited","exit_code":0,"exit_signal":null,"activity":"response_ready","unread_turn":"217eea361674a2aded5579eec8573260:1","health":{"reason":"supervisor_disconnected","state":"Unavailable"}}
+## ext dirs after the child exited (one of the two must be gone)
+/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-8630be8fc3e8df4a1f6af70d83f256ee1f01ecc3a04ddd38aed649d42523b37a
+## child pid/pgid 31611 after exit
+(eval):kill:7: kill 31611 failed: no such process
+kill -0 31611 -> ESRCH
+(eval):kill:7: kill -31611 failed: no such process
+kill -0 -31611 (pgid) -> ESRCH
+## graceful close of pi-root #13
+{"ok":true}
+## pi-root after close
+[{"id":14,"name":"pi-child","phase":"exited","exit_code":0,"exit_signal":null,"activity":"response_ready","unread_turn":"217eea361674a2aded5579eec8573260:1","health":"Unavailable"}]
+## ext dirs after both exited
+(none: both materialized extension dirs removed)
+## root pid/pgid 16864
+(eval):kill:14: kill 16864 failed: no such process
+kill -0 16864 -> ESRCH
+(eval):kill:14: kill -16864 failed: no such process
+kill -0 -16864 (pgid) -> ESRCH
+
+# final cleanup verification 2026-09-14T07:51:06Z
+## launcher (ovrcr-gui) exit
+
+[exited with code 0]
+## gui/demo processes remaining
+## demo root
+(eval):7: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-*
+(removed)
+## demo socket
+(removed)
+## materialized extension dirs
+(eval):9: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-*
+(none)
+## recorded fixture PIDs and PGIDs
+pid 25749 ESRCH
+pgid 25749 ESRCH
+pid 25802 ESRCH
+pgid 25802 ESRCH
+pid 16864 ESRCH
+pgid 16864 ESRCH
+pid 31611 ESRCH
+pgid 31611 ESRCH
+pid 26177 ESRCH
+pgid 26177 ESRCH
+pid 25967 ESRCH
+pgid 25967 ESRCH
+pid 25989 ESRCH
+pgid 25989 ESRCH
+pid 26029 ESRCH
+pgid 26029 ESRCH
+pid 26071 ESRCH
+pgid 26071 ESRCH
+pid 26076 ESRCH
+pgid 26076 ESRCH
+pid 26088 ESRCH
+pgid 26088 ESRCH
+pid 26097 ESRCH
+pgid 26097 ESRCH
+pid 26115 ESRCH
+pgid 26115 ESRCH
+pid 26138 ESRCH
+pgid 26138 ESRCH
+pid 26175 ESRCH
+pgid 26175 ESRCH
+
+## second launcher run (unmodified picker, real pi) cleanup 2026-09-14T07:56:00Z
+launcher exit:
+
+[exited with code 0]
+gui processes:
+demo roots:
+(eval):6: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-*
+(removed)
+materialized extension dirs:
+(eval):7: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-*
+(none)
+pi leader 96467:
+ESRCH
+pgid ESRCH

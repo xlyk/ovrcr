@@ -1,0 +1,6 @@
+# O4 stale acknowledgement: mark-reviewed with the O2 (turn :2) unread object while :3 is presented
+2026-09-14T08:35:23Z
+expected={"activity_revision": 5, "binding": {"conversation": "01a09f05-df15-74d5-919e-df2f3ac8593f", "generation": 1, "invocation": "1d4f00bdc6aaee7b9119772396f04e5644f69a4fb84f81b6f5db6790d3ed40ba", "provider": "Omp"}, "turn": "75d191d1261e2ab822f6b36627519eff:2"}
+{"error":{"code":"Conflict","message":"Ready observation changed; inspect the unread response before reviewing it"}}
+exit=1
+{"id": 11, "name": "omp-1", "phase": "running", "activity": "response_ready", "unread": {"activity_revision": 7, "binding": {"conversation": "01a09f05-df15-74d5-919e-df2f3ac8593f", "generation": 1, "invocation": "1d4f00bdc6aaee7b9119772396f04e5644f69a4fb84f81b6f5db6790d3ed40ba", "provider": "Omp"}, "turn": "75d191d1261e2ab822f6b36627519eff:3"}, "q": "Observed", "state": "ResponseReady", "turn": "75d191d1261e2ab822f6b36627519eff:3", "gen": 1, "conv": "01a09f05", "inv": "1d4f00bd", "health": {"reason": null, "state": "Connected"}, "reqs": [], "arev": 7, "irev": 0, "hrev": 0}

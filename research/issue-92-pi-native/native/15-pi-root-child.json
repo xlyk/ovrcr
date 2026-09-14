@@ -1,0 +1,9 @@
+# P10 — root/child isolation: two independent managed Pi bindings
+## before (root idle, child idle, no unread anywhere)
+[{"id":13,"name":"pi-root","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"e12aa26b27ba"},{"id":14,"name":"pi-child","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"9ba7bc95d701"}]
+## alert note: neither pi pane is the visible pane (the dashboard shows consigint/auth-handoff local), so the child Ready must alert in the background
+[{"id":13,"name":"pi-root","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"e12aa26b27ba"},{"id":14,"name":"pi-child","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"9ba7bc95d701"}]
+[{"id":13,"name":"pi-root","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"e12aa26b27ba"},{"id":14,"name":"pi-child","activity":"busy","state":"Busy","turn":"217eea361674a2aded5579eec8573260:1","unread_turn":null,"inv":"9ba7bc95d701"}]
+[{"id":13,"name":"pi-root","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"e12aa26b27ba"},{"id":14,"name":"pi-child","activity":"response_ready","state":"ResponseReady","turn":"217eea361674a2aded5579eec8573260:1","unread_turn":"217eea361674a2aded5579eec8573260:1","inv":"9ba7bc95d701"}]
+## after
+[{"id":13,"name":"pi-root","activity":"idle","state":"Idle","turn":null,"unread_turn":null,"inv":"e12aa26b27ba"},{"id":14,"name":"pi-child","activity":"response_ready","state":"ResponseReady","turn":"217eea361674a2aded5579eec8573260:1","unread_turn":"217eea361674a2aded5579eec8573260:1","inv":"9ba7bc95d701"}]

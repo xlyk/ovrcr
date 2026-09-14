@@ -1,0 +1,26 @@
+# 44 — second-pass cleanup
+2026-09-14T09:34:00Z
+ 2:34  up 8 days, 17:56, 6 users, load averages: 6.45 6.35 5.87
+## launcher exit
+
+[exited with code 0]
+## gui/demo processes remaining
+## demo root
+(eval):7: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-*
+(removed)
+## fixture socket
+(removed)
+## materialized extension dirs
+(eval):9: no matches found: /var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-pi-*
+(none)
+## recorded PIDs/PGIDs
+pid 14369 ESRCH
+pgid 14369 ESRCH
+pid 14571 ESRCH
+pgid 14571 ESRCH
+pid 14514 ESRCH
+pgid 14514 ESRCH
+pid 36772 ESRCH
+pgid 36772 ESRCH
+pid 96467 ESRCH
+pgid 96467 ESRCH

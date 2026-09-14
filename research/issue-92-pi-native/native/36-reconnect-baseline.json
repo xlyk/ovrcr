@@ -1,0 +1,45 @@
+# 36 — AC3 reconnect baseline / AC4 detach-reattach
+ 2:22  up 8 days, 17:44, 6 users, load averages: 7.05 5.57 5.16
+## mechanism: Ctrl-g is not deliverable through computer-use background input
+## (app_key supports only return/escape/backspace/delete/cmd+a), so the graceful
+## `Ctrl-g q` detach could not be used. The dashboard TUI process is killed instead
+## and the GUI's own "Restart dashboard" control is clicked, which opens a NEW
+## dashboard connection to the same server -- the reconnect path under test.
+## Recorded as an abrupt disconnect, not a user detach.
+
+## open a request on pi-b (#12), keep the Unread on pi-1 (#11)
+## state before the disconnect
+[{"id":11,"name":"pi-1","activity":"response_ready","unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"gen":1},{"id":12,"name":"pi-b","activity":"waiting_input","unread_turn":null,"input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p1","kind":"Select"}],"gen":1}]
+## alert-log line count before the disconnect: 3
+## killing the dashboard TUI (pid 14571)
+## while detached: sessions and their state must survive
+[{"id":11,"name":"pi-1","phase":"running","activity":"response_ready","unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"gen":1,"health":"Connected"},{"id":12,"name":"pi-b","phase":"running","activity":"waiting_input","unread_turn":null,"input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p1","kind":"Select"}],"gen":1,"health":"Connected"}]
+## after clicking "Restart dashboard" (new dashboard connection)
+ 2:23  up 8 days, 17:45, 6 users, load averages: 6.10 5.56 5.18
+[{"id":11,"name":"pi-1","phase":"running","activity":"response_ready","state":"ResponseReady","turn":"f652b6b9530834527cafcb5bd8e17d83:1","unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"gen":1,"health":"Connected","activity_revision":5,"input_revision":3},{"id":12,"name":"pi-b","phase":"running","activity":"waiting_input","state":"Idle","turn":null,"unread_turn":null,"input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p1","kind":"Select"}],"gen":1,"health":"Connected","activity_revision":1,"input_revision":2}]
+## BASELINE ASSERTION: no alert may be dispatched by the reconnect for the
+## already-open request or the already-set Unread. New lines in the alert log:
+## (end of new alert lines)
+
+# 37 — GRACEFUL detach (`q` in browse mode) and reattach
+ 2:23  up 8 days, 17:45, 6 users, load averages: 5.85 5.57 5.20
+## the restarted dashboard came up in browse mode, so `q` Detach was reachable this time.
+## GUI shows "Dashboard exited: Success" (37-graceful-detach.jpg).
+## while detached
+[{"id":11,"name":"pi-1","phase":"running","activity":"response_ready","unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"gen":1,"health":"Connected","activity_revision":5,"input_revision":3},{"id":12,"name":"pi-b","phase":"running","activity":"waiting_input","unread_turn":null,"input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p1","kind":"Select"}],"gen":1,"health":"Connected","activity_revision":1,"input_revision":2}]
+## alert-log line count before reattach: 3
+## after the graceful reattach
+ 2:24  up 8 days, 17:46, 6 users, load averages: 7.96 6.09 5.39
+[{"id":11,"name":"pi-1","activity":"response_ready","unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"gen":1,"activity_revision":5,"input_revision":3},{"id":12,"name":"pi-b","activity":"waiting_input","unread_turn":null,"input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p1","kind":"Select"}],"gen":1,"activity_revision":1,"input_revision":2}]
+## BASELINE: new alert lines after reattach (must be none)
+## (end)
+## OLD-EVENT REJECTION: revisions must be unchanged across both disconnects --
+## pi-1 activity_revision 5 / input_revision 3 and pi-b activity_revision 1 /
+## input_revision 2 were the values before the first disconnect. A replayed
+## historical event would have advanced them or produced a second Ready.
+
+## POSITIVE HALF: a genuinely NEW request after the reconnect, pane not visible
+{"activity":"waiting_input","input_requests":[{"id":"026ea8f1aeb60ec244a46a111d3779b2:p2","kind":"Confirm"}],"input_revision":4}
+## new alert lines (must show exactly one input-needed alert):
+2026-09-14T09:24:17.841780+00:00 NOTIFICATION pid=52986 :: consigint / worktree-lifecycle / pi-b (#12) OVRCR · input needed
+2026-09-14T09:24:17.982771+00:00 SOUND afplay pid=52994

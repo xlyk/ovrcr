@@ -1,0 +1,35 @@
+### scoped: cargo test -p ovrcr --lib report::
+2026-09-14T07:52:32Z
+test report::tests::agent_hook_claude_rejects_malformed_or_oversized_input ... ok
+test report::admission::tests::collector_process_loss_automatically_publishes_unavailable_health ... ok
+test report::admission::tests::initial_resume_failed_bind_status_closes_without_rebinding ... ok
+test report::admission::tests::initial_resume_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::initial_admission_lost_bind_reply_uses_original_operation_status ... ok
+test report::admission::tests::initial_admission_probe_cleans_descendants_after_leader_exit ... ok
+test report::codex::tests::codex_identity_count_exhaustion_disables_instead_of_evicting ... ok
+test report::codex::tests::codex_identity_byte_exhaustion_disables_instead_of_evicting ... ok
+POST_EXIT_DRAIN_NATIVE_OUTPUT
+test report::admission::tests::native_completion_drains_past_pending_pre_exit_eof ... ok
+test report::claude_metrics::tests::production_identity_cap_preserves_oldest_and_freezes_at_cap_plus_one ... ok
+test report::admission::tests::blocked_version_probe_reaps_the_exact_group_within_budget ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+### scoped: cargo test -p ovrcr --test server_lifecycle pi
+2026-09-14T07:52:33Z
+ create mode 100644 README
+test pi_replacement_binds_the_foreground_conversation_and_rejects_the_retired_producer ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpRRXUXi/repo/.git/
+[main (root-commit) e2fd0a8] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pi_source_gap_recovers_at_a_continuation_start_and_still_readies ... ok
+Initialized empty Git repository in /private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/.tmpxlhOR8/repo/.git/
+[main (root-commit) caa091e] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+test pi_source_gap_pauses_then_recovers_at_the_next_boundary ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 99 filtered out; finished in 15.19s
+
+2026-09-14T07:52:49Z

@@ -1,0 +1,22 @@
+Accessibility dump, compact Dashboard layout, window 15792 (dev.ovrcr.gui), second pass.
+Window resized from 1100x932 to 522x932 by dragging its bottom-right corner
+(computer-use app_drag), then restored.
+
+  coordinate frame: 522x932
+  [0]  AXTextArea/AXUnknown   [0,32 522x900] "OVRCR terminal"
+  [50] AXButton/AXCloseButton [8,8 16x16]
+  [51] AXButton/AXFullScreenButton [54,8 16x16]
+  [52] AXButton/AXMinimizeButton [31,8 16x16]
+  (54 elements total, 4 actionable; the walk is truncated by the window.)
+
+As in the first pass, this window publishes the whole dashboard as one AXTextArea and
+withholds per-row text, so AX cannot assert rendered rows. Rendered-text assertions come
+from `ovrcr terminal read --json` (35-tiny-layout.screen.txt) and the visual assertion from
+35-tiny-layout.jpg.
+
+What the compact capture shows, with nothing clipped or overlapping:
+  - header: "Unread response ready · confirmed"
+  - sidebar: the selected row "pi-1" carries the unread bullet and the "pi" agent label;
+    project/workspace rows and their agent-model labels still fit at 522 px
+  - pane: the full "Reply with the single word: GOLF" / "GOLF" exchange and Pi's status line
+  - footer: "Terminal mode  Ctrl-g browse"

@@ -1,0 +1,10 @@
+built_utc=2026-09-14T07:00:19Z
+bundle=/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app
+d07b737c8993518c8a77de7d13934adb4b6eccf48b49ead80f304f2edeadc27f  /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+0e9c7f7438633a61e7aa7cd9380c257e563f42c76dcd9e1c17e6761e34ca1768  /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+pi_path=/Users/xlyk/.local/bin/pi
+pi_version=0.85.1
+omp_path=/Users/xlyk/.local/bin/omp
+omp_version=omp/18.1.19
+host=macOS 26.5.2 arm64
+model_selected=openai-codex/gpt-5.4-mini (oauth, subscription quota)

@@ -1,0 +1,10 @@
+{
+  "activity_revision": 3,
+  "binding": {
+    "conversation": "01a09ecc-48b6-707e-a1c5-384a817f9c02",
+    "generation": 1,
+    "invocation": "c17dbeb19238218519c654d3b6a84b172bad81d3cdabb14c5331f83e9732439e",
+    "provider": "Pi"
+  },
+  "turn": "9034ab57db9e910bf253774e1104b9e0:1"
+}
