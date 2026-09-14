@@ -479,20 +479,29 @@ must not be read as one another:
   hosted check counts at the verified revision are recorded as open in both records; nothing
   here claims them.
 
-What the native runs established beyond the automated suites: two distinct responses per
-provider with Busy, Ready (Confirmed for Pi, Observed for Oh My Pi), explicit review, an earlier
-Unread surviving new work and a stale acknowledgement rejected; a real Pi extension dialog and a
-real Oh My Pi approval and ask-tool question as Input requests; both alert kinds with
-identity-only bodies, visible-pane suppression and reconnect baselines without replay; `/new`,
-`/resume`, `/fork`, `/tree`, same-file reload and plugin refresh with the expected generation
-behaviour; a forced source gap pausing as `paused_recoverable` and `/ovrcr-reattach` recovering
-it on both providers; Pi cancellation and compaction; detach and reattach of the Dashboard;
-exit, signals and owned cleanup. Pi's built-in dialogs (for example the branch summary prompt)
-publish no request, which is the documented extension-only boundary. Still open per record:
-a provider retry on Pi (no cheap way to induce one), Oh My Pi's registered stop hook,
-compaction and advisor paths, the Oh My Pi fallback dialog (not reachable from the TUI), an
-explicit Deny row, two Oh My Pi requests open at once, reattach during an open Oh My Pi wait,
-and actual display or audibility of alerts, which the records observe but cannot prove.
+What the native runs established beyond the automated suites, per record: two distinct
+responses per provider with Busy, Ready (Confirmed for Pi, Observed for Oh My Pi), explicit
+review, an earlier Unread surviving new work and a stale acknowledgement rejected, with the
+first session launched from the Dashboard picker and later ones created with the picker's
+exact argv; a real Pi extension dialog, and a real Oh My Pi approval and ask-tool question, as
+Input requests; both alert kinds with identity-only bodies on both providers, where the
+Response-ready notification title was captured on Pi and Oh My Pi's Ready is evidenced by its
+sound; visible-pane suppression on both; reconnect baselines and Dashboard detach and reattach
+on Pi; `/new`, `/resume`, `/fork` and `/tree` on both with the expected generations; Pi's
+`/reload` (an extension reload: same conversation, generation unchanged) and Oh My Pi's
+`/reload` (a plugin-resource refresh: summary byte-identical); a source gap — spontaneous on Pi
+under load, forced on Oh My Pi — pausing as `paused_recoverable` and `/ovrcr-reattach`, typed
+into the real TUI, recovering it on both, and on Oh My Pi also on a healthy reporter; Pi
+cancellation and compaction; exit, signals and owned cleanup on both. Pi's built-in dialogs
+(for example the branch summary prompt) publish no request, which is the documented
+extension-only boundary. Still open per record: a Pi provider retry (no cheap way to induce
+one) and Pi's Ctrl-D exit; Oh My Pi's registered stop hook, compaction and advisor paths, its
+fallback dialog (not reachable from the TUI), an explicit Deny row, two requests open at once,
+reattach during an open wait, a same-file session reload (no slash command in 18.1.19),
+Dashboard detach and reattach and the reconnect baseline, the Response-ready notification
+title, and sub-frame tool-lifetime ordering; real Claude and Codex turns in the mixed-provider
+step (only Pi and Oh My Pi credentials were authorised); and actual display or audibility of
+alerts, which the records observe but cannot prove.
 
 Two load-dependent limits were seen while a build ran alongside the first Pi pass (load average
 above 30 on 14 cores) and did not reproduce on an idle machine: the one-second `--version`
@@ -501,7 +510,10 @@ and the 900 ms helper deadline dropped frames, which paused reporting until the 
 Both budgets are the spec's; they are recorded here as operating limits, not defects in the
 reviewed code.
 
-Isolation for native runs is by `HOME` alone. Pi 0.85.1 bumps the modification time of the
-real `~/.pi/agent` directory at startup even under a foreign `HOME`; no file inside it changed
-in either record, and every credential copy stayed inside the fixture. `PI_CODING_AGENT_DIR`
-must never be exported for these runs because Oh My Pi honours the same variable.
+Isolation for native runs is by `HOME` alone. Pi 0.85.1 appears to bump the modification
+time of the real `~/.pi/agent` directory at startup even under a foreign `HOME`: both records
+saw it, as a correlation rather than a proof; the first Pi pass also timed the real binary
+against the real home once, recorded there as an operator breach. No file inside that
+directory changed in either record, and every credential copy stayed inside the fixture.
+`PI_CODING_AGENT_DIR` must never be exported for these runs because Oh My Pi honours the same
+variable.

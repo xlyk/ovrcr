@@ -153,8 +153,10 @@ prompts, responses, tool data or prompt titles.
 
 Pi replaces the whole extension factory when a session is replaced (new, resume, fork) and
 when extensions reload. The producer that shut down is retired, and its successor's
-`session_start` binds the conversation now in the foreground as a fresh reporting
-generation: blank activity, no requests, and the server-owned unread response untouched.
+`session_start` binds the conversation now in the foreground. A replacement is a fresh
+reporting generation: blank activity, no requests, and the server-owned unread response
+untouched. An extension reload keeps the same conversation and therefore the same
+generation; its open cycle and requests were already closed by the retiring producer.
 The announcement names the conversation it left by id, so a transition OVRCR never saw is
 detected rather than assumed. Returning to an earlier conversation is a new generation too,
 never the reuse of the old one, and every later frame from a retired producer is ignored
