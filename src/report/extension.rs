@@ -483,3 +483,1060 @@ fn namespace_of(declared: Option<&str>, id: Option<&str>) -> Option<Namespace> {
     };
     id?.starts_with(prefix).then_some(namespace)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::reporter::Frames;
+    use crate::report::reporter::scripted::{Observed, Supervisor};
+    use crate::report::{omp, pi};
+
+    fn start(harness: &'static Harness) -> (Events, Reporter, Supervisor) {
+        let (reporter, supervisor) = Supervisor::reporter(harness.provider);
+        (
+            Events {
+                harness,
+                current: None,
+                open_requests: Vec::new(),
+            },
+            reporter,
+            supervisor,
+        )
+    }
+    fn managed() -> (Events, Reporter, Supervisor) {
+        start(&pi::HARNESS)
+    }
+    fn deadline() -> Instant {
+        Instant::now() + std::time::Duration::from_secs(10)
+    }
+    fn drive(events: &mut Events, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
+        events.frame(reporter, input, true, deadline())
+    }
+    fn harness_event(
+        harness: &Harness,
+        instance: &str,
+        sequence: u64,
+        event: &str,
+        run: Option<u64>,
+        outcome: &str,
+    ) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({"provider":harness.name,"origin":harness.origin,"payload":{
+            "schema":1,"event":event,"mode":"tui","owner_pid":1,"instance":instance,"sequence":sequence,
+            "session_id":"sess-a","run":run,"outcome":outcome}}))
+        .unwrap()
+    }
+    fn event(
+        instance: &str,
+        sequence: u64,
+        event: &str,
+        run: Option<u64>,
+        outcome: &str,
+    ) -> Vec<u8> {
+        harness_event(&pi::HARNESS, instance, sequence, event, run, outcome)
+    }
+    fn with(bytes: &[u8], field: &str, value: serde_json::Value) -> Vec<u8> {
+        let mut payload: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        payload["payload"][field] = value;
+        serde_json::to_vec(&payload).unwrap()
+    }
+    fn states(observed: &[Observed]) -> Vec<(u64, AgentActivity, Option<String>, SampleQuality)> {
+        Supervisor::activity(observed)
+            .into_iter()
+            .map(|(generation, _, state, turn, quality)| (generation, state, turn, quality))
+            .collect()
+    }
+    fn ids(events: &Events) -> Vec<&str> {
+        events
+            .open_requests
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn unknown_producer_is_admitted_only_by_session_start() {
+        let (mut events, mut reporter, supervisor) = managed();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 1, "agent_start", Some(1), "none")
+            ),
+            reporter::IGNORED
+        );
+        assert!(
+            reporter.binding().is_none(),
+            "an unannounced instance never reaches the binding"
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 2, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            states(&supervisor.observed()),
+            vec![(1, AgentActivity::Idle, None, SampleQuality::Observed)]
+        );
+    }
+
+    #[test]
+    fn stale_and_replayed_sequences_are_ignored_before_any_mutation() {
+        let (mut events, mut reporter, supervisor) = managed();
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 5, "session_start", None, "none"),
+        );
+        for sequence in [5, 4, 1] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &event("a", sequence, "agent_end", Some(1), "ok")
+                ),
+                reporter::IGNORED
+            );
+        }
+        // The next sequence in order still applies: nothing advanced the fence.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 6, "agent_start", Some(1), "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            states(&supervisor.observed()),
+            vec![
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("a:1".into()),
+                    SampleQuality::Observed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn foreign_provider_non_tui_and_grandchild_payloads_are_ignored() {
+        let (mut events, mut reporter, supervisor) = managed();
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 1, "session_start", None, "none"),
+        );
+        let rpc = with(
+            &event("a", 2, "agent_start", Some(1), "none"),
+            "mode",
+            "rpc".into(),
+        );
+        assert_eq!(drive(&mut events, &mut reporter, &rpc), reporter::IGNORED);
+        let codex =
+            br#"{"provider":"codex","origin":"codex-hook","payload":{"hook_event_name":"Stop"}}"#;
+        assert_eq!(drive(&mut events, &mut reporter, codex), reporter::IGNORED);
+        assert_eq!(
+            events.frame(
+                &mut reporter,
+                &event("a", 3, "agent_start", Some(1), "none"),
+                false,
+                deadline()
+            ),
+            reporter::IGNORED,
+            "a frame that is not the native root's is never this receiver's"
+        );
+        // Sequence 2 still applies, so no ignored payload advanced the fence.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 2, "agent_start", Some(1), "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(states(&supervisor.observed()).len(), 2);
+    }
+
+    #[test]
+    fn each_harness_ignores_the_other_harness_envelope() {
+        // Oh My Pi cannot be labelled Pi to bypass the provider check, and the reverse.
+        for (harness, foreign) in [(&pi::HARNESS, &omp::HARNESS), (&omp::HARNESS, &pi::HARNESS)] {
+            let (mut events, mut reporter, supervisor) = start(harness);
+            drive(
+                &mut events,
+                &mut reporter,
+                &harness_event(harness, "a", 1, "session_start", None, "none"),
+            );
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &harness_event(foreign, "a", 2, "agent_start", Some(1), "none")
+                ),
+                reporter::IGNORED,
+                "{} accepted {}",
+                harness.name,
+                foreign.name
+            );
+            // Its own envelope at the same sequence still reaches the state machine.
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &harness_event(harness, "a", 2, "agent_start", Some(1), "none")
+                ),
+                reporter::ACCEPTED
+            );
+            assert_eq!(states(&supervisor.observed()).len(), 2);
+        }
+    }
+
+    #[test]
+    fn a_settled_or_repeated_run_that_is_not_the_open_cycle_publishes_nothing() {
+        let (mut events, mut reporter, supervisor) = managed();
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 1, "session_start", None, "none"),
+        );
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 2, "agent_start", Some(2), "none"),
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 3, "agent_settled", Some(1), "ok")
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(events.current, Some((2, "a:2".into())));
+        // A repeated start for the open run is the continuation a retry, an automatic
+        // compaction or a queued follow-up emits: already open, already published.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 4, "agent_start", Some(2), "none")
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(events.current, Some((2, "a:2".into())));
+        assert_eq!(
+            states(&supervisor.observed()),
+            vec![
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("a:2".into()),
+                    SampleQuality::Observed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reload_retires_the_producer_it_observed_shutting_down() {
+        let (mut events, mut reporter, supervisor) = managed();
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 1, "session_start", None, "none"),
+        );
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 2, "agent_start", Some(1), "none"),
+        );
+        let reload = with(
+            &event("a", 3, "session_shutdown", None, "none"),
+            "reason",
+            "reload".into(),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &reload),
+            reporter::IGNORED
+        );
+        assert!(events.current.is_none() && !reporter.closed());
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 4, "session_start", None, "none")
+            ),
+            reporter::IGNORED,
+            "the retired producer cannot re-admit itself"
+        );
+        // The successor drives the quit path, which ends reporting for good.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("b", 1, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED
+        );
+        let quit = with(
+            &event("b", 2, "session_shutdown", None, "none"),
+            "reason",
+            "quit".into(),
+        );
+        assert_eq!(drive(&mut events, &mut reporter, &quit), reporter::IGNORED);
+        assert!(reporter.closed());
+        assert_eq!(states(&supervisor.observed()).len(), 3);
+    }
+
+    fn input_event(
+        instance: &str,
+        sequence: u64,
+        name: &str,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&event(instance, sequence, name, None, "none")).unwrap();
+        value["payload"]["request_id"] = request_id.into();
+        if let Some(kind) = kind {
+            value["payload"]["kind"] = kind.into();
+        }
+        serde_json::to_vec(&value).unwrap()
+    }
+    fn namespaced_event(
+        instance: &str,
+        sequence: u64,
+        name: &str,
+        namespace: &str,
+        request_id: &str,
+        kind: Option<&str>,
+    ) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&input_event(instance, sequence, name, request_id, kind))
+                .unwrap();
+        value["payload"]["namespace"] = namespace.into();
+        serde_json::to_vec(&value).unwrap()
+    }
+    /// A receiver whose producer is admitted and whose binding is live.
+    fn announced() -> (Events, Reporter, Supervisor) {
+        let (mut events, mut reporter, supervisor) = managed();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 1, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED
+        );
+        (events, reporter, supervisor)
+    }
+
+    #[test]
+    fn the_request_set_keeps_its_order_and_removes_only_the_closed_member() {
+        let (mut events, mut reporter, supervisor) = announced();
+        for (sequence, namespace, id, kind) in [
+            (2, "approval", "approval:c1", Some("approval")),
+            (3, "question", "question:q1", Some("select")),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &namespaced_event("a", sequence, "input_open", namespace, id, kind)
+                ),
+                reporter::ACCEPTED
+            );
+        }
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &namespaced_event(
+                    "a",
+                    4,
+                    "input_open",
+                    "approval",
+                    "approval:c1",
+                    Some("approval")
+                )
+            ),
+            reporter::IGNORED,
+            "a repeated open of a known id never mutates the set"
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 5, "input_close", "question:zz", None)
+            ),
+            reporter::IGNORED,
+            "an unknown close never mutates the set"
+        );
+        assert_eq!(ids(&events), ["approval:c1", "question:q1"]);
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 6, "input_close", "approval:c1", None)
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(ids(&events), ["question:q1"]);
+        assert!(!reporter.closed());
+        // The set is published whole every time, so the runtime never merges deltas.
+        assert_eq!(
+            Supervisor::inputs(&supervisor.observed()),
+            vec![
+                vec![("approval:c1".to_owned(), InputKind::Approval)],
+                vec![
+                    ("approval:c1".to_owned(), InputKind::Approval),
+                    ("question:q1".to_owned(), InputKind::Select)
+                ],
+                vec![("question:q1".to_owned(), InputKind::Select)],
+            ]
+        );
+    }
+
+    #[test]
+    fn the_thirty_third_open_is_ignored_without_disabling() {
+        let (mut events, mut reporter, supervisor) = announced();
+        events.open_requests = (0..MAX_INPUT_REQUESTS)
+            .map(|n| (format!("approval:c{n}"), InputKind::Approval))
+            .collect();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &namespaced_event(
+                    "a",
+                    2,
+                    "input_open",
+                    "approval",
+                    "approval:overflow",
+                    Some("approval")
+                )
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(events.open_requests.len(), MAX_INPUT_REQUESTS);
+        assert!(
+            !reporter.closed(),
+            "the bound drops the new request, it never disables reporting"
+        );
+        assert!(Supervisor::inputs(&supervisor.observed()).is_empty());
+    }
+
+    #[test]
+    fn an_open_whose_namespace_kind_or_identity_is_wrong_is_ignored() {
+        let (mut events, mut reporter, supervisor) = announced();
+        for (sequence, namespace, id, kind) in [
+            // The prefix must match the declared namespace.
+            (2, "approval", "question:c1", Some("approval")),
+            (3, "question", "approval:q1", Some("select")),
+            (4, "approval", "c1", Some("approval")),
+            // An unknown namespace is not a namespace.
+            (5, "dialog", "dialog:c1", Some("select")),
+            // A prompt may not claim to be an approval.
+            (6, "prompt", "a:p1", Some("approval")),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &namespaced_event("a", sequence, "input_open", namespace, id, kind)
+                ),
+                reporter::IGNORED,
+                "{namespace} / {id}"
+            );
+        }
+        for (sequence, id, kind) in [
+            (7, "a:p1", Some("dialog")),
+            (8, "a:p1", None),
+            (9, "a:\u{1b}p1", Some("select")),
+            (10, "", Some("select")),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &input_event("a", sequence, "input_open", id, kind)
+                ),
+                reporter::IGNORED,
+                "{id:?} {kind:?}"
+            );
+        }
+        assert!(events.open_requests.is_empty() && !reporter.closed());
+        assert!(Supervisor::inputs(&supervisor.observed()).is_empty());
+    }
+
+    #[test]
+    fn an_approval_or_question_namespace_fixes_the_kind_it_publishes() {
+        // The kind follows the namespace, so a mislabelled payload cannot make an approval
+        // look like a select in the Dashboard.
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &namespaced_event(
+                    "a",
+                    2,
+                    "input_open",
+                    "approval",
+                    "approval:c1",
+                    Some("select")
+                )
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            Supervisor::inputs(&supervisor.observed()),
+            vec![vec![("approval:c1".to_owned(), InputKind::Approval)]]
+        );
+        assert_eq!(
+            namespace_of(Some("question"), Some("question:q1"))
+                .unwrap()
+                .kind(Some("confirm")),
+            Some(InputKind::Select)
+        );
+        assert_eq!(
+            namespace_of(None, Some("a:p1"))
+                .unwrap()
+                .kind(Some("editor")),
+            Some(InputKind::Editor),
+            "a missing namespace is a prompt and keeps its own kind"
+        );
+    }
+
+    #[test]
+    fn input_close_for_an_unknown_or_stale_request_is_ignored() {
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 2, "input_close", "a:p1", None)
+            ),
+            reporter::IGNORED,
+            "no request is open"
+        );
+        assert!(events.open_requests.is_empty());
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 3, "input_open", "a:p1", Some("select"))
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 4, "input_close", "a:p2", None)
+            ),
+            reporter::IGNORED,
+            "a close only closes its own request"
+        );
+        assert_eq!(ids(&events), ["a:p1"]);
+        assert!(!reporter.closed());
+        assert_eq!(
+            Supervisor::inputs(&supervisor.observed()),
+            vec![vec![("a:p1".to_owned(), InputKind::Select)]]
+        );
+    }
+
+    #[test]
+    fn session_start_and_shutdown_publish_the_close_before_forgetting_the_request() {
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 2, "input_open", "a:p1", Some("select"))
+            ),
+            reporter::ACCEPTED
+        );
+        // The conversation-switch path publishes the close against the binding that
+        // owned it, before the rebind.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 3, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(events.open_requests.is_empty());
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 4, "input_open", "a:p2", Some("select"))
+            ),
+            reporter::ACCEPTED
+        );
+        // A reload retires the producer, and the dialog it left is published closed
+        // first: otherwise a re-admitted producer keeps a stale WaitingInput on screen.
+        let reload = with(
+            &event("a", 5, "session_shutdown", None, "none"),
+            "reason",
+            "reload".into(),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &reload),
+            reporter::IGNORED
+        );
+        assert!(events.open_requests.is_empty() && !reporter.closed());
+        assert_eq!(
+            Supervisor::inputs(&supervisor.observed()),
+            vec![
+                vec![("a:p1".to_owned(), InputKind::Select)],
+                Vec::new(),
+                vec![("a:p2".to_owned(), InputKind::Select)],
+                Vec::new(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_gap_pauses_before_the_event_is_applied_and_only_a_boundary_recovers_it() {
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &input_event("a", 2, "input_open", "a:p1", Some("select"))
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 4, "agent_start", Some(1), "none")
+            ),
+            reporter::ACCEPTED,
+            "the hole is reported, the event it carried is not applied"
+        );
+        assert!(reporter.paused());
+        assert!(
+            events.current.is_none() && events.open_requests.is_empty(),
+            "the gapped event never opened a cycle, and what was on screen is no longer certain"
+        );
+        // Nothing else applies while reporting is uncertain, and nothing is inferred
+        // from the silence.
+        for (sequence, name, run) in [
+            (5, "agent_settled", Some(1)),
+            (6, "agent_end", Some(1)),
+            (7, "session_shutdown", None),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &event("a", sequence, name, run, "ok")
+                ),
+                reporter::IGNORED,
+                "{name} while paused"
+            );
+        }
+        assert!(reporter.paused() && !reporter.closed());
+        // A trustworthy boundary recovers, once, as a fresh Reporting generation.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 8, "agent_start", Some(1), "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(!reporter.paused());
+        assert_eq!(events.current, Some((1, "a:1".into())));
+        let observed = supervisor.observed();
+        assert_eq!(
+            Supervisor::health(&observed),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "source_gap".to_owned()
+            )]
+        );
+        assert_eq!(
+            states(&observed),
+            vec![
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (
+                    2,
+                    AgentActivity::Busy,
+                    Some("a:1".into()),
+                    SampleQuality::Observed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_overflow_notice_pauses_instead_of_disabling() {
+        let (mut events, mut reporter, supervisor) = announced();
+        let notice = with(
+            &event("a", 2, "unavailable", None, "none"),
+            "reason",
+            "overflow".into(),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &notice),
+            reporter::ACCEPTED
+        );
+        assert!(reporter.paused() && !reporter.closed());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "source_overflow".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_transition_this_receiver_never_saw_pauses_instead_of_rebinding() {
+        let (mut events, mut reporter, supervisor) = announced();
+        let elsewhere = with(
+            &event("a", 2, "session_start", None, "none"),
+            "previous",
+            "sess-b".into(),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &elsewhere),
+            reporter::ACCEPTED
+        );
+        assert!(reporter.paused());
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "transition_mismatch".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn an_unobserved_producer_replacement_pauses_and_retires_what_it_replaced() {
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("b", 1, "session_start", None, "none")
+            ),
+            reporter::ACCEPTED,
+            "the replacement is admitted; what it replaced was never observed closing"
+        );
+        assert!(reporter.paused());
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 9, "agent_start", Some(1), "none")
+            ),
+            reporter::IGNORED,
+            "every delayed frame of the retired instance is ignored"
+        );
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ovrcr_protocol::ReporterHealth::Unavailable,
+                "producer_replaced".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn cycle_invalidated_forgets_the_response_cycle() {
+        let (mut events, mut reporter, supervisor) = announced();
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 2, "agent_start", Some(1), "none"),
+        );
+        let tree = with(
+            &event("a", 3, "cycle_invalidated", None, "none"),
+            "idle",
+            true.into(),
+        );
+        assert_eq!(drive(&mut events, &mut reporter, &tree), reporter::ACCEPTED);
+        assert!(
+            events.current.is_none(),
+            "tree navigation invalidates the cycle it left behind"
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 4, "agent_settled", Some(1), "ok")
+            ),
+            reporter::IGNORED,
+            "the settled boundary of a forgotten cycle is not a Ready"
+        );
+        assert_eq!(
+            states(&supervisor.observed()),
+            vec![
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("a:1".into()),
+                    SampleQuality::Observed
+                ),
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_re_announced_conversation_invalidates_the_open_cycle() {
+        // Oh My Pi switches conversations in place on the same instance: the settled event
+        // of the cycle left behind must not publish against the new binding.
+        let (mut events, mut reporter, supervisor) = start(&omp::HARNESS);
+        let frame =
+            |sequence, name, run| harness_event(&omp::HARNESS, "a", sequence, name, run, "ok");
+        drive(&mut events, &mut reporter, &frame(1, "session_start", None));
+        drive(
+            &mut events,
+            &mut reporter,
+            &frame(2, "agent_start", Some(1)),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &frame(3, "session_start", None)),
+            reporter::ACCEPTED
+        );
+        assert!(events.current.is_none());
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &frame(4, "agent_settled", Some(1))
+            ),
+            reporter::IGNORED
+        );
+        assert_eq!(states(&supervisor.observed()).len(), 3);
+    }
+
+    #[test]
+    fn a_recovering_continuation_publishes_its_cycle_on_the_fresh_generation() {
+        // Pi emits `agent_start` again for a retry, an automatic compaction or a queued
+        // follow-up, with the same run: the cycle identity of the generation that paused
+        // must not silence the frame that recovered it, or the Dashboard would sit at
+        // Unknown while Pi works and the response would never become Ready.
+        let (mut events, mut reporter, supervisor) = announced();
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 2, "agent_start", Some(1), "none")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(events.current, Some((1, "a:1".into())));
+        // A hole in the source sequence pauses; the cycle is forgotten locally.
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("a", 5, "agent_end", Some(1), "ok")
+            ),
+            reporter::ACCEPTED
+        );
+        assert!(reporter.paused() && events.current.is_none());
+        for (sequence, name, outcome) in [
+            (6, "agent_start", "none"),
+            (7, "agent_end", "ok"),
+            (8, "agent_settled", "ok"),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &event("a", sequence, name, Some(1), outcome)
+                ),
+                reporter::ACCEPTED,
+                "{name} after the recovery"
+            );
+        }
+        assert_eq!(
+            Supervisor::activity(&supervisor.observed())
+                .into_iter()
+                .map(|(generation, revision, state, turn, _)| (generation, revision, state, turn))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, 1, AgentActivity::Idle, None),
+                (1, 2, AgentActivity::Busy, Some("a:1".into())),
+                (2, 1, AgentActivity::Busy, Some("a:1".into())),
+                (2, 2, AgentActivity::ResponseReady, Some("a:1".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_reattach_on_a_healthy_receiver_is_a_fresh_generation_that_keeps_its_fences() {
+        // The reattach command restarts the producer's run counter, so without a fresh
+        // generation the cycles that follow reuse identities this receiver has already
+        // published and are dropped. The command is a recovery whatever the health was.
+        let (mut events, mut reporter, supervisor) = managed();
+        // An earlier instance shuts down where this receiver can see it, earning a fence
+        // the recovery must keep, and its successor takes over.
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("z", 1, "session_start", None, "none"),
+        );
+        let retired = with(
+            &event("z", 2, "session_shutdown", None, "none"),
+            "reason",
+            "reload".into(),
+        );
+        assert_eq!(
+            drive(&mut events, &mut reporter, &retired),
+            reporter::IGNORED
+        );
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 1, "session_start", None, "none"),
+        );
+        drive(
+            &mut events,
+            &mut reporter,
+            &event("a", 2, "agent_start", Some(1), "none"),
+        );
+        let mut reattach = with(
+            &event("a", 3, "session_start", None, "none"),
+            "reason",
+            "reattach".into(),
+        );
+        reattach = with(&reattach, "idle", false.into());
+        assert_eq!(
+            drive(&mut events, &mut reporter, &reattach),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(
+                &mut events,
+                &mut reporter,
+                &event("z", 3, "session_start", None, "none")
+            ),
+            reporter::IGNORED,
+            "a retired producer stays retired across a recovery"
+        );
+        // The cycle numbering starts over with the producer's counters.
+        for (sequence, name, outcome) in [
+            (4, "agent_start", "none"),
+            (5, "agent_end", "ok"),
+            (6, "agent_settled", "ok"),
+        ] {
+            assert_eq!(
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &event("a", sequence, name, Some(1), outcome)
+                ),
+                reporter::ACCEPTED,
+                "{name} after a reattach"
+            );
+        }
+        assert_eq!(
+            states(&supervisor.observed()),
+            vec![
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (1, AgentActivity::Idle, None, SampleQuality::Observed),
+                (
+                    1,
+                    AgentActivity::Busy,
+                    Some("a:1".into()),
+                    SampleQuality::Observed
+                ),
+                // The reattach frame says Pi is not idle: what it is doing is unknown until
+                // a fresh authoritative event, never Idle and never the response before it.
+                (2, AgentActivity::Unknown, None, SampleQuality::Observed),
+                (
+                    2,
+                    AgentActivity::Busy,
+                    Some("a:1".into()),
+                    SampleQuality::Observed
+                ),
+                (
+                    2,
+                    AgentActivity::ResponseReady,
+                    Some("a:1".into()),
+                    SampleQuality::Confirmed
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_settled_quality_is_the_harness_claim_about_its_own_boundary() {
+        // Pi's `agent_settled` fires once the whole prompt is finished; Oh My Pi has no
+        // settled event of its own, so a stop hook may still continue after a clean end.
+        for (harness, expected) in [
+            (&pi::HARNESS, SampleQuality::Confirmed),
+            (&omp::HARNESS, SampleQuality::Observed),
+        ] {
+            let (mut events, mut reporter, supervisor) = start(harness);
+            for (sequence, name, run) in [
+                (1, "session_start", None),
+                (2, "agent_start", Some(1)),
+                (3, "agent_settled", Some(1)),
+            ] {
+                drive(
+                    &mut events,
+                    &mut reporter,
+                    &harness_event(harness, "a", sequence, name, run, "ok"),
+                );
+            }
+            let settled = states(&supervisor.observed());
+            assert_eq!(
+                settled.last(),
+                Some(&(
+                    1,
+                    AgentActivity::ResponseReady,
+                    Some("a:1".into()),
+                    expected
+                )),
+                "{}",
+                harness.name
+            );
+        }
+    }
+
+    #[test]
+    fn a_transition_names_the_conversation_it_left() {
+        let binding = |conversation: &str| ovrcr_protocol::AgentBinding {
+            provider: AgentProvider::Pi,
+            invocation: "inv".into(),
+            conversation: conversation.into(),
+            generation: 1,
+        };
+        assert!(
+            !transition_mismatch(None, Some(&binding("sess-a"))),
+            "no previous is no expectation"
+        );
+        assert!(
+            !transition_mismatch(Some("sess-a"), None),
+            "nothing is bound yet"
+        );
+        assert!(!transition_mismatch(
+            Some("sess-a"),
+            Some(&binding("sess-a"))
+        ));
+        assert!(
+            transition_mismatch(Some("sess-b"), Some(&binding("sess-a"))),
+            "the conversation being left is not the one this receiver is bound to"
+        );
+    }
+}

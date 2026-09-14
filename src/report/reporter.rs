@@ -534,3 +534,9 @@ impl Drop for Reporter {
 pub fn own_frame(input: &[u8], native_root: bool) -> bool {
     native_root && input.len() <= HOOK_INPUT_LIMIT
 }
+
+#[cfg(test)]
+pub(crate) mod scripted;
+
+#[cfg(test)]
+mod tests;

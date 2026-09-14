@@ -685,3 +685,579 @@ impl Hooks {
         reporter.close();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::report::reporter::Frames;
+    use crate::report::reporter::scripted::{Answer, Observed, Supervisor};
+    use ovrcr_protocol::ReporterHealth;
+
+    const EXPECTED: &str = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+
+    fn hooks(initial_source: InitialSource) -> Hooks {
+        Hooks {
+            expected: Some(EXPECTED.to_owned()),
+            initial_source: Some(initial_source),
+            announced: false,
+            prompt: None,
+            metrics: None,
+            transcript_path: None,
+            collector: None,
+            cost_watermark: None,
+            collector_caught_up: false,
+        }
+    }
+    fn envelope(payload: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "provider":"claude",
+            "origin":"claude-hook",
+            "payload":payload,
+        }))
+        .unwrap()
+    }
+    fn start(source: &str) -> Vec<u8> {
+        envelope(serde_json::json!({
+            "hook_event_name":"SessionStart",
+            "source":source,
+            "session_id":EXPECTED,
+            "transcript_path":"/exact/root.jsonl",
+        }))
+    }
+    fn deadline() -> Instant {
+        Instant::now() + Duration::from_secs(10)
+    }
+    fn drive(hooks: &mut Hooks, reporter: &mut Reporter, input: &[u8]) -> Vec<u8> {
+        hooks.frame(reporter, input, true, deadline())
+    }
+
+    #[test]
+    fn initial_resume_rejects_wrong_child_missing_source_and_end_without_binding() {
+        for payload in [
+            serde_json::json!({"hook_event_name":"SessionStart","session_id":EXPECTED,"transcript_path":"/exact/root.jsonl"}),
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":EXPECTED,"transcript_path":"/exact/root.jsonl","agent_id":"child"}),
+            serde_json::json!({"hook_event_name":"SessionEnd","reason":"other","session_id":EXPECTED}),
+        ] {
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Resume);
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &envelope(payload)),
+                reporter::IGNORED
+            );
+            assert!(
+                !reporter.closed() && reporter.binding().is_none(),
+                "this invocation is still awaiting its certified announcement"
+            );
+            assert!(supervisor.observed().is_empty());
+        }
+        // A startup announcement contradicts a resume launch: the identity this
+        // invocation certified is not what started, and nothing replaces it here.
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Resume);
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("startup")),
+            reporter::IGNORED
+        );
+        assert!(reporter.closed());
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("resume")),
+            reporter::IGNORED,
+            "the correct announcement afterwards does not reopen it"
+        );
+        assert!(reporter.binding().is_none());
+        assert!(supervisor.observed().is_empty());
+
+        for payload in [
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":"wrong-conversation","transcript_path":"/exact/root.jsonl"}),
+            serde_json::json!({"hook_event_name":"SessionStart","source":"resume","session_id":EXPECTED}),
+        ] {
+            let (mut reporter, _supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(InitialSource::Resume);
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &envelope(payload)),
+                reporter::IGNORED
+            );
+            assert!(reporter.closed() && reporter.binding().is_none());
+        }
+    }
+
+    #[test]
+    fn the_certified_announcement_binds_once_and_a_repeat_is_ignored() {
+        for (initial_source, source) in [
+            (InitialSource::Startup, "startup"),
+            (InitialSource::Resume, "resume"),
+        ] {
+            let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+            let mut receiver = hooks(initial_source);
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &start(source)),
+                reporter::ACCEPTED
+            );
+            assert_eq!(
+                reporter
+                    .binding()
+                    .map(|binding| binding.conversation.as_str()),
+                Some(EXPECTED)
+            );
+            assert_eq!(
+                receiver.transcript_path.as_deref(),
+                Some("/exact/root.jsonl")
+            );
+            assert_eq!(
+                drive(&mut receiver, &mut reporter, &start(source)),
+                reporter::IGNORED,
+                "a repeated announcement is not a second binding"
+            );
+            let observed = supervisor.observed();
+            assert_eq!(
+                observed
+                    .iter()
+                    .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn a_lost_bind_reply_is_recovered_by_the_next_announcement() {
+        // The Bind and the receipt re-read that follows it are both withheld, so this
+        // receiver answers unavailable and the announcement that repeats asks for the
+        // original operation's receipt rather than binding a second generation.
+        let (mut reporter, supervisor) = Supervisor::scripted(
+            AgentProvider::Claude,
+            vec![Answer::Withhold, Answer::Withhold],
+        );
+        let mut receiver = hooks(InitialSource::Startup);
+        assert_eq!(
+            receiver.frame(
+                &mut reporter,
+                &start("startup"),
+                true,
+                Instant::now() + Duration::from_millis(200)
+            ),
+            reporter::UNAVAILABLE
+        );
+        assert!(!reporter.closed() && reporter.binding().is_none());
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("startup")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            reporter.binding().map(|binding| binding.generation),
+            Some(1)
+        );
+        let observed = supervisor.observed();
+        assert_eq!(
+            observed
+                .iter()
+                .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                .count(),
+            1,
+            "the retry asked for a receipt, it never bound again"
+        );
+        assert!(
+            observed
+                .iter()
+                .any(|entry| matches!(entry, Observed::Status(_)))
+        );
+    }
+
+    #[test]
+    fn a_refused_binding_status_closes_without_rebinding() {
+        let (mut reporter, supervisor) =
+            Supervisor::scripted(AgentProvider::Claude, vec![Answer::Refuse]);
+        let mut receiver = hooks(InitialSource::Resume);
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("resume")),
+            reporter::UNAVAILABLE
+        );
+        assert!(reporter.closed() && reporter.binding().is_none());
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("resume")),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            supervisor
+                .observed()
+                .iter()
+                .filter(|entry| matches!(entry, Observed::Bind { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn collector_process_loss_automatically_publishes_unavailable_health() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let helper = root.path().join("collector-helper");
+        std::fs::write(&helper, "#!/bin/sh\n/bin/sleep 60\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let source = super::super::collector::CollectorSource {
+            path: root.path().join("transcript"),
+            conversation: EXPECTED.into(),
+        };
+        std::fs::write(&source.path, "").unwrap();
+        let collector =
+            super::super::collector::CollectorController::spawn(&helper, source).unwrap();
+        let collector_pid = collector.process_id().unwrap() as i32;
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("startup")),
+            reporter::ACCEPTED
+        );
+        let bound = reporter.binding().cloned().unwrap();
+        receiver.collector = Some(collector);
+        assert_eq!(unsafe { libc::kill(-collector_pid, libc::SIGKILL) }, 0);
+        let give_up = Instant::now() + Duration::from_secs(2);
+        while !reporter.paused() && Instant::now() < give_up {
+            receiver.poll(&mut reporter, give_up);
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            Supervisor::health(&supervisor.observed()),
+            vec![(
+                ReporterHealth::Unavailable,
+                "collector_unavailable".to_owned()
+            )]
+        );
+        assert_eq!(
+            reporter.binding(),
+            Some(&bound),
+            "a lost reader does not lose the binding it was reading for"
+        );
+    }
+
+    #[test]
+    fn native_completion_drains_past_pending_pre_exit_eof() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let (mut reporter, supervisor) = Supervisor::reporter(AgentProvider::Claude);
+        let mut receiver = hooks(InitialSource::Startup);
+        assert_eq!(
+            drive(&mut receiver, &mut reporter, &start("startup")),
+            reporter::ACCEPTED
+        );
+        let source = super::super::collector::CollectorSource {
+            path: root.path().join("transcript"),
+            conversation: EXPECTED.into(),
+        };
+        let begin = serde_json::to_vec(&serde_json::json!({ "Start": &source })).unwrap();
+        for (name, tokens) in [("a", 10), ("b", 30)] {
+            let mut usage = Hooks::empty_metrics().usage.value;
+            usage.input_tokens = Some(tokens);
+            let snapshot = super::super::collector::CollectorSnapshot {
+                usage,
+                source_revision: None,
+                diagnostic: None,
+                caught_up: true,
+                rebuilding: false,
+                retained_identities: 1,
+                retained_bytes: 100,
+            };
+            let payload = serde_json::to_vec(&snapshot).unwrap();
+            let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+            frame.extend(payload);
+            std::fs::write(root.path().join(name), frame).unwrap();
+        }
+        let executable = root.path().join("helper");
+        // The marker is written only after A is flushed to the real helper pipe.
+        // The helper cannot send B until the controller issues its next Read.
+        std::fs::write(&executable, format!(
+            "#!/bin/sh\ncd '{}'\n/bin/dd bs=1 count={} 2>/dev/null >/dev/null\n/bin/cat a\n/usr/bin/touch ready\n/bin/dd bs=1 count=1 2>/dev/null >/dev/null\n/bin/cat transcript\n/bin/sleep 60\n",
+            root.path().display(), begin.len() + 4,
+        )).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::copy(root.path().join("a"), &source.path).unwrap();
+        let collector =
+            super::super::collector::CollectorController::spawn(&executable, source).unwrap();
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        while !root.path().join("ready").exists() && Instant::now() < ready_deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            root.path().join("ready").exists(),
+            "pre-exit EOF was not queued"
+        );
+        receiver.collector = Some(collector);
+        let argv = args(&[
+            "/bin/sh",
+            "-c",
+            &format!(
+                "/bin/cp '{0}/b' '{0}/transcript'; printf 'POST_EXIT_DRAIN_NATIVE_OUTPUT\\n'; exit 17",
+                root.path().display(),
+            ),
+        ]);
+        let started = Instant::now();
+        let status = ovrcr_runtime::agent_runner::run_native(&argv, move |ready, _| {
+            assert!(ready);
+            Some(Box::new(move |event| {
+                // Keep the deliberately queued pre-exit response pending until the real
+                // native-completion callback, reproducing the disputed ordering exactly.
+                if let ovrcr_runtime::agent_runner::HookEvent::NativeCompleted { deadline } = event
+                {
+                    receiver.finish(&mut reporter, deadline);
+                }
+                Vec::new()
+            }))
+        })
+        .unwrap();
+        assert_eq!(status.code(), Some(17));
+        assert!(started.elapsed() < Duration::from_millis(2500));
+        let observed = supervisor.observed();
+        let final_metrics = observed
+            .iter()
+            .find_map(|entry| match entry {
+                Observed::Finalize(report) => match &report.observation {
+                    ovrcr_protocol::AgentObservation::Metrics(metrics) => Some(metrics.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("a bound invocation finalizes its accounting");
+        assert_eq!(
+            final_metrics.usage.value.input_tokens,
+            Some(30),
+            "finalization consumed only the queued pre-exit EOF"
+        );
+        assert_eq!(
+            final_metrics.usage.value.coverage,
+            ovrcr_protocol::UsageCoverage::Partial
+        );
+    }
+
+    fn args(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn initial_admission_argv_grammar_is_conservative_and_value_aware() {
+        for arguments in [
+            vec!["claude"],
+            vec!["claude", "--model=sonnet", "prompt mentioning --resume"],
+            vec![
+                "claude",
+                "--setting-sources",
+                "",
+                "--settings",
+                "path with spaces",
+                "--strict-mcp-config",
+                "--agents",
+                "{}",
+                "--agent",
+                "fixture-root",
+            ],
+            vec!["claude", "--", "doctor"],
+            vec!["claude", "-n", "name"],
+        ] {
+            assert!(
+                eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
+                "{arguments:?}"
+            );
+        }
+        for option in [
+            "--session-id=x",
+            "-c",
+            "--continue",
+            "-r",
+            "--resume=x",
+            "--fork-session",
+            "--from-pr",
+            "--teleport",
+            "--bg",
+            "--background",
+            "--cloud",
+            "--environment=x",
+            "--tmux",
+            "--remote",
+            "--exec",
+            "-p",
+            "--print",
+            "--bare",
+            "--safe-mode",
+            "--init-only",
+            "--init",
+            "--maintenance",
+            "--help",
+            "-h",
+            "--version",
+            "-v",
+            "--unknown-mode",
+            "--worktree",
+            "--add-dir",
+        ] {
+            assert!(
+                !eligible_argv(&args(&["claude", option]), ClaudeVersion::V2_1_267),
+                "{option}"
+            );
+        }
+        for arguments in [
+            vec!["claude", "doctor"],
+            vec!["claude", "agents"],
+            vec!["claude", "--model"],
+            vec!["claude", "--model", "--resume"],
+            vec!["claude", "--strict-mcp-config=true"],
+            vec!["other", "--agent", "root"],
+            vec!["claude", "two", "prompts"],
+        ] {
+            assert!(
+                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_267),
+                "{arguments:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn initial_admission_argv_accepts_only_certified_explicit_uuid_resume() {
+        let uuid = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+        let resume = args(&[
+            "claude",
+            "--resume",
+            uuid,
+            "--model",
+            "sonnet",
+            "--strict-mcp-config",
+        ]);
+        for version in [ClaudeVersion::V2_1_267, ClaudeVersion::V2_1_268] {
+            assert_eq!(
+                eligible_launch(&resume, version),
+                Some(EligibleLaunch::Resume(uuid.into()))
+            );
+        }
+        assert_eq!(
+            eligible_launch(&args(&["claude", "-r", uuid]), ClaudeVersion::V2_1_268),
+            Some(EligibleLaunch::Resume(uuid.into()))
+        );
+        assert!(!eligible_argv(
+            &args(&["claude", "-r", uuid]),
+            ClaudeVersion::V2_1_267
+        ));
+
+        for arguments in [
+            vec!["claude", "--resume"],
+            vec!["claude", "-r"],
+            vec!["claude", "-r=5ebc5f9b-54b5-4928-9955-dc81c23743dd"],
+            vec!["claude", "--resume=5ebc5f9b-54b5-4928-9955-dc81c23743dd"],
+            vec!["claude", "--resume", "5EBC5F9B-54B5-4928-9955-DC81C23743DD"],
+            vec![
+                "claude",
+                "--resume",
+                "{5ebc5f9b-54b5-4928-9955-dc81c23743dd}",
+            ],
+            vec!["claude", "--resume", "5ebc5f9b54b549289955dc81c23743dd"],
+            vec!["claude", "--resume", "00000000-0000-0000-0000-000000000000"],
+            vec!["claude", "--resume", "5ebc5f9b-54b5-3928-9955-dc81c23743dd"],
+            vec!["claude", "--resume", "5ebc5f9b-54b5-4928-7955-dc81c23743dd"],
+            vec!["claude", "--resume", uuid, "--resume", uuid],
+            vec!["claude", "--resume", uuid, "-r", uuid],
+            vec!["claude", "-r", "5EBC5F9B-54B5-4928-9955-DC81C23743DD"],
+            vec!["claude", "-r", uuid, "prompt"],
+            vec!["claude", "--resume", uuid, "prompt"],
+            vec!["claude", "--resume", uuid, "--continue"],
+            vec!["claude", "--resume", uuid, "--fork-session", uuid],
+            vec!["claude", "--resume", uuid, "--session-id", uuid],
+            vec!["claude", "--resume", uuid, "--background"],
+            vec!["claude", "--resume", uuid, "--print"],
+        ] {
+            assert!(
+                !eligible_argv(&args(&arguments), ClaudeVersion::V2_1_268),
+                "{arguments:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_version_probe_reaps_the_exact_group_within_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let fifo = root.path().join("blocked");
+        let identity = root.path().join("pid");
+        let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "printf '%s' \"$$\" > \"$1\"; IFS= read -r line < \"$2\"",
+                "probe",
+            ])
+            .arg(&identity)
+            .arg(&fifo);
+        let started = Instant::now();
+        assert!(probe_command(command).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let pid = std::fs::read_to_string(identity)
+            .unwrap()
+            .parse::<libc::pid_t>()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(-pid, 0) },
+            -1,
+            "blocked probe group leaked"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[test]
+    fn initial_admission_probe_cleans_descendants_after_leader_exit() {
+        for (version, exit, expected) in [
+            ("2.1.267", 0, true),
+            ("2.1.268", 0, true),
+            ("2.1.266", 0, false),
+            ("2.1.269", 0, false),
+            ("2.1.268", 1, false),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let identity = root.path().join("identity");
+            // Exercise the same bounded probe and classification with an existing
+            // interpreter. A freshly written executable can spend the whole probe
+            // budget in host startup checks before reaching this lifecycle fixture.
+            let mut command = Command::new("/bin/sh");
+            command
+                .args([
+                    "-c",
+                    "/bin/sleep 60 </dev/null >/dev/null 2>&1 &\nprintf '%s %s' \"$$\" \"$!\" > \"$1\"\nprintf '%s (Claude Code)\\n' \"$2\"\nexit \"$3\"\n",
+                    "probe",
+                ])
+                .arg(&identity)
+                .arg(version)
+                .arg(exit.to_string());
+            let probe = probe_command(command)
+                .as_deref()
+                .map_or(ClaudeVersionProbe::Unavailable, classify_version);
+            assert_eq!(probe.supported().is_some(), expected);
+            assert_eq!(
+                probe.observed(),
+                (exit == 0).then_some(version),
+                "version diagnostic"
+            );
+            let ids = std::fs::read_to_string(&identity).unwrap();
+            let ids: Vec<libc::pid_t> =
+                ids.split_whitespace().map(|s| s.parse().unwrap()).collect();
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while unsafe { libc::kill(-ids[0], 0) } == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let leaked = unsafe { libc::kill(-ids[0], 0) } == 0;
+            if leaked {
+                assert_eq!(
+                    unsafe { libc::getpgid(ids[1]) },
+                    ids[0],
+                    "owned fixture descendant moved"
+                );
+                unsafe {
+                    libc::kill(-ids[0], libc::SIGKILL);
+                }
+            }
+            assert!(
+                !leaked,
+                "version probe left its descendant after leader exit {exit}"
+            );
+        }
+    }
+}
