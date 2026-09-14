@@ -254,8 +254,10 @@ The [macOS native acceptance](../research/codex-response-ready-acceptance/native
 Pi 0.85.1 was installed locally and its extension declarations were the research anchor for
 this slice: the in-process extension host, the `session_start` / `agent_start` / `agent_end`
 / `agent_settled` / `session_shutdown` events, and the session manager's session identity.
-Tested versions are evidence, not an allowlist; the managed launch probes the executable but
-does not pin a release, so ordinary Pi upgrades stay enabled.
+Tested versions are evidence, not an allowlist; the managed launch does not probe the
+executable at all and does not pin a release, so ordinary Pi upgrades stay enabled. Doctor
+still runs the bounded `--version` probe as a diagnostic and reports `probe_status` and
+`version_status` from it.
 
 Ready quality is `Confirmed` because `agent_settled` has a single emission point after
 retries, automatic compaction and queued continuations have finished, so it marks the real
@@ -309,8 +311,9 @@ because no extension type declarations survive compilation. The extension loader
 `.mjs` with relative sibling imports, which is why the shared delivery module
 (`ovrcr-reporting-transport.mjs`) is materialized beside the provider extension, and an
 explicit `-e <path>` merges with discovered extensions (`--no-extensions` is never passed).
-Tested versions are evidence, not an allowlist; the managed launch probes the executable but
-does not pin a release.
+Tested versions are evidence, not an allowlist; the managed launch does not probe the
+executable at all and does not pin a release. Doctor still runs the bounded `--version`
+probe as a diagnostic and reports `probe_status` and `version_status` from it.
 
 The lifecycle differs from Pi in three ways, and the extension normalizes all three onto Pi's
 vocabulary rather than changing the receiver: there is no settled event, so an `agent_end`
@@ -507,8 +510,11 @@ Two load-dependent limits were seen while a build ran alongside the first Pi pas
 above 30 on 14 cores) and did not reproduce on an idle machine: the one-second `--version`
 admission probe timed out, so the launch fell back to a plain native command with no reporting,
 and the 900 ms helper deadline dropped frames, which paused reporting until the next boundary.
-Both budgets are the spec's; they are recorded here as operating limits, not defects in the
-reviewed code.
+The launch-time probe was removed in this branch after that observation: it proved only that
+the executable answered within a second, which a loaded machine can deny an executable that is
+perfectly fine, and a non-runnable executable still fails visibly in the native launch. Doctor
+keeps the probe as a diagnostic. The 900 ms helper deadline is unchanged and remains the spec's
+budget, recorded here as an operating limit rather than a defect in the reviewed code.
 
 Isolation for native runs is by `HOME` alone. Pi 0.85.1 appears to bump the modification
 time of the real `~/.pi/agent` directory at startup even under a foreign `HOME`: both records

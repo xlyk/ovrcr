@@ -10038,11 +10038,12 @@ fn harness_session_named(
     harness: &str,
     version_line: &str,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    harness_session_dropping(fixture, socket, name, harness, version_line, 0)
+    harness_session_dropping(fixture, socket, name, harness, version_line, 0, false)
 }
 
 /// `drop_sequence` is the source sequence whose helper the transport never spawns: the
 /// frame is lost exactly as a helper killed at its deadline loses one. 0 drops nothing.
+/// `slow_version` makes `--version` outlast the bounded diagnostic probe's one second.
 fn harness_session_dropping(
     fixture: &ControlFixture,
     socket: &Path,
@@ -10050,13 +10051,15 @@ fn harness_session_dropping(
     harness: &str,
     version_line: &str,
     drop_sequence: u64,
+    slow_version: bool,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let host = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pi/pi_host.mjs");
     let native = fixture._root.path().join(harness);
+    let delay = if slow_version { "sleep 2; " } else { "" };
     std::fs::write(
         &native,
-        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then printf '{version_line}\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then {delay}printf '{version_line}\\n'; exit; fi\nexec node '{host}' \"$@\"\n"),
     )
     .unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -10105,7 +10108,7 @@ fn pi_session_dropping(
     name: &str,
     drop_sequence: u64,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    harness_session_dropping(fixture, socket, name, "pi", "0.85.1", drop_sequence)
+    harness_session_dropping(fixture, socket, name, "pi", "0.85.1", drop_sequence, false)
 }
 
 fn omp_session_dropping(
@@ -10114,7 +10117,15 @@ fn omp_session_dropping(
     name: &str,
     drop_sequence: u64,
 ) -> (ovrcr::session::SessionSummary, std::path::PathBuf) {
-    harness_session_dropping(fixture, socket, name, "omp", "omp/18.1.19", drop_sequence)
+    harness_session_dropping(
+        fixture,
+        socket,
+        name,
+        "omp",
+        "omp/18.1.19",
+        drop_sequence,
+        false,
+    )
 }
 
 fn pi_callback(fixture: &ControlFixture, session: SessionId, index: &mut usize, command: &str) {
@@ -12070,6 +12081,65 @@ fn pi_doctor_reports_bound_lifecycle_activity_and_transport_loss() {
         lost["lifecycle"]["unread"], true,
         "reporter loss keeps Unread"
     );
+}
+
+/// The managed launch does not probe the executable: a `--version` slower than the
+/// bounded diagnostic probe's one second — what a loaded machine produced during the
+/// native Pi run — must still be admitted and bound. Doctor keeps the probe, so it
+/// reports the same launch as bound with an unavailable probe.
+#[test]
+fn pi_managed_launch_admits_an_executable_whose_version_outlasts_the_probe() {
+    let _guard = env_lock();
+    let fixture = ControlFixture::new_bounded();
+    fixture.create_hook_child("setup", "pi-setup");
+    let (summary, _probe) = harness_session_dropping(
+        &fixture,
+        &fixture.socket,
+        "pi-hooks",
+        "pi",
+        "0.85.1",
+        0,
+        true,
+    );
+    let mut index = 0;
+    pi_callback(&fixture, summary.id, &mut index, "session_start:sess-a");
+    let agent = fixture
+        .session_summary(summary.id)
+        .agent
+        .expect("the inserted extension bound the launch");
+    assert_eq!(agent.binding.provider, ovrcr::protocol::AgentProvider::Pi);
+    assert_eq!(agent.binding.conversation, "sess-a");
+    assert_eq!(
+        agent.health.state,
+        ovrcr::protocol::ReporterHealth::Connected
+    );
+    let id = summary.id.0.to_string();
+    let native = fixture._root.path().join("pi");
+    let output = cli_with_output(
+        env!("CARGO_BIN_EXE_ovrcr"),
+        &fixture._root.path().join("config.toml"),
+        &fixture.socket,
+        &[
+            "agent",
+            "doctor",
+            "pi",
+            "--json",
+            "--session",
+            &id,
+            "--executable",
+            native.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["lifecycle"]["extension"], "loaded_and_bound");
+    assert_eq!(report["session_status"], "bound");
+    assert_eq!(report["probe_status"], "unavailable");
+    assert_eq!(report["version_status"], "unknown");
 }
 
 #[test]
