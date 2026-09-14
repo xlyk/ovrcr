@@ -13,25 +13,33 @@ export function assistant(stopReason) {
   return { role: "assistant", stopReason, content: [] };
 }
 
-export async function createHost(extensionPath, { mode = "tui", session = "session-a" } = {}) {
+export async function createHost(extensionPath, { mode = "tui", session = "session-a", idle = true } = {}) {
   const handlers = new Map();
+  const commands = new Map();
   const api = {
     on(event, handler) {
       if (!handlers.has(event)) handlers.set(event, []);
       handlers.get(event).push(handler);
     },
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
   };
   const module = await import(pathToFileURL(extensionPath).href);
   await module.default(api);
-  const state = { mode, session };
+  const state = { mode, session, idle, notices: [] };
   const ctx = {
     get mode() { return state.mode; },
     hasUI: true,
     sessionManager: { getSessionId: () => state.session, getSessionFile: () => undefined },
+    isIdle: () => state.idle,
+    ui: { notify: (message, level) => state.notices.push([message, level]) },
   };
   return {
     state,
     registered: () => [...handlers.keys()].sort(),
+    commands: () => [...commands.keys()].sort(),
+    run: (name, args = []) => commands.get(name).handler(args, ctx),
     async emit(event) {
       const results = [];
       for (const handler of handlers.get(event.type) ?? []) results.push(await handler(event, ctx));
@@ -41,6 +49,8 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 }
 
 // stdin grammar: session_start[:<id>[:<reason>]] | agent_start
+//   | session_replace[:<id>[:<reason>]] | session_tree | session_compact
+//   | run_command:<name> | idle:<true|false>
 //   | agent_end:<ok|error|aborted|none>[:continue] | agent_settled
 //   | ui_prompt_start:<kind> | ui_prompt_end:<kind>
 //   | tool_approval_requested:<id> | tool_approval_resolved:<id>:<true|false>
@@ -51,7 +61,8 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
 async function main() {
   const args = process.argv.slice(2);
   const at = args.indexOf("-e");
-  const host = at >= 0 ? await createHost(args[at + 1]) : null;
+  const extension = at >= 0 ? args[at + 1] : null;
+  let host = extension ? await createHost(extension) : null;
   if (process.env.OVRCR_TEST_PROBE) {
     writeFileSync(
       process.env.OVRCR_TEST_PROBE,
@@ -106,7 +117,22 @@ async function main() {
           type: "tool_execution_end", toolCallId: b, toolName: a,
           result: { text: "ANSWER_SECRET" }, isError: c === "error",
         });
-      } else if (command === "session_switch") {
+      } else if (command === "session_replace") {
+        // Pi replaces the whole extension factory on a session replacement: the running
+        // one is shut down and a new instance is created from the same extension path.
+        const previous = host.state.session;
+        await host.emit({ type: "session_shutdown", reason: b ?? "resume" });
+        host = await createHost(extension, { idle: host.state.idle });
+        if (a) host.state.session = a;
+        await host.emit({
+          type: "session_start", reason: b ?? "resume",
+          previousSessionFile: `/private/x/${previous}.jsonl`,
+        });
+      } else if (command === "session_tree") await host.emit({ type: "session_tree" });
+      else if (command === "session_compact") await host.emit({ type: "session_compact" });
+      else if (command === "idle") host.state.idle = a !== "false";
+      else if (command === "run_command") await host.run(a);
+      else if (command === "session_switch") {
         if (a) host.state.session = a;
         await host.emit({ type: "session_switch", reason: b ?? "resume" });
       } else if (command === "agent_settled") await host.emit({ type: "agent_settled" });

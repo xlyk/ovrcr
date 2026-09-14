@@ -221,15 +221,15 @@ impl Receiver {
         };
         // Producer fencing: a new instance is admitted only by its session_start; a stale,
         // replayed, retired or foreign sequence never mutates state, freshness, or Unread.
-        match self.admit(event, instance, sequence) {
-            Admission::Ignored => return IGNORED.to_vec(),
-            Admission::Gap => return self.pause("source_gap", deadline),
-            Admission::LostClose => return self.pause("producer_replaced", deadline),
-            Admission::Accepted => {}
+        let admission = self.admit(event, instance, sequence);
+        if admission == Admission::Ignored {
+            return IGNORED.to_vec();
         }
         if self.paused.is_some() {
             // Nothing is applied while reporting is uncertain, and nothing is inferred from
-            // the silence: the next boundary this producer reaches recovers it, once.
+            // the silence: the next boundary this producer reaches recovers it, once. A
+            // boundary that arrives with a hole of its own still recovers — the reattach
+            // command drops whatever was queued, and that hole is the pause it is ending.
             if !matches!(event, "session_start" | "agent_start") {
                 return IGNORED.to_vec();
             }
@@ -237,6 +237,10 @@ impl Receiver {
                 self.disable();
                 return UNAVAILABLE.to_vec();
             }
+        } else if admission == Admission::Gap {
+            return self.pause("source_gap", deadline);
+        } else if admission == Admission::LostClose {
+            return self.pause("producer_replaced", deadline);
         } else if event == "session_start"
             && transition_mismatch(
                 payload["previous"].as_str(),

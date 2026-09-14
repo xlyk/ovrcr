@@ -36,6 +36,9 @@ export function createReporter({
   const queue = [];
   let queuedBytes = 0;
   let draining = Promise.resolve(false);
+  // Test hook: the helper for exactly this sequence number is never spawned, simulating a
+  // helper lost at its deadline. Inert unless the variable is set.
+  const dropSequence = Number(process.env.OVRCR_TEST_DROP_SEQUENCE ?? 0);
 
   // Identity and ordering are captured here, synchronously, before any delivery.
   function frame(event, ctx, extra) {
@@ -82,6 +85,7 @@ export function createReporter({
   function report(event, ctx, extra = {}) {
     if (producer.disabled || ctx.mode !== "tui") return Promise.resolve(false);
     const body = frame(event, ctx, extra);
+    if (dropSequence && producer.sequence === dropSequence) return Promise.resolve(false);
     if (queue.length >= maxEvents || queuedBytes + body.length > maxBytes) {
       producer.disabled = true;
       queue.length = 0;
@@ -102,5 +106,31 @@ export function createReporter({
     return mine;
   }
 
-  return { producer, report };
+  // One absolute deadline for a shutdown or reload drain: the queue is discarded and only
+  // this final frame is delivered, inside the one remaining helper budget rather than one
+  // budget per frame still waiting.
+  function flush(event, ctx, extra = {}) {
+    queue.length = 0;
+    queuedBytes = 0;
+    const body = frame(event, ctx, extra);
+    draining = draining.then(() => deliver(body));
+    return draining;
+  }
+
+  // Re-announce this producer from inside the already-loaded extension: the disabled flag
+  // and the queue are cleared and one session_start-shaped frame is delivered directly.
+  // The instance and its sequence continue, so the receiver still fences what came before.
+  function reattach(ctx, extra = {}) {
+    producer.disabled = false;
+    queue.length = 0;
+    queuedBytes = 0;
+    producer.run = 0;
+    producer.open = false;
+    producer.outcome = "none";
+    const body = frame("session_start", ctx, { reason: "reattach", ...extra });
+    draining = draining.then(() => deliver(body));
+    return draining;
+  }
+
+  return { producer, report, flush, reattach };
 }
