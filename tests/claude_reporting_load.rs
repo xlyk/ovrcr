@@ -1,12 +1,10 @@
 //! Opt-in real socket/PTY/helper capacity acceptance; run alone on a recorded host.
-use ovrcr::config::{Registry, save_registry_atomic};
+#[path = "support/live.rs"]
+mod live;
+
+use live::Live;
 use ovrcr::protocol::*;
 use ovrcr::report::collector::{CollectorController, CollectorSource};
-use ovrcr::server::ServerPaths;
-#[cfg(not(feature = "acceptance-diagnostics"))]
-use ovrcr::server::run_server;
-#[cfg(feature = "acceptance-diagnostics")]
-use ovrcr::server::{ServerQueueDiagnostics, run_server_with_diagnostics};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::os::unix::net::UnixStream;
@@ -47,81 +45,29 @@ fn send(s: &mut UnixStream, request: Request) -> Response {
     }
     response
 }
-struct Fixture {
-    root: tempfile::TempDir,
-    socket: PathBuf,
-    server: Option<thread::JoinHandle<()>>,
-    #[cfg(feature = "acceptance-diagnostics")]
-    diagnostics: ServerQueueDiagnostics,
+/// A live server on a test thread, with fifty sessions' worth of project and
+/// workspace already registered.
+struct Fixture(Live);
+
+impl std::ops::Deref for Fixture {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.0
+    }
 }
+
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let repo = root.path().join("repo");
-        fs::create_dir(&repo).unwrap();
-        for args in [
-            vec!["init", "-b", "main"],
-            vec!["config", "user.name", "Load Fixture"],
-            vec!["config", "user.email", "fixture@example.invalid"],
-        ] {
-            assert!(
-                Command::new("git")
-                    .args(args)
-                    .current_dir(&repo)
-                    .output()
-                    .unwrap()
-                    .status
-                    .success()
-            );
-        }
-        fs::write(repo.join("README"), "fixture").unwrap();
-        for args in [["add", "README"], ["commit", "-mfixture"]] {
-            assert!(
-                Command::new("git")
-                    .args(args)
-                    .current_dir(&repo)
-                    .output()
-                    .unwrap()
-                    .status
-                    .success()
-            );
-        }
-        let socket = root.path().join("server.sock");
-        let registry = root.path().join("config.toml");
-        save_registry_atomic(&Registry::default(), &registry).unwrap();
-        let paths = ServerPaths {
-            socket: socket.clone(),
-        };
-        #[cfg(feature = "acceptance-diagnostics")]
-        let diagnostics = ServerQueueDiagnostics::default();
-        #[cfg(feature = "acceptance-diagnostics")]
-        let server_diagnostics = diagnostics.clone();
-        #[cfg(feature = "acceptance-diagnostics")]
-        let server = Some(thread::spawn(move || {
-            run_server_with_diagnostics(paths, registry, server_diagnostics).unwrap()
-        }));
-        #[cfg(not(feature = "acceptance-diagnostics"))]
-        let server = Some(thread::spawn(move || run_server(paths, registry).unwrap()));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !socket.exists() {
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(5));
-        }
-        let fixture = Self {
-            root,
-            socket,
-            server,
-            #[cfg(feature = "acceptance-diagnostics")]
-            diagnostics,
-        };
+        let fixture = Self(Live::thread());
         let mut control = connect(&fixture.socket);
         assert_eq!(
             send(
                 &mut control,
                 Request::AddProject {
                     name: "load".into(),
-                    repo,
-                    workspace_root: fixture.root.path().join("workspaces")
+                    repo: fixture.repo.clone(),
+                    workspace_root: fixture.workspace_root.clone(),
                 }
             ),
             Response::Ok
@@ -157,13 +103,18 @@ impl Fixture {
         fixture
     }
 }
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let mut s = connect(&self.socket);
         assert_eq!(send(&mut s, Request::Shutdown { kill: true }), Response::Ok);
-        self.server.take().unwrap().join().unwrap();
+        assert!(
+            self.join_within(Duration::from_secs(30)),
+            "load fixture server did not finish"
+        );
     }
 }
+
 fn measure<T>(value: T) -> Measurement<T> {
     Measurement {
         value,
@@ -664,8 +615,8 @@ fn fifty_session_reporting_capacity() {
             resource_log.flush().unwrap();
             #[cfg(feature = "acceptance-diagnostics")]
             for (name, snapshot) in [
-                ("raw-events", fixture.diagnostics.raw_events.snapshot()),
-                ("dispatcher", fixture.diagnostics.dispatcher.snapshot()),
+                ("raw-events", fixture.diagnostics().raw_events.snapshot()),
+                ("dispatcher", fixture.diagnostics().dispatcher.snapshot()),
             ] {
                 writeln!(
                     queue_log,
@@ -682,7 +633,7 @@ fn fifty_session_reporting_capacity() {
             #[cfg(feature = "acceptance-diagnostics")]
             {
                 let dashboard = fixture
-                    .diagnostics
+                    .diagnostics()
                     .dashboard
                     .snapshot()
                     .expect("active dashboard diagnostics");
@@ -784,12 +735,12 @@ fn fifty_session_reporting_capacity() {
     assert!(p99 < 250_000 && max < 1_000_000, "control latency budget");
     #[cfg(feature = "acceptance-diagnostics")]
     {
-        let events = fixture.diagnostics.raw_events.snapshot();
-        let dispatcher = fixture.diagnostics.dispatcher.snapshot();
+        let events = fixture.diagnostics().raw_events.snapshot();
+        let dispatcher = fixture.diagnostics().dispatcher.snapshot();
         assert!(events.peak_items <= 64 && dispatcher.peak_items <= 64);
         assert!(events.peak_bytes <= 64 * 8192);
         let dashboard = fixture
-            .diagnostics
+            .diagnostics()
             .dashboard
             .snapshot()
             .expect("dashboard remains active through final sample");

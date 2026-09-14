@@ -1,3 +1,6 @@
+#[path = "support/live.rs"]
+mod live;
+
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -148,10 +151,10 @@ fn alive(pid: i32) -> bool {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = self.raw(&["shutdown", "--kill"]);
-        let end = Instant::now() + Duration::from_secs(8);
-        while self.root.path().join("server.sock").exists() && Instant::now() < end {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        live::wait_for_absent(
+            &self.root.path().join("server.sock"),
+            Duration::from_secs(8),
+        );
     }
 }
 
@@ -518,11 +521,10 @@ fn shutdown_finishes_even_when_final_state_persistence_fails() {
         !result.status.success(),
         "persistence fault must be reported"
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while f.root.path().join("server.sock").exists() {
-        assert!(Instant::now() < deadline, "server left half-stopped");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(
+        live::wait_for_absent(&f.root.path().join("server.sock"), Duration::from_secs(5)),
+        "server left half-stopped"
+    );
     fs::remove_dir(&state).unwrap();
     fs::rename(&backup, &state).unwrap();
     f.call(&["task", "concurrency", "3"]);
@@ -542,11 +544,10 @@ fn signal_shutdown_cleans_up_despite_final_state_write_failure() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f.root.path().join("server.sock").exists() {
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(live::wait_for_socket(
+        &f.root.path().join("server.sock"),
+        Duration::from_secs(5)
+    ));
     let task = f.task("signal-fault", "HOLD");
     let id = f.start(&task);
     f.wait(&id, "Running");

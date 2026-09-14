@@ -1,75 +1,35 @@
-#[path = "support/deadline.rs"]
-mod deadline;
+#[path = "support/live.rs"]
+mod live;
 #[path = "support/mouse_app.rs"]
 mod mouse_app;
 
 use anyhow::{Context, Result, bail};
-use deadline::wait_deadline;
-use ovrcr::config::{Registry, save_registry_atomic};
-use ovrcr::protocol::{
-    ClientMessage, HierarchySnapshot, Request, Response, ServerMessage, read_frame, write_frame,
-};
+use live::{Live, group_exists, wait_deadline};
+use ovrcr::protocol::{HierarchySnapshot, Request, Response};
 use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-struct AcceptanceFixture {
-    _root: tempfile::TempDir,
-    repo: PathBuf,
-    workspace_root: PathBuf,
-    socket: PathBuf,
-    config: PathBuf,
-    executable: PathBuf,
-    server: Option<Child>,
-    managed_pgids: Vec<libc::pid_t>,
+/// A live server hosted by the compiled `ovrcr` binary, plus the CLI and
+/// terminal helpers this suite drives it with.
+struct AcceptanceFixture(Live);
+
+impl std::ops::Deref for AcceptanceFixture {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.0
+    }
 }
 
 impl AcceptanceFixture {
     fn new() -> Result<Self> {
-        let root = tempfile::tempdir()?;
-        let repo = root.path().join("repo");
-        let workspace_root = root.path().join("workspaces");
-        std::fs::create_dir(&repo)?;
-        std::fs::create_dir(&workspace_root)?;
-        let config = root.path().join("config.toml");
-        save_registry_atomic(&Registry::default(), &config)?;
-        let socket = root.path().join("server.sock");
-        let executable = PathBuf::from(env!("CARGO_BIN_EXE_ovrcr"));
-        let server = Command::new(&executable)
-            .arg("server")
-            .env("OVRCR_SOCKET", &socket)
-            .env("OVRCR_CONFIG", &config)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .context("start isolated OVRCR server")?;
-        let fixture = Self {
-            config,
-            socket,
-            executable,
-            _root: root,
-            repo,
-            workspace_root,
-            server: Some(server),
-            managed_pgids: Vec::new(),
-        };
-        wait_for_socket(&fixture.socket, wait_deadline())?;
-        git(&fixture.repo, &["init", "-b", "main"])?;
-        git(&fixture.repo, &["config", "user.name", "OVRCR Acceptance"])?;
-        git(
-            &fixture.repo,
-            &["config", "user.email", "acceptance@example.invalid"],
-        )?;
-        std::fs::write(fixture.repo.join("README"), "acceptance\n")?;
-        git(&fixture.repo, &["add", "README"])?;
-        git(&fixture.repo, &["commit", "-m", "initial"])?;
-        Ok(fixture)
+        Ok(Self(Live::binary()))
     }
 
     fn cli(&self, args: &[&str]) -> Result<std::process::Output> {
@@ -126,7 +86,7 @@ impl AcceptanceFixture {
             "printf WAITING_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *LATENCY_TOKEN_*) printf 'ECHO_%s' \"$line\";; *RAW_MODE*) stty -icanon -echo min 1 time 0; printf RAW_READY; while :; do byte=$(dd bs=1 count=1 2>/dev/null); [ -n \"$byte\" ] && printf '\\rRAW_ACK_%s' \"$byte\"; done;; *WAITING_TOKEN*) printf WAITING_ACK;; *PAUSE_RESUME_TOKEN*) printf PAUSE_RESUME_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "waiting session")?;
-        self.managed_pgids = self.session_pgids()?;
+        self.session_pgids()?;
         let output = self.cli(&[
             "new",
             "--project",
@@ -141,7 +101,7 @@ impl AcceptanceFixture {
             "printf MOUSE_READY; while IFS= read -r line; do case \"$line\" in *PASTE_TOKEN*) printf PASTE_ACK;; *INPUT_TOKEN*) printf INPUT_ACK;; *MOUSE_TOKEN*) printf MOUSE_ACK;; *SIZE_TOKEN*) printf 'SIZE_ACK_%s' \"$(stty size)\";; esac; done",
         ])?;
         require_success(output, "mouse session")?;
-        self.managed_pgids = self.session_pgids()?;
+        self.session_pgids()?;
         Ok(())
     }
 
@@ -163,109 +123,51 @@ impl AcceptanceFixture {
             "--nocapture",
         ])?;
         require_success(output, "mouse-protocol session")?;
-        self.managed_pgids = self.session_pgids()?;
+        self.session_pgids()?;
         Ok(())
     }
 
     fn session_pgids(&self) -> Result<Vec<libc::pid_t>> {
-        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
-        stream.set_read_timeout(Some(wait_deadline()))?;
-        stream.set_write_timeout(Some(wait_deadline()))?;
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request: Request::List,
-            },
-        )?;
-        let message = read_frame::<ServerMessage>(&mut stream)?;
-        let ServerMessage::Response {
-            response: Response::Hierarchy(hierarchy),
-            ..
-        } = message
-        else {
-            bail!("server list did not return a hierarchy")
-        };
-        Ok(hierarchy
-            .projects
-            .into_iter()
-            .flat_map(|project| project.workspaces)
-            .flat_map(|workspace| workspace.sessions)
-            .filter_map(|session| {
-                session
-                    .pid
-                    .map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) })
-            })
-            .filter(|pgid| *pgid > 1)
-            .collect())
+        Ok(self.own_sessions())
     }
 
     fn list(&self) -> Result<HierarchySnapshot> {
-        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
-        stream.set_read_timeout(Some(wait_deadline()))?;
-        stream.set_write_timeout(Some(wait_deadline()))?;
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 1,
-                request: Request::List,
-            },
-        )?;
-        let ServerMessage::Response {
-            response: Response::Hierarchy(hierarchy),
-            ..
-        } = read_frame::<ServerMessage>(&mut stream)?
-        else {
-            bail!("server list did not return a hierarchy")
-        };
-        Ok(hierarchy)
+        match self.request(Request::List) {
+            Response::Hierarchy(hierarchy) => Ok(hierarchy),
+            response => bail!("server list did not return a hierarchy: {response:?}"),
+        }
     }
 
     fn read_terminal(&self, session: ovrcr::session::SessionId) -> Result<String> {
-        let mut stream = ovrcr::protocol::connect_server(&self.socket)?;
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        write_frame(
-            &mut stream,
-            &ClientMessage {
-                request_id: 2,
-                request: Request::ReadTerminal {
-                    session,
-                    max_lines: None,
-                },
-            },
-        )?;
-        let ServerMessage::Response { response, .. } = read_frame(&mut stream)? else {
-            bail!("terminal read returned an event")
-        };
-        let Response::TerminalText { text, .. } = response else {
-            bail!("terminal read returned an unexpected response")
-        };
-        Ok(text)
+        match self.request(Request::ReadTerminal {
+            session,
+            max_lines: None,
+        }) {
+            Response::TerminalText { text, .. } => Ok(text),
+            response => bail!("terminal read returned an unexpected response: {response:?}"),
+        }
     }
 
     fn shutdown(&mut self) -> Result<()> {
         let pgids = self.session_pgids()?;
-        self.managed_pgids = pgids.clone();
         let output = self.cli_timeout(&["shutdown", "--kill"], Duration::from_secs(12))?;
         require_success(output, "shutdown --kill")?;
-        let server = self
-            .server
-            .take()
-            .context("isolated server already stopped")?;
-        let status = wait_std_child(server, wait_deadline())?;
-        if !status.success() {
-            bail!("isolated server exited unsuccessfully: {status:?}");
+        if !self.join_within(wait_deadline()) {
+            bail!("isolated server did not exit successfully");
         }
-        wait_for_absent(&self.socket, wait_deadline())?;
+        if !live::wait_for_absent(&self.socket, wait_deadline()) {
+            bail!("server socket did not disappear: {}", self.socket.display());
+        }
         for pgid in pgids {
-            wait_for_group_absent(pgid, wait_deadline())?;
+            if !live::wait_group_absent(pgid, wait_deadline()) {
+                bail!("PTY process group {pgid} did not disappear");
+            }
         }
         Ok(())
     }
 
     fn terminate_managed_groups(&self) {
-        for &pgid in &self.managed_pgids {
+        for pgid in self.owned_groups() {
             if group_exists(pgid) {
                 unsafe {
                     libc::kill(-pgid, libc::SIGTERM);
@@ -273,12 +175,10 @@ impl AcceptanceFixture {
             }
         }
         let grace_deadline = Instant::now() + Duration::from_millis(500);
-        while Instant::now() < grace_deadline
-            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
-        {
+        while Instant::now() < grace_deadline && self.owned_groups().into_iter().any(group_exists) {
             thread::park_timeout(Duration::from_millis(5));
         }
-        for &pgid in &self.managed_pgids {
+        for pgid in self.owned_groups() {
             if group_exists(pgid) {
                 unsafe {
                     libc::kill(-pgid, libc::SIGKILL);
@@ -286,9 +186,7 @@ impl AcceptanceFixture {
             }
         }
         let kill_deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < kill_deadline
-            && self.managed_pgids.iter().any(|&pgid| group_exists(pgid))
-        {
+        while Instant::now() < kill_deadline && self.owned_groups().into_iter().any(group_exists) {
             thread::park_timeout(Duration::from_millis(5));
         }
     }
@@ -296,79 +194,10 @@ impl AcceptanceFixture {
 
 impl Drop for AcceptanceFixture {
     fn drop(&mut self) {
-        if self.server.is_some() && self.shutdown().is_err() {
+        if self.hosted() && self.shutdown().is_err() {
             self.terminate_managed_groups();
         }
-        if let Some(mut server) = self.server.take() {
-            if server.try_wait().ok().flatten().is_none() {
-                let _ = server.kill();
-            }
-            let _ = wait_std_child(server, Duration::from_secs(2));
-        }
     }
-}
-
-fn wait_for_socket(socket: &Path, timeout: Duration) -> Result<()> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if std::os::unix::net::UnixStream::connect(socket).is_ok() {
-            return Ok(());
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
-    bail!(
-        "isolated server socket did not appear: {}",
-        socket.display()
-    )
-}
-
-fn wait_for_absent(path: &Path, timeout: Duration) -> Result<()> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if !path.exists() {
-            return Ok(());
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
-    bail!("path did not disappear: {}", path.display())
-}
-
-fn group_exists(pgid: libc::pid_t) -> bool {
-    let result = unsafe { libc::kill(-pgid, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-fn wait_for_group_absent(pgid: libc::pid_t, timeout: Duration) -> Result<()> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if !group_exists(pgid) {
-            return Ok(());
-        }
-        thread::park_timeout(Duration::from_millis(5));
-    }
-    bail!("PTY process group {pgid} did not disappear")
-}
-
-fn wait_std_child(mut child: Child, timeout: Duration) -> Result<std::process::ExitStatus> {
-    let pid = child.id() as libc::pid_t;
-    let (sender, receiver) = mpsc::sync_channel(1);
-    let waiter = thread::spawn(move || {
-        let _ = sender.send(child.wait());
-    });
-    let result = match receiver.recv_timeout(timeout) {
-        Ok(result) => result?,
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-            receiver
-                .recv_timeout(Duration::from_secs(2))
-                .map_err(|_| anyhow::anyhow!("server waiter did not finish after SIGKILL"))??
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            bail!("server waiter disconnected")
-        }
-    };
-    let _ = waiter.join();
-    Ok(result)
 }
 
 fn bounded_output(child: Child, timeout: Duration) -> Result<std::process::Output> {
@@ -747,7 +576,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         "workspace fixture: config={} socket={} server_pid={:?}",
         fixture.config.display(),
         fixture.socket.display(),
-        fixture.server.as_ref().map(Child::id)
+        fixture.server_pid()
     );
     git(&fixture.repo, &["switch", "-c", "trunk"])?;
     git(
@@ -791,8 +620,8 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
         },
         Duration::from_secs(5),
     )?;
-    fixture.managed_pgids = fixture.session_pgids()?;
-    eprintln!("workspace fixture owned PGIDs: {:?}", fixture.managed_pgids);
+    let owned_pgids = fixture.session_pgids()?;
+    eprintln!("workspace fixture owned PGIDs: {owned_pgids:?}");
     let hierarchy = fixture.list()?;
     let workspace = hierarchy
         .projects
@@ -1056,7 +885,7 @@ fn split_terminal_acceptance_preserves_input_and_geometry() -> Result<()> {
 fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
-    let fifo = fixture._root.path().join("history-trigger.fifo");
+    let fifo = fixture.root.path().join("history-trigger.fifo");
     let fifo_arg = fifo.to_string_lossy().into_owned();
     let output = fixture.cli(&[
         "new",
@@ -1084,7 +913,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
         .context("history session id")?
         .id
         .0;
-    fixture.managed_pgids = fixture.session_pgids()?;
+    fixture.session_pgids()?;
     let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
         thread::yield_now();
@@ -1239,7 +1068,7 @@ fn history_keyboard_reads_old_output_during_live_session() -> Result<()> {
 fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()> {
     let mut fixture = AcceptanceFixture::new()?;
     fixture.setup()?;
-    let fifo = fixture._root.path().join("historical-copy-trigger.fifo");
+    let fifo = fixture.root.path().join("historical-copy-trigger.fifo");
     let fifo_arg = fifo.to_string_lossy().into_owned();
     let output = fixture.cli(&[
         "new",
@@ -1266,14 +1095,14 @@ fn copy_history_acceptance_emits_across_page_and_tile_boundaries() -> Result<()>
         .find(|session| session.name == "history-copy")
         .context("historical copy session id")?
         .id;
-    fixture.managed_pgids = fixture.session_pgids()?;
-    let server_pid = fixture.server.as_ref().map(Child::id);
+    fixture.session_pgids()?;
+    let server_pid = fixture.server_pid();
     let server_pgid = server_pid.map(|pid| unsafe { libc::getpgid(pid as libc::pid_t) });
     eprintln!(
         "historical copy fixture root: {} server pid/pgid: {server_pid:?}/{server_pgid:?} session id: {:?} groups: {:?}",
-        fixture._root.path().display(),
+        fixture.root.path().display(),
         history_id,
-        fixture.managed_pgids,
+        fixture.owned_groups(),
     );
     let fifo_deadline = Instant::now() + wait_deadline();
     while !fifo.exists() && Instant::now() < fifo_deadline {
@@ -1584,7 +1413,7 @@ fn empty_dashboard_start_screen_reports_isolated_paths() -> Result<()> {
     )?;
     eprintln!(
         "start screen fixture root: {} outer pid: {:?}",
-        fixture._root.path().display(),
+        fixture.root.path().display(),
         dashboard
             .child
             .as_ref()
@@ -1616,11 +1445,11 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     fixture.setup()?;
     eprintln!(
         "copy acceptance fixture root: {}",
-        fixture._root.path().display()
+        fixture.root.path().display()
     );
     eprintln!(
         "copy acceptance fixture session process groups while alive: {:?}",
-        fixture.managed_pgids
+        fixture.owned_groups()
     );
     let waiting_id = fixture
         .list()?
@@ -1719,7 +1548,7 @@ fn copy_mode_acceptance_emits_selected_text_and_reattaches() -> Result<()> {
     detach_result?;
     eprintln!(
         "copy acceptance fixture process groups after first detach: {:?}",
-        fixture.managed_pgids
+        fixture.owned_groups()
     );
 
     let mut reattached = OuterDashboard::start(
