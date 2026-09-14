@@ -1,0 +1,38 @@
+# 40 — AC2 compaction (/compact inside the cycle)
+ 2:28  up 8 days, 17:50, 6 users, load averages: 6.36 6.31 5.67
+## before
+{"t":"2026-09-14T09:28:39Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":13}
+{"t":"2026-09-14T09:28:39Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":13}
+## after
+{"t":"2026-09-14T09:28:40Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":13}
+ per line.
+ Operation aborted
+ Error: Compaction failed: Nothing to
+ compact (session too small)
+────────────────────────────────────────
+────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794...
+↑2.2k ↓1.9k R2.4k $0.031 (sub) 2.0%/1...
+
+## "Nothing to compact (session too small)" is Pi's own guard, not OVRCR: compaction
+## walks back until compaction.keepRecentTokens (default 20000) is reached, and the whole
+## session was ~2.4k tokens, so nothing lay outside the retained window. Lowered
+## keepRecentTokens to 400 in the FIXTURE settings.json (never the real ~/.pi) and
+## reloaded, so a real compaction has something to summarise.
+
+## retry after /reload picked up keepRecentTokens=400
+ 2:29  up 8 days, 17:52, 6 users, load averages: 5.99 6.25 5.70
+## before: {"t":"2026-09-14T09:29:52Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+{"t":"2026-09-14T09:29:52Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+{"t":"2026-09-14T09:29:52Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+{"t":"2026-09-14T09:29:53Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+{"t":"2026-09-14T09:29:54Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+## after: {"t":"2026-09-14T09:29:54Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14}
+ Operation aborted
+ [compaction]
+ Compacted from 2,566 tokens (ctrl+o to
+ expand)
+────────────────────────────────────────
+────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794...
+↑2.4k ↓2.7k R2.4k $0.043 (sub) ?/128k...

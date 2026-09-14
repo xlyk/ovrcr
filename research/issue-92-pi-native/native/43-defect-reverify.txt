@@ -1,0 +1,29 @@
+# 43 — Defect re-verification at low load (merged head df45b59)
+ 2:33  up 8 days, 17:55, 6 users, load averages: 6.20 6.26 5.81
+
+## Defect 1 (1 s --version admission probe)
+The FIRST picker launch of this pass bound with no workaround and no shim:
+probe_status=probed, version=0.85.1, version_status=tested, session_status=bound,
+reporting_unavailable=false, at load ~5.4 (33-probe-reverify.json). The code is
+unchanged at this head:
+300:    let deadline = Instant::now() + Duration::from_secs(1);
+1131:        let deadline = || Instant::now() + Duration::from_secs(1);
+So the defect is confirmed load-dependent, not fixed.
+
+## Defect 2 (900 ms per-frame transport deadline -> source_gap)
+Code unchanged at this head:
+34:  deadlineMs = 900, // inside the channel's one-second callback budget
+No frame dropped spontaneously anywhere in this pass. Every snapshot taken across
+four 200-line streamed responses, a cancellation, a real compaction, a reload, two
+dashboard disconnects and two tree navigations reported health Connected.
+Occurrences of Unavailable / source_gap in this pass's evidence:
+  none
+Current health of both Pi sessions:
+[{"id":11,"name":"pi-1","health":{"reason":null,"state":"Connected"},"gen":1},{"id":12,"name":"pi-b","health":{"reason":null,"state":"Connected"},"gen":1}]
+
+## Provider retry (AC2)
+OPEN / not induced. A provider-side retry needs a transient upstream failure, which
+cannot be produced cheaply or deterministically from here: the only failure this
+account can force is a hard model refusal, which settles as Error (first pass,
+14-pi-error.json) rather than a retry. Forcing a real retry would mean driving the
+provider to a rate limit, which is neither tiny nor within the turn budget.

@@ -1,0 +1,30 @@
+# 34 — AC3 visible-pane suppression
+ 2:19  up 8 days, 17:41, 6 users, load averages: 5.21 4.57 4.80
+## the pi pane IS the visible pane (terminal mode, just created by the picker)
+## alert-log line count before: 1
+## A) Input needed while visible: /gate-select
+{"t":"2026-09-14T09:19:06Z","activity":"idle","input_requests":[],"unread":null}
+{"t":"2026-09-14T09:19:07Z","activity":"waiting_input","input_requests":[{"id":"f652b6b9530834527cafcb5bd8e17d83:p1","kind":"Select"}],"unread":null}
+## alert log after the visible Input needed (must show NO new lines)
+## (end)
+
+## B) Response ready while visible (turn 1: "Reply with the single word: GOLF")
+## dialog closed first: {"t":"2026-09-14T09:19:33Z","activity":"idle","state":"Idle","turn":null,"input_requests":[],"unread_turn":null,"health":"Connected"}
+## alert-log line count before: 1
+ 2:19  up 8 days, 17:41, 6 users, load averages: 5.49 4.68 4.83
+{"t":"2026-09-14T09:19:33Z","activity":"busy","state":"Busy","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T09:19:33Z","activity":"busy","state":"Busy","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T09:19:34Z","activity":"busy","state":"Busy","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T09:19:34Z","activity":"busy","state":"Busy","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T09:19:35Z","activity":"busy","state":"Busy","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T09:19:35Z","activity":"response_ready","state":"ResponseReady","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","health":"Connected"}
+## alert log after the visible Ready (must show NO new lines)
+## (end) — unread must still be set despite the suppressed alert:
+{"t":"2026-09-14T09:19:40Z","activity":"response_ready","state":"ResponseReady","turn":"f652b6b9530834527cafcb5bd8e17d83:1","input_requests":[],"unread_turn":"f652b6b9530834527cafcb5bd8e17d83:1","health":"Connected"}
+
+## OPERATOR ARTIFACT: pi-1 (#11) input box
+A 66-character probe string was typed into pi-1 by mistake at 09:2x and could not be
+cleared: Pi maps Escape to "interrupt", not "clear", `ovrcr terminal send` is a
+bracketed-paste channel, computer-use app_key offers no Ctrl-C/Ctrl-U, and app_batch was
+refused for this whole session. pi-1 keeps its Unread and is used only for the reconnect
+baseline; every later slash command runs on pi-b (#12), whose box is empty.

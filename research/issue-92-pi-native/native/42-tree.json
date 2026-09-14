@@ -1,0 +1,49 @@
+# 42 — AC4 /tree (session tree navigation)
+ 2:30  up 8 days, 17:52, 6 users, load averages: 5.46 6.10 5.66
+## before
+{"t":"2026-09-14T09:30:20Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","activity_revision":14}
+{"t":"2026-09-14T09:30:23Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","activity_revision":14}
+
+## first /tree: accepted the node already current -> Pi replied "Already at this point";
+## OVRCR unchanged (idle, activity_revision 14, unread still :3, generation 1).
+## second /tree: navigate to a DIFFERENT node via type-to-search.
+{"t":"2026-09-14T09:31:51Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:52Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:53Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:54Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:55Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:56Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:57Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:58Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:31:59Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:32:00Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:32:01Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+{"t":"2026-09-14T09:32:02Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+## settled after selecting a DIFFERENT tree node
+{"t":"2026-09-14T09:32:03Z","activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+## doctor
+{"activity":"Idle","delivery":"observed","extension":"loaded_and_bound","health":"Connected","input_requests":[],"unread":true,"work_seen":false}
+## Pi built-in "Summarize branch?" dialog is open. Note: OVRCR publishes NO input
+## request for it -- built-in Pi dialogs are not ctx.ui.* extension dialogs, which is
+## exactly the documented boundary (docs/pi-reporting-setup.md: Pi has no approval
+## surface; the only WaitingInput source is a ctx.ui.* dialog). Snapshot while open:
+{"activity":"idle","input_requests":[],"input_revision":5}
+{"t":"2026-09-14T09:32:32Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:34Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:35Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:36Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:37Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:38Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:39Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:40Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:41Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:42Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:43Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:44Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:45Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:46Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+{"t":"2026-09-14T09:32:47Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+## settled after the tree checkout (No summary)
+{"t":"2026-09-14T09:32:48Z","activity":"unknown","state":"Unknown","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":15,"health":"Connected"}
+## doctor
+{"activity":"Unknown","delivery":"observed","extension":"loaded_and_bound","health":"Connected","input_requests":[],"unread":true,"work_seen":false}

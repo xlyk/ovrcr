@@ -1,0 +1,19 @@
+# 41 — AC4 same-file reload (/reload)
+ 2:29  up 8 days, 17:51, 6 users, load averages: 7.17 6.47 5.75
+## before
+{"t":"2026-09-14T09:29:18Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","activity_revision":13}
+{"t":"2026-09-14T09:29:18Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","activity_revision":13}
+## after
+{"t":"2026-09-14T09:29:18Z","activity":"idle","state":"Idle","turn":"026ea8f1aeb60ec244a46a111d3779b2:4","unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","activity_revision":13}
+ Operation aborted
+────────────────────────────────────────
+ Reloading keybindings, extensions,
+ skills, prompts, themes, and context
+ files...
+────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794...
+↑2.2k ↓1.9k R2.4k $0.031 (sub) 2.0%/1...
+## settled after /reload
+{"activity":"idle","state":"Idle","turn":null,"unread_turn":"026ea8f1aeb60ec244a46a111d3779b2:3","gen":1,"conv":"01a09f38-f152-7414-93f8-2448a15abd38","inv":"a2abfcb34eea","activity_revision":14,"health":"Connected"}
+## doctor
+{"activity":"Idle","delivery":"observed","extension":"loaded_and_bound","health":"Connected","input_requests":[],"unread":true,"work_seen":false}

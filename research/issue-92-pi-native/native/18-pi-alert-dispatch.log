@@ -1,0 +1,16 @@
+2026-09-14T07:44:01.543099+00:00 sound(afplay Glass) pid=26094 :: ")\012                body=parts[-1] if len(parts)>1 else ""\012            out.write(f"{datetime.datetime.now(datetime.UTC).isoformat()} {kind} pid={pid} :: {body[:200]}\n")\012    time.sleep(0.15)\0
+2026-09-14T07:44:21.129212+00:00 sound(afplay Glass) pid=28029 :: 
+--- tighter poll (30ms) starts 2026-09-14T07:44:44.994216+00:00 ---
+2026-09-14T07:45:31.339622+00:00 NOTIFICATION osascript pid=34824 :: consigint / worktree-lifecycle / pi-child (#14) OVRCR · response ready
+2026-09-14T07:45:31.512854+00:00 SOUND afplay pid=34830
+2026-09-14T07:46:19.997323+00:00 SOUND afplay pid=39645
+2026-09-14T07:46:49.985252+00:00 NOTIFICATION osascript pid=42635 :: consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+2026-09-14T07:46:50.142096+00:00 SOUND afplay pid=42640
+2026-09-14T07:46:56.120947+00:00 NOTIFICATION osascript pid=43366 :: consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+2026-09-14T07:46:56.201898+00:00 SOUND afplay pid=43372
+2026-09-14T07:47:22.938563+00:00 NOTIFICATION osascript pid=47986 :: 'unsetenv'; } >/dev/null 2>&1 || true && eval 'set -eu\012ROOT=$(cat /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/.rootpath)\012DEMO=$(cat "$ROOT/demop
+2026-09-14T07:47:48.159501+00:00 NOTIFICATION osascript pid=50436 :: consigint / auth-handoff / pi-root (#13) OVRCR · response ready
+2026-09-14T07:47:48.318460+00:00 SOUND afplay pid=50442
+2026-09-14T07:48:15.133985+00:00 NOTIFICATION osascript pid=53177 :: consigint / auth-handoff / pi-root (#13) OVRCR · response ready
+2026-09-14T07:48:15.296045+00:00 SOUND afplay pid=53188
+poller finished

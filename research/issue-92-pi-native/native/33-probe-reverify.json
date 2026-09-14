@@ -1,0 +1,80 @@
+# 33 — first picker launch at the merged head, low load (Defect 1 re-verification)
+ 2:18  up 8 days, 17:41, 6 users, load averages: 5.40 4.57 4.80
+{
+  "activity": "idle",
+  "agent": {
+    "activity": {
+      "quality": "Observed",
+      "state": "Idle",
+      "turn": null
+    },
+    "activity_revision": 1,
+    "binding": {
+      "conversation": "01a09f35-ee22-73bf-b24b-1d0d270a8074",
+      "generation": 1,
+      "invocation": "f533caafd137ebe09b6887056ec619bbd726ad5f1386efdf279b114759230be4",
+      "provider": "Pi"
+    },
+    "health": {
+      "reason": null,
+      "state": "Connected"
+    },
+    "health_revision": 0,
+    "input_requests": [],
+    "input_revision": 0,
+    "metrics": null,
+    "metrics_revision": 0
+  },
+  "agent_epoch": 1,
+  "context_stale": null,
+  "context_usage": null,
+  "exit_code": null,
+  "exit_signal": null,
+  "id": 11,
+  "label": "pi",
+  "measurement_age_ms": null,
+  "name": "pi-1",
+  "phase": "running",
+  "pid": 18136,
+  "project": "consigint",
+  "reporting_unavailable": false,
+  "started_unix_ms": 1789377506418,
+  "unread": null,
+  "workspace": "auth-handoff"
+}
+## doctor
+{
+  "binding": {
+    "generation": 1,
+    "provider": "Pi"
+  },
+  "capabilities": {
+    "approvals": "available",
+    "managed_launch": true,
+    "metrics": "absent",
+    "questions": "unavailable_no_provider_surface",
+    "recovery": "available",
+    "reporting": "available"
+  },
+  "executable": "pi",
+  "known_incompatibilities": [],
+  "lifecycle": {
+    "activity": "Idle",
+    "delivery": "observed",
+    "extension": "loaded_and_bound",
+    "health": "Connected",
+    "input_requests": [],
+    "unread": false,
+    "work_seen": false
+  },
+  "probe_status": "probed",
+  "provider": "pi",
+  "remediation": [],
+  "session_status": "bound",
+  "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+  "tested_versions": [
+    "0.85.1"
+  ],
+  "version": "0.85.1",
+  "version_status": "tested"
+}

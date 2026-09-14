@@ -1,0 +1,29 @@
+ pi v0.85.1
+ escape interrupt · ctrl+c/ctrl+d
+ clear/exit · / commands · ! bash ·
+ ctrl+o more
+ Press ctrl+o to show full startup
+ help and loaded resources.
+ Pi can explain its own features and
+ look up its docs. Ask it how to use
+ or extend Pi.
+[Extensions]
+  ovrcr-gate-dialog.mjs,
+ovrcr-pi-reporting.mjs
+ fd not found. Downloading...
+ ripgrep not found. Downloading...
+ fd installed to
+ /var/folders/j9/h6rlffxd1r794s9g9ps_5
+ 2t40000gn/T/ovrcr-native-gates.7TtcGj
+ /home/.pi/agent/bin/fd
+ ripgrep installed to
+ /var/folders/j9/h6rlffxd1r794s9g9ps_5
+ 2t40000gn/T/ovrcr-native-gates.7TtcGj
+ /home/.pi/agent/bin/rg
+ gate-select -> one
+ Reply with the single word: GOLF
+ GOLF
+───────────────────────────────────────
+───────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r79...
+↑1.1k ↓44 $0.003 (sub) 0.9%/128k (auto)

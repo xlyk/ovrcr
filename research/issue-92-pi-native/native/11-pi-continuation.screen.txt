@@ -1,0 +1,50 @@
+ Reply with the single word: BRAVO
+ BRAVO
+ Count slowly from 1 to 20, one number per line.
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+ 10
+ 11
+ 12
+ 13
+ 14
+ 15
+ 16
+ 17
+ 18
+ 19
+ 20
+ Count slowly from 1 to 20, one number per line.
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+ 10
+ 11
+ 12
+ 13
+ 14
+ 15
+ 16
+ 17
+ 18
+ 19
+ 20
+ Then reply: CHARLIE
+ CHARLIE
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+↑1.8k ↓295 R4.1k CH80.5% $0.008 (sub) 1.0%/128k (auto)                       (openai-codex) gpt-5.3-codex-spark • thinking off

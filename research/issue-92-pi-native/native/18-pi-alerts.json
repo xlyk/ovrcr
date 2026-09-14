@@ -1,0 +1,15 @@
+# P12 — enabled background alerts
+## fixture preferences in force
+desktop_notifications = true
+ready_sound = true
+## which-key at the time showed 'Disable desktop notifications' and 'Disable ready sound' (see 18-pi-prefs-enabled.png), i.e. both enabled
+## dispatch log
+2026-09-14T07:45:31.339622+00:00 NOTIFICATION osascript pid=34824 :: consigint / worktree-lifecycle / pi-child (#14) OVRCR · response ready
+2026-09-14T07:45:31.512854+00:00 SOUND afplay pid=34830
+2026-09-14T07:46:19.997323+00:00 SOUND afplay pid=39645
+2026-09-14T07:46:49.985252+00:00 NOTIFICATION osascript pid=42635 :: consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+2026-09-14T07:46:50.142096+00:00 SOUND afplay pid=42640
+2026-09-14T07:46:56.120947+00:00 NOTIFICATION osascript pid=43366 :: consigint / auth-handoff / pi-root (#13) OVRCR · input needed
+2026-09-14T07:46:56.201898+00:00 SOUND afplay pid=43372
+## snapshot of the two pi terminals at the last alert
+[{"id":13,"name":"pi-root","activity":"waiting_input","unread_turn":null,"input_requests":[{"id":"b70abde9e501047ed59de4817212eeb9:p5","kind":"Confirm"}]},{"id":14,"name":"pi-child","activity":"response_ready","unread_turn":"217eea361674a2aded5579eec8573260:1","input_requests":[]}]

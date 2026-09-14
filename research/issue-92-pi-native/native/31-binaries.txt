@@ -1,0 +1,8 @@
+# second pass
+revision=df45b5937e4098cb518238333249b3087bfe1b16
+built_utc=2026-09-14T09:16:52Z
+a2cdd6cc17a3c0b193ea11a662f835e36b24d99ea305f26d355eb3dcdfab90c8  /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr
+3b2b531ba09a8ac7e82923e85cbe0d8e39d57bc0eb05c849f9abf7e5ff52e173  /Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui
+pi_version=0.85.1
+host=macOS 26.5.2 arm64
+ 2:16  up 8 days, 17:39, 6 users, load averages: 3.54 4.04 4.67

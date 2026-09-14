@@ -1,0 +1,32 @@
+### cargo fmt --all -- --check
+2026-09-14T07:49:54Z
+exit=0
+### cargo clippy --workspace --all-targets --all-features -- -D warnings
+2026-09-14T07:49:55Z
+    Checking half v2.7.1
+    Checking ahash v0.8.12
+    Checking derive_builder v0.20.2
+    Checking tiff v0.11.3
+    Checking skrifa v0.44.0
+    Checking harfrust v0.12.0
+    Checking image v0.25.10
+    Checking bincode v2.0.1
+    Checking croner v3.0.1
+    Checking arboard v3.6.1
+    Checking epaint v0.36.1
+    Checking ratatui-widgets v0.3.2
+    Checking ratatui-crossterm v0.1.2
+    Checking egui v0.36.1
+    Checking ovrcr-protocol v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/crates/ovrcr-protocol)
+    Checking ratatui-macros v0.7.2
+    Checking ratatui v0.30.2
+    Checking ovrcr-terminal v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/crates/ovrcr-terminal)
+    Checking ovrcr-runtime v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/crates/ovrcr-runtime)
+    Checking ovrcr-tui v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native/crates/ovrcr-tui)
+    Checking egui-winit v0.36.1
+    Checking egui_glow v0.36.1
+    Checking eframe v0.36.1
+    Checking ovrcr v0.1.0 (/Users/xlyk/Code/ovrcr/.worktrees/ticket-92-pi-native)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 36.55s
+clippy_exit=
+2026-09-14T07:50:31Z

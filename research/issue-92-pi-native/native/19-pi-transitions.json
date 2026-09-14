@@ -1,0 +1,63 @@
+# P13 — session transitions: /new, prompt, /resume, /fork, /tree
+## before /new
+{"t":"2026-09-14T07:47:35Z","activity":"idle","state":"Idle","turn":null,"gen":1,"conv":"01a09ede-4ca1-704f-960a-c45839413074","unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T07:47:35Z","activity":"idle","state":"Idle","turn":null,"gen":1,"conv":"01a09ede-4ca1-704f-960a-c45839413074","unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T07:47:36Z","activity":"idle","state":"Idle","turn":null,"gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":null,"health":"Connected"}
+## after /new
+{"t":"2026-09-14T07:47:36Z","activity":"idle","state":"Idle","turn":null,"gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":null,"health":"Connected"}
+## prompt in the new session (turn 11)
+{"t":"2026-09-14T07:47:46Z","activity":"idle","state":"Idle","turn":null,"gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T07:47:47Z","activity":"busy","state":"Busy","turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":null,"health":"Connected"}
+{"t":"2026-09-14T07:47:48Z","activity":"response_ready","state":"ResponseReady","turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","health":"Connected"}
+## /resume (interactive picker; bare Enter accepts the highlighted entry)
+{"t":"2026-09-14T07:48:01Z","activity":"response_ready","state":"ResponseReady","turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","health":"Connected"}
+› Reply with the single word: FOXTROT                                                                                    2 now
+  Reply with the single word: ALPHA                                                                                     16 10m
+  Reply with the single word: ALPHA                                                                                      2 27m
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+↑1.1k ↓42 $0.003 (sub) 0.9%/128k (auto)                                      (openai-codex) gpt-5.3-codex-spark • thinking off
+### after Enter
+{"t":"2026-09-14T07:48:06Z","activity":"idle","state":"Idle","turn":null,"gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","health":"Connected"}
+## /fork (interactive picker; bare Enter accepts the highlighted entry)
+{"t":"2026-09-14T07:48:09Z","activity":"idle","state":"Idle","turn":null,"gen":2,"conv":"01a09ee2-bef9-704f-960a-c45ac0aa27bd","unread_turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","health":"Connected"}
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› Reply with the single word: FOXTROT
+  Message 1 of 1
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+↑1.1k ↓42 $0.003 (sub) 0.9%/128k (auto)                                      (openai-codex) gpt-5.3-codex-spark • thinking off
+### after Enter
+{"t":"2026-09-14T07:48:13Z","activity":"idle","state":"Idle","turn":null,"gen":3,"conv":"01a09ee3-42fb-704f-960a-c45c4eeea9c3","unread_turn":"d8db18a088a50d06a49bd180ffc6cc1b:1","health":"Connected"}
+## /tree (interactive picker; bare Enter accepts the highlighted entry)
+{"t":"2026-09-14T07:48:16Z","activity":"response_ready","state":"ResponseReady","turn":"9b7809b4680398412819fc1499f1f5f1:1","gen":3,"conv":"01a09ee3-42fb-704f-960a-c45c4eeea9c3","unread_turn":"9b7809b4680398412819fc1499f1f5f1:1","health":"Connected"}
+ Reply with the single word: FOXTROT /tree
+ FOXTROT /tree
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+↑1.1k ↓303 $0.006 (sub) 1.1%/128k (auto)                                     (openai-codex) gpt-5.3-codex-spark • thinking off
+### after Enter
+{"t":"2026-09-14T07:48:20Z","activity":"response_ready","state":"ResponseReady","turn":"9b7809b4680398412819fc1499f1f5f1:1","gen":3,"conv":"01a09ee3-42fb-704f-960a-c45c4eeea9c3","unread_turn":"9b7809b4680398412819fc1499f1f5f1:1","health":"Connected"}
+
+## OUTCOME
+/new     : generation 1 -> 2, new conversation id, blank snapshot (turn null), Idle, no replayed Ready.
+prompt   : normal Busy -> ResponseReady in the new session (turn 11 of the ledger).
+/resume  : accepted with bare Enter; activity reset to Idle, generation and conversation unchanged,
+           the server-owned Unread survived, no historical response replayed as Ready.
+/fork    : generation 2 -> 3, new conversation id, blank snapshot, Idle, the Unread survived.
+/tree    : NOT RUN. Pi's input box still held the text of the previous prompt, so the "/tree"
+           characters were appended to it and submitted as an ordinary prompt
+           ("Reply with the single word: FOXTROT /tree") instead of invoking the command.
+           The pane text below shows this. This is an artifact of driving Pi through
+           `ovrcr terminal send`, which is a bracketed-paste channel and cannot clear the
+           input box; it is not an OVRCR behaviour. It consumed ledger turn 12 (the cap),
+           so the /tree cycle_invalidated case is recorded as NOT RUN, not as passed.
+  ovrcr-gate-dialog.mjs, ovrcr-pi-reporting.mjs
+ Forked to new session
+ Reply with the single word: FOXTROT /tree
+ FOXTROT /tree
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-gDDTB6/workspaces/consigint/auth-handoff (gui-consigint-...
+↑1.1k ↓303 $0.006 (sub) 1.1%/128k (auto)                                     (openai-codex) gpt-5.3-codex-spark • thinking off
