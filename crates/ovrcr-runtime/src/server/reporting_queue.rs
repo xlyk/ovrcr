@@ -113,6 +113,10 @@ impl<T> ReportingSender<T> {
         }
     }
 
+    /// Read the counters a monitored channel keeps. Production reads them
+    /// through [`ReportingQueueMonitor::snapshot`]; this is the handle the
+    /// tests already hold.
+    #[cfg(any(test, feature = "acceptance-diagnostics"))]
     pub fn snapshot(&self) -> ReportingQueueSnapshot {
         *self.counters.snapshot.lock().unwrap()
     }
@@ -261,7 +265,8 @@ fn record_dequeue(snapshot: &mut ReportingQueueSnapshot, bytes: usize) {
 /// lock for it. With one — the `acceptance-diagnostics` build, and the tests
 /// that assert on the accounting — every send and receive moves the counters
 /// under the same lock that moves the item, so a snapshot can never disagree
-/// with the channel.
+/// with the channel. The `after_send` and `before_wait` ordering hooks live on
+/// that path too, so they fire only when a monitor is supplied.
 pub fn reporting_channel<T>(
     capacity: usize,
     weight: fn(&T) -> usize,

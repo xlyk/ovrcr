@@ -87,7 +87,10 @@ pub const RAW_EVENT_QUEUE_CAPACITY: usize = 64;
 pub const RAW_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DASHBOARD_QUEUE: usize = 64;
 
+#[cfg(not(feature = "acceptance-diagnostics"))]
+use reporting_queue::ReportingQueueMonitor;
 use reporting_queue::reporting_channel;
+#[cfg(feature = "acceptance-diagnostics")]
 pub use reporting_queue::{ReportingQueueMonitor, ReportingQueueSnapshot};
 pub(crate) use reporting_queue::{ReportingReceiver, ReportingSender};
 
