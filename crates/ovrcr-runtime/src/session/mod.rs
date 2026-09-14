@@ -221,6 +221,12 @@ pub struct Session {
 /// Publishes a spawning session where its own events can be dispatched.
 pub(crate) type SessionRegister<'a> = &'a dyn Fn(&Arc<Session>);
 
+/// The register for a spawn whose test does not watch publication. It still
+/// runs at the publication point, so the hook constructors below reach the
+/// PTY reader and child waiter the same way production does.
+#[cfg(test)]
+pub(crate) const NO_REGISTER: SessionRegister<'static> = &|_| {};
+
 /// Test-only control over the group-leader wait in `spawn_internal`.
 ///
 /// `None` in every production spawn, which reads its bound from the
@@ -231,22 +237,6 @@ pub(crate) struct LeaderWaitOverride<'a> {
 }
 
 impl Session {
-    /// Spawns a session without publishing it first.
-    ///
-    /// Test-only: every production spawn goes through
-    /// [`Session::spawn_registered`], which publishes the session before its
-    /// PTY reader and child waiter can emit an event the dispatcher cannot yet
-    /// route. A caller here would reintroduce that lost-output race.
-    #[cfg(test)]
-    pub(crate) fn spawn(
-        id: SessionId,
-        spec: SessionSpec,
-        size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
-    ) -> Result<Arc<Self>> {
-        Self::spawn_internal(id, spec, size, events.into(), None, None, None, None, None)
-    }
-
     /// Spawn a session and publish it through `register` before its PTY
     /// reader and child waiter start.
     ///
@@ -260,20 +250,10 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         register: SessionRegister<'_>,
     ) -> Result<Arc<Self>> {
-        Self::spawn_internal(
-            id,
-            spec,
-            size,
-            events.into(),
-            Some(register),
-            None,
-            None,
-            None,
-            None,
-        )
+        Self::spawn_internal(id, spec, size, events, register, None, None, None, None)
     }
 
     #[cfg(test)]
@@ -281,7 +261,7 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -290,8 +270,8 @@ impl Session {
             id,
             spec,
             size,
-            events.into(),
-            None,
+            events,
+            NO_REGISTER,
             reap_hook,
             signal_hook,
             signal_result_hook,
@@ -304,15 +284,15 @@ impl Session {
         id: SessionId,
         spec: SessionSpec,
         size: TerminalSize,
-        events: impl Into<crate::server::ReportingSender<SessionEvent>>,
+        events: crate::server::ReportingSender<SessionEvent>,
         leader_wait: LeaderWaitOverride<'_>,
     ) -> Result<Arc<Self>> {
         Self::spawn_internal(
             id,
             spec,
             size,
-            events.into(),
-            None,
+            events,
+            NO_REGISTER,
             None,
             None,
             None,
@@ -326,7 +306,7 @@ impl Session {
         spec: SessionSpec,
         size: TerminalSize,
         events: crate::server::ReportingSender<SessionEvent>,
-        register: Option<SessionRegister<'_>>,
+        register: SessionRegister<'_>,
         reap_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_hook: Option<Arc<dyn Fn() + Send + Sync>>,
         signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
@@ -455,9 +435,7 @@ impl Session {
         });
 
         // Publish the session before anything can emit an event for it.
-        if let Some(register) = register {
-            register(&session);
-        }
+        register(&session);
 
         let reader_session = Arc::clone(&session);
         let reader_events = events.clone();

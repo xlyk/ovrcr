@@ -1,8 +1,7 @@
 use super::*;
 use crate::session::{SessionEvent, SessionId, TerminalSize};
 use ovrcr_protocol::{
-    AgentReport, DashboardView, ErrorCode, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, PaneTarget,
-    Response,
+    AgentReport, DashboardView, ErrorCode, HistorySnapshotId, PAGE_COLS, PAGE_ROWS, Response,
 };
 
 pub enum DispatchMessage {
@@ -13,12 +12,6 @@ pub enum DispatchMessage {
     },
     RefreshSession {
         session: SessionId,
-    },
-    Select {
-        request_id: u64,
-        session: SessionId,
-        size: TerminalSize,
-        completion: std::sync::mpsc::SyncSender<DispatchCompletion>,
     },
     SetView {
         owner: Arc<()>,
@@ -67,11 +60,9 @@ pub enum HistoryRequest {
     },
 }
 pub(super) fn bridge_events(
-    events: impl Into<ReportingReceiver<SessionEvent>>,
-    dispatch: impl Into<ReportingSender<DispatchMessage>>,
+    events: ReportingReceiver<SessionEvent>,
+    dispatch: ReportingSender<DispatchMessage>,
 ) {
-    let events = events.into();
-    let dispatch = dispatch.into();
     while let Ok(event) = events.recv() {
         if dispatch.send(DispatchMessage::Session(event)).is_err() {
             break;
@@ -79,11 +70,7 @@ pub(super) fn bridge_events(
     }
 }
 
-pub fn run_dispatcher(
-    state: Arc<ServerState>,
-    commands: impl Into<ReportingReceiver<DispatchMessage>>,
-) {
-    let commands = commands.into();
+pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<DispatchMessage>) {
     while let Ok(command) = commands.recv() {
         match command {
             DispatchMessage::Session(event) => dispatch_session_event(&state, event),
@@ -93,12 +80,6 @@ pub fn run_dispatcher(
             DispatchMessage::RefreshSession { session } => {
                 dispatch_refresh_session(&state, session)
             }
-            DispatchMessage::Select {
-                request_id,
-                session,
-                size,
-                completion,
-            } => dispatch_select(&state, request_id, session, size, completion),
             DispatchMessage::SetView {
                 owner,
                 request_id,
@@ -430,31 +411,6 @@ fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
         .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
             session.summary(),
         ))));
-}
-
-fn dispatch_select(
-    state: &ServerState,
-    request_id: u64,
-    id: SessionId,
-    size: TerminalSize,
-    completion: SyncSender<DispatchCompletion>,
-) {
-    let Some(snapshot) = state.dashboard.snapshot() else {
-        let _ = completion.send(DispatchCompletion::Complete);
-        return;
-    };
-    let revision = state.dashboard.next_revision();
-    dispatch_set_view(
-        state,
-        &snapshot.identity,
-        request_id,
-        DashboardView {
-            revision,
-            panes: vec![PaneTarget { session: id, size }],
-            focused: Some(id),
-        },
-        completion,
-    );
 }
 
 fn view_error(
