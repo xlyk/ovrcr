@@ -131,7 +131,13 @@ async function main() {
       } else if (command === "session_tree") await host.emit({ type: "session_tree" });
       else if (command === "session_compact") await host.emit({ type: "session_compact" });
       else if (command === "idle") host.state.idle = a !== "false";
-      else if (command === "run_command") await host.run(a);
+      else if (command === "run_command") {
+        await host.run(a);
+        // The Rust lifecycle tests watch the terminal for what the command told the user.
+        for (const [message, level] of host.state.notices.splice(0)) {
+          process.stdout.write(`PI_NOTICE=[${level}] ${message}\n`);
+        }
+      }
       else if (command === "session_switch") {
         if (a) host.state.session = a;
         await host.emit({ type: "session_switch", reason: b ?? "resume" });
