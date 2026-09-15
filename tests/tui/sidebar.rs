@@ -1246,3 +1246,131 @@ fn ux_live_metadata_is_readable_and_preserves_selection() {
     // The selected review uses the soft selection background.
     assert_eq!(buffer[(8, 4)].bg, Color::Rgb(49, 50, 68));
 }
+
+fn selection_bar_row(terminal: &Terminal<TestBackend>) -> Option<u16> {
+    (0..40).find(|&y| terminal.backend().buffer()[(0, y)].symbol() == "▌")
+}
+
+#[test]
+fn browse_jk_moves_across_project_workspace_and_session_rows() {
+    let mut dashboard = dashboard_fixture();
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(4), "review session");
+
+    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(3), "local under auth");
+
+    dashboard.key(KeyCode::Char('k'));
+    assert!(dashboard.focused_session().is_none());
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(2), "auth workspace");
+    assert!(sidebar_row(&terminal, 2).contains("auth"));
+
+    dashboard.key(KeyCode::Char('k'));
+    assert!(dashboard.focused_session().is_none());
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(1), "consigint project");
+    assert!(sidebar_row(&terminal, 1).contains("CONSIGINT"));
+
+    dashboard.key(KeyCode::Char('j'));
+    assert!(dashboard.focused_session().is_none());
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(2), "back to auth");
+
+    dashboard.key(KeyCode::Down);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(3));
+
+    dashboard.key(KeyCode::Up);
+    assert!(dashboard.focused_session().is_none());
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(2));
+}
+
+#[test]
+fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
+    let mut dashboard = dashboard_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+
+    // Climb to the auth workspace row, then fold and expand with Enter.
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    assert!(dashboard.focused_session().is_none());
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 2).contains("▸"),
+        "Enter on a workspace should fold it"
+    );
+    assert_eq!(
+        sidebar_row(&terminal, 2),
+        format!("▌ 󰘬 auth{}▸ 2 ", " ".repeat(27))
+    );
+
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        !sidebar_row(&terminal, 2).contains("▸"),
+        "second Enter should expand the workspace"
+    );
+    assert_eq!(selection_bar_row(&terminal), Some(2));
+
+    // Climb to the project header and fold it.
+    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 1).contains("▸"),
+        "Enter on a project should fold it"
+    );
+    assert_eq!(
+        sidebar_row(&terminal, 1),
+        format!("▌CONSIGINT {} ▸ 2 ws ", "─".repeat(20))
+    );
+
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        !sidebar_row(&terminal, 1).contains("▸"),
+        "second Enter should expand the project"
+    );
+
+    // Select a session and Enter still focuses the terminal.
+    dashboard.key(KeyCode::Char('j'));
+    dashboard.key(KeyCode::Char('j'));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
+    dashboard.install_screen(SessionId(5), &[]);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    assert_eq!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec()),
+        "Enter on a session must enter Terminal mode"
+    );
+}

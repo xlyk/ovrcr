@@ -26,8 +26,8 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` / Down / Up | Select the next or previous visible session |
-| `Enter` | Send terminal input to the focused pane's session |
+| `j` / `k` / Down / Up | Select the next or previous visible sidebar row |
+| `Enter` | Collapse or expand the selected project or workspace; send terminal input when a session is selected |
 | `v` | Open a second pane showing the next different visible session |
 | `Tab` / `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |

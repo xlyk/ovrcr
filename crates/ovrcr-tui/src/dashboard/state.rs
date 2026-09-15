@@ -1018,14 +1018,8 @@ impl Dashboard {
 
     pub(crate) fn move_selection(&mut self, delta: isize) {
         let rows = self.visible_rows();
-        let ids = rows
-            .iter()
-            .filter_map(|row| match row {
-                TreeRow::Session { id } => Some(*id),
-                TreeRow::Project { .. } | TreeRow::Workspace { .. } => None,
-            })
-            .collect::<Vec<_>>();
-        if ids.is_empty() {
+        if rows.is_empty() {
+            self.selected_container = None;
             self.retarget(PaneChange::Cleared);
             if let Some(pane) = self.focused_pane_mut() {
                 pane.session = None;
@@ -1033,15 +1027,27 @@ impl Dashboard {
             return;
         }
         let current = self
-            .focused_session()
-            .and_then(|selected| ids.iter().position(|id| *id == selected));
+            .selected_container
+            .as_ref()
+            .and_then(|selected| rows.iter().position(|row| row == selected))
+            .or_else(|| {
+                self.focused_session().and_then(|selected| {
+                    rows.iter()
+                        .position(|row| *row == TreeRow::Session { id: selected })
+                })
+            });
         let index = match current {
-            Some(index) => (index as isize + delta).clamp(0, ids.len() as isize - 1) as usize,
-            None if delta < 0 => ids.len() - 1,
+            Some(index) => (index as isize + delta).clamp(0, rows.len() as isize - 1) as usize,
+            None if delta < 0 => rows.len() - 1,
             None => 0,
         };
-        self.select_session(ids[index]);
-        self.ensure_selection_visible(&rows);
+        match rows[index].clone() {
+            TreeRow::Session { id } => self.select_session(id),
+            row @ (TreeRow::Project { .. } | TreeRow::Workspace { .. }) => {
+                self.select_container(row);
+                self.ensure_selection_visible(&rows);
+            }
+        }
     }
 
     // A container selection can retain a wire-focused pane, but actions still
@@ -1077,20 +1083,24 @@ impl Dashboard {
         self.ensure_selection_visible(&rows);
     }
 
-    fn tree_viewport_height(&self) -> usize {
+    pub(super) fn tree_viewport_height(&self) -> usize {
         usize::from(self.focused_size().rows)
             .saturating_add(usize::from(METADATA_HEIGHT))
             .max(1)
     }
 
     fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
-        let Some(selected) = self.focused_session() else {
-            return;
-        };
-        let Some(index) = rows
-            .iter()
-            .position(|row| *row == TreeRow::Session { id: selected })
-        else {
+        let index = self
+            .selected_container
+            .as_ref()
+            .and_then(|selected| rows.iter().position(|row| row == selected))
+            .or_else(|| {
+                self.focused_session().and_then(|selected| {
+                    rows.iter()
+                        .position(|row| *row == TreeRow::Session { id: selected })
+                })
+            });
+        let Some(index) = index else {
             return;
         };
         let height = self.tree_viewport_height();
@@ -1103,6 +1113,26 @@ impl Dashboard {
         }
         let max_offset = tree_line_count(rows).saturating_sub(height);
         self.tree_offset = self.tree_offset.min(max_offset);
+    }
+
+    /// Toggle collapse for a project or workspace row. Returns true when the row folded.
+    pub(super) fn toggle_row_collapse(&mut self, row: &TreeRow) -> bool {
+        match row {
+            TreeRow::Project { name } => {
+                if !self.collapsed_projects.remove(name) {
+                    self.collapsed_projects.insert(name.clone());
+                }
+                true
+            }
+            TreeRow::Workspace { project, name } => {
+                let key = (project.clone(), name.clone());
+                if !self.collapsed_workspaces.remove(&key) {
+                    self.collapsed_workspaces.insert(key);
+                }
+                true
+            }
+            TreeRow::Session { .. } => false,
+        }
     }
 
     pub fn key_action(&mut self, key: KeyEvent) -> DashboardAction {
@@ -1984,17 +2014,12 @@ impl Dashboard {
                         Some(self.request_selected())
                     }
                     TreeRow::Project { name } if column == 0 => {
-                        if !self.collapsed_projects.remove(&name) {
-                            self.collapsed_projects.insert(name);
-                        }
+                        self.toggle_row_collapse(&TreeRow::Project { name });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
                     }
                     TreeRow::Workspace { project, name } if column == 2 => {
-                        let key = (project, name);
-                        if !self.collapsed_workspaces.remove(&key) {
-                            self.collapsed_workspaces.insert(key);
-                        }
+                        self.toggle_row_collapse(&TreeRow::Workspace { project, name });
                         self.clamp_tree_offset(usize::from(sidebar.height));
                         Some(DashboardAction::Redraw)
                     }
@@ -2008,7 +2033,7 @@ impl Dashboard {
         }
     }
 
-    fn clamp_tree_offset(&mut self, viewport_height: usize) {
+    pub(super) fn clamp_tree_offset(&mut self, viewport_height: usize) {
         let max_offset = tree_line_count(&self.visible_rows()).saturating_sub(viewport_height);
         self.tree_offset = self.tree_offset.min(max_offset);
     }

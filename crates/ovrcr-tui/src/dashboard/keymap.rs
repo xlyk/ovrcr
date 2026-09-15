@@ -266,9 +266,13 @@ impl Dashboard {
                 DashboardAction::Redraw
             }
             Action::Detach => DashboardAction::Detach,
-            // `input_is_allowed` is the same predicate the Focus binding's reason
-            // reports, so the refusal banner and the hint cannot disagree.
             Action::Focus => {
+                if let Some(container) = self.selected_container.clone() {
+                    if self.toggle_row_collapse(&container) {
+                        self.clamp_tree_offset(self.tree_viewport_height());
+                        return DashboardAction::Redraw;
+                    }
+                }
                 if self.input_is_allowed() {
                     self.mode = InputMode::Terminal;
                     DashboardAction::Redraw
@@ -300,11 +304,19 @@ impl Dashboard {
             }
             Action::NextSession => {
                 self.move_selection(1);
-                self.request_selected()
+                if self.action_session().is_some() {
+                    self.request_selected()
+                } else {
+                    DashboardAction::Redraw
+                }
             }
             Action::PreviousSession => {
                 self.move_selection(-1);
-                self.request_selected()
+                if self.action_session().is_some() {
+                    self.request_selected()
+                } else {
+                    DashboardAction::Redraw
+                }
             }
             Action::ToggleNotifications => self.toggle_desktop_notifications(),
             Action::ToggleSound => self.toggle_ready_sound(),
@@ -640,22 +652,53 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .group('v', "x"),
         key_binding(
             "j/Down",
-            "Next session",
-            "Select the next visible session".into(),
+            "Next row",
+            "Select the next visible sidebar row".into(),
             Char('j'),
             Action::NextSession,
         )
         .group('v', "j/Down"),
         key_binding(
             "k/Up",
-            "Previous session",
-            "Select the previous visible session".into(),
+            "Previous row",
+            "Select the previous visible sidebar row".into(),
             Char('k'),
             Action::PreviousSession,
         )
         .group('v', "k/Up"),
     ];
     view.extend(help());
+    let (enter_name, enter_description, enter_disabled) =
+        if let Some(container) = dashboard.selected_container.as_ref() {
+            let collapsed = match container {
+                TreeRow::Project { name } => dashboard.collapsed_projects.contains(name),
+                TreeRow::Workspace { project, name } => dashboard
+                    .collapsed_workspaces
+                    .contains(&(project.clone(), name.clone())),
+                TreeRow::Session { .. } => false,
+            };
+            if collapsed {
+                (
+                    "Expand",
+                    "Expand the selected project or workspace".into(),
+                    None,
+                )
+            } else {
+                (
+                    "Collapse",
+                    "Collapse the selected project or workspace".into(),
+                    None,
+                )
+            }
+        } else {
+            (
+                "Focus",
+                format!("Send terminal input to {target}"),
+                missing
+                    .or_else(|| (!running).then_some("session is not running"))
+                    .or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING)),
+            )
+        };
     vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(no_workspace).group('w', "n"),
@@ -663,7 +706,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
         KeyGroup { title: "Session".into(), keys: vec![
-            key_binding("Enter", "Focus", format!("Send terminal input to {target}"), Enter, Action::Focus).unless(missing.or_else(|| (!running).then_some("session is not running")).or_else(|| (!dashboard.input_is_allowed()).then_some(WAITING))).group('t', "Enter"),
+            key_binding("Enter", enter_name, enter_description, Enter, Action::Focus).unless(enter_disabled).group('t', "Enter"),
             key_binding("p", "Pause", format!("Pause the processes of {target}; no confirmation"), Char('p'), Action::Pause).unless(missing.or_else(|| (!running).then_some("not running"))).group('t', "p"),
             key_binding("r", "Resume", format!("Resume the processes of {target}; no confirmation"), Char('r'), Action::Resume).unless(missing.or_else(|| (!paused).then_some("not paused"))).group('t', "r"),
             key_binding("R", "Mark reviewed", format!("Mark the displayed unread agent response from {target} reviewed; activity and reporting health stay unchanged"), Char('R'), Action::MarkReviewed).unless(missing.or_else(|| selected.and_then(|s| s.unread.as_ref()).is_none().then_some("no unread response"))).once().group('t', "R"),

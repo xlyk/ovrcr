@@ -2264,10 +2264,13 @@ fn split_error_is_cleared_by_the_view_the_next_selection_requests() {
         ovrcr::tui::DashboardAction::Redraw
     );
     assert!(banner(&dashboard).contains("No other visible session to split"));
-    let request = match dashboard.key(KeyCode::Char('j')) {
-        ovrcr::tui::DashboardAction::Request(request) => request,
-        action => panic!("a selection change should request a view: {action:?}"),
-    };
+    let request = (0..16)
+        .find_map(|_| match dashboard.key(KeyCode::Char('j')) {
+            ovrcr::tui::DashboardAction::Request(request) => Some(request),
+            ovrcr::tui::DashboardAction::Redraw => None,
+            action => panic!("a selection change should request a view: {action:?}"),
+        })
+        .expect("j/k should reach a visible session and request its view");
     acknowledge_view_request(&mut dashboard, request);
     assert!(
         !banner(&dashboard).contains("No other visible session to split"),
