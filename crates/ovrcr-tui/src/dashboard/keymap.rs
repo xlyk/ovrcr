@@ -267,11 +267,11 @@ impl Dashboard {
             }
             Action::Detach => DashboardAction::Detach,
             Action::Focus => {
-                if let Some(container) = self.selected_container.clone() {
-                    if self.toggle_row_collapse(&container) {
-                        self.clamp_tree_offset(self.tree_viewport_height());
-                        return DashboardAction::Redraw;
-                    }
+                if let Some(container) = self.selected_container.clone()
+                    && self.toggle_row_collapse(&container)
+                {
+                    self.clamp_tree_offset(self.tree_viewport_height());
+                    return DashboardAction::Redraw;
                 }
                 if self.input_is_allowed() {
                     self.mode = InputMode::Terminal;
