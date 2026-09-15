@@ -588,6 +588,7 @@ impl Dashboard {
             outbox: super::outbox::Outbox::default(),
             ignored_responses: HashSet::new(),
             settings: DashboardSettings::default(),
+            settings_path: None,
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
         }

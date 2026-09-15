@@ -473,8 +473,11 @@ argv; a new name is inserted before `shell`.
 Desktop notifications are off by default. Set `desktop_notifications = true` in
 `dashboard.toml` to enable them when attaching. In browse mode, press uppercase
 `N`, or search the command palette for **desktop notifications**, to enable or
-disable them for the current dashboard. The toggle does not rewrite your settings
-file. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
+disable them. Each toggle saves to `dashboard.toml` (or the path selected by
+`OVRCR_DASHBOARD_CONFIG`) and takes effect immediately. The next dashboard
+loads those saved settings. A missing file is created; a save error is shown
+without changing the active preference. Other configuration values and comments are retained. Manual file edits are
+loaded on the next attach. In terminal mode `N` remains ordinary terminal input; use Ctrl-g first.
 
 Two kinds of alert share these preferences, this host and this suppression.
 **OVRCR · response ready** means a managed root response from a supported
@@ -524,8 +527,7 @@ Linux desktop delivery remains unverified.
 The ready sound is off by default and independent of desktop notifications:
 either, both or neither can be on. Set `ready_sound = true` in `dashboard.toml`
 to enable it when attaching. In browse mode, press uppercase `S`, or search the
-command palette for **ready sound**, to toggle it for the current dashboard
-without rewriting your settings file. In terminal mode `S` remains ordinary
+command palette for **ready sound**, to toggle and save it using the same settings file and failure behavior. In terminal mode `S` remains ordinary
 terminal input; use Ctrl-g first.
 
 A sound follows exactly the same selection as a desktop alert: a new unread

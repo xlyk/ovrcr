@@ -18,7 +18,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 signal-hook = { workspace = true }
 toml = { workspace = true }
-unicode-width = { workspace = true }
-
-[dev-dependencies]
+toml_edit = { workspace = true }
 tempfile = { workspace = true }
+unicode-width = { workspace = true }

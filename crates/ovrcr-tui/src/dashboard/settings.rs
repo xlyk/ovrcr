@@ -55,6 +55,82 @@ pub fn load_dashboard_settings(path: &Path) -> (DashboardSettings, Option<String
     }
 }
 
+/// Update only the selected preference, keeping other configuration values.
+/// Publish with one rename so readers never see a partially written document.
+pub(super) fn save_alert_setting(
+    path: &Path,
+    key: &str,
+    enabled: bool,
+) -> anyhow::Result<DashboardSettings> {
+    use anyhow::{Context, bail};
+    use std::io::Write;
+
+    // A dangling link is not a missing config: never replace the link itself.
+    let entry = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("inspect dashboard settings"),
+    };
+    // Follow an existing symlink rather than replacing the user's config link.
+    let path = match std::fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && entry.is_none() => {
+            path.to_path_buf()
+        }
+        Err(error) => return Err(error).context("locate dashboard settings"),
+    };
+    let permissions = match std::fs::metadata(&path) {
+        Ok(metadata) => {
+            let permissions = metadata.permissions();
+            if permissions.readonly() {
+                bail!("dashboard settings are read-only");
+            }
+            Some(permissions)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("inspect dashboard settings permissions"),
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).context("read dashboard settings"),
+    };
+    // Refuse to overwrite invalid settings, including incorrectly typed values.
+    toml::from_str::<RawSettings>(&contents).context("parse dashboard settings")?;
+    let mut document: toml_edit::DocumentMut = contents.parse()?;
+    let mut value = toml_edit::Value::from(enabled);
+    if let Some(existing) = document.get(key).and_then(toml_edit::Item::as_value) {
+        *value.decor_mut() = existing.decor().clone();
+    }
+    document[key] = toml_edit::Item::Value(value);
+    let contents = document.to_string();
+    let settings = toml::from_str::<RawSettings>(&contents)?.into_settings();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent).context("create dashboard settings directory")?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).context("create temporary dashboard settings")?;
+    temporary
+        .write_all(contents.as_bytes())
+        .context("write dashboard settings")?;
+    if let Some(permissions) = permissions {
+        temporary
+            .as_file()
+            .set_permissions(permissions)
+            .context("preserve dashboard settings permissions")?;
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .context("sync dashboard settings")?;
+    temporary
+        .persist(&path)
+        .context("replace dashboard settings")?;
+    Ok(settings)
+}
+
 impl RawSettings {
     fn into_settings(self) -> DashboardSettings {
         DashboardSettings {
