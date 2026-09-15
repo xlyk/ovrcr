@@ -264,6 +264,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
             let request: ClientMessage = read_frame(&mut stream).unwrap();
             assert_eq!(request.request, Request::Inspect);
             let session = SessionSummary {
+                title: None,
                 id: SessionId(7),
                 project: "p".into(),
                 workspace: "w".into(),

@@ -5,7 +5,9 @@ use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
-use crate::protocol::{BranchRequest, ClientMessage, CreateSessionRequest, Request, Response};
+use crate::protocol::{
+    BranchRequest, ClientMessage, CreateSessionRequest, Request, Response, SessionLaunch,
+};
 use crate::session::SessionId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Frame;
@@ -32,6 +34,9 @@ struct Suggestions {
 enum Command {
     CreateTerminal,
     CreateWorkspace,
+    RenameTerminal(SessionId),
+    RelaunchTerminal(SessionId),
+    RecoverLaunch,
     RegisterProject,
     CloseTerminal(SessionId),
     RemoveWorkspace,
@@ -84,6 +89,9 @@ pub(super) struct Palette {
     pending: Option<u64>,
     error: Option<String>,
     workspace_acknowledged: bool,
+    launch_preference: Option<(String, super::settings::LaunchChoice)>,
+    failed_launch: Option<CreateSessionRequest>,
+    launch_project: Option<String>,
     suggestions: Suggestions,
     // Some(true) retains explicit whole-form Submit; Some(false) replays Enter.
     submit_when_ready: Option<bool>,
@@ -150,6 +158,9 @@ impl Palette {
             pending: None,
             error: None,
             workspace_acknowledged: false,
+            launch_preference: None,
+            failed_launch: None,
+            launch_project: None,
             suggestions: Suggestions::default(),
             submit_when_ready: None,
             cursor: Default::default(),
@@ -196,6 +207,28 @@ impl Palette {
         }
         self.error = None;
     }
+}
+
+fn text_field(label: &'static str, value: String, required: bool) -> Field {
+    Field {
+        label,
+        value,
+        required,
+        hidden: false,
+        edited: false,
+        kind: FieldKind::Text,
+    }
+}
+fn pick_field(label: &'static str, value: String, items: Vec<PickItem>) -> Field {
+    let mut list = PickList::new(items);
+    if !list.items.iter().any(|item| item.value == value) {
+        list.query = value.clone();
+    } else {
+        list.select_value(&value);
+    }
+    let mut field = text_field(label, value, true);
+    field.kind = FieldKind::Pick(list);
+    field
 }
 
 fn visible_indices(fields: &[Field]) -> Vec<usize> {
@@ -295,6 +328,9 @@ impl Dashboard {
             pending: None,
             error: None,
             workspace_acknowledged: false,
+            launch_preference: None,
+            failed_launch: None,
+            launch_project: None,
             suggestions: Suggestions::default(),
             submit_when_ready: None,
             cursor: Default::default(),
@@ -312,6 +348,35 @@ impl Dashboard {
     }
 
     fn refresh_workspace_form(&self, palette: &mut Palette) {
+        if let Page::Form {
+            fields, command, ..
+        } = &mut palette.page
+        {
+            let project = match command {
+                Command::CreateTerminal => Some(split_workspace(&fields[1].value).0),
+                Command::CreateWorkspace => Some(fields[0].value.clone()),
+                _ => None,
+            };
+            if let Some(project) = project {
+                if palette
+                    .launch_project
+                    .as_ref()
+                    .is_some_and(|old| old != &project)
+                {
+                    for replacement in
+                        self.launch_fields(&project, matches!(command, Command::CreateWorkspace))
+                    {
+                        if let Some(field) =
+                            fields.iter_mut().find(|f| f.label == replacement.label)
+                        {
+                            *field = replacement;
+                        }
+                    }
+                }
+                palette.launch_project = Some(project);
+            }
+            self.refresh_terminal_form(fields, false);
+        }
         let hints = &mut palette.suggestions;
         if let Some((project, result)) = hints.worker.as_ref().and_then(|worker| worker.poll()) {
             hints.cache.insert(project, result);
@@ -512,13 +577,22 @@ impl Dashboard {
     }
 
     fn command_page(&self, command: Command) -> Page {
-        if let Command::CloseTerminal(id) = command {
+        if let Command::RelaunchTerminal(id) = command {
+            Page::Confirm {
+                request: Request::RelaunchSession { session: id },
+                target: "Relaunch this exited session in a new terminal, retaining its output?"
+                    .into(),
+            }
+        } else if let Command::CloseTerminal(id) = command {
             let session = find_session(self, id).expect("close target exists");
             Page::Confirm {
                 request: Request::CloseTerminal { session: id },
                 target: format!(
                     "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
-                    session.project, session.workspace, session.name, id.0
+                    session.project,
+                    session.workspace,
+                    session.display_name(),
+                    id.0
                 ),
             }
         } else {
@@ -572,6 +646,18 @@ impl Dashboard {
             .filter(|id| find_session(self, *id).is_some())
         {
             entries.push(Entry {
+                label: "Rename terminal (blank = Automatic)".into(),
+                command: Command::RenameTerminal(id),
+            });
+            if find_session(self, id)
+                .is_some_and(|s| matches!(s.phase, crate::session::SessionPhase::Exited { .. }))
+            {
+                entries.push(Entry {
+                    label: "Relaunch exited terminal".into(),
+                    command: Command::RelaunchTerminal(id),
+                });
+            }
+            entries.push(Entry {
                 label: "Close terminal".into(),
                 command: Command::CloseTerminal(id),
             });
@@ -590,7 +676,10 @@ impl Dashboard {
                     entries.push(Entry {
                         label: format!(
                             "Switch terminal: {} / {} / {} (#{})",
-                            project.name, workspace.name, session.name, session.id.0
+                            project.name,
+                            workspace.name,
+                            session.display_name(),
+                            session.id.0
                         ),
                         command: Command::Switch(session.id),
                     });
@@ -1033,12 +1122,61 @@ impl Dashboard {
                         self.palette = Some(palette);
                         return action;
                     }
+                    if matches!(command, Command::RecoverLaunch)
+                        && fields.first().is_some_and(|f| f.label == "Recovery")
+                    {
+                        let mut previous = palette.failed_launch.as_ref().unwrap().clone();
+                        if !self
+                            .hierarchy
+                            .projects
+                            .iter()
+                            .find(|p| p.name == previous.project)
+                            .is_some_and(|p| {
+                                p.workspaces.iter().any(|w| w.name == previous.workspace)
+                            })
+                        {
+                            palette.error = Some("Workspace not yet registered; wait for the hierarchy update before retrying.".into());
+                            self.palette = Some(palette);
+                            return action;
+                        }
+                        match fields[0].value.as_str() {
+                            "Choose another agent" => {
+                                *fields = self.launch_fields(&previous.project, false);
+                                fields[0] = pick_field(
+                                    "Start",
+                                    "Agent".into(),
+                                    ["Agent", "Terminal"]
+                                        .into_iter()
+                                        .map(|s| PickItem {
+                                            label: s.into(),
+                                            value: s.into(),
+                                        })
+                                        .collect(),
+                                );
+                                self.refresh_terminal_form(fields, false);
+                                *active = 1;
+                                palette.error = None;
+                                self.palette = Some(palette);
+                                return action;
+                            }
+                            "Open shell" => {
+                                previous.argv = self.shell_argv();
+                                previous.label = None;
+                            }
+                            _ => {}
+                        }
+                        action =
+                            self.palette_submit(&mut palette, Request::CreateSession(previous));
+                        self.palette = Some(palette);
+                        return action;
+                    }
                     self.refresh_terminal_form(fields, *name_edited);
                     self.refresh_project_form(fields, *name_edited, *root_edited);
                     let visible = visible_indices(fields);
                     let last = submit
                         || visible.last().copied() == Some(*active)
-                        || (matches!(command, Command::CreateWorkspace) && *active == 1);
+                        || (matches!(command, Command::CreateWorkspace)
+                            && (*active == 1 || (*active == 3 && fields[2].value == "existing")));
                     if !last {
                         move_form_field(fields, active, false);
                     } else if let Some(index) = fields
@@ -1057,11 +1195,41 @@ impl Dashboard {
                         }
                         let values: Vec<_> =
                             fields.iter().map(|f| f.value.trim().to_string()).collect();
+                        let selected_launch = if matches!(
+                            command,
+                            Command::CreateTerminal
+                                | Command::CreateWorkspace
+                                | Command::RecoverLaunch
+                        ) {
+                            match self.selected_launch(fields) {
+                                Ok(launch) => launch,
+                                Err(error) => {
+                                    palette.error = Some(error);
+                                    self.palette = Some(palette);
+                                    return action;
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         let request = match command {
-                            Command::CreateTerminal => self.create_terminal_request(&values),
-                            Command::CreateWorkspace => Request::CreateWorkspace {
+                            Command::CreateTerminal => {
+                                Request::CreateSession(CreateSessionRequest {
+                                    project: split_workspace(&values[1]).0,
+                                    workspace: split_workspace(&values[1]).1,
+                                    name: values[2].clone(),
+                                    argv: selected_launch.as_ref().unwrap().argv.clone(),
+                                    label: selected_launch.as_ref().unwrap().label.clone(),
+                                })
+                            }
+                            Command::RenameTerminal(session) => Request::SetSessionTitle {
+                                session: *session,
+                                title: (!values[0].is_empty()).then(|| values[0].clone()),
+                            },
+                            Command::CreateWorkspace => Request::CreateWorkspaceWithLaunch {
                                 project: values[0].clone(),
                                 name: values[1].clone(),
+                                launch: selected_launch.clone(),
                                 branch: if values[2] == "existing" {
                                     BranchRequest::Existing {
                                         branch: values[3].clone(),
@@ -1073,6 +1241,29 @@ impl Dashboard {
                                     }
                                 },
                             },
+                            Command::RecoverLaunch => {
+                                let previous = palette.failed_launch.as_ref().unwrap();
+                                let registered = self
+                                    .hierarchy
+                                    .projects
+                                    .iter()
+                                    .find(|p| p.name == previous.project)
+                                    .is_some_and(|p| {
+                                        p.workspaces.iter().any(|w| w.name == previous.workspace)
+                                    });
+                                if !registered {
+                                    palette.error = Some("Workspace is not yet registered in the dashboard. Wait for the hierarchy update before retrying.".into());
+                                    self.palette = Some(palette);
+                                    return action;
+                                }
+                                Request::CreateSession(CreateSessionRequest {
+                                    project: previous.project.clone(),
+                                    workspace: previous.workspace.clone(),
+                                    name: String::new(),
+                                    argv: selected_launch.as_ref().unwrap().argv.clone(),
+                                    label: selected_launch.as_ref().unwrap().label.clone(),
+                                })
+                            }
                             Command::RegisterProject => Request::AddProject {
                                 name: values[1].clone(),
                                 repo: expand_path(&values[0]),
@@ -1116,23 +1307,100 @@ impl Dashboard {
         )
     }
 
-    fn refresh_terminal_form(&self, fields: &mut [Field], name_edited: bool) {
-        if fields.first().map(|field| field.label) != Some("Agent") {
+    fn refresh_terminal_form(&self, fields: &mut [Field], _name_edited: bool) {
+        let Some(start) = fields
+            .iter()
+            .find(|f| f.label == "Start")
+            .map(|f| f.value.clone())
+        else {
             return;
+        };
+        for field in fields {
+            if field.label == "Agent" {
+                field.hidden = start != "Agent";
+                field.required = start == "Agent";
+            }
+            if field.label == "Command" {
+                field.hidden = start != "Terminal";
+                field.required = false;
+            }
         }
-        let custom = fields[0].value == "Custom";
-        if let Some(command) = fields.iter_mut().find(|field| field.label == "Command") {
-            command.hidden = !custom;
-            command.required = custom;
+    }
+
+    fn launch_fields(&self, project: &str, empty: bool) -> Vec<Field> {
+        let choice = self.settings.launch_choices.get(project);
+        let start = match choice {
+            Some(super::settings::LaunchChoice::Agent(_)) => "Agent",
+            _ => "Terminal",
+        };
+        let mut choices = vec!["Agent", "Terminal"];
+        if empty {
+            choices.push("Nothing yet");
         }
-        if name_edited {
-            return;
-        }
-        let agent = fields[0].value.clone();
-        let (project, workspace) = split_workspace(&fields[1].value);
-        let suggested = self.suggest_session_name(&project, &workspace, &agent);
-        if let Some(name) = fields.iter_mut().find(|field| field.label == "Name") {
-            name.value = suggested;
+        let agents = self
+            .detected_agents()
+            .into_iter()
+            .filter(|a| {
+                a.source != AgentSource::Shell
+                    && a.source != AgentSource::Custom
+                    && a.name != "shell"
+                    && a.name != "Custom"
+            })
+            .collect::<Vec<_>>();
+        let agent = match choice {
+            Some(super::settings::LaunchChoice::Agent(name)) => name.clone(),
+            _ => agents.first().map(|a| a.name.clone()).unwrap_or_default(),
+        };
+        let mut fields = vec![
+            pick_field(
+                "Start",
+                start.into(),
+                choices
+                    .into_iter()
+                    .map(|s| PickItem {
+                        label: s.into(),
+                        value: s.into(),
+                    })
+                    .collect(),
+            ),
+            pick_field(
+                "Agent",
+                agent,
+                agents
+                    .into_iter()
+                    .map(|a| PickItem {
+                        label: a.name.clone(),
+                        value: a.name,
+                    })
+                    .collect(),
+            ),
+            text_field("Command", String::new(), false),
+        ];
+        self.refresh_terminal_form(&mut fields, false);
+        fields
+    }
+
+    fn shell_argv(&self) -> Vec<OsString> {
+        self.detected_agents()
+            .into_iter()
+            .find(|entry| entry.source == AgentSource::Shell)
+            .expect("agent detection always includes the shell entry")
+            .argv
+    }
+
+    fn selected_launch(&self, fields: &[Field]) -> Result<Option<SessionLaunch>, String> {
+        let value = |label| {
+            fields
+                .iter()
+                .find(|f| f.label == label)
+                .map(|f| f.value.trim())
+                .unwrap_or("")
+        };
+        match value("Start") {
+            "Nothing yet" => Ok(None),
+            "Agent" => self.detected_agents().into_iter().find(|a| a.name == value("Agent") && a.source != AgentSource::Shell && a.source != AgentSource::Custom && a.name != "shell" && a.name != "Custom").map(|a| Some(SessionLaunch { argv: a.argv, label: Some(a.name) })).ok_or_else(|| format!("Agent '{}' is unavailable. Choose another agent or explicitly select Terminal.", value("Agent"))),
+            "Terminal" => Ok(Some(SessionLaunch { argv: if value("Command").is_empty() { self.shell_argv() } else { vec!["/bin/sh".into(), "-lc".into(), OsString::from(value("Command"))] }, label: None })),
+            _ => Err("Choose Agent, Terminal, or Nothing yet".into()),
         }
     }
 
@@ -1171,57 +1439,33 @@ impl Dashboard {
         }
     }
 
-    fn suggest_session_name(&self, project: &str, workspace: &str, agent: &str) -> String {
-        let sessions = self
-            .hierarchy
-            .projects
-            .iter()
-            .find(|candidate| candidate.name == project)
-            .and_then(|candidate| {
-                candidate
-                    .workspaces
-                    .iter()
-                    .find(|candidate| candidate.name == workspace)
-            })
-            .map(|candidate| candidate.sessions.as_slice())
-            .unwrap_or(&[]);
-        if agent == "shell" && sessions.iter().all(|session| session.name != "local") {
-            return "local".into();
-        }
-        for n in 1.. {
-            let candidate = format!("{agent}-{n}");
-            if sessions.iter().all(|session| session.name != candidate) {
-                return candidate;
-            }
-        }
-        unreachable!()
-    }
-
-    fn create_terminal_request(&self, values: &[String]) -> Request {
-        let (project, workspace) = split_workspace(&values[1]);
-        let agents = self.detected_agents();
-        let agent = agents.iter().find(|entry| entry.name == values[0]);
-        let argv = if agent.is_some_and(|entry| entry.source == AgentSource::Custom) {
-            vec![
-                OsString::from("/bin/sh"),
-                OsString::from("-lc"),
-                OsString::from(&values[3]),
-            ]
-        } else {
-            agent.map(|entry| entry.argv.clone()).unwrap_or_else(|| {
-                vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())]
-            })
-        };
-        Request::CreateSession(CreateSessionRequest {
-            project,
-            workspace,
-            name: values[2].clone(),
-            label: Some(values[0].clone()),
-            argv,
-        })
-    }
-
     fn palette_submit(&mut self, palette: &mut Palette, request: Request) -> DashboardAction {
+        let launch = match &request {
+            Request::CreateWorkspaceWithLaunch {
+                project,
+                name,
+                launch: Some(launch),
+                ..
+            } => Some(CreateSessionRequest {
+                project: project.clone(),
+                workspace: name.clone(),
+                name: String::new(),
+                argv: launch.argv.clone(),
+                label: launch.label.clone(),
+            }),
+            Request::CreateSession(session) => Some(session.clone()),
+            _ => None,
+        };
+        if let Some(launch) = launch {
+            palette.launch_preference = Some((
+                launch.project.clone(),
+                match &launch.label {
+                    Some(label) => super::settings::LaunchChoice::Agent(label.clone()),
+                    None => super::settings::LaunchChoice::Terminal,
+                },
+            ));
+            palette.failed_launch = Some(launch);
+        }
         let request_id = self.next_request_id();
         palette.pending = Some(request_id);
         palette.error = None;
@@ -1243,37 +1487,17 @@ impl Dashboard {
         };
         let fields = match command {
             Command::CreateTerminal => {
-                let agents = self.detected_agents();
-                let agent_items = agents
-                    .iter()
-                    .map(|entry| PickItem {
-                        label: entry.name.clone(),
-                        value: entry.name.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                let agent_value = agent_items
-                    .first()
-                    .map(|item| item.value.clone())
-                    .unwrap_or_default();
-                let mut agent_list = PickList::new(agent_items);
-                agent_list.select_value(&agent_value);
                 let workspace_list =
                     PickList::workspaces(&self.hierarchy, &project, &workspace, true);
                 let workspace_value = workspace_list
                     .accepted()
-                    .map(|item| item.value.clone())
+                    .map(|i| i.value.clone())
                     .unwrap_or_default();
-                let (project_name, workspace_name) = split_workspace(&workspace_value);
-                let name = self.suggest_session_name(&project_name, &workspace_name, &agent_value);
+                let mut launch = self.launch_fields(&split_workspace(&workspace_value).0, false);
+                let command = launch.pop().unwrap();
+                let agent = launch.pop().unwrap();
                 vec![
-                    Field {
-                        label: "Agent",
-                        value: agent_value,
-                        required: true,
-                        hidden: false,
-                        edited: false,
-                        kind: FieldKind::Pick(agent_list),
-                    },
+                    launch.pop().unwrap(),
                     Field {
                         label: "Workspace",
                         value: workspace_value,
@@ -1282,17 +1506,18 @@ impl Dashboard {
                         edited: false,
                         kind: FieldKind::Pick(workspace_list),
                     },
-                    text("Name", name, true),
-                    Field {
-                        label: "Command",
-                        value: String::new(),
-                        required: false,
-                        hidden: true,
-                        edited: false,
-                        kind: FieldKind::Text,
-                    },
+                    text("Name", String::new(), false),
+                    command,
+                    agent,
                 ]
             }
+            Command::RenameTerminal(id) => vec![text(
+                "Name",
+                find_session(self, id)
+                    .map(|s| s.display_name().to_string())
+                    .unwrap_or_default(),
+                false,
+            )],
             Command::CreateWorkspace => {
                 let list = PickList::projects(&self.hierarchy, &project);
                 let mut project = text(
@@ -1305,13 +1530,16 @@ impl Dashboard {
                 project.kind = FieldKind::Pick(list);
                 let mut mode = text("Branch mode", "new".into(), true);
                 mode.kind = FieldKind::Toggle;
-                vec![
+                let project_name = project.value.clone();
+                let mut fields = vec![
                     project,
                     text("Name", String::new(), true),
                     mode,
                     text("Branch", self.settings.branch_prefix.clone(), true),
                     text("Base", "main".into(), true),
-                ]
+                ];
+                fields.extend(self.launch_fields(&project_name, true));
+                fields
             }
             Command::RegisterProject => vec![
                 Field {
@@ -1394,6 +1622,35 @@ impl Dashboard {
             Response::Error { code, message } => {
                 palette.pending = None;
                 palette.error = Some(format!("{code:?}: {message}"));
+                if *code == crate::protocol::ErrorCode::PartialFailure
+                    && matches!(
+                        palette.page,
+                        Page::Form {
+                            command: Command::CreateWorkspace,
+                            ..
+                        }
+                    )
+                    && palette.failed_launch.is_some()
+                {
+                    let fields = vec![pick_field(
+                        "Recovery",
+                        "Retry".into(),
+                        ["Retry", "Choose another agent", "Open shell"]
+                            .into_iter()
+                            .map(|s| PickItem {
+                                label: s.into(),
+                                value: s.into(),
+                            })
+                            .collect(),
+                    )];
+                    palette.page = Page::Form {
+                        command: Command::RecoverLaunch,
+                        fields,
+                        active: 0,
+                        name_edited: false,
+                        root_edited: false,
+                    };
+                }
             }
             Response::Ok
                 if matches!(
@@ -1411,9 +1668,23 @@ impl Dashboard {
                 if let Some(request_id) = palette.suggestions.inspect {
                     self.ignored_responses.insert(request_id);
                 }
+                let preference = palette.launch_preference.take();
                 self.palette = None;
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
+                    if let Some((project, choice)) = preference {
+                        self.settings
+                            .launch_choices
+                            .insert(project.clone(), choice.clone());
+                        if let Some(path) = &self.settings_path
+                            && let Err(error) =
+                                super::settings::save_launch_choice(path, &project, &choice)
+                        {
+                            self.error = Some(format!(
+                                "Session started; could not remember launch choice: {error}"
+                            ));
+                        }
+                    }
                     self.select_session(session.id);
                     let request_id = self.next_request_id();
                     let outgoing = self
@@ -1459,6 +1730,22 @@ impl Dashboard {
         let Some(workspace) = workspace else {
             return Vec::new();
         };
+        if workspace.sessions.is_empty() {
+            let row = super::TreeRow::Workspace {
+                project: workspace.project.clone(),
+                name: workspace.name.clone(),
+            };
+            self.palette = None;
+            self.error = None;
+            self.select_container(row);
+            let request_id = self.next_request_id();
+            return self
+                .view_request(self.outer_area, request_id)
+                .ok()
+                .flatten()
+                .into_iter()
+                .collect();
+        }
         let session = workspace
             .sessions
             .iter()
@@ -1513,7 +1800,7 @@ impl Dashboard {
                         if available >= suffix.len() {
                             format!(
                                 "{}{}",
-                                clip_text(&session.name, available - suffix.len()),
+                                clip_text(session.display_name(), available - suffix.len()),
                                 suffix
                             )
                         } else {
@@ -1642,14 +1929,36 @@ impl Dashboard {
             Page::Form { command, .. } => match command {
                 Command::CreateTerminal => "Create terminal",
                 Command::CreateWorkspace => "Create workspace",
+                Command::RenameTerminal(_) => "Rename terminal · blank = Automatic",
+                Command::RecoverLaunch => "Workspace retained · recover launch",
                 Command::RegisterProject => "Register project",
                 Command::RemoveWorkspace => "Remove workspace",
                 _ => "Remove project",
             },
             Page::Confirm { .. } => "Confirm action",
         };
+        let launch_banner = if let Page::Form { fields, .. } = &palette.page {
+            fields
+                .iter()
+                .find(|f| f.label == "Start")
+                .map(|start| {
+                    if start.value == "Agent" {
+                        let preset = fields
+                            .iter()
+                            .find(|f| f.label == "Agent")
+                            .map(|f| f.value.as_str())
+                            .unwrap_or("");
+                        format!(" · Start: Agent ({preset})")
+                    } else {
+                        format!(" · Start: {}", start.value)
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         let block = Block::bordered()
-            .title(format!(" {title} "))
+            .title(format!(" {title}{launch_banner} "))
             .border_style(Style::default().fg(MAUVE))
             .style(Style::default().bg(CRUST).fg(TEXT));
         frame.render_widget(block, area);
@@ -1705,6 +2014,9 @@ impl Dashboard {
             error
         } else if palette.submit_when_ready.is_some() {
             "Waiting for Git suggestions before creating… · Esc cancel"
+        } else if matches!(&palette.page, Page::Form { fields, .. } if fields.iter().any(|f| f.label == "Start" && f.value == "Agent") && self.selected_launch(fields).is_err())
+        {
+            "Remembered/selected agent unavailable. Choose another agent or select Terminal explicitly."
         } else if let Some(note) = &palette.suggestions.note {
             note
         } else {
@@ -1716,8 +2028,12 @@ impl Dashboard {
                     command: Command::CreateWorkspace,
                     ..
                 } => "Enter on Name submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel",
+                Page::Form {
+                    command: Command::RenameTerminal(_),
+                    ..
+                } => "Name blank = Automatic · Enter save · Ctrl-u clear · Esc cancel",
                 Page::Form { .. } => {
-                    "Tab accept/next · Enter next/submit · ↑/↓ pick · Ctrl-u clear · Esc cancel"
+                    "Name blank = Automatic · Command blank = shell · Tab next · Enter submit · Ctrl-u clear"
                 }
                 Page::Confirm { .. } => "Enter confirm · Esc cancel",
             }
@@ -1846,6 +2162,24 @@ mod mouse_tests {
             cols: 100,
         })
     }
+    #[test]
+    fn terminal_name_is_optional_and_workspace_offers_first_agent() {
+        let d = dashboard();
+        let Page::Form { fields, .. } = d.palette_form(Command::CreateTerminal) else {
+            panic!()
+        };
+        let name = fields.iter().find(|f| f.label == "Name").unwrap();
+        assert!(!name.required, "terminal naming must be optional");
+        assert!(name.value.is_empty(), "blank selects automatic naming");
+        let Page::Form { fields, .. } = d.palette_form(Command::CreateWorkspace) else {
+            panic!()
+        };
+        assert!(
+            fields.iter().any(|f| f.label == "Agent"),
+            "workspace must offer first agent"
+        );
+    }
+
     #[test]
     fn mouse_form_focus_unicode_edit_and_cancel() {
         let mut d = dashboard();
@@ -2154,7 +2488,7 @@ mod mouse_tests {
         );
         let message = drained.remove(0);
         assert!(
-            matches!(message.request, Request::CreateWorkspace { project, name, branch: BranchRequest::New { base, .. } } if project == "demo" && name == "deferred" && base == "develop")
+            matches!(message.request, Request::CreateWorkspaceWithLaunch { project, name, branch: BranchRequest::New { base, .. }, .. } if project == "demo" && name == "deferred" && base == "develop")
         );
         d.poll_palette();
         assert!(
@@ -2168,5 +2502,448 @@ mod mouse_tests {
             ),
             "pending request cannot repeat on click"
         );
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::super::settings::{AgentOverride, LaunchChoice};
+    use super::*;
+    use crate::protocol::{
+        AgentActivity, ErrorCode, ProjectSummary, ServerMessage, SessionPhase, SessionSummary,
+        TerminalSize, WorkspaceSummary,
+    };
+
+    fn dashboard() -> Dashboard {
+        let mut d = Dashboard::new(TerminalSize {
+            rows: 30,
+            cols: 100,
+        });
+        d.hierarchy.projects.push(ProjectSummary {
+            name: "demo".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "demo".into(),
+                name: "root".into(),
+                path: "/tmp/unused".into(),
+                sessions: vec![],
+            }],
+        });
+        d.settings.agents.push(AgentOverride {
+            name: "fixture-agent".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+        });
+        d
+    }
+    fn set(d: &mut Dashboard, label: &str, value: &str) {
+        let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
+            panic!()
+        };
+        let f = fields.iter_mut().find(|f| f.label == label).unwrap();
+        f.value = value.into();
+        f.edited = true;
+        if let FieldKind::Pick(list) = &mut f.kind {
+            list.query.clear();
+            list.select_value(value);
+        }
+    }
+    fn submit(d: &mut Dashboard) -> DashboardAction {
+        // This is the production handler used by the visible Submit control.
+        d.palette_key_with_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true)
+    }
+    fn request(d: &mut Dashboard) -> ClientMessage {
+        let DashboardAction::Request(message) = submit(d) else {
+            panic!(
+                "expected request: {:?}",
+                d.palette.as_ref().and_then(|p| p.error.as_ref())
+            );
+        };
+        message
+    }
+    fn summary(id: u64) -> SessionSummary {
+        SessionSummary {
+            id: SessionId(id),
+            project: "demo".into(),
+            workspace: "root".into(),
+            name: format!("root-{id}"),
+            title: None,
+            label: "shell".into(),
+            pid: None,
+            started_unix_ms: 0,
+            phase: SessionPhase::Running,
+            activity: AgentActivity::Unknown,
+            context_usage: None,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+        }
+    }
+    fn start_workspace(d: &mut Dashboard, start: &str) {
+        d.open_create_workspace();
+        let p = d.palette.as_mut().unwrap();
+        p.suggestions.inspect = None;
+        p.suggestions
+            .cache
+            .insert("demo".into(), Err("fixture".into()));
+        set(d, "Name", "new-work");
+        set(d, "Start", start);
+    }
+    #[test]
+    fn configured_shell_reaches_terminal_workspace_and_recovery_entrypoints() {
+        let argv = vec![
+            OsString::from("/fixture/configured-shell"),
+            OsString::from("--login"),
+        ];
+        for entrypoint in ["terminal", "workspace", "recovery"] {
+            let mut d = dashboard();
+            d.settings.agents.push(AgentOverride {
+                name: "shell".into(),
+                argv: argv
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            });
+            if entrypoint == "terminal" {
+                d.open_create_terminal();
+            } else {
+                start_workspace(
+                    &mut d,
+                    if entrypoint == "recovery" {
+                        "Agent"
+                    } else {
+                        "Terminal"
+                    },
+                );
+            }
+            if entrypoint == "recovery" {
+                set(&mut d, "Agent", "fixture-agent");
+                let m = request(&mut d);
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: m.request_id,
+                    response: Response::Error {
+                        code: ErrorCode::PartialFailure,
+                        message: "workspace created; agent failed".into(),
+                    },
+                });
+                d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+                    project: "demo".into(),
+                    name: "new-work".into(),
+                    path: "/tmp/unused".into(),
+                    sessions: vec![],
+                });
+                set(&mut d, "Recovery", "Open shell");
+            }
+            let m = request(&mut d);
+            match &m.request {
+                Request::CreateSession(session) => {
+                    assert_eq!(session.argv, argv, "{entrypoint}");
+                    assert_eq!(session.label, None);
+                }
+                Request::CreateWorkspaceWithLaunch {
+                    launch: Some(launch),
+                    ..
+                } => {
+                    assert_eq!(launch.argv, argv);
+                    assert_eq!(launch.label, None);
+                }
+                _ => panic!("wrong launch request: {:?}", m.request),
+            }
+            d.handle_server_message(ServerMessage::Response {
+                request_id: m.request_id,
+                response: Response::CreatedSession(Box::new(summary(1))),
+            });
+            assert_eq!(
+                d.settings.launch_choices.get("demo"),
+                Some(&LaunchChoice::Terminal),
+                "{entrypoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_submits_one_selected_launch_or_empty() {
+        for start in ["Terminal", "Agent", "Nothing yet"] {
+            let mut d = dashboard();
+            start_workspace(&mut d, start);
+            if start == "Agent" {
+                set(&mut d, "Agent", "fixture-agent");
+            }
+            let m = request(&mut d);
+            let Request::CreateWorkspaceWithLaunch {
+                project,
+                name,
+                launch,
+                ..
+            } = m.request
+            else {
+                panic!()
+            };
+            assert_eq!((project.as_str(), name.as_str()), ("demo", "new-work"));
+            if start == "Nothing yet" {
+                assert!(launch.is_none());
+            } else {
+                let launch = launch.unwrap();
+                assert!(!launch.argv.is_empty());
+                assert_eq!(
+                    launch.label.as_deref(),
+                    (start == "Agent").then_some("fixture-agent")
+                );
+            }
+            assert!(
+                d.drain_outbox().is_empty(),
+                "creation sends no second shell request"
+            );
+        }
+    }
+    #[test]
+    fn optional_name_custom_command_and_success_only_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dashboard.toml");
+        std::fs::write(&path, "ready_sound = true\n").unwrap();
+        let mut d = dashboard();
+        d.settings_path = Some(path.clone());
+        d.open_create_terminal();
+        set(&mut d, "Command", "printf secret-one-off");
+        let m = request(&mut d);
+        let Request::CreateSession(s) = &m.request else {
+            panic!()
+        };
+        assert!(s.name.is_empty());
+        assert_eq!(
+            s.argv,
+            vec![
+                OsString::from("/bin/sh"),
+                "-lc".into(),
+                "printf secret-one-off".into()
+            ]
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::Error {
+                code: ErrorCode::Internal,
+                message: "launch failed".into(),
+            },
+        });
+        assert!(d.settings.launch_choices.is_empty());
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("launch_choices")
+        );
+        let m = request(&mut d);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::CreatedSession(Box::new(summary(1))),
+        });
+        let (settings, error) = super::super::settings::load_dashboard_settings(&path);
+        assert!(error.is_none());
+        assert!(settings.ready_sound);
+        assert_eq!(
+            settings.launch_choices.get("demo"),
+            Some(&LaunchChoice::Terminal)
+        );
+        assert!(
+            !std::fs::read_to_string(path)
+                .unwrap()
+                .contains("secret-one-off")
+        );
+    }
+    #[test]
+    fn successful_agent_choice_survives_restart_and_empty_workspace_leaves_it_intact() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        let mut d = dashboard();
+        d.settings_path = Some(path.clone());
+        d.open_create_terminal();
+        set(&mut d, "Start", "Agent");
+        set(&mut d, "Agent", "fixture-agent");
+        let m = request(&mut d);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::CreatedSession(Box::new(summary(1))),
+        });
+        let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
+        assert!(error.is_none());
+        assert_eq!(
+            loaded.launch_choices.get("demo"),
+            Some(&LaunchChoice::Agent("fixture-agent".into()))
+        );
+        let mut restarted = dashboard();
+        restarted.settings.launch_choices = loaded.launch_choices;
+        restarted.open_create_terminal();
+        let Page::Form { fields, .. } = &restarted.palette.as_ref().unwrap().page else {
+            panic!()
+        };
+        assert_eq!(
+            fields.iter().find(|f| f.label == "Start").unwrap().value,
+            "Agent"
+        );
+        assert_eq!(
+            fields.iter().find(|f| f.label == "Agent").unwrap().value,
+            "fixture-agent"
+        );
+        start_workspace(&mut restarted, "Nothing yet");
+        let m = request(&mut restarted);
+        restarted.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::Ok,
+        });
+        assert_eq!(
+            restarted.settings.launch_choices.get("demo"),
+            Some(&LaunchChoice::Agent("fixture-agent".into()))
+        );
+    }
+
+    #[test]
+    fn settings_save_failure_does_not_reopen_launch_or_lose_created_session() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        std::fs::write(&path, "invalid = [").unwrap();
+        let mut d = dashboard();
+        d.settings_path = Some(path.clone());
+        d.open_create_terminal();
+        let m = request(&mut d);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::CreatedSession(Box::new(summary(1))),
+        });
+        assert!(d.palette.is_none());
+        assert_eq!(d.focused_session(), Some(SessionId(1)));
+        assert!(
+            d.error
+                .as_ref()
+                .is_some_and(|e| e.contains("Session started; could not remember")),
+            "{:?}",
+            d.error
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "invalid = [");
+    }
+
+    #[test]
+    fn unavailable_remembered_agent_requires_explicit_replacement() {
+        let mut d = dashboard();
+        d.settings.launch_choices.insert(
+            "demo".into(),
+            LaunchChoice::Agent("missing-fixture-agent".into()),
+        );
+        start_workspace(&mut d, "Agent");
+        assert!(matches!(submit(&mut d), DashboardAction::Redraw));
+        assert!(
+            d.palette
+                .as_ref()
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("unavailable")
+        );
+        set(&mut d, "Start", "Terminal");
+        assert!(matches!(
+            request(&mut d).request,
+            Request::CreateWorkspaceWithLaunch {
+                launch: Some(SessionLaunch { label: None, .. }),
+                ..
+            }
+        ));
+    }
+    #[test]
+    fn partial_failure_requires_registered_workspace_and_recovers_without_recreation() {
+        for recovery in ["Retry", "Choose another agent", "Open shell"] {
+            let mut d = dashboard();
+            start_workspace(&mut d, "Agent");
+            set(&mut d, "Agent", "fixture-agent");
+            let m = request(&mut d);
+            d.handle_server_message(ServerMessage::Response {
+                request_id: m.request_id,
+                response: Response::Error {
+                    code: ErrorCode::PartialFailure,
+                    message: "workspace created; launch failed".into(),
+                },
+            });
+            set(&mut d, "Recovery", recovery);
+            assert!(matches!(submit(&mut d), DashboardAction::Redraw));
+            assert!(
+                d.palette
+                    .as_ref()
+                    .unwrap()
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("registered")
+            );
+            d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+                project: "demo".into(),
+                name: "new-work".into(),
+                path: "/tmp/unused".into(),
+                sessions: vec![],
+            });
+            if recovery == "Choose another agent" {
+                assert!(matches!(submit(&mut d), DashboardAction::Redraw));
+                set(&mut d, "Agent", "fixture-agent");
+            }
+            let m = request(&mut d);
+            let Request::CreateSession(s) = m.request else {
+                panic!("recovery must never recreate the workspace")
+            };
+            assert_eq!(s.workspace, "new-work");
+            assert_eq!(
+                s.label.as_deref(),
+                (recovery != "Open shell").then_some("fixture-agent")
+            );
+        }
+    }
+    #[test]
+    fn title_events_render_duplicates_and_rename_clear_targets_stable_id() {
+        let mut d = dashboard();
+        let mut one = summary(1);
+        one.title = Some("Working".into());
+        let mut two = summary(2);
+        two.title = Some("Working".into());
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![one.clone(), two];
+        assert_eq!(d.session_display_name(&one), "Working (#1)");
+        d.palette = Some(Palette {
+            page: d.palette_form(Command::RenameTerminal(one.id)),
+            ..Palette::new()
+        });
+        set(&mut d, "Name", "Pinned");
+        let m = request(&mut d);
+        assert_eq!(
+            m.request,
+            Request::SetSessionTitle {
+                session: SessionId(1),
+                title: Some("Pinned".into())
+            }
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: m.request_id,
+            response: Response::Ok,
+        });
+        d.palette = Some(Palette {
+            page: d.palette_form(Command::RenameTerminal(one.id)),
+            ..Palette::new()
+        });
+        d.palette_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(
+            request(&mut d).request,
+            Request::SetSessionTitle {
+                session: SessionId(1),
+                title: None
+            }
+        );
+        one.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        d.hierarchy.projects[0].workspaces[0].sessions[0] = one;
+        d.palette = Some(Palette {
+            page: d.command_page(Command::RelaunchTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        assert_eq!(
+            request(&mut d).request,
+            Request::RelaunchSession {
+                session: SessionId(1)
+            }
+        );
+        assert_eq!(d.hierarchy.projects[0].workspaces[0].sessions.len(), 2);
     }
 }

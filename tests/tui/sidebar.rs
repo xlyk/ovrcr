@@ -55,7 +55,10 @@ fn dashboard_layout() {
     assert_eq!(buffer[(39, 10)].symbol(), "│");
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     assert!(rendered[1].contains("pid: 111  elapsed: 0m"));
-    assert!(rendered[2].contains("─"));
+    assert!(
+        rendered[2].contains("review"),
+        "the pane title replaces the decorative rule"
+    );
     assert!(buffer[(8, 7)].modifier.contains(Modifier::DIM));
     assert_eq!(buffer[(0, 4)].symbol(), "▌");
     assert_eq!(buffer[(1, 4)].bg, Color::Rgb(49, 50, 68));
@@ -103,7 +106,7 @@ fn sidebar_glyphs_and_columns_match_the_reference_tree() {
     }
     assert_eq!(buffer[(5, 3)].fg, Color::Rgb(166, 173, 200));
     assert_eq!(buffer[(7, 3)].fg, Color::Rgb(166, 173, 200));
-    // Session: status glyph at column 5, regular-weight name, model right-aligned in
+    // Session: status glyph at column 5, regular-weight name, agent right-aligned in
     // the provider colour, one trailing cell.
     assert_eq!(row(4), format!("     - review{}claude ", " ".repeat(19)));
     assert_eq!(buffer[(5, 4)].fg, Color::Rgb(108, 112, 134));
@@ -285,7 +288,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        assert_eq!(metadata(&terminal), expected);
+        assert_eq!(metadata(&terminal), format!("{expected}  review"));
     }
 
     let mut review = review_session(&fixture_hierarchy()).clone();
@@ -299,7 +302,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         .unwrap();
     assert_eq!(
         metadata(&terminal),
-        "pid: 111  elapsed: 0m  agent error  paused"
+        "pid: 111  elapsed: 0m  agent error  paused  review"
     );
 
     review.phase = SessionPhase::Exited {
@@ -313,7 +316,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m");
+    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m  review");
 }
 
 #[test]
@@ -557,7 +560,7 @@ fn sidebar_clicks_map_one_line_per_session_and_skip_gap_lines() {
             Some(SessionId(id)),
             "row {row}"
         );
-        // Anywhere on the row selects, including the right-aligned model.
+        // Anywhere on the row selects, including the right-aligned agent.
         let mut dashboard = dashboard_fixture();
         dashboard.mouse_action(click(36, row), area);
         assert_eq!(dashboard.focused_session(), Some(SessionId(id)));
@@ -616,10 +619,37 @@ fn sidebar_uses_agent_label_prefixes_and_emphasizes_tree_names() {
     assert!(buffer[(4, 2)].modifier.contains(Modifier::BOLD));
     assert!(buffer[(4, 5)].modifier.contains(Modifier::BOLD));
     let row = |y| (0..39).map(|x| buffer[(x, y)].symbol()).collect::<String>();
-    assert_eq!(row(4), format!("     - review{}sonnet-4 ", " ".repeat(17)));
-    assert_eq!(buffer[(30, 4)].fg, Color::Rgb(250, 179, 135));
-    assert_eq!(row(7), format!("     · implement{}model ", " ".repeat(17)));
+    assert_eq!(row(4), format!("     - review{}claude ", " ".repeat(19)));
+    assert_eq!(buffer[(32, 4)].fg, Color::Rgb(250, 179, 135));
+    assert_eq!(
+        row(7),
+        format!("     · implement{}unknown ", " ".repeat(15))
+    );
     assert_eq!(buffer[(33, 7)].fg, Color::Rgb(144, 150, 175));
+}
+
+#[test]
+fn sidebar_shows_each_agent_instead_of_its_model() {
+    for agent in ["claude", "codex", "grok", "pi", "omp", "cursor"] {
+        for label in [agent.to_string(), format!(" {agent} / shared-model ")] {
+            let mut dashboard = dashboard_fixture();
+            let mut hierarchy = fixture_hierarchy();
+            review_session_mut(&mut hierarchy).label = label;
+            dashboard.install_hierarchy(hierarchy);
+            dashboard.install_focus(SessionId(5));
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal
+                .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
+                .unwrap();
+            let row = (0..39)
+                .map(|x| terminal.backend().buffer()[(x, 4)].symbol())
+                .collect::<String>();
+            assert_eq!(
+                row,
+                format!("     - review{}{agent} ", " ".repeat(25 - agent.len()))
+            );
+        }
+    }
 }
 
 #[test]
@@ -646,7 +676,7 @@ fn long_sidebar_names_clip_to_one_screen_line() {
         .collect::<String>();
     assert_eq!(review, "▌    - review-a-very-long-ses…  claude ");
 
-    // Too narrow for a twelve-cell name beside the model: the model goes first.
+    // Too narrow for a twelve-cell name beside the agent: the agent goes first.
     let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))

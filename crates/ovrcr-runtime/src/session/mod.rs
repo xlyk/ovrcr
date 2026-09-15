@@ -187,8 +187,51 @@ struct JoinHandles {
     waiter: Option<JoinHandle<()>>,
 }
 
+/// Keep application and manual titles with the parser. No callback acquires
+/// session-state or server locks.
+#[derive(Default)]
+struct SessionTitles {
+    application: Option<String>,
+    pinned: Option<String>,
+}
+
+const MAX_TITLE_CHARS: usize = 128;
+
+pub(crate) fn sanitize_title(title: &str) -> Option<String> {
+    let title: String = title.chars().filter(|c| {
+        !c.is_control() && !matches!(*c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    }).take(MAX_TITLE_CHARS).collect();
+    let title = title.trim();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+impl vt100::Callbacks for SessionTitles {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.application = sanitize_title(&String::from_utf8_lossy(title));
+    }
+
+    fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
+        // vt100 routes title text containing semicolons here because vte
+        // splits OSC parameters. Reassemble a bounded prefix of that text.
+        if matches!(params.first(), Some(&b"0" | &b"2")) && params.len() > 2 {
+            let title: Vec<u8> = params[1..]
+                .iter()
+                .enumerate()
+                .flat_map(|(index, part)| {
+                    (index > 0)
+                        .then_some(b';')
+                        .into_iter()
+                        .chain(part.iter().copied())
+                })
+                .take(MAX_TITLE_CHARS * 4)
+                .collect();
+            self.set_window_title(screen, &title);
+        }
+    }
+}
+
 struct TerminalState {
-    parser: vt100::Parser,
+    parser: vt100::Parser<SessionTitles>,
     revision: u64,
 }
 
@@ -196,6 +239,7 @@ pub struct Session {
     // Keep startup files alive until the shell has finished using them.
     _shell_startup: Option<tempfile::TempDir>,
     summary: SessionSummary,
+    launch: ovrcr_protocol::SessionLaunch,
     state: Mutex<SessionState>,
     state_changed: Condvar,
     terminal: Mutex<TerminalState>,
@@ -384,11 +428,16 @@ impl Session {
             .as_millis() as u64;
         let session = Arc::new(Self {
             _shell_startup: shell_startup,
+            launch: ovrcr_protocol::SessionLaunch {
+                argv: spec.argv.clone(),
+                label: Some(spec.label.clone()),
+            },
             summary: SessionSummary {
+                title: None,
                 id,
                 project: spec.project,
                 workspace: spec.workspace,
-                name: spec.name,
+                name: spec.name.clone(),
                 label: spec.label,
                 pid: Some(pid),
                 started_unix_ms,
@@ -411,7 +460,15 @@ impl Session {
             }),
             state_changed: Condvar::new(),
             terminal: Mutex::new(TerminalState {
-                parser: vt100::Parser::new(size.rows, size.cols, HISTORY_ROWS),
+                parser: vt100::Parser::new_with_callbacks(
+                    size.rows,
+                    size.cols,
+                    HISTORY_ROWS,
+                    SessionTitles {
+                        application: None,
+                        pinned: sanitize_title(&spec.name),
+                    },
+                ),
                 revision: 0,
             }),
             parser_changed: Condvar::new(),
@@ -464,9 +521,38 @@ impl Session {
         Ok(session)
     }
 
+    pub(crate) fn launch(&self) -> ovrcr_protocol::SessionLaunch {
+        self.launch.clone()
+    }
+
+    pub(crate) fn pinned_title(&self) -> Option<String> {
+        self.terminal
+            .lock()
+            .unwrap()
+            .parser
+            .callbacks()
+            .pinned
+            .clone()
+    }
+
+    pub(crate) fn set_title(&self, title: Option<String>) -> Result<()> {
+        let title = title
+            .map(|value| sanitize_title(&value).context("title must contain visible text"))
+            .transpose()?;
+        self.terminal.lock().unwrap().parser.callbacks_mut().pinned = title;
+        Ok(())
+    }
+
+    pub(crate) fn effective_title(&self) -> Option<String> {
+        let terminal = self.terminal.lock().unwrap();
+        let titles = terminal.parser.callbacks();
+        titles.pinned.clone().or_else(|| titles.application.clone())
+    }
+
     pub fn summary(&self) -> SessionSummary {
-        let state = self.state.lock().unwrap();
         let mut summary = self.summary.clone();
+        summary.title = self.effective_title();
+        let state = self.state.lock().unwrap();
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
         summary.activity = state.activity;

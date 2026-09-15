@@ -223,10 +223,10 @@ resize.
 Each project is a section: its name in upper case with a rule to the sidebar
 edge, and a blank line before every project after the first. Workspaces follow
 with a branch glyph and a bold name. Each session takes one line: a status
-glyph, the session name, and the model from its label right-aligned in the
-provider colour. A long name clips with `…` before the model, and the model is
+glyph, the session name, and the agent name from its label right-aligned in the
+provider colour. A long name clips with `…` before the agent name, and the agent name is
 dropped when fewer than twelve cells would remain for the name. Local shells
-show `$ local` with no model unless a hook reports activity inside them. The
+show `$ local` with no agent label unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.
@@ -402,19 +402,29 @@ retained.
 
 ### Create terminal (`n`)
 
-The Agent field lists coding agents found on `PATH` in this order: `claude`,
-`codex`, `gemini`, `aider`, `opencode`, `pi`, `omp`, `goose`, `amp`, `cursor-agent`.
-`shell` (`$SHELL`, or `/bin/sh` when unset) is always last before `Custom`.
-Workspace lists `project / workspace` pairs and defaults to the selected
-session's. Name defaults to `local` when the agent is `shell` and that name is
-free in the workspace; otherwise `<agent>-1`, `<agent>-2`, and so on. `Custom`
-shows a Command field that runs through `/bin/sh -lc`. After the session starts,
-typing goes to it immediately. Detected `pi` and `omp` entries launch through
-`ovrcr agent run <name> --` so OVRCR can report their activity; an `agents`
-override for the same name replaces the command entirely. A shell command that
-runs `pi` or `omp` directly stays untracked.
+Choose **Agent** or **Terminal** in Start. Agent offers installed agents and named
+`[[agents]]` presets. Terminal opens your default shell; its optional Command
+runs through `/bin/sh -lc`. Custom commands belong to Terminal, even when the
+command happens to invoke an agent. A launch choice does not guarantee agent
+reporting support.
+
+Workspace defaults to the selected workspace. Name is optional: leave it blank
+for Automatic, or enter a pinned name. After creation, typing goes to the new
+session immediately. Detected `pi` and `omp` entries retain their managed launch
+wrappers; an `agents` override replaces the command entirely.
 
 ### Create workspace (`w`)
+
+Name the workspace and choose what to start: **Agent**, **Terminal**, or
+**Nothing yet**. Agent and Terminal have the same options as terminal creation.
+Only the selected program starts; an Agent launch does not also open a shell.
+Nothing yet creates an empty workspace.
+
+Each project remembers its last successfully launched Agent and preset, or
+Terminal choice, across dashboard restarts. One-off command text is never saved.
+Nothing yet leaves the preference unchanged. A project without a preference
+starts with Terminal selected. If a remembered agent is unavailable, choose a
+replacement explicitly before launching.
 
 Project defaults to the selected terminal's project. Name has initial focus;
 `Tab` and `Shift-Tab` reach the other fields. On Branch mode, `Space` or
@@ -426,8 +436,28 @@ Base defaults to the repository's `origin/HEAD` target, then `main`, `master`, o
 the current HEAD. A remote-only default uses its full Git ref as Base. Git
 suggestions load in the background, are cached per project until the palette
 closes, and time out after two seconds. A footer note explains failures, after
-which Branch and Base accept free text. `Enter` waits for pending suggestions
-before submitting.
+which Branch and Base accept free text. Submission waits for pending suggestions.
+
+If the workspace is created but its first program cannot launch, the workspace
+remains. Retry, choose another agent, or open a shell in that existing workspace.
+If a program starts and later exits, its session and output remain visible;
+relaunching is an explicit action and creates a new session while retaining the
+old output. Workspace removal remains a separate action.
+
+### Automatic and pinned titles
+
+Automatic titles follow the running application's terminal-title updates (OSC 0
+and OSC 2), including titles such as “Thinking…”. Before an application supplies
+a title, the session uses its workspace-based fallback name. Apps that do not
+supply titles keep that fallback. Duplicate displayed titles include a short
+session identifier so they can be distinguished.
+
+Use **Rename terminal** in the command palette to pin a title. Clear it to return
+to Automatic. Title changes never change the session ID or retarget an action.
+Activity indicators remain separate, and desktop notifications continue to use
+stable identity rather than application titles. Titles and exited output survive
+dashboard detach while the server remains alive; this feature does not restore
+sessions after server restart.
 
 ### Register project (`a`)
 
@@ -467,7 +497,14 @@ argv = ["claude", "--verbose"]
 
 `picker_roots` defaults to `~/Code`, `~/src`, and `~`, keeping only the paths
 that exist. An `[[agents]]` row whose name matches a detected agent replaces its
-argv; a new name is inserted before `shell`.
+argv; a new name becomes an Agent preset. The argv is used as configured; a preset
+name alone does not prove what program it launches or whether reporting is supported.
+
+Successful launches update a per-project `launch_choices` table in this file.
+For example, `[launch_choices.consigint]` with `kind = "Terminal"` remembers a
+terminal; `kind = "Agent"` and `preset = "claude"` remember an agent preset.
+These entries contain no one-off command text. Saving a preference preserves
+other settings values but may reformat the TOML file.
 
 ## Desktop notifications
 

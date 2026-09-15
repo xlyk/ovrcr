@@ -386,7 +386,10 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
                 |session| {
                     format!(
                         "{capture_name} of {} (#{}) in {} / {}",
-                        session.name, session.id.0, session.project, session.workspace
+                        session.display_name(),
+                        session.id.0,
+                        session.project,
+                        session.workspace
                     )
                 },
             );
@@ -572,7 +575,10 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .map(|s| {
             format!(
                 "{} (#{}) in {} / {}",
-                s.name, s.id.0, s.project, s.workspace
+                s.display_name(),
+                s.id.0,
+                s.project,
+                s.workspace
             )
         })
         .unwrap_or_default();
@@ -712,7 +718,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
     vec![
         KeyGroup { title: "Create".into(), keys: vec![
             key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(no_workspace).group('w', "n"),
-            key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and start its local shell; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
+            key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },
         KeyGroup { title: "Session".into(), keys: vec![

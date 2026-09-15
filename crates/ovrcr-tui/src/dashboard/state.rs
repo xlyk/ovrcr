@@ -588,8 +588,25 @@ impl Dashboard {
             outbox: super::outbox::Outbox::default(),
             ignored_responses: HashSet::new(),
             settings: DashboardSettings::default(),
+            settings_path: None,
             config_dir: std::path::PathBuf::new(),
             error_owning_requests: HashSet::new(),
+        }
+    }
+
+    pub(super) fn session_display_name(&self, session: &crate::session::SessionSummary) -> String {
+        let duplicate = session.title.is_some()
+            && self
+                .hierarchy
+                .projects
+                .iter()
+                .flat_map(|p| &p.workspaces)
+                .flat_map(|w| &w.sessions)
+                .any(|s| s.id != session.id && s.display_name() == session.display_name());
+        if duplicate {
+            format!("{} (#{})", session.display_name(), session.id.0)
+        } else {
+            session.display_name().into()
         }
     }
 
@@ -2184,7 +2201,7 @@ impl Dashboard {
         true
     }
 
-    fn select_container(&mut self, row: TreeRow) {
+    pub(super) fn select_container(&mut self, row: TreeRow) {
         if self.selected_container.as_ref() == Some(&row) {
             return;
         }

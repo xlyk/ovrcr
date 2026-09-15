@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10,6 +11,7 @@ pub struct DashboardSettings {
     pub agents: Vec<AgentOverride>,
     pub picker_roots: Vec<PathBuf>,
     pub branch_prefix: String,
+    pub launch_choices: BTreeMap<String, LaunchChoice>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -26,6 +28,7 @@ impl Default for DashboardSettings {
             agents: Vec::new(),
             picker_roots: default_picker_roots(),
             branch_prefix: "feature/".into(),
+            launch_choices: BTreeMap::new(),
         }
     }
 }
@@ -40,6 +43,8 @@ struct RawSettings {
     agents: Vec<AgentOverride>,
     picker_roots: Option<Vec<String>>,
     branch_prefix: Option<String>,
+    #[serde(default)]
+    launch_choices: BTreeMap<String, LaunchChoice>,
 }
 
 pub fn load_dashboard_settings(path: &Path) -> (DashboardSettings, Option<String>) {
@@ -66,6 +71,7 @@ impl RawSettings {
                 .map(|roots| roots.into_iter().map(|root| expand_tilde(&root)).collect())
                 .unwrap_or_else(default_picker_roots),
             branch_prefix: self.branch_prefix.unwrap_or_else(|| "feature/".into()),
+            launch_choices: self.launch_choices,
         }
     }
 }
@@ -198,5 +204,105 @@ mod tests {
         assert_eq!(settings.agents, Vec::<AgentOverride>::new());
         assert_eq!(settings.picker_roots, vec![home.join("Code"), home]);
         assert_eq!(settings.branch_prefix, "feature/");
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", content = "preset")]
+pub enum LaunchChoice {
+    Terminal,
+    Agent(String),
+}
+
+pub(super) fn save_launch_choice(
+    path: &Path,
+    project: &str,
+    choice: &LaunchChoice,
+) -> Result<(), String> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut document: toml::Table = toml::from_str(&contents).map_err(|e| e.to_string())?;
+    let choices = document
+        .entry("launch_choices")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or("launch_choices must be a table")?;
+    choices.insert(
+        project.into(),
+        toml::Value::try_from(choice).map_err(|e| e.to_string())?,
+    );
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let contents = toml::to_string_pretty(&document).map_err(|e| e.to_string())?;
+    for _ in 0..100 {
+        let temporary = parent.join(format!(
+            ".ovrcr-launch-{}-{}.tmp",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        };
+        let result = (|| {
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return result.map_err(|e| e.to_string());
+    }
+    Err("Could not allocate a settings temporary file".into())
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    #[test]
+    fn launch_save_preserves_unrelated_settings_and_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("dashboard.toml");
+        std::fs::write(&path, "ready_sound = true\n[future]\nvalue = 42\n").unwrap();
+        let occupied = path.with_extension("toml.tmp");
+        std::fs::write(&occupied, "unrelated").unwrap();
+        save_launch_choice(
+            &path,
+            "project.with.dots",
+            &LaunchChoice::Agent("fixture".into()),
+        )
+        .unwrap();
+        let document: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(document["future"]["value"].as_integer(), Some(42));
+        assert_eq!(std::fs::read_to_string(occupied).unwrap(), "unrelated");
+        let (loaded, error) = load_dashboard_settings(&path);
+        assert!(error.is_none());
+        assert!(loaded.ready_sound);
+        assert_eq!(
+            loaded.launch_choices.get("project.with.dots"),
+            Some(&LaunchChoice::Agent("fixture".into()))
+        );
+        assert_eq!(
+            std::fs::read_dir(root.path()).unwrap().count(),
+            2,
+            "no disposable writer file remains"
+        );
     }
 }

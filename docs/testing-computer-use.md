@@ -103,7 +103,7 @@ Escape cancels the editor, then Escape returns to the dashboard. Click project a
 confirm `Space` shows only their applicable groups. Resize the window and scroll to
 the last entry; confirm it remains visible and clickable. Press Escape.
 Press Space then `w` then `n`; confirm the key popup closes and the terminal form opens.
-On Agent, move to `shell` and press Tab. Confirm Workspace shows the selected `project / workspace` and Name is filled. Enter through the remaining fields. Confirm terminal mode on the new session, then paste this command and press Return:
+On Start, choose Terminal. Confirm Workspace shows the selected `project / workspace`, Name is optional and blank, and Command is optional. Submit with both blank. Confirm terminal mode on the new session, then paste this command and press Return:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' N_SHELL_OK
@@ -114,8 +114,8 @@ Confirm a separate output line containing `CUA_N_SHELL_OK`; the echoed command a
 Return to browse with `Ctrl-g`, press `w`, and type `cua-workspace`. Confirm
 Project matches the selected session, Branch reads `feature/cua-workspace`,
 and Base shows the repository's default branch once suggestions finish loading.
-Press Enter from Name. Confirm the new workspace's `local` shell is selected
-in terminal mode. Paste and execute:
+Choose Start: Terminal and submit. Confirm a single new terminal is selected
+in terminal mode with the workspace fallback name. Paste and execute:
 
 ```sh
 rtk proxy printf 'CUA_%s\n' W_SHELL_OK
@@ -126,6 +126,27 @@ process group with the other fixture processes before cleanup. Return to
 `consigint / auth-handoff / local` for the checks below.
 
 Return to browse with `Ctrl-g`. Press `a`. Tab through a configured `picker_roots` directory to the demo repository (a `git` marker sorts it first). Confirm Name is the repository basename and Workspace root is `<config dir>/workspaces/<name>`. Escape without submitting if this run should not register a project.
+
+### Workspace launch and titles
+
+In the disposable fixture, also verify:
+
+1. Create a workspace with Nothing yet; confirm it is selected and has no sessions.
+2. Create a workspace with Terminal and a custom command that prints a unique
+   marker and waits for input. Confirm exactly one session and its actual output.
+3. In that session emit `printf '\033]2;CUA title 界\007'`; confirm its sidebar and
+   pane title change. Use a command that waits for input after the escape so the
+   shell prompt cannot immediately overwrite the title.
+4. Pin a title using Rename terminal; emit another app title and confirm the pin
+   holds. Return to Automatic and confirm the latest app title appears.
+5. Give two sessions the same app title and confirm their visible identifiers
+   distinguish them. Confirm both still receive input in the intended pane.
+6. Exercise an owned failing launch after workspace creation. Confirm the
+   workspace remains and recovery starts a program there without recreating it.
+7. Exercise Agent using a disposable configured preset, recording that this proves
+   the launch UI only, not provider reporting. Verify its project preference after
+   dashboard restart. Verify Terminal custom command text is absent from settings.
+8. Exit a session, relaunch explicitly, and confirm the old output remains.
 
 ## 3. Mouse forwarding and wheel history
 

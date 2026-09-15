@@ -78,6 +78,8 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "project": session.project,
         "workspace": session.workspace,
         "name": session.name,
+        "title": session.title,
+        "display_name": session.display_name(),
         "label": session.label,
         "pid": session.pid,
         "started_unix_ms": session.started_unix_ms,
@@ -212,7 +214,7 @@ pub(super) fn print_terminal_row(value: &Value) {
         value["id"],
         value["project"].as_str().unwrap_or_default(),
         value["workspace"].as_str().unwrap_or_default(),
-        value["name"].as_str().unwrap_or_default(),
+        value["display_name"].as_str().unwrap_or_default(),
         value["label"].as_str().unwrap_or_default(),
         json_scalar(&value["pid"]),
         value["started_unix_ms"],
@@ -312,7 +314,11 @@ pub(super) fn print_legacy_response(response: Response, json_output: bool) -> Ap
                             SessionPhase::Paused => "paused",
                             SessionPhase::Exited { .. } => "exited",
                         };
-                        println!("    session {} {} {phase}", session.id.0, session.name);
+                        println!(
+                            "    session {} {} {phase}",
+                            session.id.0,
+                            session.display_name()
+                        );
                     }
                 }
             }

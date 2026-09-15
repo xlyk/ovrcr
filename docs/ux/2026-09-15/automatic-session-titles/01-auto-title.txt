@@ -1,0 +1,14 @@
+The following is a diff from the previous accessibility tree for Window: "OVRCR GUI" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 82632  elapsed: 0m  agent unknown  Review; login 界
+  󰘬 auth-handoff                       │Review; login 界
+     $ loca
+~		4 text (settable)  CONSIGINT ────────────────────────────│pid: 82632  elapsed: 0m  agent unknown  Review; login 界
+~		5 text (settable)   󰘬 auth-handoff                       │Review; login 界
+~		7 text (settable)      - review auth handoff    grok-4.6 │Review; login 界
+~		8 text (settable)   󰘬 cua-launch                         │CUA_TITLE_APPLIED:Review; login 界
+~		9 text (settable) ▌    - Review; login 界  Fixture agent │
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 82632  elapsed: 0m  agent unknown  Review; login 界
+  󰘬 auth-handoff                       │Review; login 界
+     $ loca

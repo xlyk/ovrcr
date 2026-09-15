@@ -2124,3 +2124,81 @@ fn codex_setup_and_doctor_help_expose_provider_dispatch() {
         }
     }
 }
+
+#[test]
+fn automatic_titles_pin_reset_and_relaunch_through_cli() {
+    let fixture = live::Live::binary();
+    fixture.ready("feature/cli-titles");
+    let run = |args: &[&str]| {
+        let mut command = Command::new(&fixture.executable);
+        command
+            .args(args)
+            .env("OVRCR_CONFIG", &fixture.config)
+            .env("OVRCR_SOCKET", &fixture.socket);
+        let output = run_cli_bounded(command).unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let created = run(&[
+        "terminal",
+        "create",
+        "--project",
+        "fixture",
+        "--workspace",
+        "work",
+        "--json",
+        "--",
+        "/bin/sh",
+        "-c",
+        "printf '\\033]2;Build complete\\007CLI_TITLE_OUTPUT\\n'",
+    ]);
+    let id = created["id"].as_u64().unwrap();
+    let wait_exited = |id: u64| {
+        let deadline = Instant::now() + live::wait_deadline();
+        loop {
+            let list = run(&["terminal", "list", "--json"]);
+            let session = list
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["id"] == id)
+                .unwrap()
+                .clone();
+            if session["phase"] == "exited" {
+                break session;
+            }
+            assert!(Instant::now() < deadline, "session did not exit: {session}");
+            std::thread::yield_now();
+        }
+    };
+    let exited = wait_exited(id);
+    assert_eq!(exited["name"], "work");
+    assert_eq!(exited["display_name"], "Build complete");
+    let id_text = id.to_string();
+    assert!(
+        run(&["terminal", "read", &id_text, "--json"])["text"]
+            .as_str()
+            .unwrap()
+            .contains("CLI_TITLE_OUTPUT")
+    );
+    run(&["terminal", "rename", &id_text, "Pinned review", "--json"]);
+    let pinned = wait_exited(id);
+    assert_eq!(pinned["name"], exited["name"]);
+    assert_eq!(pinned["display_name"], "Pinned review");
+    run(&["terminal", "rename", &id_text, "--automatic", "--json"]);
+    assert_eq!(wait_exited(id)["display_name"], "Build complete");
+    let relaunched = run(&["terminal", "relaunch", &id_text, "--json"]);
+    let next = relaunched["id"].as_u64().unwrap();
+    assert_ne!(next, id);
+    assert_eq!(wait_exited(next)["display_name"], "Build complete");
+    assert!(
+        run(&["terminal", "read", &id_text, "--json"])["text"]
+            .as_str()
+            .unwrap()
+            .contains("CLI_TITLE_OUTPUT")
+    );
+}

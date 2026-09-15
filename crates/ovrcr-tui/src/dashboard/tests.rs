@@ -94,6 +94,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
                 project: "consigint".into(),
                 workspace: "auth-handoff".into(),
                 name: "agent".into(),
+                title: None,
                 label: "shell".into(),
                 pid: None,
                 started_unix_ms: 0,
@@ -841,6 +842,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
         project: "p".into(),
         workspace: "w".into(),
         name: format!("s{id}"),
+        title: None,
         label: "zsh".into(),
         pid: Some(1),
         started_unix_ms: 0,
@@ -977,6 +979,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "session".into(),
+        title: None,
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
         started_unix_ms: 0,
@@ -1106,6 +1109,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "session".into(),
+        title: None,
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
         started_unix_ms: 0,
@@ -1335,6 +1339,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "claude".into(),
+                title: None,
                 label: "claude".into(),
                 pid: Some(1),
                 // Ten minutes of session, one second since the latest sample.
@@ -1422,12 +1427,13 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
     assert!(!fresh.contains("stale"), "{fresh}");
 
     // Narrowing tiers: `est` first, then `tok` with one separator space dropped.
-    let est = drawn(&dashboard, 88);
+    // The visible title and separator reserve nine cells before metrics.
+    let est = drawn(&dashboard, 97);
     assert!(
         est.contains("tokens conv partial 711654  cost conv est $0.47"),
         "{est}"
     );
-    let tok = drawn(&dashboard, 86);
+    let tok = drawn(&dashboard, 95);
     assert!(
         tok.contains("tok conv partial 711654 cost conv est $0.47"),
         "{tok}"
@@ -1484,6 +1490,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "claude".into(),
+                title: None,
                 label: "claude".into(),
                 pid: Some(1),
                 started_unix_ms: now,
@@ -2139,6 +2146,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                         project: "consigint".into(),
                         workspace: "auth".into(),
                         name: "session".into(),
+                        title: None,
                         label: "zsh".into(),
                         pid: Some(100 + u32::try_from(*id).unwrap()),
                         started_unix_ms: 0,
@@ -2331,6 +2339,7 @@ fn keymap_session(
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "agent".into(),
+        title: None,
         label: "shell".into(),
         pid: None,
         started_unix_ms: 0,

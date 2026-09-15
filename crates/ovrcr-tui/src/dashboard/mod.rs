@@ -28,7 +28,7 @@ pub use copy::write_clipboard;
 pub use event_loop::{dashboard_message_channel, run_dashboard};
 pub use input::{encode_key, encode_mouse};
 pub use render::{actual_drawn_inner_rect, draw_dashboard, draw_dashboard_at, render_terminal};
-pub use settings::DashboardSettings;
+pub use settings::{DashboardSettings, LaunchChoice};
 pub(crate) use state::{HistoryView, PendingHistoryBegin};
 
 use crate::task_tui::TasksView;
@@ -255,6 +255,7 @@ pub struct Dashboard {
     ignored_responses: HashSet<u64>,
     settings: settings::DashboardSettings,
     config_dir: std::path::PathBuf,
+    settings_path: Option<std::path::PathBuf>,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,

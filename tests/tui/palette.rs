@@ -779,7 +779,11 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         (
             "create workspace",
             vec!["consigint", "new-space", "new", "feature/palette", "main"],
-            Request::CreateWorkspace {
+            Request::CreateWorkspaceWithLaunch {
+                launch: Some(ovrcr::protocol::SessionLaunch {
+                    argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                    label: None,
+                }),
                 project: "consigint".into(),
                 name: "new-space".into(),
                 branch: BranchRequest::New {
@@ -791,7 +795,11 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         (
             "create workspace",
             vec!["consigint", "existing", "existing", "topic"],
-            Request::CreateWorkspace {
+            Request::CreateWorkspaceWithLaunch {
+                launch: Some(ovrcr::protocol::SessionLaunch {
+                    argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                    label: None,
+                }),
                 project: "consigint".into(),
                 name: "existing".into(),
                 branch: BranchRequest::Existing {
@@ -864,6 +872,10 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                 dashboard.key(next);
             }
         }
+        if query == "create workspace" {
+            dashboard.key(KeyCode::Tab);
+            dashboard.key(KeyCode::Tab);
+        }
         let mut action = dashboard.key(KeyCode::Enter);
         if query.starts_with("remove") {
             assert_eq!(action, DashboardAction::Redraw);
@@ -893,7 +905,11 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
     };
     assert_eq!(
         message.request,
-        Request::CreateWorkspace {
+        Request::CreateWorkspaceWithLaunch {
+            launch: Some(ovrcr::protocol::SessionLaunch {
+                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                label: None
+            }),
             project: "consigint".into(),
             name: "pick-demo".into(),
             branch: BranchRequest::New {
@@ -1009,7 +1025,11 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
     };
     assert_eq!(
         message.request,
-        Request::CreateWorkspace {
+        Request::CreateWorkspaceWithLaunch {
+            launch: Some(ovrcr::protocol::SessionLaunch {
+                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                label: None
+            }),
             project: "consigint".into(),
             name: "renamed".into(),
             branch: ovrcr::protocol::BranchRequest::Existing {
@@ -1044,7 +1064,11 @@ fn typed_existing_branch_survives_hint_arrival() {
     };
     assert_eq!(
         message.request,
-        Request::CreateWorkspace {
+        Request::CreateWorkspaceWithLaunch {
+            launch: Some(ovrcr::protocol::SessionLaunch {
+                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                label: None
+            }),
             project: "consigint".into(),
             name: "typed-branch".into(),
             branch: BranchRequest::Existing {
@@ -1076,7 +1100,11 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
     };
     assert_eq!(
         message.request,
-        Request::CreateWorkspace {
+        Request::CreateWorkspaceWithLaunch {
+            launch: Some(ovrcr::protocol::SessionLaunch {
+                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
+                label: None
+            }),
             project: "consigint".into(),
             name: "typed-branch".into(),
             branch: BranchRequest::Existing {
@@ -1289,14 +1317,8 @@ fn n_opens_terminal_form_prefilled_for_selected_workspace() {
     let text = palette_text(&dashboard);
     assert!(text.contains("Create terminal"));
     assert!(text.contains("consigint / auth"));
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let shell = std::env::var_os("SHELL");
-    let first = ovrcr::tui::detect_agents(&path, shell.as_deref(), None)
-        .into_iter()
-        .next()
-        .expect("shell is always detected")
-        .name;
-    assert!(text.contains(&first), "{text}");
+    assert!(text.contains("Start"), "{text}");
+    assert!(text.contains("Terminal"), "{text}");
 }
 
 #[test]
@@ -1304,6 +1326,7 @@ fn created_session_enters_terminal_mode() {
     use ovrcr::tui::DashboardAction;
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     dashboard.key(KeyCode::Enter);
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
@@ -1317,6 +1340,7 @@ fn created_session_enters_terminal_mode() {
         project: request.project.clone(),
         workspace: request.workspace.clone(),
         name: request.name.clone(),
+        title: None,
         label: request.label.clone().unwrap_or_default(),
         pid: Some(1),
         started_unix_ms: 0,
@@ -2074,5 +2098,160 @@ fn picker_validation_keeps_recovery_hints_and_cancels_without_removal() {
             assert!(!palette_text(&dashboard).contains("Remove project"));
             assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
         }
+    }
+}
+
+#[test]
+fn application_title_events_update_sidebar_pane_and_palette_without_identity_change() {
+    let mut dashboard = dashboard_fixture();
+    let hierarchy = fixture_hierarchy();
+    let mut sessions = hierarchy
+        .projects
+        .iter()
+        .flat_map(|p| &p.workspaces)
+        .flat_map(|w| &w.sessions)
+        .filter(|s| s.id == SessionId(1) || s.id == SessionId(3))
+        .cloned()
+        .collect::<Vec<_>>();
+    for session in &mut sessions {
+        session.title = Some("Same title".into());
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::SessionChanged(
+            Box::new(session.clone()),
+        )));
+    }
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+    terminal
+        .draw(|f| draw_dashboard_at(f, &dashboard, 0))
+        .unwrap();
+    let rendered = (0..40)
+        .map(|y| {
+            (0..160)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Same title (#1)"), "{rendered}");
+    assert!(rendered.contains("Same title (#3)"), "{rendered}");
+    assert!(
+        rendered.matches("Same title (#1)").count() >= 2,
+        "title appears in sidebar and pane: {rendered}"
+    );
+    let mut narrow = Terminal::new(TestBackend::new(80, 30)).unwrap();
+    narrow
+        .draw(|f| draw_dashboard_at(f, &dashboard, 0))
+        .unwrap();
+    let narrow_title = (40..80)
+        .map(|x| narrow.backend().buffer()[(x, 2)].symbol())
+        .collect::<String>();
+    assert!(
+        narrow_title.contains("Same title (#1)"),
+        "title must remain visible at 80 columns: {narrow_title}"
+    );
+    palette_search(&mut dashboard, "Same title");
+    let text = palette_text(&dashboard);
+    assert!(text.contains("(#1)") && text.contains("(#3)"), "{text}");
+    dashboard.key(KeyCode::Esc);
+    palette_search(&mut dashboard, "Rename terminal");
+    dashboard.key(KeyCode::Enter);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("Pinned by user".into()));
+    let ovrcr::tui::DashboardAction::Request(pin) = dashboard.key(KeyCode::Enter) else {
+        panic!()
+    };
+    assert_eq!(
+        pin.request,
+        Request::SetSessionTitle {
+            session: SessionId(1),
+            title: Some("Pinned by user".into())
+        }
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: pin.request_id,
+        response: Response::Ok,
+    });
+    palette_search(&mut dashboard, "Rename terminal");
+    dashboard.key(KeyCode::Enter);
+    dashboard.ctrl('u');
+    let ovrcr::tui::DashboardAction::Request(reset) = dashboard.key(KeyCode::Enter) else {
+        panic!()
+    };
+    assert_eq!(
+        reset.request,
+        Request::SetSessionTitle {
+            session: SessionId(1),
+            title: None
+        }
+    );
+}
+
+#[test]
+fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
+    use ovrcr::tui::DashboardAction;
+    for hierarchy_first in [false, true] {
+        let mut dashboard = dashboard_fixture();
+        let action = dashboard.key(KeyCode::Char('w'));
+        answer_palette_inspect(&mut dashboard, action);
+        dashboard.event_action(Event::Paste("pick-demo".into()));
+        for _ in 0..4 {
+            dashboard.key(KeyCode::Tab);
+        }
+        dashboard.ctrl('u');
+        dashboard.event_action(Event::Paste("Nothing yet".into()));
+        let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+            panic!("empty workspace form did not submit")
+        };
+        assert!(matches!(
+            message.request,
+            Request::CreateWorkspaceWithLaunch { launch: None, .. }
+        ));
+        let mut hierarchy = extra_workspace_hierarchy();
+        hierarchy
+            .projects
+            .iter_mut()
+            .find(|p| p.name == "consigint")
+            .unwrap()
+            .workspaces
+            .last_mut()
+            .unwrap()
+            .sessions
+            .clear();
+        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(hierarchy));
+        let ack = ServerMessage::Response {
+            request_id: message.request_id,
+            response: Response::Ok,
+        };
+        let outgoing = if hierarchy_first {
+            dashboard.handle_server_message(event);
+            assert_eq!(
+                dashboard.focused_session(),
+                Some(SessionId(1)),
+                "unacknowledged creation must not change selection"
+            );
+            dashboard.handle_server_message(ack)
+        } else {
+            dashboard.handle_server_message(ack);
+            assert_eq!(
+                dashboard.focused_session(),
+                Some(SessionId(1)),
+                "wait until the created workspace exists in hierarchy"
+            );
+            dashboard.handle_server_message(event)
+        };
+        assert_eq!(
+            dashboard.focused_session(),
+            None,
+            "created empty workspace must replace the previous pane selection"
+        );
+        assert!(outgoing.iter().any(|m| matches!(&m.request, Request::SetView { view } if view.focused.is_none() && view.panes.is_empty())));
+        let text = palette_text(&dashboard);
+        assert!(
+            text.contains("consigint / pick-demo: press n to start a terminal here"),
+            "{text}"
+        );
+        assert!(!text.contains("┌ Create workspace"), "{text}");
+        dashboard.key(KeyCode::Char('n'));
+        assert!(palette_text(&dashboard).contains("consigint / pick-demo"));
     }
 }

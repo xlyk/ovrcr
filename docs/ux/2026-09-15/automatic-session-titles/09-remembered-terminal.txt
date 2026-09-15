@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ─────────────────────────────────────────│pid: 82632  elapsed: 7m  agent unknown  Latest app title (#11)
+  󰘬 auth-handoff                                    │Latest app title (#11)
+     $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ─────────────────────────────────────────│pid: 82632  elapsed: 7m  agent unknown  Latest app title (#11)
+		5 text (settable)   󰘬 auth-handoff                                    │Latest app title (#11)
+		6 text (settable)      $ local                                        │CUA_READY
+		7 text (settable)      - review auth handoff                 grok-4.6 │Review; login 界
+		8 text (settable)   󰘬 cua-empty                                       │CUA_TITLE_APPLIED:Review; login 界
+		9 text (settable)   󰘬 cua-launch                                      │Latest app title
+		10 text (settable) ▌    - Latest app title (#11)         Fixture agent │CUA_TITLE_APPLIED:Latest app title
+		11 text (settable)      · Latest app title (#12)         Fixture agent │
+		12 text (settable)      - cua-launch-3                   Fixture agent │
+		13 text (settable)   󰘬 cua-recover                                     │
+		14 text (settable)      - cua-recover                               sh │
+		15 text (settable)      - Custom terminal                           sh │
+		16 text (settable)   󰘬 worktree-lifecycle                              │
+		17 text (settable)      $ local                                        │
+		18 text (settable)      - implement lifecycle cleanup         sonnet-4 │
+		19 text (settable)      - review websocket shutdown            gpt-5.4 │
+		20 text (settable)      - plan snapshot restore               grok-4.6 │
+		21 text (settable)                                                     │
+		22 text (settable)  SPACELIFT-AGENT ───────────────────────────────────│
+		23 text (settable)   󰘬 pipeline-progress-v2                            │
+		24 text (settable)      $ local                              ┌ Create workspace · Start: Terminal ────────────────────────────────────────────┐
+		25 text (settable)      - build pipeline progress            │Project                                                                         │
+		26 text (settable)   󰘬 scope-quality                         │  consigint                                                                     │
+		27 text (settable)      $ local                              │Name                                                                            │
+		28 text (settable)      - review scope quality               │› ▏                                                                             │
+		29 text (settable)                                           │Branch mode                                                                     │
+		30 text (settable)                                           │  new                                                                           │
+		31 text (settable)                                           │Branch                                                                          │
+		32 text (settable)                                           │  feature/                                                                      │
+		33 text (settable)                                           │Base                                                                            │
+		34 text (settable)                                           │  main                                                                          │
+		35 text (settable)                                           │Start                                                                           │
+		36 text (settable)                                           │  Terminal                                                                      │
+		37 text (settable)                                           │Enter on Name submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel     │
+		38 text (settable)                                           │                                                                                │
+		39 text (settable)                                           │                                                                                │
+		40 text (settable)                                           │                                                                                │
+		41 text (settable)                                           │[Submit] [Cancel]                                                               │
+		42 text (settable)                                           └────────────────────────────────────────────────────────────────────────────────┘
+		43 text (settable)                                                     │
+		44 text (settable)                                                     │
+		45 text (settable)                                                     │
+		46 text (settable)                                                     │
+		47 text (settable)                                                     │
+		48 text (settable)                                                     │
+		49 text (settable)                                                     │
+		50 text (settable)                                                     │
+		51 text (settable)                                                     │
+		52 text (settable)                                                     │
+		53 text (settable)                                                     │
+		54 text (settable)                                                     │
+		55 text (settable)                                                     │
+		56 text (settable)                                                     │
+		57 text (settable)                                                     │
+		58 text (settable)                                                     │
+		59 text (settable)                                                     │
+		60 text (settable)                                                     │
+		61 text (settable)                                                     │
+		62 text (settable)                                                     │
+		63 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ─────────────────────────────────────────│pid: 82632  elapsed: 7m  agent unknown  Latest app title (#11)
+  󰘬 auth-handoff                                    │Latest app title (#11)
+     $ lo

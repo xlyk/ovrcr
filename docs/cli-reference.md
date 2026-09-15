@@ -22,8 +22,8 @@ contract scripts can rely on. Every command accepts `--help`.
 alias their guarded `remove` commands. The legacy top-level `new`, `list`,
 `kill`, `pause`, `resume`, and `session remove` commands remain available.
 
-Names and terminal IDs are always explicit. No command infers a target from the
-current directory.
+Resource targets and terminal IDs are explicit. No command infers a target from
+the current directory. A new terminal can omit its name for automatic titles.
 
 ## Which commands start a server
 
@@ -55,7 +55,7 @@ ovrcr terminal list --project consigint --workspace cleanup
 ```
 
 `project list` shows projects only; `ovrcr list` prints the complete hierarchy as
-`project`, `  workspace`, and `    session <id> <name> <phase>` lines. Terminal
+`project`, `  workspace`, and `    session <id> <display-name> <phase>` lines. Terminal
 lists include running sessions and retained exited records. A `--workspace` filter
 requires `--project`.
 
@@ -81,7 +81,21 @@ ovrcr project remove example
 Arguments after `--` are passed directly to the executable. With no executable,
 `terminal create` and `new` launch `$SHELL`. Sessions start at the workspace root.
 `project add` creates the workspace root if it is missing.
-`--label TEXT` sets the sidebar label.
+`--label TEXT` sets launch metadata such as the executable or agent label.
+Omit `--name` for a stable workspace-based fallback name and an automatic display
+title that follows the running app. Supply `--name TEXT` to start with a pinned
+title instead.
+
+```sh
+ovrcr terminal rename ID "Review login"  # pin a display title
+ovrcr terminal rename ID --automatic    # follow app titles again
+ovrcr terminal relaunch ID              # exited sessions only; prints the new ID
+```
+
+Rename changes the display title, not the stable session name or ID. Relaunch
+starts a new session with the original command in the same workspace and retains
+the exited session's output. Both commands require a running server. With `--json`,
+relaunch returns the created terminal object and rename returns `{"ok":true}`.
 
 `terminal send` respects bracketed-paste mode and then sends Enter; `--no-submit`
 omits that final Enter. Embedded newlines remain part of the text, so a program
@@ -204,7 +218,7 @@ ovrcr terminal list --project consigint --json
 ovrcr terminal read 7 --json
 ```
 
-Resource lists return arrays. Get commands and terminal creation return objects.
+Resource lists return arrays. Get commands, terminal creation, and relaunch return objects.
 Other successful mutations return `{"ok":true}`. `ovrcr list --json` returns the
 legacy hierarchy as an array of projects with nested `workspaces`, each containing
 `terminals`.
@@ -213,8 +227,12 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 | --- | --- |
 | Project | `name`, `repo`, `workspace_root`, `workspace_count` |
 | Workspace | `project`, `name`, `path`, `branch`, `terminal_count` |
-| Terminal | `id`, `project`, `workspace`, `name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `context_usage`, `context_stale` |
+| Terminal | `id`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `context_usage`, `context_stale` |
 | Screen read | `id`, `rows`, `cols`, `text` |
+
+`name` is the stable session name. `title` is its nullable effective title;
+`display_name` is the title or fallback name. These titles do not imply agent
+activity or reporting support.
 
 `phase` is `running`, `paused`, or `exited`; `exit_code` and `exit_signal` are
 nullable and set only for `exited`. `activity` is one of `unknown`, `idle`, `busy`,

@@ -373,8 +373,16 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
         SessionEvent::Output { bytes, .. } => Some(bytes.clone()),
         SessionEvent::Exited { .. } => None,
     };
+    let before_title = session.effective_title();
     session.apply_event(event);
     if let Some(bytes) = output {
+        if session.effective_title() != before_title {
+            state
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                    session.summary(),
+                ))));
+        }
         let revision = state
             .dashboard
             .view()
