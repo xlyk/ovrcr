@@ -549,6 +549,11 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         &format!("elapsed: {}", status.elapsed),
                         rect.metadata.width,
                     );
+                    append_metadata_field(
+                        &mut text,
+                        &dashboard.session_display_name(session),
+                        rect.metadata.width,
+                    );
                     return Line::from(Span::styled(text, Style::default().fg(TEAL)));
                 }
                 // An exited session keeps its process and elapsed fields but drops the
@@ -572,6 +577,10 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     } else {
                         Span::raw("")
                     },
+                    Span::styled(
+                        format!("  {}", dashboard.session_display_name(session)),
+                        Style::default().fg(TEXT),
+                    ),
                 ])
             },
         );
@@ -583,8 +592,22 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
             let metadata_hint = dashboard.history.as_ref().map_or_else(
                 || {
                     selected
-                        .and_then(|session| {
-                            provider_metrics(session, now_unix_ms, usize::from(rect.metadata.width))
+                        .map(|session| {
+                            let width = usize::from(rect.metadata.width);
+                            if provider_metrics(session, now_unix_ms, width).is_some() {
+                                let title = clipped_session_title(
+                                    dashboard,
+                                    session,
+                                    (width / 3).clamp(1, 24),
+                                );
+                                let metrics_width =
+                                    width.saturating_sub(Line::raw(&title).width() + 3);
+                                let metrics = provider_metrics(session, now_unix_ms, metrics_width)
+                                    .unwrap_or_default();
+                                format!("{title} · {metrics}")
+                            } else {
+                                clipped_session_title(dashboard, session, width)
+                            }
                         })
                         .unwrap_or_else(|| "─".repeat(usize::from(rect.metadata.width)))
                 },
@@ -745,6 +768,28 @@ impl Dashboard {
     }
 }
 
+fn clipped_session_title(
+    dashboard: &Dashboard,
+    session: &crate::session::SessionSummary,
+    width: usize,
+) -> String {
+    let display = dashboard.session_display_name(session);
+    if display != session.display_name() {
+        let suffix = format!(" (#{})", session.id.0);
+        if width >= suffix.len() {
+            format!(
+                "{}{}",
+                clip_text(session.display_name(), width - suffix.len()),
+                suffix
+            )
+        } else {
+            clip_text(&format!("#{}", session.id.0), width)
+        }
+    } else {
+        clip_text(&display, width)
+    }
+}
+
 fn render_split_metadata(
     frame: &mut Frame<'_>,
     rect: PaneRects,
@@ -757,7 +802,18 @@ fn render_split_metadata(
         return;
     }
     let session = pane.session.and_then(|id| find_session(dashboard, id));
-    let name = session.map_or("no session", |session| session.name.as_str());
+    let name =
+        session.map_or_else(
+            || "no session".into(),
+            |session| {
+                clipped_session_title(
+                    dashboard,
+                    session,
+                    usize::from(rect.metadata.width)
+                        .saturating_sub(if dashboard.pane_ready(pane) { 2 } else { 10 }),
+                )
+            },
+        );
     let prefix = if focused { "> " } else { "  " };
     let mut text = if dashboard.pane_ready(pane) {
         format!(
@@ -992,7 +1048,7 @@ fn tree_line_text(
                 );
             };
             let status = SessionStatus::of(session, now_unix_ms);
-            if session.name == "local" {
+            if session.name == "local" && session.display_name() == "local" {
                 // A shell is quiet unless a hook reports real activity inside it.
                 let (glyph, glyph_color) = match (status.glyph, status.color) {
                     ('-' | ' ', _) => ('$', SUBTEXT),
@@ -1059,7 +1115,10 @@ fn tree_line_text(
                         Span::styled(glyph.to_string(), Style::default().fg(glyph_color)),
                         Span::raw(" "),
                         Span::styled(unread, Style::default().fg(TEAL)),
-                        Span::styled(clip_text(&session.name, name_width), name_style),
+                        Span::styled(
+                            clipped_session_title(dashboard, session, name_width),
+                            name_style,
+                        ),
                     ],
                     Span::raw(" "),
                     right,

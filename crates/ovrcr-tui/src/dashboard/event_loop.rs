@@ -52,6 +52,7 @@ pub fn run_dashboard(
     dashboard.configuration_paths = Some(configuration_paths);
     let (settings, settings_error) = load_dashboard_settings(&settings_path);
     dashboard.settings = settings;
+    dashboard.settings_path = Some(settings_path.clone());
     if let Some(parent) = settings_path.parent() {
         dashboard.config_dir = parent.to_path_buf();
     }
@@ -793,6 +794,7 @@ mod unread_review_tests {
             project: "project".into(),
             workspace: "work".into(),
             name: "codex".into(),
+            title: None,
             label: "codex".into(),
             pid: Some(1),
             started_unix_ms: 0,

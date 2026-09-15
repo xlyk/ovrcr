@@ -105,6 +105,23 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
 pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppResult<()> {
     match command {
         TerminalCommand::Create(args) => create_terminal(args, json_output),
+        TerminalCommand::Rename {
+            id,
+            title,
+            automatic: _,
+        } => mutate_without_start(
+            Request::SetSessionTitle {
+                session: SessionId(id),
+                title,
+            },
+            json_output,
+        ),
+        TerminalCommand::Relaunch { id } => print_created_terminal(
+            request_without_start(Request::RelaunchSession {
+                session: SessionId(id),
+            })?,
+            json_output,
+        ),
         TerminalCommand::MarkReviewed { id, expected } => mutate_without_start(
             Request::MarkReviewed {
                 session: SessionId(id),
@@ -211,6 +228,10 @@ pub(super) fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()>
         label: args.label,
         argv,
     }))?;
+    print_created_terminal(response, json_output)
+}
+
+fn print_created_terminal(response: Response, json_output: bool) -> AppResult<()> {
     match response {
         Response::CreatedSession(summary) => {
             if json_output {

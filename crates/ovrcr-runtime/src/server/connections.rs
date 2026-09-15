@@ -572,6 +572,41 @@ pub(super) fn handle_request_with_id(
                 Response::Ok
             },
         ),
+        Request::CreateWorkspaceWithLaunch {
+            project,
+            name,
+            branch,
+            launch,
+        } => {
+            state
+                .create_workspace_with_launch(project, name, branch, launch)
+                .map_or_else(
+                    |error| lifecycle_response_with_partial_hierarchy(state, error),
+                    |summary| {
+                        state.dashboard.try_send(ServerMessage::Event(
+                            ServerEvent::HierarchyChanged(state.hierarchy()),
+                        ));
+                        summary.map_or(Response::Ok, |summary| {
+                            Response::CreatedSession(Box::new(summary))
+                        })
+                    },
+                )
+        }
+        Request::SetSessionTitle { session, title } => state
+            .set_session_title(session, title)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::RelaunchSession { session } => {
+            state
+                .relaunch_session(session)
+                .map_or_else(error_for_lifecycle, |summary| {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                    Response::CreatedSession(Box::new(summary))
+                })
+        }
         Request::RemoveWorkspace { project, name } => {
             state.remove_workspace(&project, &name).map_or_else(
                 |error| lifecycle_response_with_partial_hierarchy(state, error),

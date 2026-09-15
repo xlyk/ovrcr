@@ -153,7 +153,7 @@ impl Dashboard {
             .and_then(|id| super::state::find_session(self, id));
         let group = self.whichkey.as_ref().and_then(|popup| popup.group);
         let title = match group {
-            Some('t') => session.map(|s| format!("Terminal: {} (#{})", s.name, s.id.0)),
+            Some('t') => session.map(|s| format!("Terminal: {} (#{})", s.display_name(), s.id.0)),
             Some('w') if !workspace.is_empty() => {
                 Some(format!("Workspace: {project} / {workspace}"))
             }
@@ -203,7 +203,9 @@ impl Dashboard {
             (
                 "t",
                 "Terminal",
-                session.map(|s| s.name.clone()).unwrap_or_default(),
+                session
+                    .map(|s| s.display_name().to_string())
+                    .unwrap_or_default(),
                 session.is_some(),
             ),
             (

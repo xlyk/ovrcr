@@ -520,6 +520,7 @@ mod tests {
                         project: "project".into(),
                         workspace: "workspace".into(),
                         name: "session".into(),
+                        title: None,
                         label: "PRIVATE_LABEL".into(),
                         pid: Some(1),
                         started_unix_ms: 0,

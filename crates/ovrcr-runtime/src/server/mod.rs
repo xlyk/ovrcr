@@ -152,6 +152,12 @@ pub struct ServerQueueDiagnostics {
 #[cfg(test)]
 type ResizeHook = Arc<dyn Fn(&Session, TerminalSize) -> Result<()> + Send + Sync>;
 
+enum WorkspaceLaunch {
+    None,
+    Shell,
+    Session(ovrcr_protocol::SessionLaunch),
+}
+
 pub struct ServerState {
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -312,6 +318,37 @@ impl ServerState {
         request: ovrcr_protocol::CreateSessionRequest,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<SessionSummary> {
+        self.create_session_with_title_locked(request, ready, None)
+    }
+
+    fn create_session_with_title_locked(
+        &self,
+        mut request: ovrcr_protocol::CreateSessionRequest,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+        pinned_override: Option<Option<String>>,
+    ) -> Result<SessionSummary> {
+        let automatic = request.name.is_empty();
+        let used: std::collections::HashSet<_> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .map(|session| session.summary())
+            .filter(|summary| {
+                summary.project == request.project && summary.workspace == request.workspace
+            })
+            .map(|summary| summary.name)
+            .collect();
+        if automatic {
+            request.name = request.workspace.clone();
+            let mut suffix = 2u64;
+            while used.contains(&request.name) {
+                request.name = format!("{}-{suffix}", request.workspace);
+                suffix += 1;
+            }
+        }
+        let pinned = pinned_override.unwrap_or_else(|| (!automatic).then(|| request.name.clone()));
+
         let (cwd, label) = {
             let registry = self.registry.lock().unwrap();
             let workspace = registry
@@ -328,22 +365,22 @@ impl ServerState {
             (workspace.path.clone(), label)
         };
         let id = SessionId(self.next_session_id.fetch_add(1, Ordering::Relaxed));
-        let duplicate = {
-            let sessions = self.sessions.lock().unwrap();
-            sessions.values().any(|session| {
-                let summary = session.summary();
-                summary.project == request.project
-                    && summary.workspace == request.workspace
-                    && summary.name == request.name
-            })
-        };
-        if duplicate {
+        if used.contains(&request.name) {
             return Err(lifecycle_error(
                 ErrorCode::AlreadyExists,
                 format!(
                     "duplicate session: {}/{}:{}",
                     request.project, request.workspace, request.name
                 ),
+            ));
+        }
+        if pinned
+            .as_deref()
+            .is_some_and(|title| super::session::sanitize_title(title).is_none())
+        {
+            return Err(lifecycle_error(
+                ErrorCode::InvalidRequest,
+                "title must contain visible text",
             ));
         }
         let spec = SessionSpec {
@@ -377,6 +414,9 @@ impl ServerState {
         // no event of its own can arrive for a session the dispatcher cannot
         // find yet.
         let register = |session: &Arc<Session>| {
+            session
+                .set_title(pinned.clone())
+                .expect("validated session title");
             self.sessions
                 .lock()
                 .unwrap()
@@ -391,6 +431,53 @@ impl ServerState {
             })
             .context("spawn session")?;
         Ok(session.summary())
+    }
+
+    pub fn set_session_title(&self, id: SessionId, title: Option<String>) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        session
+            .set_title(title)
+            .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
+        self.refresh_session_locked(id)
+    }
+
+    pub fn relaunch_session(&self, id: SessionId) -> Result<SessionSummary> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        let summary = session.summary();
+        if !matches!(summary.phase, SessionPhase::Exited { .. }) {
+            return Err(lifecycle_error(
+                ErrorCode::SessionRunning,
+                "only an exited session can be relaunched",
+            ));
+        }
+        let launch = session.launch();
+        self.create_session_with_title_locked(
+            ovrcr_protocol::CreateSessionRequest {
+                project: summary.project,
+                workspace: summary.workspace,
+                name: String::new(),
+                label: launch.label,
+                argv: launch.argv,
+            },
+            None,
+            Some(session.pinned_title()),
+        )
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
@@ -642,7 +729,8 @@ impl ServerState {
         name: String,
         branch: BranchRequest,
     ) -> Result<()> {
-        self.create_workspace_inner(project, name, branch, true)
+        self.create_workspace_inner(project, name, branch, WorkspaceLaunch::Shell)
+            .map(|_| ())
     }
 
     pub fn create_task_workspace(
@@ -652,7 +740,28 @@ impl ServerState {
         branch: String,
         base: String,
     ) -> Result<()> {
-        self.create_workspace_inner(project, name, BranchRequest::New { branch, base }, false)
+        self.create_workspace_inner(
+            project,
+            name,
+            BranchRequest::New { branch, base },
+            WorkspaceLaunch::None,
+        )
+        .map(|_| ())
+    }
+
+    pub fn create_workspace_with_launch(
+        &self,
+        project: String,
+        name: String,
+        branch: BranchRequest,
+        launch: Option<ovrcr_protocol::SessionLaunch>,
+    ) -> Result<Option<SessionSummary>> {
+        self.create_workspace_inner(
+            project,
+            name,
+            branch,
+            launch.map_or(WorkspaceLaunch::None, WorkspaceLaunch::Session),
+        )
     }
 
     fn create_workspace_inner(
@@ -660,8 +769,8 @@ impl ServerState {
         project: String,
         name: String,
         branch: BranchRequest,
-        start_shell: bool,
-    ) -> Result<()> {
+        launch: WorkspaceLaunch,
+    ) -> Result<Option<SessionSummary>> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let project_record = self
@@ -703,31 +812,43 @@ impl ServerState {
             }
             *registry = next;
         }
-        if !start_shell {
-            return Ok(());
-        }
-        let shell = std::env::var_os("SHELL").ok_or_else(|| {
-            lifecycle_error_with_hierarchy(
-                ErrorCode::PartialFailure,
-                format!(
-                    "worktree for workspace {} exists at {} but SHELL is unset",
-                    name,
-                    workspace.path.display()
-                ),
-                true,
-            )
-        })?;
-        if let Err(error) = self.create_session_locked(
+        let (launch, session_name) = match launch {
+            WorkspaceLaunch::None => return Ok(None),
+            WorkspaceLaunch::Session(launch) => (launch, String::new()),
+            WorkspaceLaunch::Shell => {
+                let shell = std::env::var_os("SHELL").ok_or_else(|| {
+                    lifecycle_error_with_hierarchy(
+                        ErrorCode::PartialFailure,
+                        format!(
+                            "worktree for workspace {} exists at {} but SHELL is unset",
+                            name,
+                            workspace.path.display()
+                        ),
+                        true,
+                    )
+                })?;
+                (
+                    ovrcr_protocol::SessionLaunch {
+                        argv: vec![shell],
+                        label: None,
+                    },
+                    "local".into(),
+                )
+            }
+        };
+        self.create_session_locked(
             ovrcr_protocol::CreateSessionRequest {
                 project,
                 workspace: name.clone(),
-                name: "local".into(),
-                label: None,
-                argv: vec![shell],
+                name: session_name,
+                label: launch.label,
+                argv: launch.argv,
             },
             None,
-        ) {
-            return Err(lifecycle_error_with_hierarchy(
+        )
+        .map(Some)
+        .map_err(|error| {
+            lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
                     "worktree for workspace {} remains at {}: {}",
@@ -736,9 +857,8 @@ impl ServerState {
                     error_chain_string(&error)
                 ),
                 true,
-            ));
-        }
-        Ok(())
+            )
+        })
     }
 
     pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {

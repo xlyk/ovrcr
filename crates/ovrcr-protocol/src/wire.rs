@@ -165,9 +165,17 @@ pub enum BranchRequest {
 pub struct CreateSessionRequest {
     pub project: String,
     pub workspace: String,
+    /// Empty requests a unique workspace-based identity and automatic display title.
+    /// An explicit name pins the display title until SetSessionTitle resets it.
     pub name: String,
     pub label: Option<String>,
     pub argv: Vec<OsString>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLaunch {
+    pub argv: Vec<OsString>,
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,6 +273,19 @@ pub enum Request {
     MarkReviewed {
         session: SessionId,
         expected: crate::ReadyObservation,
+    },
+    CreateWorkspaceWithLaunch {
+        project: String,
+        name: String,
+        branch: BranchRequest,
+        launch: Option<SessionLaunch>,
+    },
+    SetSessionTitle {
+        session: SessionId,
+        title: Option<String>,
+    },
+    RelaunchSession {
+        session: SessionId,
     },
 }
 
@@ -380,6 +401,7 @@ mod wire_snapshot {
 
     fn summary() -> SessionSummary {
         SessionSummary {
+            title: None,
             id: SessionId(1),
             project: "p".into(),
             workspace: "w".into(),
@@ -584,6 +606,47 @@ mod wire_snapshot {
                         }],
                         focused: Some(SessionId(1)),
                     },
+                },
+            ),
+            (
+                "CreateWorkspaceWithLaunch",
+                Request::CreateWorkspaceWithLaunch {
+                    project: "a".into(),
+                    name: "b".into(),
+                    branch: BranchRequest::Existing { branch: "c".into() },
+                    launch: Some(SessionLaunch {
+                        argv: vec!["sh".into()],
+                        label: None,
+                    }),
+                },
+            ),
+            (
+                "CreateWorkspaceWithoutLaunch",
+                Request::CreateWorkspaceWithLaunch {
+                    project: "a".into(),
+                    name: "b".into(),
+                    branch: BranchRequest::Existing { branch: "c".into() },
+                    launch: None,
+                },
+            ),
+            (
+                "SetSessionTitle",
+                Request::SetSessionTitle {
+                    session: SessionId(1),
+                    title: Some("title".into()),
+                },
+            ),
+            (
+                "ResetSessionTitle",
+                Request::SetSessionTitle {
+                    session: SessionId(1),
+                    title: None,
+                },
+            ),
+            (
+                "RelaunchSession",
+                Request::RelaunchSession {
+                    session: SessionId(1),
                 },
             ),
         ]
@@ -817,6 +880,17 @@ mod wire_snapshot {
         ("Request::HistoryEnd", "180102"),
         ("Request::SetView", "1903010101020101"),
         (
+            "Request::CreateWorkspaceWithLaunch",
+            "1f0161016201016301010002736800",
+        ),
+        (
+            "Request::CreateWorkspaceWithoutLaunch",
+            "1f0161016201016300",
+        ),
+        ("Request::SetSessionTitle", "200101057469746c65"),
+        ("Request::ResetSessionTitle", "200100"),
+        ("Request::RelaunchSession", "2101"),
+        (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
         ),
@@ -824,13 +898,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506",
+            "020101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("Response::Screen", "03010301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506",
+            "0500010101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -844,7 +918,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "020103"),
         (
             "ServerEvent::SessionChanged",
-            "030101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e02010000000104010506",
+            "030101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),

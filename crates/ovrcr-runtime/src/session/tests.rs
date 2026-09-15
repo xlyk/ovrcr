@@ -1207,3 +1207,49 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     assert!(config, "normal zsh environment and aliases did not load");
     assert!(red, "failed command did not render a red arrow");
 }
+
+#[test]
+fn automatic_title_callbacks_handle_fragments_unicode_controls_and_bounds() {
+    let mut parser = vt100::Parser::new_with_callbacks(3, 30, 0, SessionTitles::default());
+    parser.process(b"\x1b]2;frag");
+    assert_eq!(parser.callbacks().application, None);
+    parser.process("mented 🦀\x07".as_bytes());
+    assert_eq!(
+        parser.callbacks().application.as_deref(),
+        Some("fragmented 🦀")
+    );
+    parser.process("\x1b]0;next title\x1b\\".as_bytes());
+    assert_eq!(
+        parser.callbacks().application.as_deref(),
+        Some("next title")
+    );
+    parser.process(b"\x1b]1;icon only\x07");
+    assert_eq!(
+        parser.callbacks().application.as_deref(),
+        Some("next title")
+    );
+    parser.process(format!("\x1b]2;{}\x07", "🦀".repeat(300)).as_bytes());
+    assert_eq!(
+        parser
+            .callbacks()
+            .application
+            .as_ref()
+            .unwrap()
+            .chars()
+            .count(),
+        MAX_TITLE_CHARS
+    );
+    assert_eq!(
+        sanitize_title("  hi\n\t\u{202e}there  ").as_deref(),
+        Some("hithere")
+    );
+    parser.process(b"\x1b]2;   \x07");
+    assert_eq!(parser.callbacks().application, None);
+    parser.process(b"\x1b]2;semi;colon\x07");
+    assert_eq!(
+        parser.callbacks().application.as_deref(),
+        Some("semi;colon")
+    );
+    parser.process(b"\x1b]2;bad\xfftitle\x07");
+    assert_eq!(parser.callbacks().application.as_deref(), Some("bad�title"));
+}

@@ -100,6 +100,7 @@ mod tests {
             project: "p".into(),
             workspace: "w".into(),
             name: "s".into(),
+            title: None,
             label: "l".into(),
             pid: Some(1),
             started_unix_ms: 0,

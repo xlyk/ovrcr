@@ -55,7 +55,10 @@ fn dashboard_layout() {
     assert_eq!(buffer[(39, 10)].symbol(), "│");
     assert_eq!(buffer[(39, 1)].symbol(), "│");
     assert!(rendered[1].contains("pid: 111  elapsed: 0m"));
-    assert!(rendered[2].contains("─"));
+    assert!(
+        rendered[2].contains("review"),
+        "the pane title replaces the decorative rule"
+    );
     assert!(buffer[(8, 7)].modifier.contains(Modifier::DIM));
     assert_eq!(buffer[(0, 4)].symbol(), "▌");
     assert_eq!(buffer[(1, 4)].bg, Color::Rgb(49, 50, 68));
@@ -285,7 +288,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         terminal
             .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
             .unwrap();
-        assert_eq!(metadata(&terminal), expected);
+        assert_eq!(metadata(&terminal), format!("{expected}  review"));
     }
 
     let mut review = review_session(&fixture_hierarchy()).clone();
@@ -299,7 +302,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
         .unwrap();
     assert_eq!(
         metadata(&terminal),
-        "pid: 111  elapsed: 0m  agent error  paused"
+        "pid: 111  elapsed: 0m  agent error  paused  review"
     );
 
     review.phase = SessionPhase::Exited {
@@ -313,7 +316,7 @@ fn agent_hook_selected_metadata_reports_activity_and_lifecycle() {
     terminal
         .draw(|frame| ovrcr::tui::draw_dashboard_at(frame, &dashboard, 0))
         .unwrap();
-    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m");
+    assert_eq!(metadata(&terminal), "pid: closed  elapsed: 0m  review");
 }
 
 #[test]

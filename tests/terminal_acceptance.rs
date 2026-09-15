@@ -651,11 +651,19 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
                 .find(|workspace| workspace.name == "wizard")
         })
         .context("new workspace missing")?;
-    let local = workspace
+    assert_eq!(
+        workspace.sessions.len(),
+        1,
+        "workspace launch must create only its selected first terminal"
+    );
+    let terminal = workspace
         .sessions
-        .iter()
-        .find(|session| session.name == "local")
-        .context("local shell missing")?;
+        .first()
+        .context("first terminal missing")?;
+    assert_eq!(
+        terminal.name, workspace.name,
+        "an automatic first terminal uses the workspace's stable fallback name"
+    );
     let branch = Command::new("git")
         .arg("-C")
         .arg(&workspace.path)
@@ -684,7 +692,7 @@ fn workspace_shortcut_creates_and_attaches_through_real_dashboard() -> Result<()
     )?;
     assert!(
         fixture
-            .read_terminal(local.id)?
+            .read_terminal(terminal.id)?
             .contains("WORKSPACE_SHELL_OK")
     );
     dashboard.detach()?;

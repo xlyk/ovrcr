@@ -45,6 +45,14 @@ pub struct SessionSummary {
     pub agent_epoch: u64,
     pub unread: Option<crate::ReadyObservation>,
     pub context_usage: Option<ContextUsageSnapshot>,
+    /// Effective display title; the stable `name` remains the command identity.
+    pub title: Option<String>,
+}
+
+impl SessionSummary {
+    pub fn display_name(&self) -> &str {
+        self.title.as_deref().unwrap_or(&self.name)
+    }
 }
 
 #[cfg(test)]

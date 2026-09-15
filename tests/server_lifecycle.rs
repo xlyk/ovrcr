@@ -1681,49 +1681,51 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
     )
     .unwrap();
     let _ = read_frame::<ServerMessage>(&mut dashboard).unwrap();
-    let mut ready = false;
-    dashboard
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .unwrap();
-    let readiness_deadline = Instant::now() + Duration::from_secs(2);
-    let mut request_id = 2;
-    while !ready && Instant::now() < readiness_deadline {
-        write_frame(
-            &mut dashboard,
-            &ClientMessage {
-                request_id,
-                request: Request::Select {
-                    session,
-                    size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
-                },
+    // Select owes both Screen and Ok. Sending another Select after every
+    // single frame would grow an undrained response backlog while waiting
+    // for READY, eventually closing the bounded dashboard queue.
+    write_frame(
+        &mut dashboard,
+        &ClientMessage {
+            request_id: 2,
+            request: Request::Select {
+                session,
+                size: ovrcr::session::TerminalSize { rows: 24, cols: 80 },
             },
-        )
-        .unwrap();
-        request_id += 1;
+        },
+    )
+    .unwrap();
+    let mut ready = false;
+    let mut selected = false;
+    let readiness_deadline = Instant::now() + Duration::from_secs(2);
+    while !ready || !selected {
+        let remaining = readiness_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        dashboard.set_read_timeout(Some(remaining)).unwrap();
         let Ok(message) = read_frame::<ServerMessage>(&mut dashboard) else {
-            continue;
+            break;
         };
         match message {
             ServerMessage::Response {
+                request_id: 2,
+                response: Response::Ok,
+            } => selected = true,
+            ServerMessage::Response {
+                request_id: 2,
                 response: Response::Screen { bytes, .. },
-                ..
             }
             | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output {
                 bytes,
                 session: _,
                 revision: _,
-            }) if String::from_utf8_lossy(&bytes).contains("READY") => {
-                ready = true;
-                break;
-            }
+            }) if String::from_utf8_lossy(&bytes).contains("READY") => ready = true,
             _ => {}
         }
     }
     assert!(ready, "blocked-session readiness marker was not rendered");
-    dashboard
-        .set_read_timeout(Some(Duration::from_millis(10)))
-        .unwrap();
-    while read_frame::<ServerMessage>(&mut dashboard).is_ok() {}
+    assert!(selected, "blocked-session selection was not acknowledged");
     write_frame(
         &mut dashboard,
         &ClientMessage {

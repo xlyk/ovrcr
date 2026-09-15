@@ -4,6 +4,34 @@ Synchronous terminal multiplexer. One server owner, one active dashboard, fifty 
 
 ## Language
 
+**Session title**:
+The name shown for a terminal session. It can follow the running application's title or remain pinned to a name chosen by the user; changing it does not change which session it identifies.
+_Avoid_: session identity, agent label, workspace name as interchangeable terms
+
+**Automatic title**:
+A session title that follows titles supplied by the running application, using a fallback when no application title is available.
+_Avoid_: generated task summary, inferred activity
+
+**Pinned title**:
+A session title chosen by the user that stays unchanged until the user edits it or returns to Automatic.
+_Avoid_: pinned session, which could imply a placement or lifecycle change
+
+**Launch choice**:
+The user's choice to start an Agent or a Terminal in a workspace. Creating a workspace can also leave it empty with Nothing yet.
+_Avoid_: custom command as a third session category
+
+**Agent**:
+A detected or configured agent selected for launch. This launch choice alone does not establish reporting support or determine everything that may later run in the session.
+_Avoid_: any arbitrary command as an agent
+
+**Terminal**:
+The launch choice for opening a shell, optionally with a custom command. Like an Agent launch, it creates a terminal session with automatic or pinned titles.
+_Avoid_: custom command as a separate session type
+
+**Remembered launch choice**:
+A project's most recently successfully launched Agent and preset, or Terminal choice. It excludes one-off command text and is unchanged by creating an empty workspace.
+_Avoid_: running agent, silently substituted fallback
+
 **Dashboard**:
 The one active TUI for live sessions: the hierarchy, the panes, and browse / terminal / history / copy.
 _Avoid_: TUI (the crate), GUI helper, task UI as a separate product

@@ -194,6 +194,19 @@ pub(super) enum TerminalCommand {
         expected: ovrcr::protocol::ReadyObservation,
     },
     Create(NewArgs),
+    /// Pin a display title or restore application-controlled titles.
+    #[command(group(ArgGroup::new("title_mode").required(true).args(["title", "automatic"])))]
+    Rename {
+        id: u64,
+        #[arg(conflicts_with = "automatic")]
+        title: Option<String>,
+        #[arg(long)]
+        automatic: bool,
+    },
+    /// Launch an exited session's command again, retaining the old output.
+    Relaunch {
+        id: u64,
+    },
     List {
         #[arg(long)]
         project: Option<String>,
@@ -244,7 +257,8 @@ pub(super) struct NewArgs {
     pub(super) project: String,
     #[arg(long)]
     pub(super) workspace: String,
-    #[arg(long)]
+    /// Pin a name; omit to follow application titles automatically.
+    #[arg(long, default_value = "")]
     pub(super) name: String,
     #[arg(long)]
     pub(super) label: Option<String>,
@@ -341,4 +355,43 @@ fn parse_ready_observation(value: &str) -> Result<ovrcr::protocol::ReadyObservat
         })?;
     expected.validate().map_err(|error| error.to_string())?;
     Ok(expected)
+}
+
+#[cfg(test)]
+mod launch_cli_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_creation_can_request_automatic_name() {
+        assert!(
+            Cli::try_parse_from([
+                "ovrcr",
+                "terminal",
+                "create",
+                "--project",
+                "p",
+                "--workspace",
+                "w",
+                "--",
+                "/bin/sh",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn title_and_relaunch_commands_parse_without_ambiguous_reset() {
+        for args in [
+            vec!["ovrcr", "terminal", "rename", "7", "Review login"],
+            vec!["ovrcr", "terminal", "rename", "7", "--automatic"],
+            vec!["ovrcr", "terminal", "relaunch", "7"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+        assert!(Cli::try_parse_from(["ovrcr", "terminal", "rename", "7"]).is_err());
+        assert!(
+            Cli::try_parse_from(["ovrcr", "terminal", "rename", "7", "Pinned", "--automatic",])
+                .is_err()
+        );
+    }
 }
