@@ -89,13 +89,35 @@ impl Dashboard {
     }
 
     pub(super) fn toggle_desktop_notifications(&mut self) -> DashboardAction {
-        self.settings.desktop_notifications = !self.settings.desktop_notifications;
-        self.alerts_changed("Desktop notifications", self.settings.desktop_notifications)
+        self.toggle_alert_setting(
+            "desktop_notifications",
+            "Desktop notifications",
+            !self.settings.desktop_notifications,
+        )
     }
 
     pub(super) fn toggle_ready_sound(&mut self) -> DashboardAction {
-        self.settings.ready_sound = !self.settings.ready_sound;
-        self.alerts_changed("Ready sound", self.settings.ready_sound)
+        self.toggle_alert_setting("ready_sound", "Ready sound", !self.settings.ready_sound)
+    }
+
+    fn toggle_alert_setting(&mut self, key: &str, name: &str, enabled: bool) -> DashboardAction {
+        if let Some(path) = &self.settings_path {
+            match super::settings::save_alert_setting(path, key, enabled) {
+                Ok(settings) => self.settings = settings,
+                Err(error) => {
+                    self.desktop.notice = Some(format!("Could not save {name}: {error:#}"));
+                    return DashboardAction::Redraw;
+                }
+            }
+        } else {
+            // Embedded dashboards constructed without a file remain in-memory.
+            match key {
+                "desktop_notifications" => self.settings.desktop_notifications = enabled,
+                "ready_sound" => self.settings.ready_sound = enabled,
+                _ => unreachable!(),
+            }
+        }
+        self.alerts_changed(name, enabled)
     }
 
     fn alerts_changed(&mut self, name: &str, enabled: bool) -> DashboardAction {

@@ -56,6 +56,7 @@ pub fn run_dashboard(
     if let Some(parent) = settings_path.parent() {
         dashboard.config_dir = parent.to_path_buf();
     }
+    dashboard.settings_path = Some(settings_path);
     dashboard.handle_server_message(initial);
     write_client(
         &mut stream,

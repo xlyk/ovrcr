@@ -485,3 +485,76 @@ fn outer_pty_parses_attributes_and_resize_reaches_the_tty() -> Result<()> {
     terminal.stop()?;
     Ok(())
 }
+
+#[test]
+fn real_dashboard_saves_alert_preferences_and_reloads_config() -> Result<()> {
+    let mut demo = Demo::start(Path::new(env!("CARGO_BIN_EXE_ovrcr")))?;
+    let root = demo.root().to_owned();
+    let pgids = demo_session_groups(&root)?;
+    let settings = root.join("preferences/custom.toml");
+    let launch = || -> Result<Terminal> {
+        let mut command = portable_pty::CommandBuilder::new(env!("CARGO_BIN_EXE_ovrcr"));
+        command.env("OVRCR_CONFIG", root.join("config.toml"));
+        command.env("OVRCR_SOCKET", root.join("server.sock"));
+        command.env("OVRCR_DASHBOARD_CONFIG", &settings);
+        command.env("TERM", "xterm-256color");
+        Terminal::start(command, 40, 160, Default::default())
+    };
+    let mut terminal = launch()?;
+    wait_screen(&terminal, "implement lifecycle")?;
+    terminal.send(b"N")?;
+    wait_screen(&terminal, "Desktop notifications: on")?;
+    terminal.send(b"S")?;
+    wait_screen(&terminal, "Ready sound: on")?;
+    let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&settings)?)?;
+    assert_eq!(saved["desktop_notifications"].as_bool(), Some(true));
+    assert_eq!(saved["ready_sound"].as_bool(), Some(true));
+    assert!(
+        !root.join("dashboard.toml").exists(),
+        "must save to the selected path"
+    );
+    terminal.stop()?;
+
+    let mut terminal = launch()?;
+    wait_screen(&terminal, "implement lifecycle")?;
+    terminal.send(b":desktop notifications")?;
+    wait_screen(&terminal, "Disable desktop notifications")?;
+    terminal.send(b"\r")?;
+    wait_screen(&terminal, "Desktop notifications: off")?;
+    terminal.send(b"S")?;
+    wait_screen(&terminal, "Ready sound: off")?;
+    let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&settings)?)?;
+    assert_eq!(saved["desktop_notifications"].as_bool(), Some(false));
+    assert_eq!(saved["ready_sound"].as_bool(), Some(false));
+    terminal.stop()?;
+
+    std::fs::write(
+        &settings,
+        "desktop_notifications = false\nready_sound = true\n",
+    )?;
+    let mut terminal = launch()?;
+    wait_screen(&terminal, "implement lifecycle")?;
+    terminal.send(b"N")?;
+    wait_screen(&terminal, "Desktop notifications: on")?;
+    terminal.send(b"S")?;
+    wait_screen(&terminal, "Ready sound: off")?;
+    // A real filesystem error must leave the toggle off and report the failure.
+    std::fs::remove_file(&settings)?;
+    std::fs::create_dir(&settings)?;
+    terminal.send(b"S")?;
+    wait_screen(&terminal, "Could not save Ready sound")?;
+    terminal.send(b":ready sound")?;
+    wait_screen(&terminal, "Enable ready sound")?;
+    terminal.send(b"\x1b")?;
+    terminal.stop()?;
+    demo.shutdown()?;
+    assert!(!root.exists());
+    for pgid in pgids {
+        assert_eq!(unsafe { libc::kill(-pgid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+    Ok(())
+}

@@ -2755,3 +2755,143 @@ fn a_clicked_popup_row_clears_the_desktop_notice() {
         "a clicked row clears the notice a key press would have cleared"
     );
 }
+
+#[test]
+fn alert_toggles_persist_across_dashboard_restart() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("custom-dashboard.toml");
+    std::fs::write(&path, "branch_prefix = 'fix/'\npicker_roots = ['/tmp']\nextra = 'keep'\n[[agents]]\nname = 'shell'\nargv = ['/bin/sh']\n").unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.settings = super::settings::load_dashboard_settings(&path).0;
+    dashboard.settings_path = Some(path.clone());
+    dashboard.key(KeyCode::Char('N'));
+    dashboard.key(KeyCode::Char('S'));
+    let (loaded, error) = super::settings::load_dashboard_settings(&path);
+    assert_eq!(error, None);
+    assert!(
+        loaded.desktop_notifications,
+        "notification toggle must survive restart"
+    );
+    assert!(loaded.ready_sound, "sound toggle must survive restart");
+    assert_eq!(loaded.branch_prefix, "fix/");
+    assert_eq!(loaded.agents[0].argv, ["/bin/sh"]);
+    let raw: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["extra"].as_str(), Some("keep"));
+    let mut restarted = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    restarted.settings = loaded;
+    restarted.settings_path = Some(path.clone());
+    restarted.key(KeyCode::Char('N'));
+    restarted.key(KeyCode::Char('S'));
+    let (loaded, error) = super::settings::load_dashboard_settings(&path);
+    assert_eq!(error, None);
+    assert!(!loaded.desktop_notifications);
+    assert!(!loaded.ready_sound);
+}
+
+#[test]
+fn alert_toggle_save_failure_leaves_setting_and_file_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dashboard.toml");
+    let invalid = "desktop_notifications = 'invalid'\n";
+    std::fs::write(&path, invalid).unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.settings_path = Some(path.clone());
+    for key in ['N', 'S'] {
+        dashboard.key(KeyCode::Char(key));
+        assert!(!dashboard.settings.desktop_notifications);
+        assert!(!dashboard.settings.ready_sound);
+        assert!(
+            dashboard
+                .desktop
+                .notice
+                .as_ref()
+                .unwrap()
+                .contains("Could not save")
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+    }
+}
+
+#[test]
+fn alert_toggle_preserves_comments_and_other_preference_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dashboard.toml");
+    let original = "# My alerts\ndesktop_notifications = false # notification preference\nready_sound = true # sound preference\nbranch_prefix = 'fix/' # keep formatting\n";
+    std::fs::write(&path, original).unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.settings_path = Some(path.clone());
+    // The other preference was edited on disk after the dashboard started.
+    dashboard.key(KeyCode::Char('N'));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        original.replace(
+            "desktop_notifications = false",
+            "desktop_notifications = true"
+        )
+    );
+    assert!(dashboard.settings.ready_sound);
+}
+
+#[test]
+fn alert_toggle_refuses_dangling_symlink_and_read_only_config() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dashboard.toml");
+    let target = root.path().join("actual.toml");
+    symlink(&target, &path).unwrap();
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 24,
+        cols: 120,
+    });
+    dashboard.settings_path = Some(path.clone());
+    dashboard.key(KeyCode::Char('N'));
+    assert!(!dashboard.settings.desktop_notifications);
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(!target.exists());
+    std::fs::write(&target, "desktop_notifications = false\n").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444)).unwrap();
+    dashboard.key(KeyCode::Char('S'));
+    assert!(!dashboard.settings.ready_sound);
+    assert!(
+        dashboard
+            .desktop
+            .notice
+            .as_ref()
+            .unwrap()
+            .contains("Could not save")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "desktop_notifications = false\n"
+    );
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+    dashboard.key(KeyCode::Char('N'));
+    assert!(dashboard.settings.desktop_notifications);
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+}
