@@ -31,9 +31,10 @@ Only `new`, `terminal create`, `project add`, `workspace create`, and the
 dashboard start a server on demand.
 
 Read commands never start one. They never migrate the registry. With no server
-running, project and workspace queries read `config.toml.sqlite3` when that file
-exists, otherwise leftover `config.toml`. A present but unreadable or
-incompatible database is an error, not a TOML fallback. Terminal lists are empty.
+running, project and workspace queries read `config.toml.sqlite3` after migration.
+They read the preserved `config.toml` if the database is absent or still empty and
+uninitialized after an interrupted import. A foreign, unreadable, or incompatible
+database is an error, not a TOML fallback. Terminal lists are empty.
 Reading or controlling a missing terminal returns an error.
 
 Removal and kill commands (`project remove`, `workspace remove`,

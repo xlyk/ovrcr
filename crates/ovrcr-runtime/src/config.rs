@@ -46,6 +46,9 @@ pub fn load_registry(path: &Path) -> Result<Registry> {
             .with_context(|| format!("open registry database {}", database.display()))?;
     connection.busy_timeout(Duration::from_secs(1))?;
     let transaction = connection.transaction()?;
+    if is_uninitialized(&transaction)? {
+        return load_legacy_registry(path);
+    }
     check_schema(&transaction)?;
     read_registry(&transaction)
 }
@@ -110,16 +113,7 @@ fn open_writable_registry(path: &Path) -> Result<Connection> {
     connection.pragma_update(None, "foreign_keys", true)?;
     connection.pragma_update(None, "synchronous", "FULL")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let (application, version) = schema_identity(&transaction)?;
-    if application == 0 && version == 0 {
-        let objects: i64 = transaction.query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
-            [],
-            |row| row.get(0),
-        )?;
-        if objects != 0 {
-            bail!("unrecognized registry database; original storage was not replaced");
-        }
+    if is_uninitialized(&transaction)? {
         let registry = load_legacy_registry(path)?;
         transaction.execute_batch(
             "CREATE TABLE projects (
@@ -152,6 +146,18 @@ fn schema_identity(connection: &Connection) -> Result<(i64, i64)> {
         connection.pragma_query_value(None, "application_id", |row| row.get(0))?,
         connection.pragma_query_value(None, "user_version", |row| row.get(0))?,
     ))
+}
+
+fn is_uninitialized(connection: &Connection) -> Result<bool> {
+    if schema_identity(connection)? != (0, 0) {
+        return Ok(false);
+    }
+    let objects: i64 = connection.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(objects == 0)
 }
 
 fn check_schema(connection: &Connection) -> Result<()> {
@@ -258,7 +264,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[[projects]\n").unwrap();
-        assert!(load_registry(&path).is_err());
+        let error = load_registry(&path).unwrap_err();
+        assert!(
+            error.downcast_ref::<toml::de::Error>().is_some(),
+            "{error:#}"
+        );
         assert_eq!(std::fs::read_to_string(path).unwrap(), "[[projects]\n");
     }
 
@@ -267,7 +277,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "").unwrap();
-        assert!(load_registry(&path).is_err());
+        let error = load_registry(&path).unwrap_err();
+        assert!(
+            error.downcast_ref::<toml::de::Error>().is_some(),
+            "{error:#}"
+        );
         assert_eq!(std::fs::read_to_string(path).unwrap(), "");
     }
 }

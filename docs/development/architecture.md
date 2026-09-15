@@ -19,10 +19,11 @@ Root `src/` and control-role tests speak to the server through `ovrcr_protocol::
 Project and workspace metadata use SQLite as the sole writable store, per #112.
 The database path is the full `config.toml` path with `.sqlite3` appended. First
 server start creates the schema (`application_id` `0x4f565243`, `user_version` 1)
-and imports leftover TOML in the same transaction. Later starts and every save
-use SQLite only. Offline readers open the database read-only when it exists;
-otherwise they read leftover TOML and do not migrate. An empty uninitialized file
-at that path can still be initialized. A foreign, nonempty unversioned, or
-unsupported database fails without replacement and without falling back to TOML.
+and imports leftover TOML in the same transaction. After that transaction commits,
+later starts and every save use SQLite only. Offline readers open the database
+read-only. They read preserved TOML only if the database is absent, or both its
+application ID and version are zero and it has no user objects. That uninitialized
+state can be retried on startup. A foreign, nonempty unversioned, or unsupported
+database fails without replacement and without falling back to TOML.
 `dashboard.toml` and the `config.tasks` directory stay outside this store.
 Session retention and native resume are later work (#114–#120).

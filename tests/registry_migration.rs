@@ -195,8 +195,8 @@ fn nonempty_unversioned_sqlite_refuses_startup_without_legacy_fallback() {
         Connection::open(database)
             .unwrap()
             .execute_batch(
-                "CREATE TABLE notes (body TEXT);
-                 INSERT INTO notes VALUES ('foreign');",
+                "CREATE TABLE sqliteX (body TEXT);
+                 INSERT INTO sqliteX VALUES ('foreign');",
             )
             .unwrap();
     });
@@ -251,6 +251,15 @@ fn interrupted_initial_sqlite_transaction_recovers_into_one_time_migration() {
     holder.kill().expect("kill owned uncommitted sqlite holder");
     holder.wait().expect("reap owned uncommitted sqlite holder");
     assert!(transaction_started, "holder did not begin its transaction");
+
+    let sqlite_before = std::fs::read(&database).unwrap();
+    assert_eq!(project_names(&live), ["recover"]);
+    assert!(
+        !live.socket.exists(),
+        "offline inspection must not start a server"
+    );
+    assert_eq!(std::fs::read(&database).unwrap(), sqlite_before);
+    assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
 
     live.start_binary();
     assert_eq!(project_names(&live), ["recover"]);

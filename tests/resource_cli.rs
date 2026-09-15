@@ -782,18 +782,16 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
 fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     let mut fixture = Fixture(Live::idle().bounded());
     let legacy_workspace = fixture.workspace_root.join("legacy");
-    let git = Command::new("git")
-        .arg("-C")
-        .arg(&fixture.repo)
-        .args(["worktree", "add", "-b", "feature/legacy"])
-        .arg(&legacy_workspace)
-        .arg("main")
-        .output()
-        .unwrap();
-    assert!(
-        git.status.success(),
-        "{}",
-        String::from_utf8_lossy(&git.stderr)
+    live::git(
+        &fixture.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/legacy",
+            legacy_workspace.to_str().unwrap(),
+            "main",
+        ],
     );
     let original = toml::to_string(&ovrcr::config::Registry {
         projects: vec![ovrcr::config::ProjectRecord {

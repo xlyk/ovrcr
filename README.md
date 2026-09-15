@@ -249,9 +249,10 @@ Three behaviours worth knowing before scripting against it:
   ready or finished. `read` returns the current screen, so a read straight after a
   send can show the earlier one; read again.
 - Read commands never start a server. They never migrate the registry. With no
-  server running, project and workspace queries read `config.toml.sqlite3` when
-  that file exists, otherwise leftover `config.toml`. A present but unreadable or
-  incompatible database is an error, not a TOML fallback. Terminal lists are
+  server running, project and workspace queries read `config.toml.sqlite3` after
+  migration. They read the preserved `config.toml` if the database is absent or
+  still empty and uninitialized after an interrupted import. A foreign, damaged,
+  or incompatible database is an error, not a TOML fallback. Terminal lists are
   empty. Only `new`, `terminal create`, `project add`, `workspace create`, and the
   dashboard start one on demand.
 - Requests are bounded: 30 seconds for an ordinary request, 60 for `kill`,
@@ -371,10 +372,11 @@ A server that a command started in the background writes its output to
 `server.log` beside the socket. When startup fails, the command reports the exit
 status and the last lines of that log, which is where a corrupt or incompatible
 project database, an unusable socket directory, or a damaged task store shows up.
-If `config.toml.sqlite3` is present but is not an OVRCR database, or uses an
-unsupported schema, startup and offline project/workspace queries fail. They do
-not fall back to `config.toml`. Run `ovrcr server` in the foreground to watch the
-same output live.
+If `config.toml.sqlite3` contains foreign data or uses an unsupported schema,
+startup and offline project/workspace queries fail without falling back to
+`config.toml`. An empty, uninitialized database left by an interrupted import
+can be retried on startup; offline inspection reads the preserved TOML without
+writing the database. Run `ovrcr server` in the foreground to watch startup output.
 
 Compare a client against a long-running server with `ovrcr --version`, which
 prints both the package and the protocol version.
