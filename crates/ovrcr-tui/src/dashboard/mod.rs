@@ -256,7 +256,6 @@ pub struct Dashboard {
     settings: settings::DashboardSettings,
     settings_path: Option<std::path::PathBuf>,
     config_dir: std::path::PathBuf,
-    settings_path: Option<std::path::PathBuf>,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
