@@ -966,7 +966,7 @@ const WORKSPACE_INDENT: &str = "  ";
 const SESSION_INDENT: &str = "     ";
 /// Indent, status glyph and separating space before a session name.
 const SESSION_NAME_COLUMN: usize = SESSION_INDENT.len() + 2;
-/// Minimum cells kept for a session name before its model is dropped.
+/// Minimum cells kept for a session name before its agent label is dropped.
 const SESSION_NAME_MIN_WIDTH: usize = 12;
 
 fn tree_line_text(
@@ -1080,28 +1080,28 @@ fn tree_line_text(
                 if exited {
                     name_style = name_style.add_modifier(Modifier::DIM);
                 }
-                let model = session
+                let agent = session
                     .label
                     .split_once('/')
-                    .map_or(session.label.as_str(), |(_, model)| model)
+                    .map_or(session.label.as_str(), |(agent, _)| agent)
                     .trim();
-                let model_cells = Line::raw(model).width();
+                let agent_cells = Line::raw(agent).width();
                 let unread = if status.unread.is_some() { "● " } else { "" };
                 let name_column = SESSION_NAME_COLUMN + Line::raw(unread).width();
-                // Name width when the model is shown: two cells of gap and one trailing cell.
-                let name_width_with_model = width.saturating_sub(name_column + model_cells + 3);
-                let show_model =
-                    !model.is_empty() && name_width_with_model >= SESSION_NAME_MIN_WIDTH;
-                let name_width = if show_model {
-                    name_width_with_model
+                // Name width when the agent is shown: two cells of gap and one trailing cell.
+                let name_width_with_agent = width.saturating_sub(name_column + agent_cells + 3);
+                let show_agent =
+                    !agent.is_empty() && name_width_with_agent >= SESSION_NAME_MIN_WIDTH;
+                let name_width = if show_agent {
+                    name_width_with_agent
                 } else {
                     width.saturating_sub(name_column)
                 };
-                let right = if show_model {
+                let right = if show_agent {
                     let color = label_color(&session.label);
                     vec![
                         Span::styled(
-                            model.to_string(),
+                            agent.to_string(),
                             Style::default().fg(if exited { faded(color, 65) } else { color }),
                         ),
                         Span::raw(" "),

@@ -223,10 +223,10 @@ resize.
 Each project is a section: its name in upper case with a rule to the sidebar
 edge, and a blank line before every project after the first. Workspaces follow
 with a branch glyph and a bold name. Each session takes one line: a status
-glyph, the session name, and the model from its label right-aligned in the
-provider colour. A long name clips with `…` before the model, and the model is
+glyph, the session name, and the agent name from its label right-aligned in the
+provider colour. A long name clips with `…` before the agent name, and the agent name is
 dropped when fewer than twelve cells would remain for the name. Local shells
-show `$ local` with no model unless a hook reports activity inside them. The
+show `$ local` with no agent label unless a hook reports activity inside them. The
 selected row shows a mauve bar in its first column and a lighter background; its
 own colours stay visible. A folded project shows `▸ N ws` and a folded workspace
 `▸ N` at the right edge.

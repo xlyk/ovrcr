@@ -53,6 +53,21 @@ fn palette_creates_switches_and_closes_a_real_terminal() -> Result<()> {
     let mut pgids = demo_session_groups(&root)?;
     let mut terminal = demo.dashboard(40, 120, Default::default())?;
     wait_screen(&terminal, "implement lifecycle")?;
+    let initial = terminal.screen().contents();
+    let sidebar = initial
+        .lines()
+        .filter_map(|line| line.split_once('│').map(|(left, _)| left))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for agent in ["claude", "codex", "pi", "grok"] {
+        assert!(sidebar.contains(agent), "missing agent {agent}: {sidebar}");
+    }
+    for model in ["sonnet-4", "gpt-5.4", "grok-4.6", "opus-4"] {
+        assert!(
+            !sidebar.contains(model),
+            "model shown instead of agent: {sidebar}"
+        );
+    }
     terminal.send(b":create terminal\r")?;
     wait_screen(&terminal, "┌ Create terminal")?;
     // Explicitly choose Terminal, accept the workspace, and pin an optional

@@ -46,3 +46,11 @@ Initial socket tests were blocked by sandbox EPERM, then rerun with approved loc
 Both disposable GUI windows were closed. The first fixture, its socket, and all recorded processes were absent afterward. Final fixture `ovrcr-gui-jPQCr0`, its socket, and all 12 recorded session groups (including exited group 2610) were absent afterward. Real terminal acceptance separately checks PTY geometry and process-group cleanup; screenshots establish visible behavior, not geometry correctness by themselves.
 
 Raw local logs and inventories: `/private/tmp/ovrcr-title-evidence`. Linux native GUI behavior and actual provider-specific title emission remain unverified. Ignored capacity/memory tests require their separate CI gates; ignored tests are not counted as passed.
+
+## Agent label correction
+
+The user clarified that the right-hand sidebar column should identify the agent, such as `claude`, `codex`, `grok`, `pi`, `omp`, or `cursor`. The renderer previously selected the model suffix from `agent / model` labels; it now selects the trimmed agent prefix. Labels without a suffix continue to display directly. Alignment, provider color and narrow-width clipping are preserved.
+
+The regression failed with `shared-model` instead of `claude`, then passed for all six agents with and without model suffixes. The 26 sidebar tests passed. The real GUI integration asserts agent names and absence of model suffixes. [Native screenshot](14-agent-labels.png) and adjacent accessibility evidence show the corrected column and separate `AGENT_LABEL_VERIFIED` terminal output. This follow-up does not claim that fixture sessions are actual provider runs.
+
+Follow-up validation: full workspace all-targets/all-features suite passed (859 tests, 16 ignored, 27 suites); Clippy and formatting passed. Native demo `ovrcr-gui-Ltdaih` exited successfully; all ten recorded session groups and fixture path were absent afterward.
