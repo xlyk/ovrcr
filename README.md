@@ -146,8 +146,8 @@ intercepts only `Ctrl-g`. The keys below are Browse mode:
 
 | Key | Action |
 | --- | --- |
-| `j` `k` Down Up | Select the next or previous visible session |
-| `Enter` | Type into the focused pane's session |
+| `j` `k` Down Up | Select the next or previous visible sidebar row |
+| `Enter` | Collapse or expand a selected project or workspace; type into a selected session |
 | `v` | Open a second pane with the next different session |
 | `Tab` `Shift-Tab` | Focus the other pane |
 | `x` | Close the focused pane; its session keeps running |
@@ -178,7 +178,8 @@ workspace group. `a` Register project and `q` Detach remain available at the top
 
 | Sequence | Action |
 | --- | --- |
-| `Space t Enter` | Focus the selected running terminal |
+| `Space t Enter` | Focus the selected running terminal; hidden when a project or workspace is selected |
+| `Enter` | Collapse or expand a selected project or workspace; same as Focus on a session |
 | `Space t p` / `Space t r` | Pause / resume; only the applicable action appears |
 | `Space t c` / `Space t h` | Copy screen / history |
 | `Space t x` | Close the selected terminal, with confirmation |

@@ -2504,6 +2504,18 @@ fn keymap_reasons_name_the_condition_that_disables_a_key() {
         assert_eq!(reason(&paused, key), Some("no session selected"), "{key}");
     }
 
+    let mut split = keymap_dashboard(crate::protocol::SessionPhase::Running);
+    split.hierarchy.projects[0].workspaces[0]
+        .sessions
+        .push(keymap_session(13, crate::protocol::SessionPhase::Running));
+    split.split_pane();
+    split.key(KeyCode::Char('k'));
+    split.key(KeyCode::Char('k'));
+    assert!(split.action_session().is_none());
+    assert_eq!(reason(&split, "x"), Some("no session selected"));
+    assert_eq!(reason(&split, "Tab/Shift-Tab"), Some("no session selected"));
+    assert_eq!(reason(&split, "Enter"), None);
+
     let empty = Dashboard::new(TerminalSize {
         rows: 40,
         cols: 120,
