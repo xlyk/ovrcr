@@ -337,7 +337,8 @@ still apply; repositories and workspace branches are retained. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
-Bare hotkeys remain unchanged.
+The Terminal group is hidden while a project or workspace is selected; bare
+Enter still collapses or expands that row. Bare hotkeys remain unchanged.
 
 The compact popup sits above the footer in the bottom-right corner. Its title
 shows the current prefix, and the submenu heading names the target. Backspace

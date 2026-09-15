@@ -1026,16 +1026,7 @@ impl Dashboard {
             }
             return;
         }
-        let current = self
-            .selected_container
-            .as_ref()
-            .and_then(|selected| rows.iter().position(|row| row == selected))
-            .or_else(|| {
-                self.focused_session().and_then(|selected| {
-                    rows.iter()
-                        .position(|row| *row == TreeRow::Session { id: selected })
-                })
-            });
+        let current = self.visible_selection_index(&rows);
         let index = match current {
             Some(index) => (index as isize + delta).clamp(0, rows.len() as isize - 1) as usize,
             None if delta < 0 => rows.len() - 1,
@@ -1050,8 +1041,8 @@ impl Dashboard {
         }
     }
 
-    // A container selection can retain a wire-focused pane, but actions still
-    // target the selected container until the user selects a session again.
+    // Container selection wipes the focused pane. Session actions stay off until
+    // the user selects a session again; create/remove still follow this header.
     pub(super) fn creation_context(&self) -> (String, String) {
         match &self.selected_container {
             Some(TreeRow::Project { name }) => (name.clone(), String::new()),
@@ -1089,18 +1080,37 @@ impl Dashboard {
             .max(1)
     }
 
+    fn visible_selection_index(&self, rows: &[TreeRow]) -> Option<usize> {
+        if let Some(selected) = &self.selected_container {
+            if let Some(index) = rows.iter().position(|row| row == selected) {
+                return Some(index);
+            }
+            if let TreeRow::Workspace { project, .. } = selected
+                && let Some(index) = rows
+                    .iter()
+                    .position(|row| matches!(row, TreeRow::Project { name } if name == project))
+            {
+                return Some(index);
+            }
+        }
+        let id = self.focused_session()?;
+        if let Some(index) = rows.iter().position(|row| *row == TreeRow::Session { id }) {
+            return Some(index);
+        }
+        let session = find_session(self, id)?;
+        let workspace = TreeRow::Workspace {
+            project: session.project.clone(),
+            name: session.workspace.clone(),
+        };
+        if let Some(index) = rows.iter().position(|row| *row == workspace) {
+            return Some(index);
+        }
+        rows.iter()
+            .position(|row| matches!(row, TreeRow::Project { name } if name == &session.project))
+    }
+
     fn ensure_selection_visible(&mut self, rows: &[TreeRow]) {
-        let index = self
-            .selected_container
-            .as_ref()
-            .and_then(|selected| rows.iter().position(|row| row == selected))
-            .or_else(|| {
-                self.focused_session().and_then(|selected| {
-                    rows.iter()
-                        .position(|row| *row == TreeRow::Session { id: selected })
-                })
-            });
-        let Some(index) = index else {
+        let Some(index) = self.visible_selection_index(rows) else {
             return;
         };
         let height = self.tree_viewport_height();
@@ -1115,7 +1125,8 @@ impl Dashboard {
         self.tree_offset = self.tree_offset.min(max_offset);
     }
 
-    /// Toggle collapse for a project or workspace row. Returns true when the row folded.
+    /// Toggle collapse for a project or workspace row. Returns true when the row
+    /// is foldable, whether the toggle collapsed or expanded it.
     pub(super) fn toggle_row_collapse(&mut self, row: &TreeRow) -> bool {
         match row {
             TreeRow::Project { name } => {
@@ -2998,6 +3009,15 @@ impl Dashboard {
         let focused_before = self.focused_session();
         self.observe_desktop_responses(&hierarchy);
         self.hierarchy = hierarchy;
+        self.selected_container = self.selected_container.take().filter(|row| match row {
+            TreeRow::Project { name } => self
+                .hierarchy
+                .projects
+                .iter()
+                .any(|project| &project.name == name),
+            TreeRow::Workspace { project, name } => find_workspace(self, project, name).is_some(),
+            TreeRow::Session { .. } => false,
+        });
         self.cancel_copy_if_session_missing();
         self.update_mode_for_selected_phase();
         let mut outgoing = Vec::new();
@@ -3065,7 +3085,7 @@ impl Dashboard {
         {
             return None;
         }
-        let session = self.focused_session()?;
+        let session = self.action_session()?;
         self.error_owning_requests.insert(request_id);
         Some(ClientMessage {
             request_id,

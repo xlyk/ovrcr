@@ -290,14 +290,16 @@ impl Dashboard {
                 DashboardAction::Redraw
             }
             Action::ClosePane => {
-                self.close_focused_pane();
+                if self.action_session().is_some() {
+                    self.close_focused_pane();
+                }
                 DashboardAction::Redraw
             }
             // Dispatch runs a disabled binding's action so it can refuse in its
             // own words, so every action holds its own bound: this one keeps the
             // pane count the "only one pane" reason reports.
             Action::OtherPane => {
-                if self.panes.len() == 2 {
+                if self.action_session().is_some() && self.panes.len() == 2 {
                     self.focus_pane((self.focused_pane + 1) % 2);
                 }
                 DashboardAction::Redraw
@@ -639,7 +641,11 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Tab,
             Action::OtherPane,
         )
-        .unless((dashboard.panes.len() < 2).then_some("only one pane"))
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
         .group('v', "Tab/Shift-Tab"),
         key_binding(
             "x",
@@ -648,7 +654,11 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
             Char('x'),
             Action::ClosePane,
         )
-        .unless((dashboard.panes.len() < 2).then_some("only one pane"))
+        .unless(
+            (dashboard.panes.len() < 2)
+                .then_some("only one pane")
+                .or(missing),
+        )
         .group('v', "x"),
         key_binding(
             "j/Down",

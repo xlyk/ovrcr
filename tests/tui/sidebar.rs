@@ -1268,7 +1268,11 @@ fn browse_jk_moves_across_project_workspace_and_session_rows() {
         .unwrap();
     assert_eq!(selection_bar_row(&terminal), Some(3), "local under auth");
 
-    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(
+        dashboard.key(KeyCode::Char('k')),
+        DashboardAction::Redraw,
+        "landing on a workspace must not request a view"
+    );
     assert!(dashboard.focused_session().is_none());
     terminal
         .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
@@ -1373,4 +1377,222 @@ fn enter_toggles_selected_container_fold_and_still_focuses_sessions() {
         DashboardAction::PtyBytes(b"z".to_vec()),
         "Enter on a session must enter Terminal mode"
     );
+}
+
+#[test]
+fn browse_jk_requests_a_view_only_for_session_rows() {
+    let mut dashboard = dashboard_fixture();
+    let to_session = dashboard.key(KeyCode::Char('k'));
+    assert!(matches!(to_session, DashboardAction::Request(_)));
+    pump_view(&mut dashboard, to_session);
+    assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
+    assert_eq!(dashboard.key(KeyCode::Char('k')), DashboardAction::Redraw);
+    assert!(dashboard.focused_session().is_none());
+    assert!(matches!(
+        dashboard.key(KeyCode::Char('j')),
+        DashboardAction::Request(_)
+    ));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(5)));
+}
+
+#[test]
+fn enter_on_an_unready_session_refuses_and_stays_in_browse() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_unready(SessionId(1));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(footer.contains("ERROR:"), "{footer}");
+    assert_ne!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec())
+    );
+}
+
+#[test]
+fn j_from_a_folded_workspace_skips_hidden_sessions() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    dashboard.key(KeyCode::Char('j'));
+    assert!(dashboard.focused_session().is_none());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        sidebar_row(&terminal, 3).contains("lifecycle"),
+        "j from folded auth should land on the next visible workspace"
+    );
+    assert_eq!(selection_bar_row(&terminal), Some(3));
+}
+
+#[test]
+fn jk_from_a_hidden_session_steps_off_the_folded_header() {
+    let mut dashboard = dashboard_fixture();
+    let area = Rect::new(0, 0, 120, 40);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    dashboard.key(KeyCode::Char('j'));
+    assert!(dashboard.focused_session().is_none());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(3));
+    assert!(
+        sidebar_row(&terminal, 3).contains("lifecycle"),
+        "j after mouse-folding auth should leave the header, not jump to the first project"
+    );
+}
+
+#[test]
+fn empty_tree_jk_does_not_panic() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 38, cols: 88 });
+    dashboard.install_area(Rect::new(0, 0, 88, 38));
+    assert_eq!(dashboard.key(KeyCode::Char('j')), DashboardAction::Redraw);
+    assert_eq!(dashboard.key(KeyCode::Char('k')), DashboardAction::Redraw);
+    assert!(dashboard.focused_session().is_none());
+}
+
+#[test]
+fn keyboard_selecting_a_project_scrolls_it_into_view() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 34, cols: 88 });
+    dashboard.install_area(Rect::new(0, 0, 120, 40));
+    dashboard.install_hierarchy(HierarchySnapshot {
+        projects: vec![ProjectSummary {
+            name: "project".into(),
+            workspaces: vec![WorkspaceSummary {
+                project: "project".into(),
+                name: "workspace".into(),
+                path: PathBuf::from("/tmp/workspace"),
+                sessions: (1..=50)
+                    .map(|id| {
+                        session_summary(
+                            id,
+                            "project",
+                            "workspace",
+                            &format!("session-{id}"),
+                            "sh",
+                            Some(id as u32),
+                            0,
+                        )
+                    })
+                    .collect(),
+            }],
+        }],
+    });
+    dashboard.install_focus(SessionId(50));
+    for _ in 0..52 {
+        dashboard.key(KeyCode::Char('k'));
+        if dashboard.focused_session().is_none() {
+            break;
+        }
+    }
+    dashboard.key(KeyCode::Char('k'));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert_eq!(selection_bar_row(&terminal), Some(1));
+    assert!(sidebar_row(&terminal, 1).contains("PROJECT"));
+}
+
+#[test]
+fn container_selection_does_not_close_or_switch_a_split() {
+    let area = Rect::new(0, 0, 120, 40);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_area(area);
+    let action = dashboard.key(KeyCode::Char('v'));
+    pump_view(&mut dashboard, action);
+    let retained = dashboard.focused_session().expect("split session");
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(retained, &[]);
+    let left = dashboard
+        .pane_rects(area)
+        .into_iter()
+        .find(|pane| pane.pane_index == 0)
+        .expect("left pane")
+        .terminal;
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: left.x + 2,
+            row: left.y + 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        area,
+    );
+    dashboard.install_screen(SessionId(1), &[]);
+    dashboard.install_screen(retained, &[]);
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+    assert_eq!(
+        dashboard.mouse_action(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 5,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+        ),
+        DashboardAction::Redraw
+    );
+    assert_eq!(dashboard.focused_session(), Some(retained));
+    dashboard.key(KeyCode::Char('x'));
+    assert_eq!(dashboard.pane_rects(area).len(), 2);
+    dashboard.key(KeyCode::Tab);
+    assert_eq!(dashboard.focused_session(), Some(retained));
+}
+
+#[test]
+fn removing_a_project_drops_its_container_selection() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy
+        .projects
+        .retain(|project| project.name != "consigint");
+    dashboard.install_hierarchy(hierarchy);
+    assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
+    dashboard.install_hierarchy(fixture_hierarchy());
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| draw_dashboard_at(frame, &dashboard, 0))
+        .unwrap();
+    assert!(
+        !sidebar_row(&terminal, 1).contains("▸"),
+        "Enter must not fold a project that was removed"
+    );
+}
+
+#[test]
+fn container_click_in_terminal_mode_returns_to_browse() {
+    let mut dashboard = dashboard_fixture();
+    enter_terminal(&mut dashboard);
+    dashboard.mouse_action(
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        },
+        Rect::new(0, 0, 120, 40),
+    );
+    assert_ne!(
+        dashboard.key(KeyCode::Char('z')),
+        DashboardAction::PtyBytes(b"z".to_vec())
+    );
+    let footer = rendered_footer(&dashboard, 120);
+    assert!(footer.contains("BROWSE"), "{footer}");
 }
