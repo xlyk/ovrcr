@@ -1,4 +1,4 @@
-use crate::config::{ProjectRecord, Registry, load_registry, save_registry_atomic};
+use crate::config::{ProjectRecord, Registry, initialize_registry, save_registry_atomic};
 use crate::git::{self, BranchSpec};
 use crate::session::{
     HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase,

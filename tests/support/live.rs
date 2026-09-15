@@ -28,7 +28,6 @@ mod deadline;
 
 pub use deadline::wait_deadline;
 
-use ovrcr::config::{Registry, save_registry_atomic};
 use ovrcr::protocol::{BranchRequest, Request, Response, client, connect_server};
 use ovrcr::server::ServerPaths;
 #[cfg(feature = "acceptance-diagnostics")]
@@ -104,7 +103,7 @@ impl Live {
         std::fs::create_dir(&workspace_root).unwrap();
         init_repo(&repo);
         let config = root.path().join("config.toml");
-        save_registry_atomic(&Registry::default(), &config).unwrap();
+        std::fs::write(&config, "projects = []\n").unwrap();
         Self {
             repo: repo.canonicalize().unwrap(),
             workspace_root: workspace_root.canonicalize().unwrap(),
@@ -133,10 +132,17 @@ impl Live {
     /// Adapter: the server runs as a spawned `ovrcr` child process.
     pub fn binary() -> Self {
         let live = Self::idle();
-        let child = Command::new(&live.executable)
+        live.start_binary();
+        live.bounded_by(wait_deadline())
+    }
+
+    /// Start or restart the compiled server against this fixture's retained storage.
+    pub fn start_binary(&self) {
+        assert!(!self.hosted(), "fixture already owns a running server");
+        let child = Command::new(&self.executable)
             .arg("server")
-            .env("OVRCR_SOCKET", &live.socket)
-            .env("OVRCR_CONFIG", &live.config)
+            .env("OVRCR_SOCKET", &self.socket)
+            .env("OVRCR_CONFIG", &self.config)
             // The sessions a workspace opens run this shell. The developer's
             // own login shell and its rc files are not the test's subject.
             .env("SHELL", "/bin/sh")
@@ -145,11 +151,8 @@ impl Live {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn isolated OVRCR server");
-        *live.host.lock().unwrap() = Host::Binary(child);
-        live.wait_socket();
-        // A spawned server can die; a control request must fail rather than
-        // block this suite's own process forever.
-        live.bounded_by(wait_deadline())
+        *self.host.lock().unwrap() = Host::Binary(child);
+        self.wait_socket();
     }
 
     /// Start the thread adapter under an [`idle`](Self::idle) fixture.

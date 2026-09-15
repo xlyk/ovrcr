@@ -30,9 +30,11 @@ the current directory. A new terminal can omit its name for automatic titles.
 Only `new`, `terminal create`, `project add`, `workspace create`, and the
 dashboard start a server on demand.
 
-Read commands never start one. With no server running, project and workspace
-queries read the persisted registry and terminal lists are empty. Reading or
-controlling a missing terminal returns an error.
+Read commands never start one. They never migrate the registry. With no server
+running, project and workspace queries read `config.toml.sqlite3` when that file
+exists, otherwise leftover `config.toml`. A present but unreadable or
+incompatible database is an error, not a TOML fallback. Terminal lists are empty.
+Reading or controlling a missing terminal returns an error.
 
 Removal and kill commands (`project remove`, `workspace remove`,
 `terminal kill`, `terminal remove`, `kill`, `session remove`) also never start a

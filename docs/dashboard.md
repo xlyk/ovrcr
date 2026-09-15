@@ -480,8 +480,10 @@ terminal form.
 ## Dashboard settings
 
 Dashboard settings live in `dashboard.toml` beside `config.toml`. Override the
-path with `OVRCR_DASHBOARD_CONFIG`. Do not put these keys in `config.toml`: the
-server rewrites that file and drops unknown tables. A missing file uses defaults,
+path with `OVRCR_DASHBOARD_CONFIG`. Remembered launch choices stay in this file.
+Do not put these keys in `config.toml`. That path remains the instance identity
+for the project/workspace database (`config.toml.sqlite3`) and scheduled-task
+storage (`config.tasks`); it is not dashboard settings. A missing file uses defaults,
 and a parse error shows in the footer and also uses defaults.
 
 ```toml

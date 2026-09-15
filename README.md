@@ -248,8 +248,10 @@ Three behaviours worth knowing before scripting against it:
   omits. A successful send means the bytes were written, not that the program was
   ready or finished. `read` returns the current screen, so a read straight after a
   send can show the earlier one; read again.
-- Read commands never start a server. With no server running, project and
-  workspace queries fall back to the persisted registry and terminal lists are
+- Read commands never start a server. They never migrate the registry. With no
+  server running, project and workspace queries read `config.toml.sqlite3` when
+  that file exists, otherwise leftover `config.toml`. A present but unreadable or
+  incompatible database is an error, not a TOML fallback. Terminal lists are
   empty. Only `new`, `terminal create`, `project add`, `workspace create`, and the
   dashboard start one on demand.
 - Requests are bounded: 30 seconds for an ordinary request, 60 for `kill`,
@@ -303,12 +305,17 @@ service installation, scheduling rules, and retained-work cleanup.
 | Path | Default |
 | --- | --- |
 | Registry / config | `~/Library/Application Support/ovrcr/config.toml` on macOS, `$XDG_CONFIG_HOME/ovrcr/config.toml` (usually `~/.config/ovrcr`) on Linux |
+| Project/workspace database | The full registry path with `.sqlite3` appended. Default `config.toml` therefore uses `config.toml.sqlite3`, not `config.sqlite3`. |
 | Dashboard settings | `dashboard.toml` beside `config.toml` |
+| Scheduled tasks | `config.tasks` beside `config.toml` |
 | Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
 | Server log | `server.log` beside the socket |
 
-The server writes `config.toml` itself and drops tables it does not know, so
-dashboard settings belong in `dashboard.toml` only.
+`OVRCR_CONFIG` still names the `config.toml` path. Dashboard settings and
+scheduled-task storage are derived from that path as before. After the first
+server start, project and workspace records live in the `.sqlite3` file. The
+server writes that database only and never rewrites `config.toml`. Keep
+dashboard settings in `dashboard.toml`.
 
 | Variable | Effect |
 | --- | --- |
@@ -347,24 +354,35 @@ installed service) and retry
 
 Close its terminals and run `ovrcr shutdown`, then launch the updated binary. Use
 `ovrcr shutdown --kill` if you intend to stop all sessions together. The CLI never
-stops an old server automatically and never restores its lost PTYs. The
-project/workspace registry needs no migration.
+stops an old server automatically and never restores its lost PTYs.
+
+The first start of this binary against an existing `config.toml` imports project
+and workspace records into that path with `.sqlite3` appended, in one transaction.
+Later starts do not import again after the migration commits. The original TOML
+is left unchanged for recovery. If import fails or is interrupted before commit,
+the next server start can retry; it never publishes a partially imported registry.
+
+An older binary on the same `OVRCR_CONFIG` still reads that leftover TOML, which
+does not include projects or workspaces added after the import.
 
 ## Troubleshooting
 
 A server that a command started in the background writes its output to
 `server.log` beside the socket. When startup fails, the command reports the exit
-status and the last lines of that log, which is where a corrupt registry, an
-unusable socket directory, or a damaged task store shows up. Run `ovrcr server` in
-the foreground to watch the same output live.
+status and the last lines of that log, which is where a corrupt or incompatible
+project database, an unusable socket directory, or a damaged task store shows up.
+If `config.toml.sqlite3` is present but is not an OVRCR database, or uses an
+unsupported schema, startup and offline project/workspace queries fail. They do
+not fall back to `config.toml`. Run `ovrcr server` in the foreground to watch the
+same output live.
 
 Compare a client against a long-running server with `ovrcr --version`, which
 prints both the package and the protocol version.
 
 ## How it works
 
-A single server process owns everything with state: the registry, the Git
-worktrees, the PTYs, and the sessions. Clients — the dashboard and every CLI
+A single server process owns everything with state: the project/workspace
+database, the Git worktrees, the PTYs, and the sessions. Clients — the dashboard and every CLI
 command — connect over a private Unix socket and speak a versioned binary
 protocol. The server is authoritative: a dashboard renders what the server has
 confirmed rather than predicting it, which is why a paused row appears only after

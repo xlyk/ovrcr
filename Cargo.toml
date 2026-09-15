@@ -26,6 +26,7 @@ eframe = { version = "0.36.1", default-features = false, features = ["accesskit"
 libc = "0.2"
 portable-pty = "0.9"
 ratatui = "0.30"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 signal-hook = "0.3"
@@ -80,4 +81,5 @@ vt100 = { workspace = true }
 bincode = { workspace = true }
 ratatui = { workspace = true }
 signal-hook = { workspace = true }
+rusqlite = { workspace = true }
 tempfile = { workspace = true }
