@@ -1,15 +1,16 @@
-use crate::config::{ProjectRecord, Registry, load_registry, save_registry_atomic};
+use crate::config::{ProjectRecord, Registry, initialize_registry, save_registry_atomic};
 use crate::git::{self, BranchSpec};
+use crate::retained::{RetainedSession, SessionMetadata, SessionStore};
 use crate::session::{
-    HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase,
-    SessionSpec, SessionSummary, TerminalSize,
+    AlreadyExited, HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId,
+    SessionPhase, SessionSpec, SessionSummary, TerminalSize,
 };
 use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
 use ovrcr_protocol::{
     BranchRequest, ClientMessage, ClientRole, DashboardView, ErrorCode, HierarchySnapshot,
-    PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage,
-    WorkspaceSummary, read_frame, read_preamble, write_frame, write_preamble,
+    PROTOCOL_VERSION, ProjectSummary, Request, Response, ServerEvent, ServerMessage, SessionKind,
+    SessionRunId, WorkspaceSummary, read_frame, read_preamble, write_frame, write_preamble,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
@@ -18,7 +19,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -158,6 +159,14 @@ enum WorkspaceLaunch {
     Session(ovrcr_protocol::SessionLaunch),
 }
 
+const MAX_LIVE_SESSIONS: usize = 50;
+
+struct SessionControlTarget {
+    run: SessionRunId,
+    session: Option<Arc<Session>>,
+    already_exited: bool,
+}
+
 pub struct ServerState {
     pub tasks: Option<Arc<TaskManager>>,
     socket: PathBuf,
@@ -165,7 +174,7 @@ pub struct ServerState {
     pub registry: Mutex<Registry>,
     pub sessions: Mutex<HashMap<SessionId, Arc<Session>>>,
     pub(super) dashboard: ActiveDashboard,
-    pub next_session_id: AtomicU64,
+    pub(crate) retained: parking_lot::Mutex<SessionStore>,
     pub mutation_lock: Mutex<()>,
     pub dispatch: ReportingSender<DispatchMessage>,
     pub shutdown: AtomicBool,
@@ -189,16 +198,63 @@ impl ServerState {
         snapshot_from_state(self)
     }
 
+    fn summary_for_record(
+        record: &RetainedSession,
+        session: Option<&Arc<Session>>,
+        boot_id: Option<&str>,
+    ) -> SessionSummary {
+        if let Some(session) = session.filter(|session| session.run() == record.run) {
+            let mut summary = session.summary();
+            if !summary.phase.is_live() {
+                summary.recovery = Some(record.recovery(boot_id));
+            }
+            return summary;
+        }
+        record.summary(boot_id)
+    }
+
+    pub(crate) fn session_summary(&self, id: SessionId) -> Option<SessionSummary> {
+        let retained = self.retained.lock();
+        let record = retained.get(id)?;
+        let sessions = self.sessions.lock().unwrap();
+        Some(Self::summary_for_record(
+            record,
+            sessions.get(&id),
+            retained.boot_id(),
+        ))
+    }
+
+    pub(crate) fn session_summaries(&self) -> Vec<SessionSummary> {
+        let retained = self.retained.lock();
+        let sessions = self.sessions.lock().unwrap();
+        retained
+            .records()
+            .map(|record| {
+                Self::summary_for_record(record, sessions.get(&record.id), retained.boot_id())
+            })
+            .collect()
+    }
+
+    pub(crate) fn persist_session_titles(&self, session: &Session) -> Result<()> {
+        let titles = session.title_snapshot();
+        self.retained.lock().update_titles(
+            session.id(),
+            session.run(),
+            titles.revision,
+            titles.pinned,
+            titles.application,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn persist_session_exit(&self, session: &Session) -> Result<()> {
+        self.persist_session_titles(session)
+    }
+
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
         let _mutation = self.mutation_lock.lock().unwrap();
         let registry = self.registry.lock().unwrap().clone();
-        let sessions = self
-            .sessions
-            .lock()
-            .unwrap()
-            .values()
-            .map(|session| session.summary())
-            .collect();
+        let sessions = self.session_summaries();
         (registry, sessions)
     }
 
@@ -213,15 +269,7 @@ impl ServerState {
                 "max_lines must be greater than zero",
             ));
         }
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })?;
+        let session = self.session_for_control(id)?;
         let (size, text) = session.terminal_text();
         let text = match max_lines {
             Some(max_lines) => {
@@ -234,15 +282,7 @@ impl ServerState {
     }
 
     pub fn send_terminal(&self, id: SessionId, text: &str, submit: bool) -> Result<()> {
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })?;
+        let session = self.session_for_control(id)?;
         if matches!(session.summary().phase, SessionPhase::Exited { .. }) {
             return Err(lifecycle_error(ErrorCode::Conflict, "session has exited"));
         }
@@ -251,30 +291,108 @@ impl ServerState {
             .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
-    pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let termination = self.terminate_session_unlocked(id, grace);
+    pub fn close_terminal(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        grace: Duration,
+    ) -> Result<()> {
+        let target = self.control_target(id, Some(expected_run))?;
+        let termination = match &target.session {
+            Some(session) => session.terminate(grace),
+            None => Err(anyhow::Error::new(AlreadyExited)),
+        };
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.ensure_control_target(id, &target)?;
+        let termination = self.finish_control_stop(id, &target, termination);
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)?;
         self.remove_session_locked(id)
     }
 
-    /// Terminate a session without holding `mutation_lock` for the wait.
-    ///
-    /// Termination can take the full grace period, and the lock also gates
-    /// dashboard geometry updates and every create or remove, so holding it
-    /// would freeze the dashboard for the duration. The lookup and capability
-    /// revocation still happen under the lock; concurrent terminations of one
-    /// session are serialized by the session's own control lock.
-    fn terminate_session_unlocked(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let session = {
-            let _mutation = self.mutation_lock.lock().unwrap();
-            self.reject_if_stopping()?;
-            let session = self.session_for_control(id)?;
+    /// Capture the owned run before waiting without the mutation lock.
+    fn control_target(
+        &self,
+        id: SessionId,
+        expected_run: Option<SessionRunId>,
+    ) -> Result<SessionControlTarget> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if expected_run.is_some_and(|expected| summary.run != expected) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
+            ));
+        }
+        if summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::OwnershipUncertain,
+                "previous processes may still be running; explicitly acknowledge they stopped",
+            ));
+        }
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|session| session.run() == summary.run)
+            .cloned();
+        if let Some(session) = &session {
             session.revoke_hook_capability();
-            session
+        }
+        Ok(SessionControlTarget {
+            run: summary.run,
+            session,
+            already_exited: !summary.phase.is_live(),
+        })
+    }
+
+    fn persist_control_stop(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
+        if let Some(session) = &target.session {
+            self.persist_session_titles(session)?;
+        }
+        self.retained.lock().mark_stopped(id, target.run)?;
+        Ok(())
+    }
+
+    fn finish_control_stop(
+        &self,
+        id: SessionId,
+        target: &SessionControlTarget,
+        termination: Result<()>,
+    ) -> Result<()> {
+        match termination {
+            Ok(()) if target.session.is_some() => self.persist_control_stop(id, target),
+            Ok(()) => Err(anyhow::Error::new(AlreadyExited)),
+            Err(error) if error.is::<AlreadyExited>() && target.already_exited => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn ensure_control_target(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
+        let current = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session no longer exists"))?;
+        let sessions = self.sessions.lock().unwrap();
+        let same_process = match (target.session.as_ref(), sessions.get(&id)) {
+            (Some(expected), Some(current)) => Arc::ptr_eq(expected, current),
+            (None, None) => true,
+            _ => false,
         };
-        session.terminate(grace).map(|_| ())
+        if current.run != target.run || !same_process {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session was reopened; the replacement run was not controlled",
+            ));
+        }
+        Ok(())
     }
 
     pub fn set_session_paused(&self, id: SessionId, paused: bool) -> Result<()> {
@@ -310,96 +428,133 @@ impl ServerState {
         self.create_session_locked(request, Some(ready))
     }
 
-    /// Create one session. Every caller holds `mutation_lock`, which is what
-    /// serializes creation, so the duplicate check needs the `sessions` guard
-    /// only once and the spawn runs without it.
+    /// Admission stays locked from the live-slot check through durable intent and publication.
     fn create_session_locked(
-        &self,
-        request: ovrcr_protocol::CreateSessionRequest,
-        ready: Option<Arc<dyn Fn() + Send + Sync>>,
-    ) -> Result<SessionSummary> {
-        self.create_session_with_title_locked(request, ready, None)
-    }
-
-    fn create_session_with_title_locked(
         &self,
         mut request: ovrcr_protocol::CreateSessionRequest,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
-        pinned_override: Option<Option<String>>,
     ) -> Result<SessionSummary> {
-        let automatic = request.name.is_empty();
-        let used: std::collections::HashSet<_> = self
-            .sessions
-            .lock()
-            .unwrap()
-            .values()
-            .map(|session| session.summary())
-            .filter(|summary| {
-                summary.project == request.project && summary.workspace == request.workspace
-            })
-            .map(|summary| summary.name)
-            .collect();
-        if automatic {
-            request.name = request.workspace.clone();
-            let mut suffix = 2u64;
-            while used.contains(&request.name) {
-                request.name = format!("{}-{suffix}", request.workspace);
-                suffix += 1;
-            }
-        }
-        let pinned = pinned_override.unwrap_or_else(|| (!automatic).then(|| request.name.clone()));
-
-        let (cwd, label) = {
-            let registry = self.registry.lock().unwrap();
-            let workspace = registry
-                .workspace(&request.project, &request.workspace)
-                .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?;
-            let label = request.label.clone().unwrap_or_else(|| {
-                request
-                    .argv
-                    .first()
-                    .and_then(|arg| Path::new(arg).file_name())
-                    .map(|value| value.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            });
-            (workspace.path.clone(), label)
-        };
-        let id = SessionId(self.next_session_id.fetch_add(1, Ordering::Relaxed));
-        if used.contains(&request.name) {
-            return Err(lifecycle_error(
-                ErrorCode::AlreadyExists,
-                format!(
-                    "duplicate session: {}/{}:{}",
-                    request.project, request.workspace, request.name
-                ),
-            ));
-        }
-        if pinned
-            .as_deref()
-            .is_some_and(|title| super::session::sanitize_title(title).is_none())
-        {
+        if request.argv.is_empty() {
             return Err(lifecycle_error(
                 ErrorCode::InvalidRequest,
-                "title must contain visible text",
+                "session command cannot be empty",
             ));
         }
-        let spec = SessionSpec {
+        let automatic = request.name.is_empty();
+        {
+            let retained = self.retained.lock();
+            let used: std::collections::HashSet<_> = retained
+                .records()
+                .filter(|record| {
+                    record.metadata.project == request.project
+                        && record.metadata.workspace == request.workspace
+                })
+                .map(|record| record.metadata.name.as_str())
+                .collect();
+            if automatic {
+                request.name = request.workspace.clone();
+                let mut suffix = 2u64;
+                while used.contains(request.name.as_str()) {
+                    request.name = format!("{}-{suffix}", request.workspace);
+                    suffix += 1;
+                }
+            } else if used.contains(request.name.as_str()) {
+                return Err(lifecycle_error(
+                    ErrorCode::AlreadyExists,
+                    "duplicate session name",
+                ));
+            }
+        }
+        let pinned_title = if automatic {
+            None
+        } else {
+            Some(
+                crate::session::sanitize_title(&request.name).ok_or_else(|| {
+                    lifecycle_error(ErrorCode::InvalidRequest, "title must contain visible text")
+                })?,
+            )
+        };
+        let cwd = self
+            .registry
+            .lock()
+            .unwrap()
+            .workspace(&request.project, &request.workspace)
+            .map_err(|error| lifecycle_error(ErrorCode::NotFound, error.to_string()))?
+            .path
+            .clone();
+        if !cwd.is_dir() {
+            return Err(lifecycle_error(
+                ErrorCode::NotFound,
+                "working directory is unavailable",
+            ));
+        }
+        self.check_live_capacity()?;
+        let label = request.label.unwrap_or_else(|| {
+            request
+                .argv
+                .first()
+                .and_then(|arg| Path::new(arg).file_name())
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
+        let record = self.retained.lock().create(SessionMetadata {
             project: request.project,
             workspace: request.workspace,
             name: request.name,
             label,
             cwd,
-            argv: request.argv,
-            hook_env: Some(HookEnvironment {
-                socket: validate_bound_socket(&self.socket)?,
-                session: id,
-                capability: generate_hook_capability()?,
-            }),
-        };
-        let size = self.dashboard.geometry().unwrap_or(TerminalSize {
-            rows: 40,
-            cols: 120,
-        });
+            kind: request.kind,
+            pinned_title,
+            application_title: None,
+        })?;
+        let result = self.spawn_record_locked(record.id, record.run, request.argv, ready);
+        if let Err(error) = &result {
+            let removed = {
+                let mut retained = self.retained.lock();
+                let current = retained.get(record.id).map(|record| record.run);
+                match current {
+                    Some(run) if run.0 == 0 || error.is::<crate::session::NoProcessStarted>() => {
+                        retained.remove(record.id, run)?
+                    }
+                    _ => false,
+                }
+            };
+            if removed {
+                self.dashboard.forget_session(record.id);
+            }
+        }
+        result
+    }
+
+    fn check_live_capacity(&self) -> Result<()> {
+        if self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|session| session.is_live())
+            .count()
+            >= MAX_LIVE_SESSIONS
+        {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "all 50 live process slots are occupied",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The mutation lock is the slot reservation: no other admission can pass while spawning.
+    fn spawn_record_locked(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        argv: Vec<std::ffi::OsString>,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<SessionSummary> {
+        self.check_live_capacity()?;
+        let socket = validate_bound_socket(&self.socket)?;
+        let capability = generate_hook_capability()?;
         let events = self
             .events
             .lock()
@@ -407,16 +562,36 @@ impl ServerState {
             .as_ref()
             .context("server event channel closed")?
             .clone();
-        // The spawn itself runs without the `sessions` guard: it waits for the
-        // child's process group, and the dispatcher needs that same guard for
-        // every PTY byte it delivers. `spawn_registered` re-takes the guard to
-        // publish the session before the child's reader and waiter start, so
-        // no event of its own can arrive for a session the dispatcher cannot
-        // find yet.
+        let record = self.retained.lock().begin_run(id, expected_run)?;
+        if let Some(old) = self.sessions.lock().unwrap().remove(&id) {
+            old.revoke_hook_capability();
+        }
+        self.dashboard.forget_session(id);
+        let metadata = &record.metadata;
+        let spec = SessionSpec {
+            run: record.run,
+            kind: metadata.kind.clone(),
+            project: metadata.project.clone(),
+            workspace: metadata.workspace.clone(),
+            name: metadata.name.clone(),
+            label: metadata.label.clone(),
+            cwd: metadata.cwd.clone(),
+            argv,
+            hook_env: Some(HookEnvironment {
+                socket,
+                session: id,
+                capability,
+            }),
+        };
+        let size = self.dashboard.geometry().unwrap_or(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
         let register = |session: &Arc<Session>| {
-            session
-                .set_title(pinned.clone())
-                .expect("validated session title");
+            session.restore_titles(
+                metadata.pinned_title.clone(),
+                metadata.application_title.clone(),
+            );
             self.sessions
                 .lock()
                 .unwrap()
@@ -425,64 +600,221 @@ impl ServerState {
                 ready();
             }
         };
-        let session = Session::spawn_registered(id, spec, size, events, &register)
-            .inspect_err(|_| {
-                self.sessions.lock().unwrap().remove(&id);
-            })
-            .context("spawn session")?;
-        Ok(session.summary())
+        if let Err(error) = Session::spawn_registered(id, spec, size, events, &register) {
+            if let Some(failed) = self.sessions.lock().unwrap().remove(&id) {
+                failed.revoke_hook_capability();
+            }
+            let no_process = error.is::<crate::session::NoProcessStarted>();
+            let message = if no_process {
+                "Launch failed before a process started; check the executable and retry"
+            } else {
+                "Launch did not complete; confirm previous processes stopped before retrying"
+            };
+            let persisted = {
+                let mut retained = self.retained.lock();
+                if no_process {
+                    retained
+                        .mark_stopped(id, record.run)
+                        .and_then(|_| retained.record_failure(id, record.run, message.into()))
+                } else {
+                    retained.record_failure(id, record.run, message.into())
+                }
+            };
+            if let Err(error) = persisted {
+                eprintln!("retain session {} launch failure: {error:#}", id.0);
+            }
+            let failure = lifecycle_error_with_hierarchy(
+                if no_process {
+                    ErrorCode::PartialFailure
+                } else {
+                    ErrorCode::OwnershipUncertain
+                },
+                format!("session {} retained: {message}", id.0),
+                true,
+            );
+            return Err(if no_process {
+                failure.context(crate::session::NoProcessStarted)
+            } else {
+                failure
+            });
+        }
+        self.session_summary(id)
+            .context("published session disappeared")
     }
 
     pub fn set_session_title(&self, id: SessionId, title: Option<String>) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
-        session
-            .set_title(title)
-            .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
+        let session = self.sessions.lock().unwrap().get(&id).cloned();
+        if let Some(session) = session {
+            session
+                .set_title(title)
+                .map_err(|error| lifecycle_error(ErrorCode::InvalidRequest, error.to_string()))?;
+            self.persist_session_titles(&session).map_err(|error| {
+                lifecycle_error_with_hierarchy(
+                    ErrorCode::PartialFailure,
+                    format!("live title changed but could not be retained: {error}"),
+                    true,
+                )
+            })?;
+        } else {
+            let mut retained = self.retained.lock();
+            let record = retained
+                .get(id)
+                .cloned()
+                .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            let title = title
+                .map(|title| {
+                    crate::session::sanitize_title(&title).ok_or_else(|| {
+                        lifecycle_error(
+                            ErrorCode::InvalidRequest,
+                            "title must contain visible text",
+                        )
+                    })
+                })
+                .transpose()?;
+            let revision = record
+                .title_revision
+                .checked_add(1)
+                .context("title revision exhausted")?;
+            retained.update_titles(
+                id,
+                record.run,
+                revision,
+                title,
+                record.metadata.application_title,
+            )?;
+        }
         self.refresh_session_locked(id)
     }
 
-    pub fn relaunch_session(&self, id: SessionId) -> Result<SessionSummary> {
+    pub fn acknowledge_session_stopped(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+    ) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
+        self.acknowledge_stopped_locked(id, expected_run)?;
+        self.refresh_session_locked(id)
+    }
+
+    fn acknowledge_stopped_locked(&self, id: SessionId, expected_run: SessionRunId) -> Result<()> {
+        let summary = self
+            .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
-        let summary = session.summary();
-        if !matches!(summary.phase, SessionPhase::Exited { .. }) {
+        if summary.run != expected_run {
             return Err(lifecycle_error(
-                ErrorCode::SessionRunning,
-                "only an exited session can be relaunched",
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
             ));
         }
-        let launch = session.launch();
-        self.create_session_with_title_locked(
-            ovrcr_protocol::CreateSessionRequest {
-                project: summary.project,
-                workspace: summary.workspace,
-                name: String::new(),
-                label: launch.label,
-                argv: launch.argv,
-            },
-            None,
-            Some(session.pinned_title()),
-        )
+        if summary.phase.is_live() {
+            return Err(lifecycle_error(
+                ErrorCode::SessionRunning,
+                "the currently owned process is still live",
+            ));
+        }
+        self.retained.lock().mark_stopped(id, expected_run)?;
+        Ok(())
+    }
+
+    pub fn reopen_session(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        acknowledge_stopped: bool,
+    ) -> Result<SessionSummary> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.run != expected_run {
+            if expected_run.0.checked_add(1) == Some(summary.run.0) {
+                if let Some(failure) = summary
+                    .recovery
+                    .as_ref()
+                    .and_then(|recovery| recovery.failure.as_ref())
+                {
+                    return Err(lifecycle_error(ErrorCode::PartialFailure, failure.clone()));
+                }
+                return Ok(summary);
+            }
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
+            ));
+        }
+        if summary.phase.is_live() {
+            return Ok(summary);
+        }
+        if let Some(reason) = summary
+            .recovery
+            .as_ref()
+            .and_then(|recovery| recovery.unavailable.as_ref())
+        {
+            return Err(lifecycle_error(ErrorCode::InvalidRequest, reason.clone()));
+        }
+        if summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack)
+        {
+            if !acknowledge_stopped {
+                return Err(lifecycle_error(
+                    ErrorCode::OwnershipUncertain,
+                    "confirm that the previous agent and background processes stopped; use --ack-stopped",
+                ));
+            }
+            self.acknowledge_stopped_locked(id, expected_run)?;
+        }
+        let record = self
+            .retained
+            .lock()
+            .get(id)
+            .cloned()
+            .context("retained session disappeared")?;
+        if !record.metadata.cwd.is_dir() {
+            let message = format!(
+                "Recorded working directory is unavailable: {}",
+                record.metadata.cwd.display()
+            );
+            self.retained
+                .lock()
+                .record_failure(id, expected_run, message.clone())?;
+            return Err(lifecycle_error(ErrorCode::NotFound, message));
+        }
+        let shell = std::env::var_os("SHELL")
+            .filter(|shell| !shell.is_empty())
+            .ok_or_else(|| {
+                lifecycle_error(
+                    ErrorCode::InvalidRequest,
+                    "SHELL is unset; configure a fresh shell before reopening",
+                )
+            })?;
+        let old = self.sessions.lock().unwrap().get(&id).cloned();
+        if let Some(old) = old {
+            match old.terminate(Duration::from_secs(2)) {
+                Ok(()) => {}
+                Err(error) if error.is::<AlreadyExited>() => {}
+                Err(error) => return Err(error),
+            }
+
+            self.persist_session_exit(&old)?;
+        }
+        self.spawn_record_locked(id, expected_run, vec![shell], None)
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let termination = self.terminate_session_unlocked(id, grace);
+        let target = self.control_target(id, None)?;
+        let termination = match &target.session {
+            Some(session) => session.terminate(grace),
+            None => Err(anyhow::Error::new(AlreadyExited)),
+        };
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.ensure_control_target(id, &target)?;
+        let termination = self.finish_control_stop(id, &target, termination);
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)
     }
@@ -494,23 +826,29 @@ impl ServerState {
     }
 
     fn remove_session_locked(&self, id: SessionId) -> Result<()> {
-        let session = self
-            .sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })?;
-        if !matches!(session.summary().phase, SessionPhase::Exited { .. }) {
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.phase.is_live() {
             return Err(lifecycle_error(
                 ErrorCode::SessionRunning,
                 "session is still live; kill it before removal",
             ));
         }
-        session.revoke_hook_capability();
-        self.sessions.lock().unwrap().remove(&id);
+        if summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack)
+        {
+            return Err(lifecycle_error(
+                ErrorCode::OwnershipUncertain,
+                "use terminal acknowledge-stopped before removing an ownership-uncertain record",
+            ));
+        }
+        self.retained.lock().remove(id, summary.run)?;
+        if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
+            session.revoke_hook_capability();
+        }
         self.dashboard.forget_session(id);
         Ok(())
     }
@@ -522,6 +860,7 @@ impl ServerState {
     ) -> Arc<Self> {
         let (events, _) = event_channel(None);
         let (dispatch, _) = dispatch_channel(None);
+        let retained = SessionStore::open(&registry_path).unwrap();
         Arc::new(Self {
             tasks: Some(tasks),
             socket: registry_path.with_extension("sock"),
@@ -529,7 +868,7 @@ impl ServerState {
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
-            next_session_id: AtomicU64::new(1),
+            retained: parking_lot::Mutex::new(retained),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -561,8 +900,8 @@ impl ServerState {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        if !kill && !sessions.is_empty() {
-            return error_response(ErrorCode::SessionsRemain, "sessions remain");
+        if !kill && sessions.iter().any(|session| session.is_live()) {
+            return error_response(ErrorCode::SessionsRemain, "live sessions remain");
         }
         if kill {
             // Terminate concurrently: each session may wait out the whole
@@ -571,7 +910,7 @@ impl ServerState {
             let workers = sessions
                 .into_iter()
                 .map(|session| {
-                    let id = session.summary().id;
+                    let id = session.id();
                     session.revoke_hook_capability();
                     let worker = thread::Builder::new()
                         .name(format!("ovrcr-shutdown-kill-{}", id.0))
@@ -587,6 +926,31 @@ impl ServerState {
                         .unwrap_or_else(|_| Err(anyhow::anyhow!("termination worker panicked"))),
                     Err(error) => Err(error).context("spawn termination worker"),
                 };
+                let verified = termination.is_ok();
+                let termination = match termination {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.is::<AlreadyExited>() => Ok(()),
+                    Err(error) => Err(error),
+                };
+                let termination = termination.and_then(|()| {
+                    let session = self.sessions.lock().unwrap().get(&id).cloned();
+                    let Some(session) = session else {
+                        return Ok(());
+                    };
+                    if verified {
+                        self.persist_control_stop(
+                            id,
+                            &SessionControlTarget {
+                                run: session.run(),
+                                session: Some(session),
+                                already_exited: false,
+                            },
+                        )
+                    } else {
+                        self.persist_session_exit(&session)
+                    }
+                });
+
                 let refresh = self.refresh_session_locked(id);
                 if let Err(error) = combine_control_and_refresh(id, termination, refresh) {
                     failures.push(format!("session {}: {}", id.0, error_chain_string(&error)));
@@ -621,14 +985,20 @@ impl ServerState {
     }
 
     fn session_for_control(&self, id: SessionId) -> Result<Arc<Session>> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| {
-                lifecycle_error(ErrorCode::NotFound, format!("session {} not found", id.0))
-            })
+        let session = self.sessions.lock().unwrap().get(&id).cloned();
+        if let Some(session) = session {
+            return Ok(session);
+        }
+        if self.retained.lock().get(id).is_some() {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session has no current terminal; explicitly reopen it",
+            ));
+        }
+        Err(lifecycle_error(
+            ErrorCode::NotFound,
+            format!("session {} not found", id.0),
+        ))
     }
 
     fn refresh_session_locked(&self, id: SessionId) -> Result<()> {
@@ -831,6 +1201,7 @@ impl ServerState {
                     ovrcr_protocol::SessionLaunch {
                         argv: vec![shell],
                         label: None,
+                        kind: SessionKind::Terminal,
                     },
                     "local".into(),
                 )
@@ -843,11 +1214,18 @@ impl ServerState {
                 name: session_name,
                 label: launch.label,
                 argv: launch.argv,
+                kind: launch.kind,
             },
             None,
         )
         .map(Some)
         .map_err(|error| {
+            if error
+                .downcast_ref::<LifecycleFailure>()
+                .is_some_and(|failure| failure.code == ErrorCode::OwnershipUncertain)
+            {
+                return error;
+            }
             lifecycle_error_with_hierarchy(
                 ErrorCode::PartialFailure,
                 format!(
@@ -923,10 +1301,10 @@ impl ServerState {
                 format!("task run remains for workspace {project}/{name}"),
             ));
         }
-        let occupied = self.sessions.lock().unwrap().values().any(|session| {
-            let summary = session.summary();
-            summary.project == project && summary.workspace == name
-        });
+        let occupied =
+            self.retained.lock().records().any(|record| {
+                record.metadata.project == project && record.metadata.workspace == name
+            });
         if occupied {
             return Err(lifecycle_error(
                 ErrorCode::SessionsRemain,
@@ -1011,7 +1389,7 @@ fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
 
 fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
-    let sessions = state.sessions.lock().unwrap();
+    let mut sessions = state.session_summaries();
     let mut projects = registry
         .projects
         .into_iter()
@@ -1028,11 +1406,8 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
                 .collect::<Vec<_>>();
             for workspace in &mut workspaces {
                 workspace.sessions = sessions
-                    .values()
-                    .filter_map(|session| {
-                        let summary = session.summary();
-                        (summary.project == project.name && summary.workspace == workspace.name)
-                            .then_some(summary)
+                    .extract_if(.., |summary| {
+                        summary.project == project.name && summary.workspace == workspace.name
                     })
                     .collect();
                 workspace.sessions.sort_by(|left, right| {

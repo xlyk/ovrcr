@@ -43,13 +43,16 @@ fn session_summary(
 ) -> SessionSummary {
     SessionSummary {
         id: SessionId(id),
+        run: ovrcr::protocol::SessionRunId(1),
+        kind: ovrcr::protocol::SessionKind::Terminal,
+        recovery: None,
         project: project.into(),
         workspace: workspace.into(),
         name: name.into(),
         title: None,
         label: label.into(),
         pid,
-        started_unix_ms,
+        started_unix_ms: Some(started_unix_ms),
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -235,6 +238,7 @@ fn deliver_all_view_screens(
             request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -477,6 +481,7 @@ fn dashboard_reader_channel_applies_bounded_backpressure() {
         sender
             .send(ServerMessage::Event(ServerEvent::ScreenDirty {
                 session: SessionId(1),
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: 0,
             }))
             .unwrap();
@@ -499,6 +504,7 @@ fn output_for_newly_selected_session_waits_for_screen() {
     dashboard.install_focus(SessionId(5));
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"EARLY OUTPUT".to_vec(),
     }));
@@ -513,6 +519,7 @@ fn output_for_newly_selected_session_waits_for_screen() {
     assert!(text.contains("FIVE SCREEN"), "{text}");
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b" LIVE".to_vec(),
     }));
@@ -557,6 +564,58 @@ fn control_punctuation_and_modified_keys_encode() {
     assert_eq!(bytes(KeyCode::PageUp, KeyModifiers::SHIFT), b"\x1b[5;2~");
     assert_eq!(bytes(KeyCode::Enter, KeyModifiers::NONE), b"\r");
     assert_eq!(bytes(KeyCode::Backspace, KeyModifiers::NONE), b"\x7f");
+}
+
+#[test]
+fn inactive_to_live_requests_a_current_run_view_without_old_output() {
+    let mut dashboard = screen_ready_dashboard(b"OLD_OUTPUT");
+    let mut stopped = fixture_hierarchy();
+    let session = stopped
+        .projects
+        .iter_mut()
+        .flat_map(|project| project.workspaces.iter_mut())
+        .flat_map(|workspace| workspace.sessions.iter_mut())
+        .find(|session| session.id == SessionId(1))
+        .unwrap();
+    session.phase = SessionPhase::Stopped;
+    session.pid = None;
+    session.title = Some("Pinned".into());
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(stopped)));
+    let mut live = fixture_hierarchy();
+    let session = live
+        .projects
+        .iter_mut()
+        .flat_map(|project| project.workspaces.iter_mut())
+        .flat_map(|workspace| workspace.sessions.iter_mut())
+        .find(|session| session.id == SessionId(1))
+        .unwrap();
+    session.phase = SessionPhase::Running;
+    session.title = Some("Pinned".into());
+    let outgoing =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(live)));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+    let text = rendered_rows(&dashboard, 88, 38).join("\n");
+    assert!(
+        !text.contains("OLD_OUTPUT"),
+        "inactive-to-live must not keep the previous screen: {text}"
+    );
+    assert!(
+        text.contains("Pinned"),
+        "same-row reopen must keep the title: {text}"
+    );
+    let set_view = outgoing
+        .iter()
+        .find(|message| matches!(message.request, Request::SetView { .. }))
+        .expect("inactive-to-live must request a view");
+    let Request::SetView { view } = &set_view.request else {
+        panic!("expected SetView");
+    };
+    assert!(
+        view.panes.iter().any(
+            |pane| pane.session == SessionId(1) && pane.run == ovrcr::protocol::SessionRunId(1)
+        ),
+        "view must bind the live run: {view:?}"
+    );
 }
 
 /// Slightly longer than `VIEW_RETRY_BACKOFF` in `crates/ovrcr-tui/src/dashboard/state.rs`.

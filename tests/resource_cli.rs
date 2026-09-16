@@ -234,6 +234,7 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "demo",
     ]);
     assert!(!occupied.status.success());
+    fixture.ok(&["terminal", "acknowledge-stopped", &id]);
     fixture.ok(&["terminal", "close", &id]);
     assert!(
         !fixture
@@ -687,7 +688,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             agent.clone()
         };
         let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
-            "id":7,"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
+            "id":7,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -776,4 +777,129 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             assert!(value["measurement_age_ms"].is_null());
         }
     }
+}
+
+#[test]
+fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
+    let mut fixture = Fixture(Live::idle().bounded());
+    let legacy_workspace = fixture.workspace_root.join("legacy");
+    live::git(
+        &fixture.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/legacy",
+            legacy_workspace.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let original = toml::to_string(&ovrcr::config::Registry {
+        projects: vec![ovrcr::config::ProjectRecord {
+            name: "fixture".into(),
+            repo: fixture.repo.clone(),
+            workspace_root: fixture.workspace_root.clone(),
+            workspaces: vec![ovrcr::config::WorkspaceRecord {
+                name: "legacy".into(),
+                path: legacy_workspace.clone(),
+                branch: "feature/legacy".into(),
+            }],
+        }],
+    })
+    .unwrap();
+    std::fs::write(&fixture.config, &original).unwrap();
+    fixture.start_binary();
+    assert_eq!(
+        fixture.json(&["project", "get", "fixture"])["workspace_count"],
+        1
+    );
+    let imported = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--name",
+        "legacy",
+    ]);
+    assert_eq!(imported["path"], legacy_workspace.to_str().unwrap());
+    assert_eq!(imported["branch"], "feature/legacy");
+    fixture.ok(&[
+        "workspace",
+        "create",
+        "--project",
+        "fixture",
+        "--name",
+        "migrated",
+        "--new-branch",
+        "feature/migrated",
+        "--base",
+        "main",
+    ]);
+    fixture.capture();
+    let online = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--name",
+        "migrated",
+    ]);
+    assert_eq!(online["branch"], "feature/migrated");
+    assert_eq!(online["terminal_count"], 1);
+    assert_eq!(
+        std::fs::read_to_string(&fixture.config).unwrap(),
+        original,
+        "migration and later mutations must leave recoverable legacy data untouched"
+    );
+    fixture.ok(&["shutdown", "--kill"]);
+    fixture.join();
+
+    // Once imported, even a broken legacy file cannot replace committed inventory.
+    std::fs::write(&fixture.config, "[[projects]\n").unwrap();
+    let offline = fixture.json(&[
+        "workspace",
+        "get",
+        "--project",
+        "fixture",
+        "--name",
+        "migrated",
+    ]);
+    assert_eq!(offline["path"], online["path"]);
+    assert_eq!(offline["branch"], online["branch"]);
+    assert_eq!(offline["terminal_count"], 1);
+    let retained = fixture.json(&["terminal", "list"]);
+    assert_eq!(retained.as_array().unwrap().len(), 1);
+    assert_eq!(retained[0]["phase"], "stopped");
+    assert_eq!(retained[0]["recovery"]["requires_ack"], false);
+    let retained_id = retained[0]["id"].as_u64().unwrap().to_string();
+    assert!(
+        !fixture.socket.exists(),
+        "offline inspection must not start a server"
+    );
+
+    fixture.start_binary();
+    assert_eq!(
+        fixture.json(&["project", "get", "fixture"])["workspace_count"],
+        2,
+        "restart must neither discard nor re-import workspace records"
+    );
+    fixture.ok(&["terminal", "remove", &retained_id]);
+    fixture.ok(&[
+        "workspace",
+        "remove",
+        "--project",
+        "fixture",
+        "--name",
+        "migrated",
+    ]);
+    fixture.ok(&[
+        "workspace",
+        "remove",
+        "--project",
+        "fixture",
+        "--name",
+        "legacy",
+    ]);
+    fixture.ok(&["project", "remove", "fixture"]);
+    assert_eq!(fixture.json(&["project", "list"]), serde_json::json!([]));
 }

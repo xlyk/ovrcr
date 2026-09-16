@@ -342,8 +342,11 @@ pub(super) fn handle_request_with_id(
         } => state
             .send_terminal(session, &text, submit)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
-        Request::CloseTerminal { session } => state
-            .close_terminal(session, requested_kill_grace())
+        Request::CloseTerminal {
+            session,
+            expected_run,
+        } => state
+            .close_terminal(session, expected_run, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| {
                 state
                     .dashboard
@@ -407,6 +410,26 @@ pub(super) fn handle_request_with_id(
             let Some(owner) = owner else {
                 return error_response(ErrorCode::Conflict, "dashboard is disconnected");
             };
+            let run = {
+                let live = state
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .get(&session)
+                    .map(|session| session.run());
+                match live {
+                    Some(run) => run,
+                    None => match state.session_summary(session) {
+                        Some(summary) => summary.run,
+                        None => {
+                            return error_response(
+                                ErrorCode::NotFound,
+                                format!("session {} not found", session.0),
+                            );
+                        }
+                    },
+                }
+            };
             let revision = state.dashboard.next_revision();
             let (sender, receiver) = mpsc::sync_channel(1);
             if state
@@ -416,7 +439,7 @@ pub(super) fn handle_request_with_id(
                     request_id,
                     view: ovrcr_protocol::DashboardView {
                         revision,
-                        panes: vec![ovrcr_protocol::PaneTarget { session, size }],
+                        panes: vec![ovrcr_protocol::PaneTarget { session, run, size }],
                         focused: Some(session),
                     },
                     completion: sender,
@@ -462,7 +485,11 @@ pub(super) fn handle_request_with_id(
             request_id,
             HistoryRequest::End { session, snapshot },
         ),
-        Request::Input { session, bytes } => {
+        Request::Input {
+            session,
+            run,
+            bytes,
+        } => {
             if !dashboard
                 || owner.is_none_or(|owner| !state.dashboard.owns(owner))
                 || state.dashboard.view().and_then(|view| view.focused) != Some(session)
@@ -472,11 +499,27 @@ pub(super) fn handle_request_with_id(
                     "input is only accepted for the focused dashboard session",
                 );
             }
+            let pane_run = state.dashboard.view().and_then(|view| {
+                view.panes
+                    .iter()
+                    .find(|pane| pane.session == session)
+                    .map(|pane| pane.run)
+            });
+            if pane_run != Some(run) {
+                return error_response(
+                    ErrorCode::InvalidRequest,
+                    "input is only accepted for the focused dashboard session",
+                );
+            }
             let selected_session = state.sessions.lock().unwrap().get(&session).cloned();
             match selected_session {
-                Some(session) => session.write(&bytes).map_or_else(
+                Some(session) if session.run() == run => session.write(&bytes).map_or_else(
                     |error| error_response(input_error_code(&error), error_chain_string(&error)),
                     |_| Response::Ok,
+                ),
+                Some(_) => error_response(
+                    ErrorCode::InvalidRequest,
+                    "input is only accepted for the focused dashboard session",
                 ),
                 None => error_response(
                     ErrorCode::NotFound,
@@ -503,6 +546,7 @@ pub(super) fn handle_request_with_id(
             if current.panes.len() != 1 || current.focused != Some(session) {
                 return error_response(ErrorCode::InvalidRequest, "use SetView for split geometry");
             }
+            let run = current.panes[0].run;
             let revision = current
                 .revision
                 .checked_add(1)
@@ -519,7 +563,7 @@ pub(super) fn handle_request_with_id(
                     request_id,
                     view: ovrcr_protocol::DashboardView {
                         revision,
-                        panes: vec![ovrcr_protocol::PaneTarget { session, size }],
+                        panes: vec![ovrcr_protocol::PaneTarget { session, run, size }],
                         focused: Some(session),
                     },
                     completion: sender,
@@ -592,20 +636,45 @@ pub(super) fn handle_request_with_id(
                     },
                 )
         }
-        Request::SetSessionTitle { session, title } => state
-            .set_session_title(session, title)
-            .map_or_else(error_for_lifecycle, |_| Response::Ok),
-        Request::RelaunchSession { session } => {
+        Request::SetSessionTitle { session, title } => {
+            state.set_session_title(session, title).map_or_else(
+                |error| lifecycle_response_with_partial_hierarchy(state, error),
+                |_| Response::Ok,
+            )
+        }
+        Request::ReopenSession {
+            session,
+            expected_run,
+            acknowledge_stopped,
+        } => {
+            let result = state.reopen_session(session, expected_run, acknowledge_stopped);
             state
-                .relaunch_session(session)
-                .map_or_else(error_for_lifecycle, |summary| {
-                    state
-                        .dashboard
-                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
-                            state.hierarchy(),
-                        )));
-                    Response::CreatedSession(Box::new(summary))
-                })
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                    state.hierarchy(),
+                )));
+            result.map_or_else(error_for_lifecycle, |summary| {
+                Response::CreatedSession(Box::new(summary))
+            })
+        }
+        Request::AcknowledgeSessionStopped {
+            session,
+            expected_run,
+        } => {
+            let result = state.acknowledge_session_stopped(session, expected_run);
+            state
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                    state.hierarchy(),
+                )));
+            if let Some(summary) = state.session_summary(session) {
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                        summary,
+                    ))));
+            }
+            result.map_or_else(error_for_lifecycle, |_| Response::Ok)
         }
         Request::RemoveWorkspace { project, name } => {
             state.remove_workspace(&project, &name).map_or_else(
@@ -620,18 +689,17 @@ pub(super) fn handle_request_with_id(
                 },
             )
         }
-        Request::CreateSession(request) => {
-            state
-                .create_session(request)
-                .map_or_else(error_for_lifecycle, |summary| {
-                    state
-                        .dashboard
-                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
-                            state.hierarchy(),
-                        )));
-                    Response::CreatedSession(Box::new(summary))
-                })
-        }
+        Request::CreateSession(request) => state.create_session(request).map_or_else(
+            |error| lifecycle_response_with_partial_hierarchy(state, error),
+            |summary| {
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
+                Response::CreatedSession(Box::new(summary))
+            },
+        ),
         Request::KillSession { session } => state
             .kill_session(session, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
@@ -736,12 +804,7 @@ fn dispatch_history_request(
 
 pub(super) fn error_for_lifecycle(error: anyhow::Error) -> Response {
     let message = error_chain_string(&error);
-    let code = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
-        .map(|failure| failure.code.clone())
-        .unwrap_or(ErrorCode::Conflict);
-    error_response(code, message)
+    error_response(lifecycle_code(&error), message)
 }
 
 pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
@@ -756,10 +819,16 @@ pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
 }
 
 fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
-        .map_or(ErrorCode::Conflict, |failure| failure.code.clone())
+    if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
+        return failure.code.clone();
+    }
+    if error
+        .downcast_ref::<crate::session::DiscoveryFailed>()
+        .is_some()
+    {
+        return ErrorCode::OwnershipUncertain;
+    }
+    ErrorCode::Conflict
 }
 
 pub(super) fn combine_control_and_refresh(
@@ -834,10 +903,9 @@ where
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    // Match request_shutdown: any session record, including an exited one
-    // awaiting removal, blocks a non-kill shutdown.
-    if !kill && !sessions.is_empty() {
-        return error_response(ErrorCode::SessionsRemain, "sessions remain");
+    // Retained or exited rows do not keep a server alive.
+    if !kill && sessions.iter().any(|session| session.is_live()) {
+        return error_response(ErrorCode::SessionsRemain, "live sessions remain");
     }
     if kill {
         let mut failures = Vec::new();

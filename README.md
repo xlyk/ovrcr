@@ -32,6 +32,8 @@ sessions.
   History input modes.
 - PTYs and child process groups survive dashboard detach; reattaching rebuilds
   the current screen from the running session.
+- Session rows survive a server restart as metadata. Reopen starts a fresh shell
+  in the same row; it does not restore output, and agent resume is unavailable.
 - 512 rows of retained scrollback per session, with keyboard selection and
   clipboard copy over OSC52.
 - Pause and resume a session's process group with SIGSTOP and SIGCONT.
@@ -248,10 +250,14 @@ Three behaviours worth knowing before scripting against it:
   omits. A successful send means the bytes were written, not that the program was
   ready or finished. `read` returns the current screen, so a read straight after a
   send can show the earlier one; read again.
-- Read commands never start a server. With no server running, project and
-  workspace queries fall back to the persisted registry and terminal lists are
-  empty. Only `new`, `terminal create`, `project add`, `workspace create`, and the
-  dashboard start one on demand.
+- Read commands never start a server. They never migrate the registry. With no
+  server running, project and workspace queries read `config.toml.sqlite3` after
+  migration. They read the preserved `config.toml` if the database is absent or
+  still empty and uninitialized after an interrupted import. A foreign, damaged,
+  or incompatible database is an error, not a TOML fallback. Terminal lists include
+  retained rows without starting their processes. `new`, `terminal create`,
+  `terminal reopen`, `terminal acknowledge-stopped`, `project add`,
+  `workspace create`, and the dashboard start a server on demand.
 - Requests are bounded: 30 seconds for an ordinary request, 60 for `kill`,
   `close`, and `shutdown`.
 
@@ -261,9 +267,15 @@ Stopping things:
 ovrcr pause ID          # SIGSTOP the session's process group
 ovrcr resume ID         # SIGCONT it
 ovrcr kill ID           # stop it, keep the final screen
-ovrcr session remove ID # drop the exited record
-ovrcr shutdown          # stop an empty server; --kill also stops sessions
+ovrcr session remove ID # drop a stopped or acknowledged record
+ovrcr terminal reopen ID # fresh shell in the same row
+ovrcr shutdown          # stop a server with no live processes; --kill also stops them
 ```
+
+A natural shell exit is not proof that its background jobs stopped. Confirm
+cleanup with `terminal reopen ID --ack-stopped`, or `terminal acknowledge-stopped ID`
+before closing/removing an ownership-uncertain row. Inventory restoration never
+performs that acknowledgement for you.
 
 The [CLI reference](docs/cli-reference.md) has the full command list and aliases,
 JSON record shapes, removal guards, the exact signal sequence `kill` uses, and a
@@ -303,12 +315,17 @@ service installation, scheduling rules, and retained-work cleanup.
 | Path | Default |
 | --- | --- |
 | Registry / config | `~/Library/Application Support/ovrcr/config.toml` on macOS, `$XDG_CONFIG_HOME/ovrcr/config.toml` (usually `~/.config/ovrcr`) on Linux |
+| Project/workspace database | The full registry path with `.sqlite3` appended. Default `config.toml` therefore uses `config.toml.sqlite3`, not `config.sqlite3`. |
 | Dashboard settings | `dashboard.toml` beside `config.toml` |
+| Scheduled tasks | `config.tasks` beside `config.toml` |
 | Server socket | `$XDG_RUNTIME_DIR/ovrcr/server.sock` on Linux, `$TMPDIR/ovrcr-UID/ovrcr/server.sock` on macOS and wherever `XDG_RUNTIME_DIR` is unset |
 | Server log | `server.log` beside the socket |
 
-The server writes `config.toml` itself and drops tables it does not know, so
-dashboard settings belong in `dashboard.toml` only.
+`OVRCR_CONFIG` still names the `config.toml` path. Dashboard settings and
+scheduled-task storage are derived from that path as before. After the first
+server start, project and workspace records live in the `.sqlite3` file. The
+server writes that database only and never rewrites `config.toml`. Keep
+dashboard settings in `dashboard.toml`.
 
 | Variable | Effect |
 | --- | --- |
@@ -345,26 +362,38 @@ version 3; stop the old server with `ovrcr shutdown --kill` (or restart the
 installed service) and retry
 ```
 
-Close its terminals and run `ovrcr shutdown`, then launch the updated binary. Use
-`ovrcr shutdown --kill` if you intend to stop all sessions together. The CLI never
-stops an old server automatically and never restores its lost PTYs. The
-project/workspace registry needs no migration.
+Stop live sessions or run `ovrcr shutdown --kill`, then launch the updated binary.
+Retained exited or stopped rows do not block `ovrcr shutdown`. The CLI never
+stops an old server automatically and never restores its lost PTYs.
+
+The first start of this binary against an existing `config.toml` imports project
+and workspace records into that path with `.sqlite3` appended, in one transaction.
+Later starts do not import again after the migration commits. The original TOML
+is left unchanged for recovery. If import fails or is interrupted before commit,
+the next server start can retry; it never publishes a partially imported registry.
+
+An older binary on the same `OVRCR_CONFIG` still reads that leftover TOML, which
+does not include projects or workspaces added after the import.
 
 ## Troubleshooting
 
 A server that a command started in the background writes its output to
 `server.log` beside the socket. When startup fails, the command reports the exit
-status and the last lines of that log, which is where a corrupt registry, an
-unusable socket directory, or a damaged task store shows up. Run `ovrcr server` in
-the foreground to watch the same output live.
+status and the last lines of that log, which is where a corrupt or incompatible
+project database, an unusable socket directory, or a damaged task store shows up.
+If `config.toml.sqlite3` contains foreign data or uses an unsupported schema,
+startup and offline project/workspace queries fail without falling back to
+`config.toml`. An empty, uninitialized database left by an interrupted import
+can be retried on startup; offline inspection reads the preserved TOML without
+writing the database. Run `ovrcr server` in the foreground to watch startup output.
 
 Compare a client against a long-running server with `ovrcr --version`, which
 prints both the package and the protocol version.
 
 ## How it works
 
-A single server process owns everything with state: the registry, the Git
-worktrees, the PTYs, and the sessions. Clients — the dashboard and every CLI
+A single server process owns everything with state: the project/workspace
+database, the Git worktrees, the PTYs, and the sessions. Clients — the dashboard and every CLI
 command — connect over a private Unix socket and speak a versioned binary
 protocol. The server is authoritative: a dashboard renders what the server has
 confirmed rather than predicting it, which is why a paused row appears only after
@@ -458,19 +487,21 @@ you ran to verify it, and anything still unverified.
 ## Roadmap and limits
 
 Shipped: split panes, historical scrollback, keyboard copy mode, pause and resume,
-agent activity hooks, context usage accounting, and mouse forwarding.
+agent activity hooks, context usage accounting, mouse forwarding, and retained
+session rows that reopen in a fresh shell after a server restart.
 
 Not shipped, with priorities and dates undecided:
 
-- [ ] Session restore after a server crash or reboot, including saved session
-      metadata, new PTYs, and agent conversation resumption where supported.
+- [ ] Native provider / agent conversation resume.
 - [ ] Multiple dashboards connected to one server. **Deferred.**
 
 Know the current limits before relying on it: one server and one attached
-dashboard, a workload tested at 50 sessions, and live PTYs plus retained history
-held in memory. Detaching and reattaching connects to a surviving PTY, but a server
-crash or reboot loses those sessions — reattaching successfully is never evidence
-of crash recovery.
+dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
+history. Detaching reconnects to a surviving PTY. A server crash loses those
+PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
+and workspace stay in the store so you can reopen a fresh shell in the same row.
+Agent resume is unavailable. Tests simulate boot-identity changes while reading
+native boot IDs; they do not reboot the machine.
 
 ## License
 

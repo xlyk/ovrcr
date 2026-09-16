@@ -727,12 +727,15 @@ pub(super) fn read_initial_selection(
                 request_id: response_id,
                 response:
                     Response::Screen {
-                        session, revision, ..
+                        session,
+                        run,
+                        revision,
+                        ..
                     },
             } if *response_id == request_id => {
                 if dashboard
                     .handshake
-                    .snapshot_matches(request_id, *revision, *session)
+                    .snapshot_matches(request_id, *revision, *session, *run)
                 {
                     screens_seen.insert(*session);
                 }
@@ -792,13 +795,16 @@ mod unread_review_tests {
     fn fixture() -> (Dashboard, SessionSummary) {
         let summary = SessionSummary {
             id: SessionId(1),
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            recovery: None,
             project: "project".into(),
             workspace: "work".into(),
             name: "codex".into(),
             title: None,
             label: "codex".into(),
             pid: Some(1),
-            started_unix_ms: 0,
+            started_unix_ms: Some(0),
             phase: SessionPhase::Running,
             activity: AgentActivity::ResponseReady,
             agent: None,

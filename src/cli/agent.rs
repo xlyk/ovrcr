@@ -3,12 +3,7 @@ use ovrcr::protocol::AgentProvider;
 use std::os::unix::process::ExitStatusExt;
 
 fn provider(name: &str) -> AgentProvider {
-    match name {
-        "codex" => AgentProvider::Codex,
-        "pi" => AgentProvider::Pi,
-        "omp" => AgentProvider::Omp,
-        _ => AgentProvider::Claude,
-    }
+    AgentProvider::from_name(name).expect("clap value_parser accepts known provider names")
 }
 
 pub(super) fn run(command: AgentCommand) -> AppResult<()> {

@@ -1,8 +1,11 @@
 use anyhow::Context;
+use clap::Parser;
 use ovrcr::config::{ProjectRecord, Registry, WorkspaceRecord};
 use ovrcr::freshness;
-use ovrcr::protocol::{BranchRequest, CreateSessionRequest, ErrorCode, Request, Response};
-use ovrcr::session::{SessionId, SessionPhase, SessionSummary};
+use ovrcr::protocol::{
+    AgentProvider, BranchRequest, CreateSessionRequest, ErrorCode, Request, Response, SessionKind,
+};
+use ovrcr::session::{SessionId, SessionSummary};
 use serde_json::json;
 use std::io::Write;
 
@@ -116,12 +119,10 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Relaunch { id } => print_created_terminal(
-            request_without_start(Request::RelaunchSession {
-                session: SessionId(id),
-            })?,
-            json_output,
-        ),
+        TerminalCommand::Reopen { id, ack_stopped } => {
+            reopen_terminal(id, ack_stopped, json_output)
+        }
+        TerminalCommand::AcknowledgeStopped { id } => acknowledge_stopped(id, json_output),
         TerminalCommand::MarkReviewed { id, expected } => mutate_without_start(
             Request::MarkReviewed {
                 session: SessionId(id),
@@ -190,12 +191,16 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Close { id } => mutate_without_start(
-            Request::CloseTerminal {
-                session: SessionId(id),
-            },
-            json_output,
-        ),
+        TerminalCommand::Close { id } => {
+            let session = inventory_session(id)?;
+            mutate_without_start(
+                Request::CloseTerminal {
+                    session: SessionId(id),
+                    expected_run: session.run,
+                },
+                json_output,
+            )
+        }
         TerminalCommand::Kill { id } => mutate_without_start(
             Request::KillSession {
                 session: SessionId(id),
@@ -221,14 +226,91 @@ pub(super) fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()>
     } else {
         args.argv
     };
+    let kind = session_kind_from_argv(&argv);
     let response = request_started(Request::CreateSession(CreateSessionRequest {
         project: args.project,
         workspace: args.workspace,
         name: args.name,
         label: args.label,
         argv,
+        kind,
     }))?;
     print_created_terminal(response, json_output)
+}
+
+fn session_kind_from_argv(argv: &[std::ffi::OsString]) -> SessionKind {
+    if let Some(kind) = managed_wrapper_kind(argv) {
+        return kind;
+    }
+    let Some(name) = argv
+        .first()
+        .and_then(|exe| std::path::Path::new(exe).file_name())
+        .and_then(|name| name.to_str())
+    else {
+        return SessionKind::Terminal;
+    };
+    AgentProvider::from_name(name)
+        .map(|provider| SessionKind::Agent {
+            name: provider.name().to_string(),
+        })
+        .unwrap_or(SessionKind::Terminal)
+}
+
+fn managed_wrapper_kind(argv: &[std::ffi::OsString]) -> Option<SessionKind> {
+    let cli = Cli::try_parse_from(argv).ok()?;
+    match cli.command {
+        Some(Command::Agent {
+            command:
+                AgentCommand::Run {
+                    provider,
+                    legacy_provider,
+                    ..
+                },
+        }) => {
+            let name = provider.or(legacy_provider)?;
+            AgentProvider::from_name(&name).map(|provider| SessionKind::Agent {
+                name: provider.name().to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn reopen_terminal(id: u64, acknowledge_stopped: bool, json_output: bool) -> AppResult<()> {
+    let session = inventory_session(id)?;
+    if matches!(session.kind, SessionKind::Agent { .. }) {
+        return Err(RuntimeError::new(
+            ErrorCode::InvalidRequest,
+            "agent resume is unavailable",
+        ));
+    }
+    print_created_terminal(
+        request_started(Request::ReopenSession {
+            session: SessionId(id),
+            expected_run: session.run,
+            acknowledge_stopped,
+        })?,
+        json_output,
+    )
+}
+
+fn acknowledge_stopped(id: u64, json_output: bool) -> AppResult<()> {
+    let session = inventory_session(id)?;
+    mutate_started(
+        Request::AcknowledgeSessionStopped {
+            session: SessionId(id),
+            expected_run: session.run,
+        },
+        json_output,
+    )
+}
+
+fn inventory_session(id: u64) -> AppResult<SessionSummary> {
+    let (_, sessions) = inspect()?;
+    sessions
+        .into_iter()
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}")))
 }
 
 fn print_created_terminal(response: Response, json_output: bool) -> AppResult<()> {
@@ -273,7 +355,7 @@ fn find_workspace<'a>(
 pub(super) fn inspect_session_context(id: u64) -> AppResult<()> {
     let session = listed_session(id)?;
     let now_unix_ms = now_unix_ms();
-    let exited = matches!(session.phase, SessionPhase::Exited { .. });
+    let exited = !session.phase.is_live();
     print_json(&json!({
         "session": id,
         "context_usage": session.context_usage,
@@ -307,4 +389,88 @@ fn listed_session(id: u64) -> AppResult<SessionSummary> {
         .flat_map(|workspace| workspace.sessions)
         .find(|session| session.id == SessionId(id))
         .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}")))
+}
+
+#[cfg(test)]
+mod session_kind_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn argv(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn managed_wrapper_provider_flag_is_agent() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&[
+                "ovrcr",
+                "agent",
+                "run",
+                "--provider",
+                "claude",
+                "--",
+                "claude"
+            ])),
+            SessionKind::Agent {
+                name: "claude".into()
+            }
+        );
+    }
+
+    #[test]
+    fn managed_wrapper_positional_provider_is_agent() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&[
+                "/usr/local/bin/ovrcr",
+                "agent",
+                "run",
+                "pi",
+                "--",
+                "/usr/bin/pi"
+            ])),
+            SessionKind::Agent { name: "pi".into() }
+        );
+    }
+
+    #[test]
+    fn managed_wrapper_global_flag_before_agent_stays_agent() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&[
+                "ovrcr",
+                "--json",
+                "agent",
+                "run",
+                "--provider",
+                "codex",
+                "--",
+                "codex"
+            ])),
+            SessionKind::Agent {
+                name: "codex".into()
+            }
+        );
+    }
+
+    #[test]
+    fn direct_known_executable_is_agent() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&["claude"])),
+            SessionKind::Agent {
+                name: "claude".into()
+            }
+        );
+    }
+
+    #[test]
+    fn shell_wrapping_agent_run_stays_terminal() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&[
+                "/bin/sh",
+                "-c",
+                "ovrcr agent run --provider claude -- claude"
+            ])),
+            SessionKind::Terminal
+        );
+    }
 }

@@ -72,9 +72,17 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
             code.map_or(Value::Null, |code| json!(code)),
             signal.as_ref().map_or(Value::Null, |signal| json!(signal)),
         ),
+        SessionPhase::Stopped => ("stopped", Value::Null, Value::Null),
+        SessionPhase::Interrupted => ("interrupted", Value::Null, Value::Null),
+    };
+    let kind = match &session.kind {
+        ovrcr::protocol::SessionKind::Terminal => json!("terminal"),
+        ovrcr::protocol::SessionKind::Agent { name } => json!({"agent": name}),
     };
     json!({
         "id": session.id.0,
+        "run": session.run.0,
+        "kind": kind,
         "project": session.project,
         "workspace": session.workspace,
         "name": session.name,
@@ -97,6 +105,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "agent": session.agent,
         "agent_epoch": session.agent_epoch,
         "unread": session.unread,
+        "recovery": session.recovery,
         "reporting_unavailable": reporting_unavailable(session),
         "measurement_age_ms": measurement_age_ms(session, now_unix_ms),
         "context_usage": session.context_usage,
@@ -104,7 +113,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
             freshness::is_stale(
                 sample.received_unix_ms,
                 now_unix_ms,
-                matches!(session.phase, SessionPhase::Exited { .. }),
+                !session.phase.is_live(),
             )
         }),
     })
@@ -113,7 +122,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
 pub(super) fn reporting_unavailable(session: &SessionSummary) -> Option<bool> {
     session.agent.as_ref().map(|agent| {
         agent.health.state == ovrcr::protocol::ReporterHealth::Unavailable
-            || matches!(session.phase, SessionPhase::Exited { .. })
+            || !session.phase.is_live()
     })
 }
 
@@ -210,14 +219,16 @@ pub(super) fn print_workspace(value: &Value) {
 
 pub(super) fn print_terminal_row(value: &Value) {
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         value["id"],
+        value["run"],
+        json_scalar(&value["kind"]),
         value["project"].as_str().unwrap_or_default(),
         value["workspace"].as_str().unwrap_or_default(),
         value["display_name"].as_str().unwrap_or_default(),
         value["label"].as_str().unwrap_or_default(),
         json_scalar(&value["pid"]),
-        value["started_unix_ms"],
+        json_scalar(&value["started_unix_ms"]),
         value["phase"].as_str().unwrap_or_default(),
         value["activity"].as_str().unwrap_or_default(),
         json_scalar(&value["exit_code"]),
@@ -227,6 +238,7 @@ pub(super) fn print_terminal_row(value: &Value) {
         } else {
             ""
         },
+        json_scalar(&value["recovery"]),
     );
 }
 
@@ -313,6 +325,8 @@ pub(super) fn print_legacy_response(response: Response, json_output: bool) -> Ap
                             SessionPhase::Running => "running",
                             SessionPhase::Paused => "paused",
                             SessionPhase::Exited { .. } => "exited",
+                            SessionPhase::Stopped => "stopped",
+                            SessionPhase::Interrupted => "interrupted",
                         };
                         println!(
                             "    session {} {} {phase}",

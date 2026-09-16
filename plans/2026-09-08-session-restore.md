@@ -1,5 +1,7 @@
 # Session Restore After Server Loss Plan
 
+> **Superseded.** [#112](https://github.com/xlyk/ovrcr/issues/112) and [#113](https://github.com/xlyk/ovrcr/issues/113)–[#120](https://github.com/xlyk/ovrcr/issues/120) replace this opt-in, TOML, Claude-only restore design. Keep this file as history. Do not implement it as a competing current plan. The ownership rules that still apply are in #112: never signal a remembered PID, and never present an old process or screen as restored.
+
 > **Execution:** Use `superpowers:subagent-driven-development` or `superpowers:executing-plans`. Each task is one PR against `main`.
 
 **Outcome:** Explicitly saved sessions can be restored after a server crash or reboot by creating new PTYs from durable launch intent, with a Claude Code conversation adapter.

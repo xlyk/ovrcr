@@ -35,11 +35,9 @@ fn workspace(launch: Option<SessionLaunch>) -> Request {
 }
 
 fn title_program() -> SessionLaunch {
-    SessionLaunch {
-        argv: vec!["/bin/sh".into(), "-c".into(),
-            "stty -echo; printf 'TITLE-READY\\n'; while IFS= read -r title; do [ \"$title\" = EXIT ] && exit 0; printf '\\033]2;%s\\007applied:%s\\n' \"$title\" \"$title\"; done".into()],
-        label: Some("owned title fixture".into()),
-    }
+    SessionLaunch { kind: ovrcr_protocol::SessionKind::Terminal, argv: vec!["/bin/sh".into(), "-c".into(),
+        "stty -echo; printf 'TITLE-READY\\n'; while IFS= read -r title; do [ \"$title\" = EXIT ] && exit 0; printf '\\033]2;%s\\007applied:%s\\n' \"$title\" \"$title\"; done".into()],
+    label: Some("owned title fixture".into()), }
 }
 
 fn created(live: &Live, request: Request) -> SessionSummary {
@@ -127,7 +125,7 @@ fn changed(stream: &mut UnixStream, id: SessionId, expected: &str) {
 }
 
 #[test]
-fn automatic_workspace_launch_titles_pin_reset_and_relaunch_keep_identity_and_output() {
+fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_reset_output() {
     let live = fixture();
     let original = created(&live, workspace(Some(title_program())));
     assert_eq!(original.name, WORKSPACE);
@@ -161,15 +159,18 @@ fn automatic_workspace_launch_titles_pin_reset_and_relaunch_keep_identity_and_ou
     );
     changed(&mut dashboard, original.id, "latest application");
     assert_eq!(sessions(&live)[0].name, WORKSPACE);
-    assert!(matches!(
-        live.request(Request::RelaunchSession {
-            session: original.id
-        }),
-        Response::Error {
-            code: ErrorCode::SessionRunning,
-            ..
-        }
-    ));
+    let reused = created(
+        &live,
+        Request::ReopenSession {
+            session: original.id,
+            expected_run: original.run,
+            acknowledge_stopped: false,
+        },
+    );
+    assert_eq!(
+        (reused.id, reused.run, reused.pid),
+        (original.id, original.run, original.pid)
+    );
     assert!(matches!(
         live.request(Request::SetSessionTitle {
             session: original.id,
@@ -193,20 +194,31 @@ fn automatic_workspace_launch_titles_pin_reset_and_relaunch_keep_identity_and_ou
         assert!(Instant::now() < deadline, "session did not exit");
         std::thread::yield_now();
     }
-    let old_output = terminal(&live, original.id);
-    let relaunched = created(
+    assert!(terminal(&live, original.id).contains("TITLE-READY"));
+    let reopened = created(
         &live,
-        Request::RelaunchSession {
+        Request::ReopenSession {
             session: original.id,
+            expected_run: original.run,
+            acknowledge_stopped: true,
         },
     );
-    assert_ne!(relaunched.id, original.id);
-    assert_eq!(relaunched.name, format!("{WORKSPACE}-2"));
-    assert_eq!(relaunched.display_name(), relaunched.name);
-    wait_for(&live, relaunched.id, "TITLE-READY");
-    emit(&live, relaunched.id, "fresh title");
-    assert_eq!(terminal(&live, original.id), old_output);
-    assert_eq!(sessions(&live).len(), 2);
+    assert_eq!(reopened.id, original.id);
+    assert_eq!(reopened.run.0, original.run.0 + 1);
+    assert_eq!(reopened.name, original.name);
+    assert_eq!(reopened.display_name(), "latest application");
+    assert!(!terminal(&live, reopened.id).contains("TITLE-READY"));
+    assert_eq!(
+        live.request(Request::SendTerminal {
+            session: reopened.id,
+            text: r"printf '\033]2;fresh title\007'; printf 'SHELL_%s\n' TITLE_SET".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    wait_for(&live, reopened.id, "SHELL_TITLE_SET");
+    changed(&mut dashboard, reopened.id, "fresh title");
+    assert_eq!(sessions(&live).len(), 1);
 }
 
 #[test]
@@ -226,6 +238,7 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
     let new = |name: &str| {
         let launch = title_program();
         Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: PROJECT.into(),
             workspace: WORKSPACE.into(),
             name: name.into(),
@@ -268,27 +281,38 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
         assert!(Instant::now() < deadline, "explicit session did not exit");
         std::thread::yield_now();
     }
-    let relaunched = created(
+    let reopened = created(
         &live,
-        Request::RelaunchSession {
+        Request::ReopenSession {
             session: explicit.id,
+            expected_run: explicit.run,
+            acknowledge_stopped: true,
         },
     );
-    assert_eq!(relaunched.name, format!("{WORKSPACE}-3"));
+    assert_eq!(reopened.id, explicit.id);
+    assert_eq!(reopened.run.0, explicit.run.0 + 1);
+    assert_eq!(reopened.name, explicit.name);
     assert_eq!(
-        relaunched.display_name(),
+        reopened.display_name(),
         WORKSPACE,
-        "relaunch keeps pinned title"
+        "reopen keeps pinned title"
     );
-    wait_for(&live, relaunched.id, "TITLE-READY");
-    emit(&live, relaunched.id, "still pinned");
+    assert_eq!(
+        live.request(Request::SendTerminal {
+            session: reopened.id,
+            text: r"printf '\033]2;still pinned\007'; printf 'PIN_%s\n' KEPT".into(),
+            submit: true,
+        }),
+        Response::Ok
+    );
+    wait_for(&live, reopened.id, "PIN_KEPT");
     assert_eq!(
         sessions(&live)
             .into_iter()
-            .find(|session| session.id == relaunched.id)
+            .find(|session| session.id == reopened.id)
             .unwrap()
             .display_name(),
-        WORKSPACE
+        WORKSPACE,
     );
 }
 
@@ -296,6 +320,7 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
 fn automatic_workspace_launch_failure_retains_worktree_and_retry_uses_existing_workspace() {
     let live = fixture();
     let response = live.request(workspace(Some(SessionLaunch {
+        kind: ovrcr_protocol::SessionKind::Terminal,
         argv: vec!["/does-not-exist/ovrcr-owned-test".into()],
         label: None,
     })));
@@ -330,6 +355,7 @@ fn automatic_workspace_launch_failure_retains_worktree_and_retry_uses_existing_w
     let retry = created(
         &live,
         Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: PROJECT.into(),
             workspace: WORKSPACE.into(),
             name: String::new(),
@@ -340,8 +366,10 @@ fn automatic_workspace_launch_failure_retains_worktree_and_retry_uses_existing_w
     wait_for(&live, retry.id, "TITLE-READY");
     assert_eq!(retry.name, WORKSPACE);
     assert!(matches!(
-        live.request(Request::RelaunchSession {
-            session: SessionId(u64::MAX)
+        live.request(Request::ReopenSession {
+            session: SessionId(u64::MAX),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+            acknowledge_stopped: false,
         }),
         Response::Error {
             code: ErrorCode::NotFound,

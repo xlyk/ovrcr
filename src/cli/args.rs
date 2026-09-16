@@ -203,8 +203,14 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         automatic: bool,
     },
-    /// Launch an exited session's command again, retaining the old output.
-    Relaunch {
+    /// Reopen in a fresh shell. Natural exit does not prove background jobs stopped; confirm with --ack-stopped.
+    Reopen {
+        id: u64,
+        #[arg(long)]
+        ack_stopped: bool,
+    },
+    /// Confirm old processes stopped without launching a session. Required after unverified or natural exits.
+    AcknowledgeStopped {
         id: u64,
     },
     List {
@@ -380,11 +386,13 @@ mod launch_cli_tests {
     }
 
     #[test]
-    fn title_and_relaunch_commands_parse_without_ambiguous_reset() {
+    fn title_and_reopen_commands_parse_without_ambiguous_reset() {
         for args in [
             vec!["ovrcr", "terminal", "rename", "7", "Review login"],
             vec!["ovrcr", "terminal", "rename", "7", "--automatic"],
-            vec!["ovrcr", "terminal", "relaunch", "7"],
+            vec!["ovrcr", "terminal", "reopen", "7"],
+            vec!["ovrcr", "terminal", "reopen", "7", "--ack-stopped"],
+            vec!["ovrcr", "terminal", "acknowledge-stopped", "7"],
         ] {
             assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
         }
@@ -393,5 +401,6 @@ mod launch_cli_tests {
             Cli::try_parse_from(["ovrcr", "terminal", "rename", "7", "Pinned", "--automatic",])
                 .is_err()
         );
+        assert!(Cli::try_parse_from(["ovrcr", "terminal", "relaunch", "7"]).is_err());
     }
 }

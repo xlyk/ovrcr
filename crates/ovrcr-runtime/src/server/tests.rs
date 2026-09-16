@@ -21,6 +21,7 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
     for _ in 0..RAW_EVENT_QUEUE_CAPACITY {
         event_sender
             .try_send(SessionEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 id: SessionId(1),
                 bytes: vec![0; 8192],
             })
@@ -28,6 +29,7 @@ fn raw_event_and_dispatch_queues_reject_the_65th_item() {
     }
     assert!(matches!(
         event_sender.try_send(SessionEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             id: SessionId(1),
             bytes: vec![0; 8192],
         }),
@@ -85,6 +87,7 @@ fn split_delivery_snapshots_precede_increments() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session,
                     revision: 1,
                     bytes: b"old".to_vec(),
@@ -98,10 +101,12 @@ fn split_delivery_snapshots_precede_increments() {
         revision: 2,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: left,
                 size: TerminalSize { rows: 36, cols: 39 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: right,
                 size: TerminalSize { rows: 36, cols: 40 },
             },
@@ -112,6 +117,7 @@ fn split_delivery_snapshots_precede_increments() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: right,
                 revision: 2,
                 bytes: b"new".to_vec(),
@@ -146,6 +152,7 @@ fn split_delivery_snapshots_precede_increments() {
         sink.next(),
         Some(DashboardDelivery::Message(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 revision: 2,
                 bytes,
@@ -178,6 +185,7 @@ fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: SessionId(1),
                     revision: 1,
                     bytes: vec![b'x'; 32],
@@ -190,6 +198,7 @@ fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: SessionId(1),
                 revision: 1,
                 bytes: vec![b'y'; 32],
@@ -204,10 +213,15 @@ fn dashboard_snapshot_counts_messages_terminal_and_dirty_separately() {
     assert_eq!(snapshot.terminal_items, 0);
     assert!(snapshot.pending_bytes <= ovrcr_protocol::MAX_FRAME_BYTES);
     assert_eq!(snapshot.rejected, 0);
-    let DashboardDelivery::Dirty { revision, session } = sink.next().unwrap() else {
+    let DashboardDelivery::Dirty {
+        run: ovrcr_protocol::SessionRunId(1),
+        revision,
+        session,
+    } = sink.next().unwrap()
+    else {
         panic!("expected dirty delivery");
     };
-    sink.dirty_sent(revision, session);
+    sink.dirty_sent(revision, session, ovrcr_protocol::SessionRunId(1));
     assert!(sink.replace_view(
         &DashboardView {
             revision: 2,
@@ -246,6 +260,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session,
                     revision: 1,
                     bytes: bytes.to_vec(),
@@ -258,6 +273,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first,
                 revision: 1,
                 bytes: b"first-replaced".to_vec(),
@@ -269,6 +285,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second,
                 revision: 1,
                 bytes: b"second-replaced".to_vec(),
@@ -280,6 +297,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
     assert_eq!(
         sink.enqueue(DashboardOutbound {
             message: ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second,
                 revision: 1,
                 bytes: b"second-dirty".to_vec(),
@@ -304,10 +322,12 @@ fn split_delivery_dirty_revisions_are_isolated() {
         revision: 2,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
@@ -337,6 +357,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
     assert!(matches!(
         initial_messages[DASHBOARD_QUEUE - 3],
         ServerMessage::Event(ServerEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             session: SessionId(3),
             revision: 1,
             ref bytes,
@@ -357,7 +378,12 @@ fn split_delivery_dirty_revisions_are_isolated() {
     );
     let mut old_dirty = Vec::new();
     for _ in 0..2 {
-        let Some(DashboardDelivery::Dirty { revision, session }) = sink.next() else {
+        let Some(DashboardDelivery::Dirty {
+            run: ovrcr_protocol::SessionRunId(1),
+            revision,
+            session,
+        }) = sink.next()
+        else {
             panic!("expected old dirty delivery");
         };
         old_dirty.push((revision, session));
@@ -370,7 +396,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         vec![b"first-screen".to_vec(), b"second-screen".to_vec()],
     ));
     for (revision, session) in old_dirty {
-        sink.dirty_sent(revision, session);
+        sink.dirty_sent(revision, session, ovrcr_protocol::SessionRunId(1));
     }
     for _ in 0..(DASHBOARD_QUEUE - 3) {
         assert_eq!(
@@ -388,6 +414,7 @@ fn split_delivery_dirty_revisions_are_isolated() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session,
                     revision: 2,
                     bytes: b"new".to_vec(),
@@ -400,7 +427,9 @@ fn split_delivery_dirty_revisions_are_isolated() {
     assert!(
         sink.dirty_keys()
             .into_iter()
-            .all(|(revision, session)| revision == 2 && [first, second].contains(&session))
+            .all(|(revision, session, run)| revision == 2
+                && run == ovrcr_protocol::SessionRunId(1)
+                && [first, second].contains(&session))
     );
     assert_eq!(sink.dirty_keys().len(), 2);
     let mut refreshed_messages = Vec::new();
@@ -452,7 +481,12 @@ fn split_delivery_dirty_revisions_are_isolated() {
     }));
     let mut refreshed_dirty = Vec::new();
     for _ in 0..2 {
-        let Some(DashboardDelivery::Dirty { revision, session }) = sink.next() else {
+        let Some(DashboardDelivery::Dirty {
+            run: ovrcr_protocol::SessionRunId(1),
+            revision,
+            session,
+        }) = sink.next()
+        else {
             panic!("expected refreshed dirty delivery");
         };
         refreshed_dirty.push((revision, session));
@@ -473,7 +507,7 @@ fn split_delivery_rejects_stale_owner_and_input() {
         Some(old_sink.clone()),
         Some((old_owner.clone(), server_stream)),
     );
-    state.sessions.lock().unwrap().insert(id, session.clone());
+    register_test_session(&state, id, session.clone());
     let (new_server, _new_client) = UnixStream::pair().unwrap();
     let new_sink = DashboardSink::new();
     let new_owner = Arc::new(());
@@ -483,6 +517,7 @@ fn split_delivery_rejects_stale_owner_and_input() {
     let view = DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: id,
             size: TerminalSize { rows: 24, cols: 80 },
         }],
@@ -509,6 +544,7 @@ fn split_delivery_rejects_stale_owner_and_input() {
             &state,
             &mut role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: id,
                 bytes: b"stale".to_vec(),
             },
@@ -564,19 +600,20 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(focused_id, focused.clone()), (hidden_id, hidden.clone())]);
+    extend_test_sessions(
+        &state,
+        [(focused_id, focused.clone()), (hidden_id, hidden.clone())],
+    );
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 7,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: focused_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: hidden_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
@@ -589,6 +626,7 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
             &state,
             &mut role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: hidden_id,
                 bytes: b"hidden".to_vec(),
             },
@@ -605,6 +643,7 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
             &state,
             &mut role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: SessionId(999),
                 bytes: b"unknown".to_vec(),
             },
@@ -622,6 +661,7 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
             &state,
             &mut control_role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: focused_id,
                 bytes: b"control".to_vec(),
             },
@@ -642,6 +682,7 @@ fn current_owner_rejects_hidden_input_and_unknown_view_session() {
             view: DashboardView {
                 revision: 8,
                 panes: vec![PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: SessionId(999),
                     size: TerminalSize { rows: 24, cols: 80 },
                 }],
@@ -685,7 +726,7 @@ fn oversized_set_view_returns_invalid_request_without_resizing() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state.sessions.lock().unwrap().insert(id, session.clone());
+    register_test_session(&state, id, session.clone());
     let initial_pty_size = session.master_size().unwrap();
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
@@ -698,6 +739,7 @@ fn oversized_set_view_returns_invalid_request_without_resizing() {
             view: DashboardView {
                 revision: 1,
                 panes: vec![PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: id,
                     size: TerminalSize {
                         rows: 5000,
@@ -746,19 +788,20 @@ fn resize_is_rejected_for_a_split_view() {
     let sink = DashboardSink::new();
     let (state, _dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 9,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first_id,
                 size: TerminalSize { rows: 36, cols: 39 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second_id,
                 size: TerminalSize { rows: 36, cols: 40 },
             },
@@ -840,11 +883,10 @@ fn set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     // Two panes publish two snapshots and one `Ok`; leaving room for two means
     // the view cannot be published without evicting a queued lifecycle frame.
     let lifecycle = ServerMessage::Event(ServerEvent::HierarchyChanged(state.hierarchy()));
@@ -869,10 +911,12 @@ fn set_view_overflow_disconnects_instead_of_dropping_lifecycle_frames() {
                 revision: 1,
                 panes: vec![
                     PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: first_id,
                         size: TerminalSize { rows: 36, cols: 39 },
                     },
                     PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: second_id,
                         size: TerminalSize { rows: 36, cols: 40 },
                     },
@@ -923,21 +967,22 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     let first_size = TerminalSize { rows: 30, cols: 90 };
     let second_size = TerminalSize { rows: 31, cols: 91 };
     let committed = DashboardView {
         revision: 4,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first_id,
                 size: first_size,
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second_id,
                 size: second_size,
             },
@@ -973,10 +1018,12 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
         revision: 5,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first_id,
                 size: TerminalSize { rows: 32, cols: 92 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: SessionId(999),
                 size: TerminalSize { rows: 33, cols: 93 },
             },
@@ -1022,10 +1069,12 @@ fn invalid_view_preserves_populated_geometry_and_pty_sizes() {
         revision: 3,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first_id,
                 size: TerminalSize { rows: 34, cols: 94 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second_id,
                 size: TerminalSize { rows: 35, cols: 95 },
             },
@@ -1082,7 +1131,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink), Some((owner.clone(), server_stream)));
-    state.sessions.lock().unwrap().insert(id, session.clone());
+    register_test_session(&state, id, session.clone());
     let snapshot = state
         .dashboard
         .snapshot()
@@ -1101,6 +1150,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
     let replacement_view = DashboardView {
         revision: 9,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: id,
             size: TerminalSize { rows: 27, cols: 83 },
         }],
@@ -1152,6 +1202,7 @@ fn view_publication_aborts_when_owner_disconnects_during_resize() {
             view: DashboardView {
                 revision: 1,
                 panes: vec![PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: id,
                     size: TerminalSize { rows: 25, cols: 81 },
                 }],
@@ -1198,7 +1249,7 @@ fn set_view_drops_a_session_removed_before_publication() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state.sessions.lock().unwrap().insert(id, session.clone());
+    register_test_session(&state, id, session.clone());
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline
         && !matches!(session.summary().phase, SessionPhase::Exited { .. })
@@ -1213,11 +1264,14 @@ fn set_view_drops_a_session_removed_before_publication() {
     // resize seam is the window a slow PTY leaves open for a concurrent
     // RemoveSession on a connection thread.
     let hook_state = Arc::downgrade(&state);
+    let run = session.run();
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |_, _| {
-        hook_state
+        let state = hook_state
             .upgrade()
-            .expect("server state outlives the resize hook")
-            .remove_session(id)
+            .expect("server state outlives the resize hook");
+        state
+            .acknowledge_session_stopped(id, run)
+            .and_then(|()| state.remove_session(id))
     }));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
@@ -1230,6 +1284,7 @@ fn set_view_drops_a_session_removed_before_publication() {
             view: DashboardView {
                 revision: 1,
                 panes: vec![PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: id,
                     size: TerminalSize { rows: 25, cols: 81 },
                 }],
@@ -1260,6 +1315,7 @@ fn set_view_drops_a_session_removed_before_publication() {
             &state,
             &mut role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: id,
                 bytes: b"stale".to_vec(),
             },
@@ -1277,6 +1333,123 @@ fn set_view_drops_a_session_removed_before_publication() {
 }
 
 #[test]
+fn set_view_drops_a_retained_session_removed_before_publication() {
+    let retained_id = SessionId(67);
+    let live_id = SessionId(68);
+    let (_retained_cwd, retained_session, retained_receiver) =
+        spawn_exiting_test_session(retained_id);
+    let retained_events =
+        apply_test_session_events(Arc::clone(&retained_session), retained_receiver);
+    let (_live_cwd, live, live_receiver) = spawn_live_test_session(live_id);
+    let live_events = apply_test_session_events(Arc::clone(&live), live_receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(
+            retained_session.summary().phase,
+            SessionPhase::Exited { .. }
+        )
+    {
+        thread::yield_now();
+    }
+    assert!(matches!(
+        retained_session.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    state
+        .retained
+        .lock()
+        .register_fixture(&retained_session)
+        .unwrap();
+    register_test_session(&state, live_id, live.clone());
+    // Remove the focused retained row between pane resolution and publication:
+    // the live pane's resize seam is the window a slow PTY leaves open for a
+    // concurrent RemoveSession on a connection thread.
+    let hook_state = Arc::downgrade(&state);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        let state = hook_state
+            .upgrade()
+            .expect("server state outlives the resize hook");
+        state
+            .remove_session(retained_id)
+            .and_then(|()| session.resize(size))
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 84,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![
+                    PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
+                        session: retained_id,
+                        size: TerminalSize { rows: 25, cols: 81 },
+                    },
+                    PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
+                        session: live_id,
+                        size: TerminalSize { rows: 26, cols: 82 },
+                    },
+                ],
+                focused: Some(retained_id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Response {
+            request_id: 84,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            },
+        }
+    ));
+    assert!(sink.queue.lock().unwrap().messages.is_empty());
+    assert!(state.dashboard.view().is_none());
+    assert!(
+        state.retained.lock().get(retained_id).is_none(),
+        "removed retained row must stay deleted"
+    );
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
+                session: retained_id,
+                bytes: b"stale".to_vec(),
+            },
+            85,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&live, live_events).unwrap();
+    cleanup_test_session(&retained_session, retained_events).unwrap();
+}
+
+#[test]
 fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
     let focused_id = SessionId(65);
     let removed_id = SessionId(66);
@@ -1289,11 +1462,10 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(focused_id, focused.clone()), (removed_id, removed.clone())]);
+    extend_test_sessions(
+        &state,
+        [(focused_id, focused.clone()), (removed_id, removed.clone())],
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline
         && !matches!(removed.summary().phase, SessionPhase::Exited { .. })
@@ -1307,19 +1479,23 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let calls_for_hook = Arc::clone(&calls);
     let hook_state = Arc::downgrade(&state);
+    let removed_run = removed.run();
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
         if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             session.resize(size)
         } else {
-            hook_state
+            let state = hook_state
                 .upgrade()
-                .expect("server state outlives the resize hook")
-                .remove_session(removed_id)
+                .expect("server state outlives the resize hook");
+            state
+                .acknowledge_session_stopped(removed_id, removed_run)
+                .and_then(|()| state.remove_session(removed_id))
         }
     }));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
     let focused_pane = PaneTarget {
+        run: ovrcr_protocol::SessionRunId(1),
         session: focused_id,
         size: TerminalSize { rows: 25, cols: 81 },
     };
@@ -1334,6 +1510,7 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
                 panes: vec![
                     focused_pane.clone(),
                     PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: removed_id,
                         size: TerminalSize { rows: 26, cols: 82 },
                     },
@@ -1483,19 +1660,20 @@ fn view_revision_floor_survives_exit_and_removal() {
     let sink = DashboardSink::new();
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(exited_id, exited.clone()), (survivor_id, survivor.clone())]);
+    extend_test_sessions(
+        &state,
+        [(exited_id, exited.clone()), (survivor_id, survivor.clone())],
+    );
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 10,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: exited_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: survivor_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
@@ -1579,10 +1757,12 @@ fn view_revision_floor_survives_exit_and_removal() {
             revision: 10,
             panes: vec![
                 PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: exited_id,
                     size: TerminalSize { rows: 24, cols: 80 },
                 },
                 PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: survivor_id,
                     size: TerminalSize { rows: 24, cols: 80 },
                 },
@@ -1596,6 +1776,7 @@ fn view_revision_floor_survives_exit_and_removal() {
             &state,
             &mut role,
             Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: exited_id,
                 bytes: b"stale".to_vec(),
             },
@@ -1611,6 +1792,7 @@ fn view_revision_floor_survives_exit_and_removal() {
     state
         .dispatch
         .send(DispatchMessage::Session(SessionEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             id: survivor_id,
             bytes: b"SURVIVOR".to_vec(),
         }))
@@ -1620,7 +1802,7 @@ fn view_revision_floor_survives_exit_and_removal() {
         && !sink.queue.lock().unwrap().messages.iter().any(|outbound| {
             matches!(
                 &outbound.message,
-                ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+                ServerMessage::Event(ServerEvent::Output { run: ovrcr_protocol::SessionRunId(1), session, revision, bytes })
                     if *session == survivor_id && *revision == 10 && bytes == b"SURVIVOR"
             )
         })
@@ -1630,7 +1812,7 @@ fn view_revision_floor_survives_exit_and_removal() {
     assert!(sink.queue.lock().unwrap().messages.iter().any(|outbound| {
         matches!(
             &outbound.message,
-            ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+            ServerMessage::Event(ServerEvent::Output { run: ovrcr_protocol::SessionRunId(1), session, revision, bytes })
                 if *session == survivor_id && *revision == 10 && bytes == b"SURVIVOR"
         )
     }));
@@ -1647,6 +1829,9 @@ fn view_revision_floor_survives_exit_and_removal() {
         state.dashboard.view().as_ref().map(|view| view.revision),
         Some(10)
     );
+    state
+        .acknowledge_session_stopped(exited_id, exited.run())
+        .unwrap();
     state.remove_session(exited_id).unwrap();
     let after_removal = state.dashboard.view().unwrap();
     assert_eq!(after_removal.revision, 10);
@@ -1687,7 +1872,9 @@ fn view_revision_floor_survives_exit_and_removal() {
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
     exited_thread.join().unwrap();
-    exited.terminate(Duration::from_secs(2)).unwrap();
+    if let Err(error) = exited.terminate(Duration::from_secs(2)) {
+        assert!(error.is::<crate::session::AlreadyExited>(), "{error:#}");
+    }
 }
 
 #[test]
@@ -1703,19 +1890,20 @@ fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
     let old_owner = Arc::new(());
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(old_sink), Some((old_owner.clone(), old_server)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 10,
         panes: vec![
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: first_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
             PaneTarget {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: second_id,
                 size: TerminalSize { rows: 24, cols: 80 },
             },
@@ -1760,10 +1948,12 @@ fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
                 revision: 11,
                 panes: vec![
                     PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: first_id,
                         size: TerminalSize { rows: 25, cols: 81 },
                     },
                     PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: second_id,
                         size: TerminalSize { rows: 26, cols: 82 },
                     },
@@ -1797,6 +1987,7 @@ fn partial_resize_failure_does_not_restore_revision_after_owner_replacement() {
             view: DashboardView {
                 revision: 1,
                 panes: vec![PaneTarget {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: first_id,
                     size: TerminalSize { rows: 25, cols: 81 },
                 }],
@@ -1835,11 +2026,10 @@ fn partial_resize_connection_delivers_error_before_owner_close() {
     let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
     let second_events = apply_test_session_events(Arc::clone(&second), second_events);
     let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     let first_size = TerminalSize { rows: 25, cols: 81 };
     let second_size = TerminalSize { rows: 26, cols: 82 };
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1881,10 +2071,12 @@ fn partial_resize_connection_delivers_error_before_owner_close() {
                     revision: 1,
                     panes: vec![
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: first_id,
                             size: first_size,
                         },
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: second_id,
                             size: second_size,
                         },
@@ -1934,11 +2126,10 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
     let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
     let second_events = apply_test_session_events(Arc::clone(&second), second_events);
     let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let calls_for_hook = Arc::clone(&calls);
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
@@ -1997,6 +2188,7 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: first_id,
                     revision,
                     bytes: vec![b'x'; ovrcr_protocol::MAX_FRAME_BYTES - 128],
@@ -2019,10 +2211,12 @@ fn partial_resize_blocked_writer_times_out_and_closes_owner() {
                     revision: 1,
                     panes: vec![
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: first_id,
                             size: TerminalSize { rows: 25, cols: 81 },
                         },
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: second_id,
                             size: TerminalSize { rows: 26, cols: 82 },
                         },
@@ -2058,11 +2252,10 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
     let (_second_cwd, second, second_events) = spawn_live_test_session(second_id);
     let second_events = apply_test_session_events(Arc::clone(&second), second_events);
     let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .extend([(first_id, first.clone()), (second_id, second.clone())]);
+    extend_test_sessions(
+        &state,
+        [(first_id, first.clone()), (second_id, second.clone())],
+    );
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let calls_for_hook = Arc::clone(&calls);
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
@@ -2137,10 +2330,12 @@ fn terminal_frame_survives_a_concurrent_lifecycle_event() {
                     revision: 1,
                     panes: vec![
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: first_id,
                             size: TerminalSize { rows: 25, cols: 81 },
                         },
                         PaneTarget {
+                            run: ovrcr_protocol::SessionRunId(1),
                             session: second_id,
                             size: TerminalSize { rows: 26, cols: 82 },
                         },
@@ -2303,6 +2498,7 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
         test_state_with_socket(socket.clone(), registry);
     let summary = state
         .create_session(ovrcr_protocol::CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),
             workspace: "workspace".into(),
             name: "relative".into(),
@@ -2352,12 +2548,16 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
     );
     session.wait_until_exited(Duration::from_secs(2)).unwrap();
     event_thread.join().unwrap();
+    state
+        .acknowledge_session_stopped(summary.id, session.run())
+        .unwrap();
     state.remove_session(summary.id).unwrap();
 
     drop(listener);
     std::fs::remove_file(&socket).unwrap();
     let error = state
         .create_session(ovrcr_protocol::CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),
             workspace: "workspace".into(),
             name: "missing".into(),
@@ -2403,7 +2603,7 @@ fn test_state_with_dispatch(
             registry: Mutex::new(Registry::default()),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
-            next_session_id: AtomicU64::new(1),
+            retained: parking_lot::Mutex::new(SessionStore::in_memory()),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2444,7 +2644,7 @@ fn test_state_with_socket(
             registry: Mutex::new(registry),
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
-            next_session_id: AtomicU64::new(1),
+            retained: parking_lot::Mutex::new(SessionStore::in_memory()),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2485,9 +2685,11 @@ fn spawn_live_test_session_with_hook(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
-            name: "live".into(),
+            name: format!("live-{}", id.0),
             label: "sh".into(),
             cwd: cwd.path().to_path_buf(),
             argv: vec![
@@ -2517,9 +2719,11 @@ fn spawn_exiting_test_session(
     let session = Session::spawn_registered(
         id,
         SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
-            name: "exiting".into(),
+            name: format!("exiting-{}", id.0),
             label: "sh".into(),
             cwd: cwd.path().to_path_buf(),
             argv: vec!["sh".into(), "-c".into(), "printf FINAL; exit 0".into()],
@@ -2603,11 +2807,7 @@ fn saturated_control_state(
     let identity = Arc::new(());
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink), Some((identity, server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(session));
+    register_test_session(&state, id, Arc::clone(session));
     for _ in 0..RAW_DISPATCH_QUEUE_CAPACITY {
         state.dispatch.try_send(DispatchMessage::Stop).unwrap();
     }
@@ -2616,7 +2816,12 @@ fn saturated_control_state(
 
 fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<()> {
     let _ = session.set_paused(false);
-    let termination = session.terminate(Duration::from_secs(2));
+    let termination = match session.terminate(Duration::from_secs(2)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.is::<crate::session::AlreadyExited>() => Ok(()),
+        Err(error) => Err(error),
+    };
+
     if termination.is_err() {
         events.cancel();
     }
@@ -2717,16 +2922,8 @@ fn history_owner_and_token_isolation() {
         Some(old_sink.clone()),
         Some((old_owner.clone(), old_server)),
     );
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(&session));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(switched_id, Arc::clone(&switched_session));
+    register_test_session(&state, id, Arc::clone(&session));
+    register_test_session(&state, switched_id, Arc::clone(&switched_session));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
 
@@ -2741,6 +2938,7 @@ fn history_owner_and_token_isolation() {
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: id,
             size: TerminalSize { rows: 24, cols: 80 },
         }],
@@ -2755,6 +2953,7 @@ fn history_owner_and_token_isolation() {
                 view: DashboardView {
                     revision: 2,
                     panes: vec![PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: id,
                         size: TerminalSize { rows: 24, cols: 80 },
                     }],
@@ -2807,6 +3006,7 @@ fn history_owner_and_token_isolation() {
                 view: DashboardView {
                     revision: 3,
                     panes: vec![PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
                         session: switched_id,
                         size: TerminalSize { rows: 24, cols: 80 },
                     }],
@@ -3079,11 +3279,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
         Some(race_sink.clone()),
         Some((race_owner.clone(), race_server)),
     );
-    race_state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(race_id, Arc::clone(&race_session));
+    register_test_session(&race_state, race_id, Arc::clone(&race_session));
     let (capture_entered, capture_entered_result) = mpsc::sync_channel(1);
     let (capture_release, capture_release_result) = mpsc::sync_channel(1);
     let capture_release_result = Arc::new(Mutex::new(capture_release_result));
@@ -3123,6 +3319,9 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let removal_session = Arc::clone(&race_session);
     let removal = thread::spawn(move || {
         removal_session.terminate(Duration::from_secs(2)).unwrap();
+        removal_state
+            .acknowledge_session_stopped(race_id, removal_session.run())
+            .unwrap();
         removal_state.remove_session(race_id).unwrap();
         removed.send(()).unwrap();
     });
@@ -3210,11 +3409,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     }
     let (_page_cwd, page_session, page_receiver) = spawn_live_test_session(SessionId(12));
     let page_events = apply_test_session_events(Arc::clone(&page_session), page_receiver);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(SessionId(12), Arc::clone(&page_session));
+    register_test_session(&state, SessionId(12), Arc::clone(&page_session));
     let (parser_holder_acquired_sender, parser_holder_acquired) = mpsc::sync_channel(1);
     let (parser_holder_release, parser_holder_release_result) = mpsc::sync_channel(1);
     let parser_holder_session = Arc::clone(&page_session);
@@ -3265,10 +3460,13 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let disconnected_before_release = completion_before_release && !state.dashboard.is_claimed();
     let _ = parser_holder_release.send(());
     let parser_holder_joined = parser_holder.join().is_ok();
+    let cleanup_result = cleanup_test_session(&page_session, page_events);
+    let acknowledged = state
+        .acknowledge_session_stopped(SessionId(12), page_session.run())
+        .is_ok();
+    let removed = state.remove_session(SessionId(12)).is_ok();
     let dispatcher_stopped = state.dispatch.send(DispatchMessage::Stop).is_ok();
     let dispatcher_joined = dispatcher.join().is_ok();
-    let cleanup_result = cleanup_test_session(&page_session, page_events);
-    let removed = state.remove_session(SessionId(12)).is_ok();
     assert!(parser_was_held);
     assert!(queue_filled);
     assert!(page_sent);
@@ -3278,6 +3476,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     assert!(dispatcher_stopped);
     assert!(dispatcher_joined);
     assert!(cleanup_result.is_ok());
+    assert!(acknowledged);
     assert!(removed);
 }
 
@@ -3291,14 +3490,11 @@ fn history_capture_orders_with_output() {
     let owner = Arc::new(());
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(&session));
+    register_test_session(&state, id, Arc::clone(&session));
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: id,
             size: TerminalSize { rows: 24, cols: 80 },
         }],
@@ -3310,6 +3506,7 @@ fn history_capture_orders_with_output() {
     state
         .dispatch
         .send(DispatchMessage::Session(SessionEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             id,
             bytes: b"A".to_vec(),
         }))
@@ -3318,6 +3515,7 @@ fn history_capture_orders_with_output() {
     state
         .dispatch
         .send(DispatchMessage::Session(SessionEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             id,
             bytes: b"B".to_vec(),
         }))
@@ -3342,6 +3540,7 @@ fn history_capture_orders_with_output() {
     assert!(matches!(
         &messages[0],
         ServerMessage::Event(ServerEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             session,
             revision: _,
             bytes,
@@ -3358,6 +3557,7 @@ fn history_capture_orders_with_output() {
     assert!(matches!(
         &messages[2],
         ServerMessage::Event(ServerEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             session,
             revision: _,
             bytes,
@@ -3410,6 +3610,7 @@ fn dashboard_overflow_closes_affected_connection() {
     state
         .dashboard
         .try_send(ServerMessage::Event(ServerEvent::ScreenDirty {
+            run: ovrcr_protocol::SessionRunId(1),
             session: SessionId(2),
             revision: 0,
         }));
@@ -3428,6 +3629,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
         assert_eq!(
             sink.enqueue(DashboardOutbound {
                 message: ServerMessage::Event(ServerEvent::Output {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: SessionId(2),
                     revision: 7,
                     bytes: b"x".to_vec(),
@@ -3453,6 +3655,7 @@ fn pending_output_does_not_evict_dashboard_on_lifecycle_event() {
     assert!(matches!(
         sink.next(),
         Some(DashboardDelivery::Dirty {
+            run: ovrcr_protocol::SessionRunId(1),
             revision: 7,
             session: SessionId(2)
         })
@@ -3818,11 +4021,7 @@ fn session_refresh_dispatch_failures_disconnect_without_blocking() {
     let identity = Arc::new(());
     let (state, dispatch_receiver) =
         test_state_with_dispatch(Some(sink), Some((identity, server_stream)));
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(&session));
+    register_test_session(&state, id, Arc::clone(&session));
     drop(dispatch_receiver);
     let error = state.set_session_paused(id, true).unwrap_err();
     let pause_preserved = matches!(session.summary().phase, SessionPhase::Paused);
@@ -3843,7 +4042,7 @@ fn kill_and_close_refresh_failures_keep_exited_records() {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         let error = if close {
-            state.close_terminal(id, Duration::from_millis(250))
+            state.close_terminal(id, session.run(), Duration::from_millis(250))
         } else {
             state.kill_session(id, Duration::from_millis(250))
         }
@@ -3903,6 +4102,8 @@ fn control_and_refresh_failures_preserve_both_causes() {
         let session = Session::spawn_registered(
             id,
             SessionSpec {
+                run: ovrcr_protocol::SessionRunId(1),
+                kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "exited".into(),
@@ -3922,11 +4123,7 @@ fn control_and_refresh_failures_preserve_both_causes() {
     session.wait_until_exited(Duration::from_secs(2)).unwrap();
     cleanup_test_session(&session, events).unwrap();
     let state = test_state(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(&session));
+    register_test_session(&state, id, Arc::clone(&session));
     let error = state.set_session_paused(id, true).unwrap_err();
     let lifecycle = error.downcast_ref::<LifecycleFailure>().unwrap();
     assert_eq!(lifecycle.code, ErrorCode::Conflict);
@@ -4247,6 +4444,8 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
     let session = Session::spawn_registered(
         SessionId(7),
         crate::session::SessionSpec {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
             workspace: "w".into(),
             name: "fault".into(),
@@ -4275,11 +4474,7 @@ fn shutdown_termination_failure_is_partial_and_server_remains_available() {
         }
     });
     let state = test_state(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(SessionId(7), Arc::clone(&session));
+    register_test_session(&state, SessionId(7), Arc::clone(&session));
     let response = handle_shutdown(&state, true, |_| {
         Err(anyhow::anyhow!("controlled ownership failure"))
     });
@@ -4325,6 +4520,8 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
     let session = Session::spawn_with_test_hooks(
         SessionId(71),
         SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "kill-failure".into(),
@@ -4365,11 +4562,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
         }
     });
     let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(SessionId(71), Arc::clone(&session));
+    register_test_session(&state, SessionId(71), Arc::clone(&session));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
     let mut cleanup = KillFailureCleanup::new(
@@ -4379,6 +4572,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
         original_pgid,
         waiter,
         dispatcher,
+        true,
     );
     let deadline = Instant::now() + Duration::from_secs(2);
     while !String::from_utf8_lossy(&session.current_screen()).contains("READY") {
@@ -4423,19 +4617,17 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     let (events, receiver) = event_channel(None);
     let session = Session::spawn_with_test_hooks(
             SessionId(72),
-            SessionSpec {
-                project: "p".into(),
-                workspace: "w".into(),
-                name: "exited-leader".into(),
-                label: "sh".into(),
-                cwd: cwd.path().to_path_buf(),
-                argv: vec![
-                    "sh".into(),
-                    "-c".into(),
-                    "(trap '' HUP; printf DESCENDANT_READY; while :; do sleep 1; done) & printf LEADER_READY; while IFS= read -r line; do case \"$line\" in HOST_OWNERSHIP_ACK) printf HOST_OWNERSHIP_ACKED; IFS= read -r line || break; [ \"$line\" = ALLOW_LEADER_EXIT ] && kill -KILL \"$$\";; esac; done".into(),
-                ],
-                hook_env: None,
-            },
+            SessionSpec { run: ovrcr_protocol::SessionRunId(1), kind: ovrcr_protocol::SessionKind::Terminal, project: "p".into(),
+            workspace: "w".into(),
+            name: "exited-leader".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "(trap '' HUP; printf DESCENDANT_READY; while :; do sleep 1; done) & printf LEADER_READY; while IFS= read -r line; do case \"$line\" in HOST_OWNERSHIP_ACK) printf HOST_OWNERSHIP_ACKED; IFS= read -r line || break; [ \"$line\" = ALLOW_LEADER_EXIT ] && kill -KILL \"$$\";; esac; done".into(),
+            ],
+            hook_env: None, },
             TerminalSize { rows: 24, cols: 80 },
             events,
             None,
@@ -4457,11 +4649,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
         }
     });
     let (state, dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(SessionId(72), Arc::clone(&session));
+    register_test_session(&state, SessionId(72), Arc::clone(&session));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
     let refuse_sigcont = Arc::new(AtomicBool::new(false));
@@ -4472,6 +4660,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
         original_pgid,
         waiter,
         dispatcher,
+        false,
     );
     assert_eq!(
         unsafe { libc::getpgid(original_pgid) },
@@ -4497,6 +4686,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
     // This forced Exited event is a test seam only; production waits for its owned
     // process group to disappear before publishing Exited.
     session.apply_event(SessionEvent::Exited {
+        run: ovrcr_protocol::SessionRunId(1),
         id: SessionId(72),
         phase: SessionPhase::Exited {
             code: Some(0),
@@ -4519,6 +4709,8 @@ fn shutdown_without_kill_rejects_paused_session() {
     let session = Session::spawn_registered(
         SessionId(8),
         crate::session::SessionSpec {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
             workspace: "w".into(),
             name: "paused".into(),
@@ -4544,11 +4736,7 @@ fn shutdown_without_kill_rejects_paused_session() {
     });
     session.set_paused(true).unwrap();
     let state = test_state(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(SessionId(8), Arc::clone(&session));
+    register_test_session(&state, SessionId(8), Arc::clone(&session));
     assert!(matches!(
         handle_shutdown(&state, false, |_| panic!("paused session was not guarded")),
         Response::Error {
@@ -4568,6 +4756,8 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     let session = Session::spawn_registered(
         id,
         crate::session::SessionSpec {
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            run: ovrcr_protocol::SessionRunId(1),
             project: "p".into(),
             workspace: "w".into(),
             name: "retained".into(),
@@ -4582,14 +4772,11 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     )
     .unwrap();
     let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
-    state
-        .sessions
-        .lock()
-        .unwrap()
-        .insert(id, Arc::clone(&session));
+    register_test_session(&state, id, Arc::clone(&session));
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: id,
             size: TerminalSize { rows: 24, cols: 80 },
         }],
@@ -4610,7 +4797,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     }
 
     let error = state
-        .close_terminal(id, Duration::from_millis(20))
+        .close_terminal(id, session.run(), Duration::from_millis(20))
         .unwrap_err();
     assert!(
         error
@@ -4631,11 +4818,375 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     for event in pending {
         session.apply_event(event);
     }
-    state.close_terminal(id, Duration::from_millis(20)).unwrap();
-    assert!(!state.sessions.lock().unwrap().contains_key(&id));
-    assert!(state.dashboard.view().as_ref().is_some_and(|view| {
-        view.revision == 1 && view.panes.is_empty() && view.focused.is_none()
-    }));
+    let error = state
+        .close_terminal(id, session.run(), Duration::from_millis(20))
+        .unwrap_err();
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "close after natural exit must retain the row: {error:#}"
+    );
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "close after natural exit must not certify stopped"
+    );
+    assert!(
+        state
+            .session_summary(id)
+            .unwrap()
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "close after natural exit must leave acknowledgement required"
+    );
+}
+
+#[test]
+fn close_after_natural_exit_does_not_certify_stopped_or_remove_row() {
+    let id = SessionId(19);
+    let (_cwd, session, receiver) = spawn_exiting_test_session(id);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "exit event must not persist stop proof before close"
+    );
+
+    let _ = state.close_terminal(id, session.run(), Duration::from_millis(200));
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "close of an already-exited run must not remove the row"
+    );
+    let retained = state.retained.lock();
+    let record = retained.get(id).expect("retained row missing");
+    assert!(
+        !record.stopped,
+        "already-exited close must not certify stopped"
+    );
+    drop(retained);
+    let summary = state.session_summary(id).unwrap();
+    assert!(
+        summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "already-exited close must leave acknowledgement required: {summary:?}"
+    );
+}
+
+#[test]
+fn close_after_ack_removes_already_exited_in_memory_row() {
+    let id = SessionId(20);
+    let (_cwd, session, receiver) = spawn_exiting_test_session(id);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    let run = session.run();
+    assert!(
+        state
+            .session_summary(id)
+            .unwrap()
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "natural exit must require acknowledgement before close"
+    );
+
+    let mut role = ClientRole::Control;
+    assert_eq!(
+        state.handle_request(
+            &mut role,
+            Request::AcknowledgeSessionStopped {
+                session: id,
+                expected_run: run,
+            },
+        ),
+        Response::Ok
+    );
+    let acknowledged = state.session_summary(id).unwrap();
+    assert!(
+        !acknowledged
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "acknowledgement must clear close ownership uncertainty: {acknowledged:?}"
+    );
+    assert_eq!(
+        state.handle_request(
+            &mut role,
+            Request::CloseTerminal {
+                session: id,
+                expected_run: run,
+            },
+        ),
+        Response::Ok,
+        "acknowledged already-exited close must succeed without treating AlreadyExited as stop proof"
+    );
+    assert!(
+        !state.sessions.lock().unwrap().contains_key(&id),
+        "acknowledged close must drop the in-memory row"
+    );
+    assert!(
+        state.retained.lock().get(id).is_none(),
+        "acknowledged close must remove the retained record"
+    );
+}
+
+#[test]
+fn stale_close_does_not_revoke_or_stop_current_run() {
+    let id = SessionId(22);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let current = session.run();
+    let mut role = ClientRole::Control;
+    assert!(
+        matches!(
+            state.handle_request(
+                &mut role,
+                Request::CloseTerminal {
+                    session: id,
+                    expected_run: ovrcr_protocol::SessionRunId(current.0.saturating_add(1)),
+                },
+            ),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "stale CloseTerminal must conflict without acting on the live run"
+    );
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "stale close must not stop the current run: {:?}",
+        session.summary().phase
+    );
+    assert_eq!(state.session_summary(id).unwrap().run, current);
+    assert!(state.sessions.lock().unwrap().contains_key(&id));
+    cleanup_test_session(&session, events).unwrap();
+}
+
+#[test]
+fn close_and_kill_without_live_arc_do_not_mark_stopped() {
+    let current = crate::retained::current_boot_id();
+    let other = "11111111-2222-3333-4444-555555555555";
+    assert!(
+        crate::retained::different_boot(Some(other), current.as_deref()),
+        "need two verified boot ids to reach missing-Arc control; current={current:?}"
+    );
+    for close in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        crate::config::initialize_registry(&config).unwrap();
+        let cwd = {
+            use std::os::unix::ffi::OsStrExt;
+            dir.path().as_os_str().as_bytes().to_vec()
+        };
+        let kind = serde_json::to_string(&ovrcr_protocol::SessionKind::Terminal).unwrap();
+        let name = if close { "no-arc-close" } else { "no-arc-kill" };
+        {
+            let connection = crate::config::open_writable_registry(&config).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO retained_sessions
+                     (run, project, workspace, name, label, cwd, kind, pinned_title,
+                      application_title, title_revision, boot_id, stopped, failure)
+                     VALUES (1, 'p', 'w', ?1, 'sh', ?2, ?3, NULL, NULL, 0, ?4, 0, NULL)",
+                    rusqlite::params![name, cwd, kind, other],
+                )
+                .unwrap();
+        }
+        let store = crate::retained::SessionStore::open(&config).unwrap();
+        let id = store.records().next().unwrap().id;
+        let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+        *state.retained.lock() = store;
+        assert!(
+            state.sessions.lock().unwrap().get(&id).is_none(),
+            "fixture must have no live Arc"
+        );
+        assert!(
+            !state.retained.lock().get(id).unwrap().stopped,
+            "fixture must not already be certified stopped"
+        );
+        if close {
+            state
+                .close_terminal(
+                    id,
+                    state.session_summary(id).unwrap().run,
+                    Duration::from_millis(50),
+                )
+                .expect("boot-resolved close with no Arc must remove the row");
+            assert!(
+                state.retained.lock().get(id).is_none(),
+                "close must remove the boot-resolved row without a controlled-stop certificate"
+            );
+        } else {
+            state.kill_session(id, Duration::from_millis(50)).expect(
+                "boot-resolved kill with no Arc must not fail after boot resolved ownership",
+            );
+            assert!(
+                !state.retained.lock().get(id).unwrap().stopped,
+                "missing Arc must not mark_stopped"
+            );
+        }
+        let _ = dir;
+    }
+}
+
+#[test]
+fn listing_failure_pause_kill_close_are_ownership_uncertain_and_do_not_mark_stopped() {
+    for (id, op) in [
+        (SessionId(90), "pause"),
+        (SessionId(91), "kill"),
+        (SessionId(92), "close"),
+    ] {
+        let (_cwd, session, receiver) = spawn_live_test_session(id);
+        let events = apply_test_session_events(Arc::clone(&session), receiver);
+        let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+        register_test_session(&state, id, Arc::clone(&session));
+        session.set_listing_error_hook(Some(Arc::new(|| {
+            Some(anyhow::anyhow!("ovrcr-test-injected-listing-failure"))
+        })));
+        let error = match op {
+            "pause" => state.set_session_paused(id, true),
+            "kill" => state.kill_session(id, Duration::from_millis(250)),
+            "close" => state.close_terminal(id, session.run(), Duration::from_millis(250)),
+            _ => unreachable!(),
+        }
+        .unwrap_err();
+        let response = error_for_lifecycle(error);
+        assert_eq!(
+            match &response {
+                Response::Error { code, .. } => code,
+                other => panic!("{op} listing failure mapped to {other:?}"),
+            },
+            &ErrorCode::OwnershipUncertain,
+            "{op} listing failure must be typed OwnershipUncertain"
+        );
+        assert!(
+            !state.retained.lock().get(id).unwrap().stopped,
+            "{op} listing failure must not mark_stopped"
+        );
+        session.set_listing_error_hook(None);
+        let _ = cleanup_test_session(&session, events);
+    }
+}
+
+#[test]
+fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() {
+    let id = SessionId(21);
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = event_channel(None);
+    let capability = [0x21; 32];
+    let (hold_entered_tx, hold_entered_rx) = mpsc::sync_channel(1);
+    let (hold_release_tx, hold_release_rx) = mpsc::sync_channel(1);
+    let hold_release_rx = Mutex::new(hold_release_rx);
+    let session = Session::spawn_with_test_hooks(
+        id,
+        SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "captured-exit".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' HUP TERM; printf READY; IFS= read -r _; exit 0".into(),
+            ],
+            hook_env: Some(HookEnvironment {
+                socket: PathBuf::from("/private/test/ovrcr.sock"),
+                session: id,
+                capability,
+            }),
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+        None,
+        Some(Arc::new(move || {
+            let _ = hold_entered_tx.send(());
+            let _ = hold_release_rx.lock().unwrap().recv();
+        })),
+        None,
+    )
+    .unwrap();
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    assert!(
+        wait_test_screen(&session, "READY", Duration::from_secs(2)),
+        "captured-exit fixture did not start"
+    );
+
+    let hold_session = Arc::clone(&session);
+    let holder = thread::spawn(move || hold_session.terminate(Duration::from_secs(2)));
+    hold_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("holder must enter terminate before close captures");
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "holder SIGTERM must not finish the trapped process"
+    );
+
+    let close_state = Arc::clone(&state);
+    let close_run = session.run();
+    let closer = thread::spawn(move || {
+        close_state.close_terminal(id, close_run, Duration::from_millis(200))
+    });
+    let report = AgentReport {
+        session: id,
+        capability,
+        sequence: None,
+        update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while session.apply_agent_report(&report).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "close did not capture/revoke the live target"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "close must capture the target while it is still live"
+    );
+
+    session.write(b"\r").unwrap();
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    let _ = hold_release_tx.send(());
+    let _ = holder.join();
+    let close_result = closer.join().expect("close thread panicked");
+
+    assert!(
+        close_result.is_err(),
+        "live capture then natural exit must not close-success: {close_result:?}"
+    );
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "captured-before-exit close must not remove the row"
+    );
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "captured-before-exit close must not certify stopped"
+    );
+    let summary = state.session_summary(id).unwrap();
+    assert_eq!(summary.run, ovrcr_protocol::SessionRunId(1));
+    assert!(
+        summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "captured-before-exit close must leave acknowledgement required: {summary:?}"
+    );
 }
 
 #[test]
@@ -4670,7 +5221,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
-        next_session_id: AtomicU64::new(1),
+        retained: parking_lot::Mutex::new(SessionStore::in_memory()),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -4711,6 +5262,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
     let creator = thread::spawn(move || {
         creator_state.create_session_with_ready(
                 ovrcr_protocol::CreateSessionRequest {
+                    kind: ovrcr_protocol::SessionKind::Terminal,
                     project: "project".into(),
                     workspace: "workspace".into(),
                     name: "fast".into(),
@@ -4851,6 +5403,8 @@ fn session_output_flows_while_another_session_spawns() {
     let live = Session::spawn_registered(
         live_id,
         SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: "project".into(),
             workspace: "workspace".into(),
             name: "live".into(),
@@ -4873,9 +5427,9 @@ fn session_output_flows_while_another_session_spawns() {
         socket: socket_path,
         registry_path: root.path().join("config.toml"),
         registry: Mutex::new(registry),
-        sessions: Mutex::new(HashMap::from([(live_id, live.clone())])),
+        sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
-        next_session_id: AtomicU64::new(1),
+        retained: parking_lot::Mutex::new(SessionStore::in_memory()),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -4888,12 +5442,14 @@ fn session_output_flows_while_another_session_spawns() {
         #[cfg(feature = "acceptance-diagnostics")]
         dashboard_monitor: None,
     });
+    register_test_session(&state, live_id, live.clone());
     state
         .dashboard
         .claim_with_identity(sink.clone(), owner, server_stream);
     state.dashboard.install_view_for_test(Some(DashboardView {
         revision: 7,
         panes: vec![PaneTarget {
+            run: ovrcr_protocol::SessionRunId(1),
             session: live_id,
             size: TerminalSize { rows: 24, cols: 80 },
         }],
@@ -4912,6 +5468,7 @@ fn session_output_flows_while_another_session_spawns() {
     let creator = thread::spawn(move || {
         creator_state.create_session_with_ready(
             ovrcr_protocol::CreateSessionRequest {
+                kind: ovrcr_protocol::SessionKind::Terminal,
                 project: "project".into(),
                 workspace: "workspace".into(),
                 name: "slow".into(),
@@ -4935,6 +5492,7 @@ fn session_output_flows_while_another_session_spawns() {
     entered.recv_timeout(Duration::from_secs(2)).unwrap();
     dispatch
         .try_send(DispatchMessage::Session(SessionEvent::Output {
+            run: ovrcr_protocol::SessionRunId(1),
             id: live_id,
             bytes: b"LIVE".to_vec(),
         }))
@@ -4943,7 +5501,7 @@ fn session_output_flows_while_another_session_spawns() {
         sink.queue.lock().unwrap().messages.iter().any(|outbound| {
             matches!(
                 &outbound.message,
-                ServerMessage::Event(ServerEvent::Output { session, revision, bytes })
+                ServerMessage::Event(ServerEvent::Output { run: ovrcr_protocol::SessionRunId(1), session, revision, bytes })
                     if *session == live_id && *revision == 7 && bytes == b"LIVE"
             )
         })
@@ -4971,7 +5529,7 @@ fn session_output_flows_while_another_session_spawns() {
     assert_eq!(summary.name, "slow");
     assert!(state.sessions.lock().unwrap().contains_key(&summary.id));
     live.terminate(Duration::from_secs(2)).unwrap();
-    state.sessions.lock().unwrap().remove(&live_id);
+    remove_test_session(&state, &live_id);
 }
 
 fn parse_test_capability(value: &str) -> [u8; 32] {
@@ -5181,6 +5739,7 @@ struct KillFailureCleanup {
     original_pgid: libc::pid_t,
     waiter: Option<JoinHandle<()>>,
     dispatcher: Option<JoinHandle<()>>,
+    ack_before_stop: bool,
 }
 
 impl KillFailureCleanup {
@@ -5191,6 +5750,7 @@ impl KillFailureCleanup {
         original_pgid: libc::pid_t,
         waiter: JoinHandle<()>,
         dispatcher: JoinHandle<()>,
+        ack_before_stop: bool,
     ) -> Self {
         Self {
             session,
@@ -5199,6 +5759,7 @@ impl KillFailureCleanup {
             original_pgid,
             waiter: Some(waiter),
             dispatcher: Some(dispatcher),
+            ack_before_stop,
         }
     }
 
@@ -5219,6 +5780,14 @@ impl KillFailureCleanup {
                     .session
                     .wait_until_exited(Duration::from_secs(2))
                     .is_ok();
+        }
+
+        if cleaned && self.ack_before_stop {
+            let id = self.session.id();
+            let run = self.session.run();
+            if self.state.acknowledge_session_stopped(id, run).is_err() {
+                cleaned = false;
+            }
         }
 
         if self.dispatcher.is_some() {
@@ -5563,11 +6132,7 @@ mod agent_reporting {
                 }),
             );
             let (state, commands) = test_state_with_dispatch(None, None);
-            state
-                .sessions
-                .lock()
-                .unwrap()
-                .insert(SessionId(900), session.clone());
+            register_test_session(&state, SessionId(900), session.clone());
             let dispatch_state = state.clone();
             let dispatcher = thread::spawn(move || run_dispatcher(dispatch_state, commands));
             let dispatch = state.dispatch.clone();
@@ -5672,7 +6237,13 @@ mod agent_reporting {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            self.session.terminate(Duration::from_millis(100)).unwrap();
+            if let Err(error) = self.session.terminate(Duration::from_millis(100)) {
+                assert!(
+                    error.is::<crate::session::AlreadyExited>(),
+                    "agent reporting fixture terminate: {error:#}"
+                );
+            }
+
             self.bridge.take().unwrap().join().unwrap();
             self.state.dispatch.send(DispatchMessage::Stop).unwrap();
             self.dispatcher.take().unwrap().join().unwrap();
@@ -6720,4 +7291,33 @@ mod agent_reporting {
         assert_eq!(f.session.summary().activity, AgentActivity::WaitingInput);
         assert!(sink.queue.lock().unwrap().messages.iter().any(|outbound| matches!(&outbound.message, ServerMessage::Event(ServerEvent::SessionChanged(summary)) if summary.activity == AgentActivity::WaitingInput)), "legacy takeover must publish even when the old legacy value matches");
     }
+}
+
+fn register_test_session(
+    state: &ServerState,
+    id: SessionId,
+    session: Arc<Session>,
+) -> Option<Arc<Session>> {
+    assert_eq!(id, session.id());
+    state.retained.lock().register_fixture(&session).unwrap();
+    state.sessions.lock().unwrap().insert(id, session)
+}
+
+fn extend_test_sessions(
+    state: &ServerState,
+    sessions: impl IntoIterator<Item = (SessionId, Arc<Session>)>,
+) {
+    for (id, session) in sessions {
+        register_test_session(state, id, session);
+    }
+}
+
+fn remove_test_session(state: &ServerState, id: &SessionId) -> Option<Arc<Session>> {
+    {
+        let mut retained = state.retained.lock();
+        if let Some(run) = retained.get(*id).map(|record| record.run) {
+            retained.remove(*id, run).unwrap();
+        }
+    }
+    state.sessions.lock().unwrap().remove(id)
 }

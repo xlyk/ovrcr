@@ -149,12 +149,13 @@ fn run_server_inner(
     // The socket is bound so concurrent starters see a live server, but a
     // failure from here on must not leave a dead socket file behind.
     let loaded = (|| -> Result<_> {
-        let registry = load_registry(&registry_path)
+        let registry = initialize_registry(&registry_path)
             .with_context(|| format!("load server registry {}", registry_path.display()))?;
         let task_manager = crate::task_manager::TaskManager::open(&registry_path)?;
-        Ok((registry, task_manager))
+        let retained = SessionStore::open(&registry_path)?;
+        Ok((registry, task_manager, retained))
     })();
-    let (registry, task_manager) = match loaded {
+    let (registry, task_manager, retained) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
             drop(listener);
@@ -171,7 +172,7 @@ fn run_server_inner(
         registry: Mutex::new(registry),
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
-        next_session_id: AtomicU64::new(1),
+        retained: parking_lot::Mutex::new(retained),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),

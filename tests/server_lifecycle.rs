@@ -375,7 +375,8 @@ fn agent_hook_capability_and_exit_are_enforced() {
     );
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: first.session
+            session: first.session,
+            expected_run: fixture.session_summary(first.session).run
         }),
         Response::Ok
     );
@@ -1451,7 +1452,10 @@ fn workspace_remove_succeeds_after_directory_deleted() {
     fixture.ready("feature/vanished-dir");
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     let workspace_dir = fixture.workspace_root.join("work");
@@ -1491,30 +1495,38 @@ fn workspace_remove_succeeds_after_directory_deleted() {
 }
 
 #[test]
-fn shutdown_without_kill_rejects_exited_record() {
+fn shutdown_without_kill_allows_retained_exited_records() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.ready("feature/exited-record");
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     let exited = fixture.create_session("exits", vec!["sh".into(), "-c".into(), "exit 0".into()]);
     fixture.wait_exited(exited);
-    // An exited record still awaiting removal keeps the final screen; a
-    // non-kill shutdown must refuse just as it does for a live session.
-    assert!(matches!(
-        fixture.request(Request::Shutdown { kill: false }),
-        Response::Error {
-            code: ErrorCode::SessionsRemain,
-            ..
-        }
-    ));
     assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok,
+        "retained exited rows do not block a non-kill shutdown",
+    );
+    fixture.join();
+    fixture.start();
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: exited,
+            expected_run: ovrcr_protocol::SessionRunId(1),
+        }),
+        Response::Ok,
+    );
+    assert!(matches!(
         fixture.request(Request::RemoveSession { session: exited }),
         Response::Ok
-    );
+    ));
     assert_eq!(
         fixture.request(Request::Shutdown { kill: false }),
         Response::Ok
@@ -1717,6 +1729,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
                 response: Response::Screen { bytes, .. },
             }
             | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 bytes,
                 session: _,
                 revision: _,
@@ -1731,6 +1744,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         &ClientMessage {
             request_id: 20,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: vec![b'x'; 512 * 1024],
             },
@@ -1850,6 +1864,7 @@ fn control_lifecycle_enforces_every_removal_gate() {
     let review = fixture.create_session("review", vec!["sh".into(), "-c".into(), "exit 0".into()]);
     assert!(matches!(
         fixture.request(Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr::protocol::SessionKind::Terminal,
             project: "fixture".into(),
             workspace: "work".into(),
             name: "review".into(),
@@ -1888,7 +1903,21 @@ fn control_lifecycle_enforces_every_removal_gate() {
         }
     ));
     assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: local,
+            expected_run: fixture.session_summary(local).run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
         fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: review,
+            expected_run: fixture.session_summary(review).run,
+        }),
         Response::Ok
     );
     assert_eq!(
@@ -1983,6 +2012,13 @@ fn fast_exit_session_is_retained_as_exited() {
         vec!["sh".into(), "-c".into(), "printf retained".into()],
     );
     fixture.wait_exited(fast);
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: fast,
+            expected_run: fixture.session_summary(fast).run,
+        }),
+        Response::Ok
+    );
     assert_eq!(
         fixture.request(Request::RemoveSession { session: fast }),
         Response::Ok
@@ -2081,6 +2117,7 @@ fn pause_resume_server_refuses_removal_and_late_mutation() {
         &ClientMessage {
             request_id: 11,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"paused".to_vec(),
             },
@@ -2534,6 +2571,7 @@ impl HistoryDashboardParser {
 
     fn forward(&mut self, message: &ServerMessage) {
         if let ServerMessage::Event(ServerEvent::Output {
+            run: _,
             session,
             bytes,
             revision: _,
@@ -3133,6 +3171,7 @@ fn pause_resume_stops_group_and_rejects_input() {
             &mut dashboard,
             3,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 bytes: b"REJECTED_WHILE_PAUSED".to_vec(),
             },
@@ -3177,6 +3216,7 @@ fn pause_resume_stops_group_and_rejects_input() {
             &mut dashboard,
             5,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 bytes: b"PTY_AFTER_RESUME_1".to_vec(),
             },
@@ -3425,53 +3465,131 @@ fn pause_resume_control_races_body() {
         unsafe { libc::getpgid(reaped_descendant.pid) },
         reaped_descendant.pgid
     );
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::PauseSession { session: reaped }),
-        Response::Ok
+    let before = session_summary(&harness.fixture, reaped);
+    assert!(
+        before.phase.is_live(),
+        "reaped-leader row must still be live"
     );
-    wait_peer_stopped(&reaped_descendant, Duration::from_secs(2));
-    send_peer_command(&harness.control, &reaped_descendant, "RESUME_SURVIVOR_1");
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::ResumeSession { session: reaped }),
-        Response::Ok
-    );
-    expect_peer_reply(&harness.control, "RESUME_SURVIVOR_1");
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::KillSession { session: reaped }),
-        Response::Ok
-    );
-    let reaped_drain_ok = expect_term_acks_and_descendant_final(
-        &harness.control,
-        &[&reaped_descendant],
-        &[&reaped_descendant],
-    );
-    if !cfg!(target_os = "macos") {
-        assert!(
-            reaped_drain_ok,
-            "reaped survivor did not drain final PTY bytes"
-        );
+    let pause = harness
+        .fixture
+        .request(Request::PauseSession { session: reaped });
+    match pause {
+        Response::Ok => {
+            wait_peer_stopped(&reaped_descendant, Duration::from_secs(2));
+            send_peer_command(&harness.control, &reaped_descendant, "RESUME_SURVIVOR_1");
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::ResumeSession { session: reaped }),
+                Response::Ok
+            );
+            expect_peer_reply(&harness.control, "RESUME_SURVIVOR_1");
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::KillSession { session: reaped }),
+                Response::Ok
+            );
+            let reaped_drain_ok = expect_term_acks_and_descendant_final(
+                &harness.control,
+                &[&reaped_descendant],
+                &[&reaped_descendant],
+            );
+            if !cfg!(target_os = "macos") {
+                assert!(
+                    reaped_drain_ok,
+                    "reaped survivor did not drain final PTY bytes"
+                );
+            }
+            let mut reaped_terminal_markers = vec![reaped_descendant.preexit_marker.as_str()];
+            if reaped_drain_ok {
+                reaped_terminal_markers.push("FINAL_DESCENDANT_AFTER_TERM");
+            }
+            wait_exited_and_assert_terminal_contains(
+                &harness.fixture,
+                reaped,
+                &reaped_terminal_markers,
+            );
+            assert!(live::wait_group_absent(
+                reaped_descendant.pgid,
+                Duration::from_secs(2)
+            ));
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::RemoveSession { session: reaped }),
+                Response::Ok
+            );
+        }
+        Response::Error {
+            code: ErrorCode::OwnershipUncertain,
+            ..
+        } => {
+            let after = session_summary(&harness.fixture, reaped);
+            assert_eq!(
+                after.phase, before.phase,
+                "listing refusal must not claim pause: {after:?}"
+            );
+            assert_eq!(
+                unsafe { libc::getpgid(reaped_descendant.pid) },
+                reaped_descendant.pgid
+            );
+            let kill = harness
+                .fixture
+                .request(Request::KillSession { session: reaped });
+            match kill {
+                Response::Ok => {
+                    assert!(expect_term_acks_and_descendant_final(
+                        &harness.control,
+                        &[&reaped_descendant],
+                        &[&reaped_descendant],
+                    ));
+                    wait_exited_and_assert_terminal_contains(
+                        &harness.fixture,
+                        reaped,
+                        &[
+                            reaped_descendant.preexit_marker.as_str(),
+                            "FINAL_DESCENDANT_AFTER_TERM",
+                        ],
+                    );
+                    assert!(live::wait_group_absent(
+                        reaped_descendant.pgid,
+                        Duration::from_secs(2)
+                    ));
+                    assert_eq!(
+                        harness
+                            .fixture
+                            .request(Request::RemoveSession { session: reaped }),
+                        Response::Ok
+                    );
+                }
+                Response::Error {
+                    code: ErrorCode::OwnershipUncertain,
+                    ..
+                } => {
+                    assert!(live::wait_group_absent(
+                        reaped_descendant.pgid,
+                        Duration::from_secs(2)
+                    ));
+                    assert_eq!(
+                        harness.fixture.request(Request::AcknowledgeSessionStopped {
+                            session: reaped,
+                            expected_run: after.run,
+                        }),
+                        Response::Ok
+                    );
+                    assert_eq!(
+                        harness
+                            .fixture
+                            .request(Request::RemoveSession { session: reaped }),
+                        Response::Ok
+                    );
+                }
+                other => panic!("unexpected kill after listing pause refusal: {other:?}"),
+            }
+        }
+        other => panic!("unexpected pause after EXIT_LEADER: {other:?}"),
     }
-    let mut reaped_terminal_markers = vec![reaped_descendant.preexit_marker.as_str()];
-    if reaped_drain_ok {
-        reaped_terminal_markers.push("FINAL_DESCENDANT_AFTER_TERM");
-    }
-    wait_exited_and_assert_terminal_contains(&harness.fixture, reaped, &reaped_terminal_markers);
-    assert!(live::wait_group_absent(
-        reaped_descendant.pgid,
-        Duration::from_secs(2)
-    ));
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::RemoveSession { session: reaped }),
-        Response::Ok
-    );
     harness.finish();
 }
 
@@ -3530,6 +3648,7 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
         &ClientMessage {
             request_id: 20,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: vec![b'x'; 512 * 1024],
             },
@@ -4235,6 +4354,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
     while Instant::now() < drain_deadline {
         match dashboard.next(Instant::now() + Duration::from_millis(50)) {
             Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: dirty_session,
                 revision: _,
             }))) if dirty_session == session => dirty = true,
@@ -4336,6 +4456,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     while !saw_dirty {
         match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
             ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision: _,
             }) if session == burst => saw_dirty = true,
@@ -4382,6 +4503,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     while Instant::now() < quiet_deadline {
         match read_frame::<ServerMessage>(&mut dashboard) {
             Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision: _,
             })) if session == burst => dirty_count += 1,
@@ -4495,14 +4617,26 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         hex.contains(&format!("{a} {b}")) || hex.contains(&format!("{b} {a}")),
         "concurrent paste bytes interleaved: {text:?}"
     );
-
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session }),
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session,
+            expected_run: fixture.session_summary(session).run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session,
+            expected_run: fixture.session_summary(session).run
+        }),
         Response::Ok
     );
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     assert_eq!(
@@ -4683,6 +4817,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
         &ClientMessage {
             request_id: 3,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: local,
                 bytes: b"printf SELECTED_OK\r".to_vec(),
             },
@@ -4703,19 +4838,31 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
 
     fixture.wait_exited(background);
     assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: background,
+            expected_run: fixture.session_summary(background).run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
         fixture.request(Request::CloseTerminal {
             session: background,
+            expected_run: fixture.session_summary(background).run
         }),
         Response::Ok
     );
     wait_for_group_absent(background_pid as libc::pid_t, Duration::from_secs(2));
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     assert!(matches!(
         fixture.request(Request::CloseTerminal {
             session: background,
+            expected_run: ovrcr_protocol::SessionRunId(1)
         }),
         Response::Error {
             code: ErrorCode::NotFound,
@@ -4748,6 +4895,15 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.ready("feature/fifty-sessions");
+    // Remove the implicit shell so every one of the fifty exercised slots has a marker.
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
+        Response::Ok
+    );
     let sessions = (0..50)
         .map(|index| {
             fixture.create_session(
@@ -4803,7 +4959,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     assert_eq!(
         pgids.len(),
         50,
-        "all 50 managed process groups must be saved"
+        "all 50 managed process groups must be saved",
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
@@ -4847,13 +5003,9 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
                 .all(|summary| summary.pid.is_none())
         );
     }
-    let local = fixture.only_session_id();
-    fixture.request(Request::KillSession { session: local });
-    fixture.wait_exited(local);
     for session in sessions_for_cleanup(&fixture) {
         fixture.request(Request::RemoveSession { session });
     }
-    fixture.request(Request::RemoveSession { session: local });
     fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "work".into(),
@@ -4910,7 +5062,34 @@ impl ControlFixture {
         name: &str,
         argv: Vec<OsString>,
     ) -> ovrcr::session::SessionSummary {
+        self.create_session_with_kind(ovrcr_protocol::SessionKind::Terminal, name, argv)
+    }
+
+    /// The codex fixture launches `ovrcr agent run codex`, so its row carries the
+    /// Agent kind exactly as the TUI and CLI launch paths do. Retention must keep
+    /// that kind and report native resume unavailable instead of reopening as a shell.
+    fn create_codex_session_summary(
+        &self,
+        name: &str,
+        argv: Vec<OsString>,
+    ) -> ovrcr::session::SessionSummary {
+        self.create_session_with_kind(
+            ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            name,
+            argv,
+        )
+    }
+
+    fn create_session_with_kind(
+        &self,
+        kind: ovrcr_protocol::SessionKind,
+        name: &str,
+        argv: Vec<OsString>,
+    ) -> ovrcr::session::SessionSummary {
         match self.request(Request::CreateSession(CreateSessionRequest {
+            kind,
             project: PROJECT.into(),
             workspace: WORKSPACE.into(),
             name: name.into(),
@@ -5084,7 +5263,7 @@ impl ControlFixture {
                     submit: true,
                 });
                 self.wait_exited(session.id);
-            } else {
+            } else if session.phase.is_live() {
                 assert_eq!(
                     self.request(Request::KillSession {
                         session: session.id
@@ -5427,6 +5606,7 @@ fn selection_snapshot_precedes_later_quiet_tail_output() {
         &ClientMessage {
             request_id: 3,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"\n".to_vec(),
             },
@@ -5565,6 +5745,7 @@ fn split_view_parsers(
             ServerMessage::Response {
                 response:
                     Response::Screen {
+                        run: ovrcr::protocol::SessionRunId(1),
                         session,
                         revision,
                         size,
@@ -5583,6 +5764,7 @@ fn split_view_parsers(
                 screens.insert(*session);
             }
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision,
                 bytes,
@@ -5591,9 +5773,12 @@ fn split_view_parsers(
                     parsers.get_mut(session).unwrap().process(bytes);
                 }
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
-                if view.panes.iter().any(|pane| pane.session == *session)
-                    && screens.contains(session) =>
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
+                session,
+                revision,
+            }) if view.panes.iter().any(|pane| pane.session == *session)
+                && screens.contains(session) =>
             {
                 assert_eq!(
                     *revision, view.revision,
@@ -5620,6 +5805,7 @@ fn split_input_marker(
         &ClientMessage {
             request_id,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"SIZE\n".to_vec(),
             },
@@ -5648,6 +5834,7 @@ fn split_input_marker(
                 response => panic!("split input returned unexpected response: {response:?}"),
             },
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: output_session,
                 revision: output_revision,
                 bytes,
@@ -5660,6 +5847,7 @@ fn split_input_marker(
                 parser.process(&bytes);
             }
             ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: dirty_session,
                 revision: dirty_revision,
             }) if dirty_session == session => {
@@ -5778,10 +5966,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
         revision: 1,
         panes: vec![
             PaneTarget {
+                run: left.run,
                 session: left.id,
                 size: ovrcr::session::TerminalSize { rows: 36, cols: 39 },
             },
             PaneTarget {
+                run: right.run,
                 session: right.id,
                 size: ovrcr::session::TerminalSize { rows: 36, cols: 40 },
             },
@@ -5826,10 +6016,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
         revision: 3,
         panes: vec![
             PaneTarget {
+                run: left.run,
                 session: left.id,
                 size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
             },
             PaneTarget {
+                run: right.run,
                 session: right.id,
                 size: ovrcr::session::TerminalSize { rows: 26, cols: 30 },
             },
@@ -5952,6 +6144,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
         );
         match message {
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision,
                 bytes,
@@ -5962,9 +6155,11 @@ fn split_server_two_streams_resize_resync_and_detach() {
                 );
                 let _ = bytes;
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
-                if session == left.id || session == right.id =>
-            {
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
+                session,
+                revision,
+            }) if session == left.id || session == right.id => {
                 assert_eq!(
                     revision, resized_focus_right_view.revision,
                     "old-revision burst dirty notification arrived after replacement"
@@ -6018,6 +6213,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
     let singleton_view = DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: left.run,
             session: left.id,
             size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
         }],
@@ -9443,7 +9639,7 @@ fn codex_session_named(
     std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let probe = fixture.root.path().join(format!("{name}-channel"));
-    let summary = fixture.create_session_summary(name, vec![
+    let summary = fixture.create_codex_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
         "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
@@ -10421,11 +10617,9 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     );
     let text = cli_with_output(bin, &config, &fixture.socket, &["terminal", "list"]);
     assert!(text.status.success());
-    assert!(
-        String::from_utf8_lossy(&text.stdout)
-            .lines()
-            .any(|line| line.contains("codex-hooks") && line.ends_with("unread"))
-    );
+    assert!(String::from_utf8_lossy(&text.stdout).lines().any(|line| {
+        line.contains("codex-hooks") && line.split('\t').any(|field| field == "unread")
+    }));
 
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
@@ -10567,7 +10761,10 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
     }
     assert!(fixture.session_summary(first.id).unread.is_some());
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: first.id }),
+        fixture.request(Request::CloseTerminal {
+            session: first.id,
+            expected_run: fixture.session_summary(first.id).run
+        }),
         Response::Ok
     );
     let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
@@ -10599,9 +10796,28 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         !registry.projects.is_empty(),
         "restart uses the same saved configuration"
     );
+    let restored = sessions
+        .iter()
+        .find(|session| session.id == second.id)
+        .expect("retained stopped row survives server restart");
     assert!(
-        sessions.is_empty(),
-        "new server cannot resurrect live terminals or unread results from saved configuration"
+        matches!(restored.kind, ovrcr::protocol::SessionKind::Agent { .. }),
+        "restart must keep the Agent kind"
+    );
+    assert!(
+        restored
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.unavailable.is_some()),
+        "Agent rows must not reopen as a shell"
+    );
+    assert!(
+        restored.unread.is_none(),
+        "Unread is runtime state, not retained metadata"
+    );
+    assert!(
+        !restored.phase.is_live(),
+        "restart must not resurrect a PTY"
     );
 }
 
@@ -13190,7 +13406,8 @@ fn installed_omp_managed_launch_binds_the_real_session_and_stays_idle() {
     // keystroke cannot be delivered here (SendTerminal brackets its bytes as pasted text).
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: summary.id
+            session: summary.id,
+            expected_run: fixture.session_summary(summary.id).run
         }),
         Response::Ok
     );
@@ -13254,7 +13471,8 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
     // product's own termination path instead and require a real exit.
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: summary.id
+            session: summary.id,
+            expected_run: fixture.session_summary(summary.id).run
         }),
         Response::Ok
     );

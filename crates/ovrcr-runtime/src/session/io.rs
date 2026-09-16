@@ -2,8 +2,6 @@ use super::*;
 use crate::server::ReportingSender;
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 pub(super) fn read_pty(
     mut reader: Box<dyn Read + Send>,
@@ -23,6 +21,7 @@ pub(super) fn read_pty(
         if events
             .send(SessionEvent::Output {
                 id: session.summary.id,
+                run: session.run(),
                 bytes: buffer[..read].to_vec(),
             })
             .is_err()
@@ -60,6 +59,7 @@ pub(super) fn wait_for_child(
     }
     let _ = events.send(SessionEvent::Exited {
         id: session.summary.id,
+        run: session.run(),
         phase,
     });
 }

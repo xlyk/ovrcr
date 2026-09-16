@@ -27,17 +27,20 @@ the current directory. A new terminal can omit its name for automatic titles.
 
 ## Which commands start a server
 
-Only `new`, `terminal create`, `project add`, `workspace create`, and the
-dashboard start a server on demand.
+`new`, `terminal create`, `terminal reopen`, `terminal acknowledge-stopped`,
+`project add`, `workspace create`, and the dashboard start a server on demand.
 
-Read commands never start one. With no server running, project and workspace
-queries read the persisted registry and terminal lists are empty. Reading or
-controlling a missing terminal returns an error.
+Read commands never start one. They never migrate the registry. With no server
+running, project and workspace queries read `config.toml.sqlite3` after migration.
+They read the preserved `config.toml` if the database is absent or still empty and
+uninitialized after an interrupted import. A foreign, unreadable, or incompatible
+database is an error, not a TOML fallback. Terminal lists include retained rows.
+Reading or controlling a missing terminal returns an error.
 
 Removal and kill commands (`project remove`, `workspace remove`,
-`terminal kill`, `terminal remove`, `kill`, `session remove`) also never start a
-server: with none running they fail with `OVRCR server is not running`, because
-there is nothing to remove.
+`terminal kill`, `terminal close`, `terminal remove`, `kill`, `session remove`)
+never start a server. With none running they fail with `OVRCR server is not
+running`: only the server mutates retained records or controls processes.
 
 ## Request timeouts
 
@@ -89,13 +92,27 @@ title instead.
 ```sh
 ovrcr terminal rename ID "Review login"  # pin a display title
 ovrcr terminal rename ID --automatic    # follow app titles again
-ovrcr terminal relaunch ID              # exited sessions only; prints the new ID
+ovrcr terminal reopen ID                # reopen a retained row in a fresh shell
+ovrcr terminal reopen ID --ack-stopped  # confirm previous processes stopped, then reopen
+ovrcr terminal acknowledge-stopped ID   # resolve ownership without launching
 ```
 
-Rename changes the display title, not the stable session name or ID. Relaunch
-starts a new session with the original command in the same workspace and retains
-the exited session's output. Both commands require a running server. With `--json`,
-relaunch returns the created terminal object and rename returns `{"ok":true}`.
+Rename changes the display title, not the stable session name or ID. Reopen
+starts a fresh shell in the same session row. It does not keep the previous
+process output. `--ack-stopped` is required when the inventory says previous
+agent or background processes may still be running; Retry is not that
+confirmation. `acknowledge-stopped` records that confirmation without launching
+a session, but starts the server on demand when it is not running. Agent rows
+cannot be resumed. Reopen starts the server if it is not running. With `--json`,
+reopen returns the terminal object and rename returns `{"ok":true}`.
+
+A natural exit does not prove that background jobs stopped. Such a row keeps
+`recovery.requires_ack=true`, even while its current phase is `exited`. Confirm
+that the old processes are gone with `terminal reopen ID --ack-stopped`, or use
+`terminal acknowledge-stopped ID` before closing or removing the row. A verified
+different boot also resolves prior-run ownership; no process is signalled by a
+saved PID. A successfully verified controlled stop does not need another
+acknowledgement; a raced, failed or unverifiable stop does not certify cleanup.
 
 `terminal send` respects bracketed-paste mode and then sends Enter; `--no-submit`
 omits that final Enter. Embedded newlines remain part of the text, so a program
@@ -110,7 +127,10 @@ lines and requires a positive number. It does not expose scrollback. CLI reads a
 sends do not select or resize the dashboard terminal.
 
 `terminal close` stops the whole process group, waits for cleanup, and removes the
-record. Cleanup failure leaves the record available. To retain the final screen,
+record. The close captures the session's current run from inventory first, and a
+close whose run has advanced since that snapshot fails with a conflict, so a stale
+close cannot stop a replacement process started by reopening the same row. Cleanup
+failure leaves the record available. To retain the final screen,
 use `terminal kill ID`, then `terminal remove ID` when finished.
 
 ## Agent reporting commands
@@ -203,8 +223,9 @@ ovrcr shutdown
 ovrcr shutdown --kill
 ```
 
-`shutdown` refuses while sessions remain. `--kill` terminates every managed
-process group and then stops the server.
+`shutdown` refuses while live owned processes remain. Retained exited or stopped
+rows do not block it. `--kill` terminates every live managed process group and
+then stops the server.
 
 ## JSON output
 
@@ -218,7 +239,7 @@ ovrcr terminal list --project consigint --json
 ovrcr terminal read 7 --json
 ```
 
-Resource lists return arrays. Get commands, terminal creation, and relaunch return objects.
+Resource lists return arrays. Get commands, terminal creation, and reopen return objects.
 Other successful mutations return `{"ok":true}`. `ovrcr list --json` returns the
 legacy hierarchy as an array of projects with nested `workspaces`, each containing
 `terminals`.
@@ -227,15 +248,20 @@ legacy hierarchy as an array of projects with nested `workspaces`, each containi
 | --- | --- |
 | Project | `name`, `repo`, `workspace_root`, `workspace_count` |
 | Workspace | `project`, `name`, `path`, `branch`, `terminal_count` |
-| Terminal | `id`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `context_usage`, `context_stale` |
+| Terminal | `id`, `run`, `kind`, `project`, `workspace`, `name`, `title`, `display_name`, `label`, `pid`, `started_unix_ms`, `phase`, `activity`, `exit_code`, `exit_signal`, `recovery`, `context_usage`, `context_stale` |
 | Screen read | `id`, `rows`, `cols`, `text` |
 
 `name` is the stable session name. `title` is its nullable effective title;
 `display_name` is the title or fallback name. These titles do not imply agent
 activity or reporting support.
 
-`phase` is `running`, `paused`, or `exited`; `exit_code` and `exit_signal` are
-nullable and set only for `exited`. `activity` is one of `unknown`, `idle`, `busy`,
+`run` is the process-run identity of the row. `kind` is `terminal` or
+`{"agent":"<preset>"}`. The agent name identifies a selected preset or detected
+executable; it is not proof of resume support. `phase` is `running`, `paused`,
+`exited`, `stopped`, or `interrupted`; `exit_code` and `exit_signal` are nullable
+and set only for `exited`. Dormant rows have a null `started_unix_ms` rather than
+inventing elapsed time from epoch. `recovery` describes ownership and resume state.
+`activity` is one of `unknown`, `idle`, `busy`,
 `waiting_input`, `response_ready`, or `error`, and is the latest accepted provider
 observation — `waiting_input` while the terminal's `agent.input_requests` set is non-empty,
 whatever activity is recorded underneath (see

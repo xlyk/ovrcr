@@ -113,6 +113,7 @@ mod tests {
             vec![
                 ServerMessage::Event(ServerEvent::ScreenDirty {
                     session: SessionId(1),
+                    run: crate::SessionRunId(1),
                     revision: 1,
                 }),
                 ServerMessage::Response {

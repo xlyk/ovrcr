@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -130,8 +130,8 @@ mod tests {
     use super::*;
     use crate::{
         AgentActivity, AgentReport, AgentUpdate, ClientMessage, DashboardView, PaneTarget, Request,
-        Response, ServerEvent, ServerMessage, SessionId, SessionPhase, SessionSummary,
-        TerminalSize,
+        Response, ServerEvent, ServerMessage, SessionId, SessionKind, SessionPhase, SessionRunId,
+        SessionSummary, TerminalSize,
     };
     use std::io::Write;
     use std::os::unix::net::UnixStream;
@@ -143,6 +143,7 @@ mod tests {
             request_id: 7,
             request: Request::Input {
                 session: SessionId(9),
+                run: SessionRunId(1),
                 bytes: vec![0, 27, 255],
             },
         };
@@ -196,6 +197,7 @@ mod tests {
     fn split_view_validation_rejects_ambiguous_targets() {
         let target = PaneTarget {
             session: SessionId(1),
+            run: SessionRunId(1),
             size: TerminalSize { rows: 36, cols: 39 },
         };
         let mut view = DashboardView {
@@ -213,14 +215,17 @@ mod tests {
         view.panes = vec![
             PaneTarget {
                 session: SessionId(1),
+                run: SessionRunId(1),
                 size: TerminalSize { rows: 36, cols: 39 },
             },
             PaneTarget {
                 session: SessionId(2),
+                run: SessionRunId(1),
                 size: TerminalSize { rows: 18, cols: 39 },
             },
             PaneTarget {
                 session: SessionId(3),
+                run: SessionRunId(1),
                 size: TerminalSize { rows: 18, cols: 39 },
             },
         ];
@@ -251,6 +256,7 @@ mod tests {
             revision: 3,
             panes: vec![PaneTarget {
                 session: SessionId(1),
+                run: SessionRunId(1),
                 size: TerminalSize { rows: 36, cols: 39 },
             }],
             focused: Some(SessionId(1)),
@@ -295,6 +301,7 @@ mod tests {
             },
             Request::CloseTerminal {
                 session: SessionId(3),
+                expected_run: crate::SessionRunId(3),
             },
         ] {
             let (mut left, mut right) = UnixStream::pair().unwrap();
@@ -328,20 +335,23 @@ mod tests {
         }
 
         let paused = SessionSummary {
-            title: None,
             id: SessionId(3),
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
+            recovery: None,
             project: "project".into(),
             workspace: "workspace".into(),
             name: "session".into(),
             label: "sh".into(),
             pid: Some(42),
-            started_unix_ms: 7,
+            started_unix_ms: Some(7),
             phase: SessionPhase::Paused,
             activity: AgentActivity::Unknown,
             context_usage: None,
             agent: None,
             agent_epoch: 0,
             unread: None,
+            title: None,
         };
         let (mut left, mut right) = UnixStream::pair().unwrap();
         let message = ServerMessage::Event(ServerEvent::SessionChanged(Box::new(paused)));

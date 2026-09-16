@@ -565,6 +565,7 @@ fn protocol_change_clears_held_state() {
     );
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"\x1b[?1002l".to_vec(),
     }));
@@ -663,14 +664,10 @@ fn wheel_up_over_the_unfocused_pane_opens_its_history() {
     assert_eq!(action, ovrcr::tui::DashboardAction::Redraw);
     assert_eq!(dashboard.focused_session(), Some(session_b));
 
-    let dirty = dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
-        session: session_b,
-        revision: 0,
-    }));
-    let replacement = dirty
-        .into_iter()
-        .find(|message| matches!(message.request, Request::SetView { .. }))
+    let replacement = dashboard
+        .request_view_at(area)
         .expect("the wheel focus change should emit one SetView");
+    dashboard.drain_outbox();
     let Request::SetView { ref view } = replacement.request else {
         panic!("expected SetView");
     };

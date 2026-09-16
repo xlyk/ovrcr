@@ -6,7 +6,8 @@ use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
 use super::state::find_session;
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{
-    BranchRequest, ClientMessage, CreateSessionRequest, Request, Response, SessionLaunch,
+    BranchRequest, ClientMessage, CreateSessionRequest, Request, Response, SessionKind,
+    SessionLaunch,
 };
 use crate::session::SessionId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -35,7 +36,9 @@ enum Command {
     CreateTerminal,
     CreateWorkspace,
     RenameTerminal(SessionId),
-    RelaunchTerminal(SessionId),
+    ReopenTerminal(SessionId),
+    AcknowledgeStopped(SessionId),
+    AgentResumeUnavailable,
     RecoverLaunch,
     RegisterProject,
     CloseTerminal(SessionId),
@@ -79,7 +82,7 @@ enum Page {
         root_edited: bool,
     },
     Confirm {
-        request: Request,
+        request: Option<Request>,
         target: String,
     },
 }
@@ -554,6 +557,19 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
+        let matches_close = matches!(
+            self.palette.as_ref().map(|palette| &palette.page),
+            Some(Page::Confirm {
+                request: Some(Request::CloseTerminal { session: id, .. }),
+                ..
+            }) if *id == session
+        );
+        if matches_close {
+            self.palette = None;
+        }
+    }
+
     pub(super) fn open_remove_context(&mut self, workspace: bool) -> DashboardAction {
         let (project, name) = self.creation_context();
         if project.is_empty() || (workspace && name.is_empty()) {
@@ -577,26 +593,59 @@ impl Dashboard {
     }
 
     fn command_page(&self, command: Command) -> Page {
-        if let Command::RelaunchTerminal(id) = command {
-            Page::Confirm {
-                request: Request::RelaunchSession { session: id },
-                target: "Relaunch this exited session in a new terminal, retaining its output?"
+        match command {
+            Command::ReopenTerminal(id) => {
+                let session = find_session(self, id).expect("reopen target exists");
+                let acknowledge_stopped = session
+                    .recovery
+                    .as_ref()
+                    .is_some_and(|recovery| recovery.requires_ack);
+                let target = if acknowledge_stopped {
+                    "Previous agent or background processes may still be running. Confirm they have stopped, then reopen this session in a fresh shell?"
+                } else {
+                    "Reopen this session in a fresh shell?"
+                };
+                Page::Confirm {
+                    request: Some(Request::ReopenSession {
+                        session: id,
+                        expected_run: session.run,
+                        acknowledge_stopped,
+                    }),
+                    target: target.into(),
+                }
+            }
+            Command::AcknowledgeStopped(id) => {
+                let session = find_session(self, id).expect("acknowledge target exists");
+                Page::Confirm {
+                    request: Some(Request::AcknowledgeSessionStopped {
+                        session: id,
+                        expected_run: session.run,
+                    }),
+                    target: "Acknowledge that previous agent or background processes have stopped, without launching a replacement?".into(),
+                }
+            }
+            Command::AgentResumeUnavailable => Page::Confirm {
+                request: None,
+                target: "Agent resume is unavailable. Native provider resume is not supported."
                     .into(),
+            },
+            Command::CloseTerminal(id) => {
+                let session = find_session(self, id).expect("close target exists");
+                Page::Confirm {
+                    request: Some(Request::CloseTerminal {
+                        session: id,
+                        expected_run: session.run,
+                    }),
+                    target: format!(
+                        "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
+                        session.project,
+                        session.workspace,
+                        session.display_name(),
+                        id.0
+                    ),
+                }
             }
-        } else if let Command::CloseTerminal(id) = command {
-            let session = find_session(self, id).expect("close target exists");
-            Page::Confirm {
-                request: Request::CloseTerminal { session: id },
-                target: format!(
-                    "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
-                    session.project,
-                    session.workspace,
-                    session.display_name(),
-                    id.0
-                ),
-            }
-        } else {
-            self.palette_form(command)
+            command => self.palette_form(command),
         }
     }
 
@@ -649,13 +698,42 @@ impl Dashboard {
                 label: "Rename terminal (blank = Automatic)".into(),
                 command: Command::RenameTerminal(id),
             });
-            if find_session(self, id)
-                .is_some_and(|s| matches!(s.phase, crate::session::SessionPhase::Exited { .. }))
+            if let Some(session) = find_session(self, id).filter(|session| !session.phase.is_live())
             {
-                entries.push(Entry {
-                    label: "Relaunch exited terminal".into(),
-                    command: Command::RelaunchTerminal(id),
-                });
+                match &session.kind {
+                    SessionKind::Agent { .. } => {
+                        entries.push(Entry {
+                            label: "Agent resume is unavailable".into(),
+                            command: Command::AgentResumeUnavailable,
+                        });
+                        if session
+                            .recovery
+                            .as_ref()
+                            .is_some_and(|recovery| recovery.requires_ack)
+                        {
+                            entries.push(Entry {
+                                label: "Acknowledge stopped processes".into(),
+                                command: Command::AcknowledgeStopped(id),
+                            });
+                        }
+                    }
+                    SessionKind::Terminal => {
+                        entries.push(Entry {
+                            label: "Reopen in a fresh shell".into(),
+                            command: Command::ReopenTerminal(id),
+                        });
+                        if session
+                            .recovery
+                            .as_ref()
+                            .is_some_and(|recovery| recovery.requires_ack)
+                        {
+                            entries.push(Entry {
+                                label: "Acknowledge stopped without reopening".into(),
+                                command: Command::AcknowledgeStopped(id),
+                            });
+                        }
+                    }
+                }
             }
             entries.push(Entry {
                 label: "Close terminal".into(),
@@ -1220,6 +1298,7 @@ impl Dashboard {
                                     name: values[2].clone(),
                                     argv: selected_launch.as_ref().unwrap().argv.clone(),
                                     label: selected_launch.as_ref().unwrap().label.clone(),
+                                    kind: selected_launch.as_ref().unwrap().kind.clone(),
                                 })
                             }
                             Command::RenameTerminal(session) => Request::SetSessionTitle {
@@ -1262,6 +1341,7 @@ impl Dashboard {
                                     name: String::new(),
                                     argv: selected_launch.as_ref().unwrap().argv.clone(),
                                     label: selected_launch.as_ref().unwrap().label.clone(),
+                                    kind: selected_launch.as_ref().unwrap().kind.clone(),
                                 })
                             }
                             Command::RegisterProject => Request::AddProject {
@@ -1286,8 +1366,12 @@ impl Dashboard {
                     }
                 }
                 Page::Confirm { request, .. } => {
-                    let request = request.clone();
-                    action = self.palette_submit(&mut palette, request);
+                    if let Some(request) = request.clone() {
+                        action = self.palette_submit(&mut palette, request);
+                    } else {
+                        self.palette = None;
+                        return DashboardAction::Redraw;
+                    }
                 }
             },
             _ => {}
@@ -1398,8 +1482,44 @@ impl Dashboard {
         };
         match value("Start") {
             "Nothing yet" => Ok(None),
-            "Agent" => self.detected_agents().into_iter().find(|a| a.name == value("Agent") && a.source != AgentSource::Shell && a.source != AgentSource::Custom && a.name != "shell" && a.name != "Custom").map(|a| Some(SessionLaunch { argv: a.argv, label: Some(a.name) })).ok_or_else(|| format!("Agent '{}' is unavailable. Choose another agent or explicitly select Terminal.", value("Agent"))),
-            "Terminal" => Ok(Some(SessionLaunch { argv: if value("Command").is_empty() { self.shell_argv() } else { vec!["/bin/sh".into(), "-lc".into(), OsString::from(value("Command"))] }, label: None })),
+            "Agent" => self
+                .detected_agents()
+                .into_iter()
+                .find(|a| {
+                    a.name == value("Agent")
+                        && a.source != AgentSource::Shell
+                        && a.source != AgentSource::Custom
+                        && a.name != "shell"
+                        && a.name != "Custom"
+                })
+                .map(|a| {
+                    Some(SessionLaunch {
+                        argv: a.argv,
+                        kind: SessionKind::Agent {
+                            name: a.name.clone(),
+                        },
+                        label: Some(a.name),
+                    })
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Agent '{}' is unavailable. Choose another agent or explicitly select Terminal.",
+                        value("Agent")
+                    )
+                }),
+            "Terminal" => Ok(Some(SessionLaunch {
+                argv: if value("Command").is_empty() {
+                    self.shell_argv()
+                } else {
+                    vec![
+                        "/bin/sh".into(),
+                        "-lc".into(),
+                        OsString::from(value("Command")),
+                    ]
+                },
+                label: None,
+                kind: SessionKind::Terminal,
+            })),
             _ => Err("Choose Agent, Terminal, or Nothing yet".into()),
         }
     }
@@ -1452,6 +1572,7 @@ impl Dashboard {
                 name: String::new(),
                 argv: launch.argv.clone(),
                 label: launch.label.clone(),
+                kind: launch.kind.clone(),
             }),
             Request::CreateSession(session) => Some(session.clone()),
             _ => None,
@@ -1600,8 +1721,8 @@ impl Dashboard {
         request_id: u64,
         response: &Response,
     ) -> Option<Vec<ClientMessage>> {
-        let palette = self.palette.as_mut()?;
-        if palette.suggestions.inspect == Some(request_id) {
+        if self.palette.as_ref()?.suggestions.inspect == Some(request_id) {
+            let mut palette = self.palette.take().unwrap();
             palette.suggestions.inspect = None;
             if let Response::Inventory { registry, .. } = response {
                 palette.suggestions.repos = registry
@@ -1610,19 +1731,54 @@ impl Dashboard {
                     .map(|project| (project.name.clone(), project.repo.clone()))
                     .collect();
             }
-            let mut palette = self.palette.take().unwrap();
             self.refresh_workspace_form(&mut palette);
             self.palette = Some(palette);
             return Some(Vec::new());
         }
-        if palette.pending != Some(request_id) {
+        if self.palette.as_ref()?.pending != Some(request_id) {
             return None;
         }
+        let workspace_form = matches!(
+            self.palette.as_ref()?.page,
+            Page::Form {
+                command: Command::CreateWorkspace,
+                ..
+            }
+        );
         match response {
             Response::Error { code, message } => {
+                let code = code.clone();
+                let message = message.clone();
+                let mut palette = self.palette.take().unwrap();
                 palette.pending = None;
                 palette.error = Some(format!("{code:?}: {message}"));
-                if *code == crate::protocol::ErrorCode::PartialFailure
+                let reopen = match &palette.page {
+                    Page::Confirm {
+                        request: Some(Request::ReopenSession { session, .. }),
+                        ..
+                    } => Some((*session, true)),
+                    Page::Confirm {
+                        request: Some(Request::AcknowledgeSessionStopped { session, .. }),
+                        ..
+                    } => Some((*session, false)),
+                    _ => None,
+                };
+                if let Some((id, reopen)) = reopen {
+                    if find_session(self, id).is_some() {
+                        palette.page = if reopen {
+                            self.command_page(Command::ReopenTerminal(id))
+                        } else {
+                            self.command_page(Command::AcknowledgeStopped(id))
+                        };
+                        palette.error = Some(format!("{code:?}: {message}"));
+                    }
+                } else if code == crate::protocol::ErrorCode::OwnershipUncertain {
+                    palette.failed_launch = None;
+                    palette.page = Page::Confirm {
+                        request: None,
+                        target: "Launch ownership is uncertain. No process-stop acknowledgement was sent. Close this notice, select the intended retained row, then use its Reopen or Acknowledge action after stopping old processes. Do not create another session.".into(),
+                    };
+                } else if code == crate::protocol::ErrorCode::PartialFailure
                     && matches!(
                         palette.page,
                         Page::Form {
@@ -1651,25 +1807,24 @@ impl Dashboard {
                         root_edited: false,
                     };
                 }
+                self.palette = Some(palette);
+                return Some(Vec::new());
             }
-            Response::Ok
-                if matches!(
-                    palette.page,
-                    Page::Form {
-                        command: Command::CreateWorkspace,
-                        ..
-                    }
-                ) =>
-            {
-                palette.workspace_acknowledged = true;
+            Response::Ok if workspace_form => {
+                self.palette.as_mut().unwrap().workspace_acknowledged = true;
                 return Some(self.attach_created_workspace());
             }
             _ => {
+                let mut palette = self.palette.take().unwrap();
                 if let Some(request_id) = palette.suggestions.inspect {
                     self.ignored_responses.insert(request_id);
                 }
+                if let Response::CreatedSession(session) = response
+                    && self.stale_created_session(session)
+                {
+                    return Some(Vec::new());
+                }
                 let preference = palette.launch_preference.take();
-                self.palette = None;
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
                     if let Some((project, choice)) = preference {
@@ -1696,6 +1851,7 @@ impl Dashboard {
                     self.mode = InputMode::Terminal;
                     return Some(outgoing);
                 }
+                self.palette = None;
             }
         }
         Some(Vec::new())
@@ -2117,7 +2273,10 @@ fn removal_confirmation(request: Request) -> Page {
         }
         _ => unreachable!("only workspace/project removal uses this confirmation"),
     };
-    Page::Confirm { request, target }
+    Page::Confirm {
+        request: Some(request),
+        target,
+    }
 }
 
 #[cfg(test)]
@@ -2510,8 +2669,8 @@ mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
     use crate::protocol::{
-        AgentActivity, ErrorCode, ProjectSummary, ServerMessage, SessionPhase, SessionSummary,
-        TerminalSize, WorkspaceSummary,
+        AgentActivity, ErrorCode, ProjectSummary, ServerEvent, ServerMessage, SessionKind,
+        SessionPhase, SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
     };
 
     fn dashboard() -> Dashboard {
@@ -2562,13 +2721,16 @@ mod launch_tests {
     fn summary(id: u64) -> SessionSummary {
         SessionSummary {
             id: SessionId(id),
+            run: crate::protocol::SessionRunId(1),
+            kind: crate::protocol::SessionKind::Terminal,
+            recovery: None,
             project: "demo".into(),
             workspace: "root".into(),
             name: format!("root-{id}"),
             title: None,
             label: "shell".into(),
             pid: None,
-            started_unix_ms: 0,
+            started_unix_ms: Some(0),
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             context_usage: None,
@@ -2935,15 +3097,418 @@ mod launch_tests {
         };
         d.hierarchy.projects[0].workspaces[0].sessions[0] = one;
         d.palette = Some(Palette {
-            page: d.command_page(Command::RelaunchTerminal(SessionId(1))),
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
             ..Palette::new()
         });
         assert_eq!(
             request(&mut d).request,
-            Request::RelaunchSession {
-                session: SessionId(1)
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
             }
         );
         assert_eq!(d.hierarchy.projects[0].workspaces[0].sessions.len(), 2);
+    }
+
+    #[test]
+    fn reopen_and_acknowledge_confirm_previous_process_termination() {
+        let mut d = dashboard();
+        let mut stopped = summary(1);
+        stopped.phase = SessionPhase::Stopped;
+        stopped.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: None,
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![stopped];
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let Page::Confirm { request, target } = &d.palette.as_ref().unwrap().page else {
+            panic!("reopen must confirm");
+        };
+        assert!(
+            target.contains("Previous agent or background processes"),
+            "{target}"
+        );
+        assert_eq!(
+            request,
+            &Some(Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: true,
+            })
+        );
+        d.palette = Some(Palette {
+            page: d.command_page(Command::AcknowledgeStopped(SessionId(1))),
+            ..Palette::new()
+        });
+        let Page::Confirm { request, target } = &d.palette.as_ref().unwrap().page else {
+            panic!("acknowledge must confirm");
+        };
+        assert!(target.contains("without launching"), "{target}");
+        assert_eq!(
+            request,
+            &Some(Request::AcknowledgeSessionStopped {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+            })
+        );
+        d.hierarchy.projects[0].workspaces[0].sessions[0].kind = SessionKind::Agent {
+            name: "codex".into(),
+        };
+        d.palette = Some(Palette {
+            page: d.command_page(Command::AgentResumeUnavailable),
+            ..Palette::new()
+        });
+        assert!(matches!(
+            d.palette.as_ref().unwrap().page,
+            Page::Confirm { request: None, .. }
+        ));
+        assert_eq!(submit(&mut d), DashboardAction::Redraw);
+    }
+
+    #[test]
+    fn failed_reopen_retries_the_current_run() {
+        let mut d = dashboard();
+        let mut stopped = summary(1);
+        stopped.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![stopped];
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let first = request(&mut d);
+        assert_eq!(
+            first.request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
+            }
+        );
+        let mut failed = summary(1);
+        failed.run = crate::protocol::SessionRunId(2);
+        failed.phase = SessionPhase::Stopped;
+        failed.recovery = Some(SessionRecovery {
+            requires_ack: false,
+            unavailable: None,
+            failure: Some("cwd missing".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions[0] = failed;
+        d.handle_server_message(ServerMessage::Response {
+            request_id: first.request_id,
+            response: Response::Error {
+                code: ErrorCode::Internal,
+                message: "reopen failed".into(),
+            },
+        });
+        assert_eq!(
+            request(&mut d).request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(2),
+                acknowledge_stopped: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delayed_reopen_response_preserves_the_current_error() {
+        let mut d = dashboard();
+        let mut original = summary(1);
+        original.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![original];
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let pending = request(&mut d);
+        let mut current = summary(1);
+        current.run = crate::protocol::SessionRunId(3);
+        d.hierarchy.projects[0].workspaces[0].sessions[0] = current;
+        d.set_error("current operation failed");
+        let mut delayed = summary(1);
+        delayed.run = crate::protocol::SessionRunId(2);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: pending.request_id,
+            response: Response::CreatedSession(Box::new(delayed)),
+        });
+        assert_eq!(d.error.as_deref(), Some("current operation failed"));
+    }
+
+    #[test]
+    fn ownership_uncertain_create_offers_the_existing_row_not_another_create() {
+        let mut d = dashboard();
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        assert!(matches!(launched.request, Request::CreateSession(_)));
+        let mut retained = summary(7);
+        retained.phase = SessionPhase::Stopped;
+        retained.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![retained];
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                message: "process ownership is uncertain".into(),
+            },
+        });
+        assert_eq!(d.focused_session(), None);
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                    panic!("uncertain create must not replay creation or acknowledge a guessed row")
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+        d.select_session(SessionId(7));
+        d.palette = Some(Palette {
+            page: d.command_page(Command::AcknowledgeStopped(SessionId(7))),
+            ..Palette::new()
+        });
+        assert_eq!(
+            request(&mut d).request,
+            Request::AcknowledgeSessionStopped {
+                session: SessionId(7),
+                expected_run: crate::protocol::SessionRunId(1),
+            }
+        );
+    }
+
+    #[test]
+    fn known_create_failure_still_retries_the_create_form() {
+        let mut d = dashboard();
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::Internal,
+                message: "executable not found".into(),
+            },
+        });
+        assert!(matches!(request(&mut d).request, Request::CreateSession(_)));
+    }
+
+    #[test]
+    fn recover_launch_retry_does_not_acknowledge_stopped() {
+        let mut d = dashboard();
+        start_workspace(&mut d, "Agent");
+        set(&mut d, "Agent", "fixture-agent");
+        let launched = request(&mut d);
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::PartialFailure,
+                message: "workspace created; agent failed".into(),
+            },
+        });
+        d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+            project: "demo".into(),
+            name: "new-work".into(),
+            path: "/tmp/unused".into(),
+            sessions: vec![],
+        });
+        set(&mut d, "Recovery", "Retry");
+        assert!(
+            matches!(request(&mut d).request, Request::CreateSession(_)),
+            "Retry recovers by creating in the existing workspace, without stopped-process acknowledgement"
+        );
+    }
+
+    #[test]
+    fn ownership_uncertain_create_does_not_guess_among_two_rows() {
+        let mut d = dashboard();
+        let mut first = summary(1);
+        first.phase = SessionPhase::Stopped;
+        first.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        let mut second = summary(2);
+        second.phase = SessionPhase::Stopped;
+        second.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![first, second];
+        d.select_session(SessionId(1));
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        assert!(matches!(launched.request, Request::CreateSession(_)));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                message: "process ownership is uncertain".into(),
+            },
+        });
+        assert_eq!(d.focused_session(), Some(SessionId(1)));
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                    panic!("uncertain create must not replay creation or acknowledge a guessed row")
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn ownership_uncertain_create_does_not_parse_session_id_from_error_text() {
+        let mut d = dashboard();
+        let mut first = summary(7);
+        first.phase = SessionPhase::Stopped;
+        first.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        let mut bait = summary(42);
+        bait.phase = SessionPhase::Stopped;
+        bait.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![first, bait];
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        assert!(matches!(launched.request, Request::CreateSession(_)));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                message: "process ownership is uncertain for session 42 run 7".into(),
+            },
+        });
+        assert_eq!(
+            d.focused_session(),
+            None,
+            "error text must not select the bait session, and inventory order must not guess a row"
+        );
+        let palette = d.palette.as_ref().expect("uncertain notice stays open");
+        assert!(
+            palette.failed_launch.is_none(),
+            "uncertain create must not keep a recoverable launch"
+        );
+        assert!(
+            matches!(palette.page, Page::Confirm { request: None, .. }),
+            "uncertain create must keep a request-less notice"
+        );
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_)
+                | Request::AcknowledgeSessionStopped { .. }
+                | Request::ReopenSession { .. } => {
+                    panic!(
+                        "uncertain create must not parse error text to create, ack, or reopen a row"
+                    )
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
+        let mut d = dashboard();
+        let mut stopped = summary(1);
+        stopped.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![stopped];
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let mut advanced = d.hierarchy.clone();
+        advanced.projects[0].workspaces[0].sessions[0].run = crate::protocol::SessionRunId(4);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            advanced,
+        )));
+        let first = request(&mut d);
+        assert_eq!(
+            first.request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
+            }
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: first.request_id,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                message: "run moved".into(),
+            },
+        });
+        assert!(
+            d.palette.is_some(),
+            "Conflict rebuilds confirmation and waits for another Enter"
+        );
+        assert_eq!(
+            request(&mut d).request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(4),
+                acknowledge_stopped: false,
+            }
+        );
+    }
+
+    #[test]
+    fn close_confirm_does_not_submit_after_run_replacement() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![summary(1)];
+        d.select_session(SessionId(1));
+        d.open_close_terminal();
+        assert!(matches!(
+            &d.palette.as_ref().unwrap().page,
+            Page::Confirm {
+                request: Some(Request::CloseTerminal {
+                    session: SessionId(1),
+                    expected_run: crate::protocol::SessionRunId(1),
+                }),
+                ..
+            }
+        ));
+        let mut advanced = d.hierarchy.clone();
+        advanced.projects[0].workspaces[0].sessions[0].run = crate::protocol::SessionRunId(4);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            advanced,
+        )));
+        let action = if d.palette.is_some() {
+            submit(&mut d)
+        } else {
+            DashboardAction::None
+        };
+        assert!(
+            !matches!(
+                action,
+                DashboardAction::Request(ClientMessage {
+                    request: Request::CloseTerminal { .. },
+                    ..
+                })
+            ),
+            "must not send CloseTerminal for the old confirmation without a new explicit confirm"
+        );
     }
 }

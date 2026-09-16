@@ -544,11 +544,13 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                         &format!("pid: {}{paused}{}", status.pid, status.activity),
                         width,
                     );
-                    append_metadata_field(
-                        &mut text,
-                        &format!("elapsed: {}", status.elapsed),
-                        rect.metadata.width,
-                    );
+                    if !status.elapsed.is_empty() {
+                        append_metadata_field(
+                            &mut text,
+                            &format!("elapsed: {}", status.elapsed),
+                            rect.metadata.width,
+                        );
+                    }
                     append_metadata_field(
                         &mut text,
                         &dashboard.session_display_name(session),
@@ -560,6 +562,8 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 // live activity label.
                 let activity = if status.exited {
                     Span::raw("")
+                } else if !status.live {
+                    Span::styled(format!(" {}", status.activity), Style::default().fg(TEAL))
                 } else {
                     Span::styled(
                         format!("  agent{}", status.activity),
@@ -569,7 +573,14 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                 Line::from(vec![
                     Span::styled("pid: ", Style::default().fg(MUTED)),
                     Span::styled(status.pid, Style::default().fg(TEAL)),
-                    Span::styled("  elapsed: ", Style::default().fg(MUTED)),
+                    Span::styled(
+                        if status.elapsed.is_empty() {
+                            ""
+                        } else {
+                            "  elapsed: "
+                        },
+                        Style::default().fg(MUTED),
+                    ),
                     Span::styled(status.elapsed, Style::default().fg(TEAL)),
                     activity,
                     if status.paused {
@@ -844,11 +855,13 @@ fn render_split_metadata(
                 rect.metadata.width,
             );
         }
-        append_metadata_field(
-            &mut text,
-            &format!("elapsed: {}", status.elapsed),
-            rect.metadata.width,
-        );
+        if !status.elapsed.is_empty() {
+            append_metadata_field(
+                &mut text,
+                &format!("elapsed: {}", status.elapsed),
+                rect.metadata.width,
+            );
+        }
     }
     if let Some(unread) = status.as_ref().and_then(|status| status.unread.as_deref()) {
         // Keep both unread and reporting availability ahead of names, PID and geometry.

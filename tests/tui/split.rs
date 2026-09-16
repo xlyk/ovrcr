@@ -622,6 +622,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         request_id: split_req.request_id,
         response: Response::Screen {
             session: left_session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: initial_view.panes[0].size,
             bytes: b"\x1b[31mLEFT\x1b[0m\x1b[36;38H\xE7\x95\x8C\x1b[31m\x1b[36;1H<\x1b[2;4H"
@@ -632,6 +633,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         request_id: split_req.request_id,
         response: Response::Screen {
             session: right_session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: initial_view.panes[1].size,
             bytes: b"\x1b[32mRIGHT\x1b[0m\x1b[36;39H\xE7\x95\x8C\x1b[32m\x1b[36;1H>\x1b[2;5H"
@@ -737,6 +739,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: right_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"\x1b[36;40H\xE7\x95\x8C".to_vec(),
     }));
@@ -750,6 +753,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: left_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"\x1b[36;39H\xE7\x95\x8C".to_vec(),
     }));
@@ -775,6 +779,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         request_id: focused_left.request_id,
         response: Response::Screen {
             session: left_session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: TerminalSize { rows: 36, cols: 39 },
             bytes: b"\x1b[2;4H".to_vec(),
@@ -784,6 +789,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
         request_id: focused_left.request_id,
         response: Response::Screen {
             session: right_session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: TerminalSize { rows: 36, cols: 40 },
             bytes: Vec::new(),
@@ -803,6 +809,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: left_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"\x1b[?25l".to_vec(),
     }));
@@ -815,6 +822,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: left_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"\x1b[?25h\x1b[2;4H".to_vec(),
     }));
@@ -848,6 +856,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     acknowledge_all_view_targets(&mut dashboard, narrow);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: left_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"L\x1b[2;4H".to_vec(),
     }));
@@ -950,11 +959,13 @@ fn split_layout_renders_independent_cells_and_cursor() {
     acknowledge_all_view_targets(&mut dashboard, wide);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: left_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"L".to_vec(),
     }));
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: right_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"R".to_vec(),
     }));
@@ -973,6 +984,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     ));
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: right_session,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"\x1b[1;1HOTHER".to_vec(),
     }));
@@ -994,6 +1006,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     acknowledge_all_view_targets(&mut exited_split, focused_request);
     exited_split.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: exited_revision,
         bytes: b"FINAL\x1b[2;4H".to_vec(),
     }));
@@ -1011,6 +1024,7 @@ fn split_layout_renders_independent_cells_and_cursor() {
     assert_eq!(exited_split.pane_rects(area).len(), 2);
     exited_split.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(4),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: exited_revision,
         bytes: b"SURVIVOR".to_vec(),
     }));
@@ -1102,6 +1116,7 @@ fn split_state_modes_and_input_are_local() {
         request_id: request.request_id,
         response: Response::Screen {
             session: right,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: TerminalSize { rows: 36, cols: 40 },
             bytes: b"\x1b[?1h\x1b[?2004hRIGHT".to_vec(),
@@ -1112,6 +1127,7 @@ fn split_state_modes_and_input_are_local() {
         request_id: request.request_id,
         response: Response::Screen {
             session: left,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: TerminalSize { rows: 36, cols: 39 },
             bytes: b"LEFT".to_vec(),
@@ -1179,6 +1195,7 @@ fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
         request_id: shrink.request_id,
         response: Response::Screen {
             session: shrink_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: shrink_view.revision,
             size: shrink_target.size,
             bytes: b"SHRUNK".to_vec(),
@@ -1221,6 +1238,7 @@ fn split_review_readiness_requires_matching_targets_and_cancels_resize_copy() {
     let dirty_outgoing =
         dirty_copy.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
             session: dirty_copy.focused_session().unwrap(),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: 1,
         }));
     assert!(
@@ -1277,6 +1295,7 @@ fn split_review_preserves_nonfirst_survivor_on_hierarchy_removal() {
         request_id: split_request_id,
         response: Response::Screen {
             session: removed,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: split_revision,
             size: TerminalSize { rows: 36, cols: 40 },
             bytes: b"removed old".to_vec(),
@@ -1284,11 +1303,13 @@ fn split_review_preserves_nonfirst_survivor_on_hierarchy_removal() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: removed,
+        run: ovrcr_protocol::SessionRunId(1),
         revision: split_revision,
         bytes: b"removed output".to_vec(),
     }));
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: removed,
+        run: ovrcr_protocol::SessionRunId(1),
         revision: split_revision,
     }));
     assert_ne!(dashboard.focused_session(), Some(removed));
@@ -1307,6 +1328,7 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id.saturating_add(1),
         response: Response::Screen {
             session: first.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: first.size,
             bytes: b"wrong request".to_vec(),
@@ -1318,6 +1340,7 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id,
         response: Response::Screen {
             session: first.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision.saturating_sub(1),
             size: first.size,
             bytes: b"wrong revision".to_vec(),
@@ -1329,6 +1352,7 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id,
         response: Response::Screen {
             session: SessionId(5),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: first.size,
             bytes: b"wrong session".to_vec(),
@@ -1340,6 +1364,7 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id,
         response: Response::Screen {
             session: first.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: first.size,
             bytes: b"first".to_vec(),
@@ -1351,6 +1376,7 @@ fn split_review_requires_all_screens_before_ok_and_ignores_stale_view_completion
         request_id: request.request_id,
         response: Response::Screen {
             session: second.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: second.size,
             bytes: b"second".to_vec(),
@@ -1504,6 +1530,7 @@ fn split_review_pending_a_b_a_preserves_received_parser_before_ok() {
         request_id: initial.request_id,
         response: Response::Screen {
             session: target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: target.size,
             bytes: b"PENDING_A\x1b[?1h\x1b[?2004h".to_vec(),
@@ -1530,6 +1557,7 @@ fn split_review_pending_a_b_a_preserves_received_parser_before_ok() {
         request_id: replacement.request_id,
         response: Response::Screen {
             session: replacement_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: replacement_view.revision,
             size: replacement_target.size,
             bytes: b"FRESH_A\x1b[?1h\x1b[?2004h".to_vec(),
@@ -1587,6 +1615,7 @@ fn split_review_discarded_pending_view_refreshes_before_late_receipts() {
         request_id: initial.request_id,
         response: Response::Screen {
             session: initial_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: initial_revision,
             size: initial_target.size,
             bytes: b"ORIGINAL_A".to_vec(),
@@ -1604,6 +1633,7 @@ fn split_review_discarded_pending_view_refreshes_before_late_receipts() {
         request_id: replacement.request_id,
         response: Response::Screen {
             session: replacement_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: replacement_view.revision,
             size: replacement_target.size,
             bytes: b"FRESH_A\x1b[?1h\x1b[?2004h".to_vec(),
@@ -1640,6 +1670,7 @@ fn split_review_absent_a_screen_cannot_authorize_reassigned_parser() {
         request_id: initial.request_id,
         response: Response::Screen {
             session: target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: target.size,
             bytes: b"ABSENT_A".to_vec(),
@@ -1663,6 +1694,7 @@ fn split_review_absent_a_screen_cannot_authorize_reassigned_parser() {
         request_id: replacement.request_id,
         response: Response::Screen {
             session: replacement_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: replacement_view.revision,
             size: replacement_target.size,
             bytes: b"FRESH_ABSENT_A".to_vec(),
@@ -1699,6 +1731,7 @@ fn split_review_close_reopen_does_not_authorize_recreated_parser() {
         request_id: initial.request_id,
         response: Response::Screen {
             session: left.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: left.size,
             bytes: b"A_CONTENT".to_vec(),
@@ -1708,6 +1741,7 @@ fn split_review_close_reopen_does_not_authorize_recreated_parser() {
         request_id: initial.request_id,
         response: Response::Screen {
             session: right.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: right.size,
             bytes: b"B_CONTENT\x1b[?1h\x1b[?2004h".to_vec(),
@@ -1756,6 +1790,7 @@ fn split_review_close_reopen_does_not_authorize_recreated_parser() {
             request_id: replacement.request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: pane.run,
                 revision: replacement_view.revision,
                 size: pane.size,
                 bytes,
@@ -1806,6 +1841,7 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
         request_id: second.request_id,
         response: Response::Screen {
             session: first_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: first_target.size,
             bytes: Vec::new(),
@@ -1816,6 +1852,7 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
         request_id: second.request_id,
         response: Response::Screen {
             session: second_target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: second_target.size,
             bytes: Vec::new(),
@@ -1841,6 +1878,7 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
             request_id: refocus.request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: refocus_view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -1875,6 +1913,7 @@ fn split_review_focus_select_and_close_revoke_public_input_until_setview_ok() {
             request_id: select_other.request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: select_view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -1932,6 +1971,7 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: first_a_id,
         response: Response::Screen {
             session: SessionId(4),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: first_a_revision,
             size: TerminalSize { rows: 34, cols: 44 },
             bytes: b"old A".to_vec(),
@@ -1941,6 +1981,7 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: b_id,
         response: Response::Screen {
             session: SessionId(3),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: b_revision,
             size: TerminalSize { rows: 34, cols: 44 },
             bytes: b"old B".to_vec(),
@@ -1948,11 +1989,13 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(4),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: first_a_revision,
         bytes: b"stale output".to_vec(),
     }));
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
         session: SessionId(4),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: first_a_revision,
     }));
     dashboard.handle_server_message(ServerMessage::Response {
@@ -1976,6 +2019,7 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
     let dirty_outgoing =
         dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
             session: SessionId(4),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: first_a_revision,
         }));
     assert!(dirty_outgoing.is_empty());
@@ -1998,6 +2042,7 @@ fn split_review_replaces_a_b_a_and_rejects_old_completions() {
         request_id: second_a.request_id,
         response: Response::Screen {
             session: SessionId(4),
+            run: ovrcr::protocol::SessionRunId(1),
             revision: current_revision,
             size,
             bytes: b"new A".to_vec(),
@@ -2031,6 +2076,7 @@ fn split_review_matching_view_error_disables_input_until_a_new_view_is_ready() {
         request_id: next.request_id,
         response: Response::Screen {
             session: target.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: target.size,
             bytes: b"partial".to_vec(),
@@ -2064,6 +2110,7 @@ fn view_error_on_unchanged_view_retries_once_after_backoff() {
     let mut dirty =
         dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
             session,
+            run: ovrcr::protocol::SessionRunId(1),
             revision: 0,
         }));
     assert_eq!(dirty.len(), 1);
@@ -2142,6 +2189,7 @@ fn incomplete_final_ok_marks_panes_failed_and_refreshes() {
         request_id: request.request_id,
         response: Response::Screen {
             session: first.session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: first.size,
             bytes: b"only one snapshot".to_vec(),
@@ -2211,6 +2259,7 @@ fn split_error_survives_a_screen_dirty_refresh() {
     let mut dirty =
         dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
             session,
+            run: ovrcr::protocol::SessionRunId(1),
             revision: 0,
         }));
     assert_eq!(dirty.len(), 1);
@@ -2357,6 +2406,7 @@ fn split_review_terminal_modes_use_each_panes_parser() {
         request_id: split_req.request_id,
         response: Response::Screen {
             session: view.panes[0].session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: Vec::new(),
@@ -2366,6 +2416,7 @@ fn split_review_terminal_modes_use_each_panes_parser() {
         request_id: split_req.request_id,
         response: Response::Screen {
             session: SessionId(4),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[1].size,
             bytes: b"\x1b[?1l\x1b[?2004h".to_vec(),
@@ -2408,6 +2459,7 @@ fn split_review_terminal_modes_use_each_panes_parser() {
         request_id: left_view.request_id,
         response: Response::Screen {
             session: left.panes[0].session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: left.revision,
             size: left.panes[0].size,
             bytes: b"\x1b[?1h".to_vec(),
@@ -2418,6 +2470,7 @@ fn split_review_terminal_modes_use_each_panes_parser() {
             request_id: left_view.request_id,
             response: Response::Screen {
                 session: left.panes[1].session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: left.revision,
                 size: left.panes[1].size,
                 bytes: Vec::new(),
@@ -2483,6 +2536,7 @@ fn split_review_keeps_history_a_while_b_changes_and_cancels_late_work() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: b,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"B output".to_vec(),
     }));
@@ -2747,6 +2801,7 @@ fn split_state_ignores_stale_revisions_and_removed_sessions() {
         request_id: first.request_id,
         response: Response::Screen {
             session: right,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: TerminalSize { rows: 36, cols: 40 },
             bytes: b"first".to_vec(),
@@ -2756,6 +2811,7 @@ fn split_state_ignores_stale_revisions_and_removed_sessions() {
     dashboard.install_focus(right);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: right,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"stale".to_vec(),
     }));
@@ -2782,6 +2838,7 @@ fn split_preserves_history_copy_and_paused_input() {
         request_id: ready.request_id,
         response: Response::Screen {
             session: first,
+            run: ovrcr::protocol::SessionRunId(1),
             revision,
             size,
             bytes: b"A".to_vec(),
@@ -2805,6 +2862,7 @@ fn split_preserves_history_copy_and_paused_input() {
         request_id: request.request_id,
         response: Response::Screen {
             session: first,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: TerminalSize { rows: 36, cols: 39 },
             bytes: b"A".to_vec(),
@@ -2814,6 +2872,7 @@ fn split_preserves_history_copy_and_paused_input() {
         request_id: request.request_id,
         response: Response::Screen {
             session: right,
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             size: TerminalSize { rows: 36, cols: 40 },
             bytes: b"B".to_vec(),
@@ -2825,6 +2884,7 @@ fn split_preserves_history_copy_and_paused_input() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: right,
+        run: ovrcr_protocol::SessionRunId(1),
         revision,
         bytes: b"B output".to_vec(),
     }));

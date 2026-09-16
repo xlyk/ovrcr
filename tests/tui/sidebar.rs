@@ -403,6 +403,7 @@ fn agent_hook_summary_updates_drive_animation() {
 
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(5),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"PTY output\x1b]52;c;V0FJVElORw==\x1b\\".to_vec(),
     }));
@@ -932,15 +933,10 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
     dashboard.install_area(area);
     let action = dashboard.key(KeyCode::Char('v'));
     pump_view(&mut dashboard, action);
-    let session = dashboard.focused_session().expect("split session");
     let split_view = dashboard
-        .handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
-            session,
-            revision: 0,
-        }))
-        .into_iter()
-        .find(|msg| matches!(msg.request, Request::SetView { .. }))
+        .request_view_at(area)
         .expect("split should request a view");
+    dashboard.drain_outbox();
     acknowledge_all_view_targets(&mut dashboard, split_view);
     let split = dashboard.focused_session().expect("split session");
     dashboard.install_screen(SessionId(1), &[]);
@@ -975,16 +971,11 @@ fn empty_pane_click_preserves_the_assigned_wire_focus() {
         ),
         ovrcr::tui::DashboardAction::Redraw
     );
-    if let Some(selected) = dashboard
-        .handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
-            session: dashboard.focused_session().unwrap_or(SessionId(1)),
-            revision: dashboard.view_revision(),
-        }))
-        .into_iter()
-        .find(|msg| matches!(msg.request, Request::SetView { .. }))
-    {
-        acknowledge_all_view_targets(&mut dashboard, selected);
-    }
+    let selected = dashboard
+        .request_view_at(area)
+        .expect("container selection should update the view");
+    dashboard.drain_outbox();
+    acknowledge_all_view_targets(&mut dashboard, selected);
     let retained = dashboard.focused_session().expect("retained wire focus");
     let rects = dashboard.pane_rects(area);
     assert_eq!(rects.len(), 2);

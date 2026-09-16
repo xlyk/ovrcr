@@ -65,6 +65,18 @@ impl Unread {
         self.requests.retain(|id, _| existing.contains(id));
     }
 
+    pub(super) fn forget_session(&mut self, session: SessionId) {
+        self.observed.remove(&session);
+        self.requests.remove(&session);
+        if self
+            .presented
+            .as_ref()
+            .is_some_and(|(id, _)| *id == session)
+        {
+            self.presented = None;
+        }
+    }
+
     pub(super) fn commit_presented(&mut self, presented: Option<(SessionId, ReadyObservation)>) {
         self.presented = presented;
     }
@@ -97,13 +109,16 @@ mod tests {
     fn session(id: u64, open: &[(&str, InputKind)]) -> SessionSummary {
         SessionSummary {
             id: SessionId(id),
+            run: crate::protocol::SessionRunId(1),
+            kind: crate::protocol::SessionKind::Terminal,
+            recovery: None,
             project: "p".into(),
             workspace: "w".into(),
             name: "s".into(),
             title: None,
             label: "l".into(),
             pid: Some(1),
-            started_unix_ms: 0,
+            started_unix_ms: Some(0),
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             context_usage: None,

@@ -146,7 +146,24 @@ In the disposable fixture, also verify:
 7. Exercise Agent using a disposable configured preset, recording that this proves
    the launch UI only, not provider reporting. Verify its project preference after
    dashboard restart. Verify Terminal custom command text is absent from settings.
-8. Exit a session, relaunch explicitly, and confirm the old output remains.
+8. Exit an owned session. Verify Reopen explicitly asks you to confirm that old
+   agent/background processes stopped; cancel once and verify no new process.
+   After independently verifying the fixture processes are gone, confirm.
+   Check the same row/title, absence of old output, and a separate fresh-shell
+   execution marker. An older capture without this acknowledgement is not
+   evidence for the current recovery policy.
+
+For a deliberate server-loss check, record the fixture paths and owned processes
+first. Verify restored rows without launching processes, then explicitly confirm
+that old agents and background processes have stopped before reopening a shell.
+A host reboot is not required: `retained_ownership` tests deterministic boot-ID
+transitions and independently checks the native reader on macOS and Linux.
+
+The GUI helper deliberately preserves its fixture after an unexpected server
+exit. Record that cleanup-guard result separately. Shut down any replacement
+server through the fixture socket, verify every owned process group is gone,
+stop only the task-owned GUI launcher, and remove only its recorded disposable
+root. Do not weaken the normal cleanup guard to make a crash check pass.
 
 ## 3. Mouse forwarding and wheel history
 

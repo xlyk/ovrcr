@@ -68,13 +68,16 @@ mod tests {
     ) -> SessionSummary {
         SessionSummary {
             id: SessionId(1),
+            run: crate::protocol::SessionRunId(1),
+            kind: crate::protocol::SessionKind::Terminal,
+            recovery: None,
             project: "p".into(),
             workspace: "w".into(),
             name: "s".into(),
             title: None,
             label: "l".into(),
             pid: Some(1),
-            started_unix_ms: 0,
+            started_unix_ms: Some(0),
             phase,
             activity: AgentActivity::Unknown,
             context_usage: None,

@@ -1,6 +1,7 @@
 use crate::context::ContextUsageReport;
 use crate::{
-    AgentActivity, Registry, SessionId, SessionSummary, TaskRequest, TaskResponse, TerminalSize,
+    AgentActivity, Registry, SessionId, SessionKind, SessionRunId, SessionSummary, TaskRequest,
+    TaskResponse, TerminalSize,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -72,6 +73,7 @@ pub struct ClientMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneTarget {
     pub session: SessionId,
+    pub run: SessionRunId,
     pub size: TerminalSize,
 }
 
@@ -170,12 +172,14 @@ pub struct CreateSessionRequest {
     pub name: String,
     pub label: Option<String>,
     pub argv: Vec<OsString>,
+    pub kind: SessionKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionLaunch {
     pub argv: Vec<OsString>,
     pub label: Option<String>,
+    pub kind: SessionKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -221,6 +225,7 @@ pub enum Request {
     },
     Input {
         session: SessionId,
+        run: SessionRunId,
         bytes: Vec<u8>,
     },
     Resize {
@@ -242,6 +247,7 @@ pub enum Request {
     },
     CloseTerminal {
         session: SessionId,
+        expected_run: SessionRunId,
     },
     Task(Box<TaskRequest>),
     AgentReport(AgentReport),
@@ -284,8 +290,14 @@ pub enum Request {
         session: SessionId,
         title: Option<String>,
     },
-    RelaunchSession {
+    ReopenSession {
         session: SessionId,
+        expected_run: SessionRunId,
+        acknowledge_stopped: bool,
+    },
+    AcknowledgeSessionStopped {
+        session: SessionId,
+        expected_run: SessionRunId,
     },
 }
 
@@ -301,6 +313,7 @@ pub enum ErrorCode {
     PartialFailure,
     Internal,
     WorkspacesRemain,
+    OwnershipUncertain,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -329,6 +342,7 @@ pub enum Response {
     CreatedSession(Box<SessionSummary>),
     Screen {
         session: SessionId,
+        run: SessionRunId,
         revision: u64,
         size: TerminalSize,
         bytes: Vec<u8>,
@@ -357,11 +371,13 @@ pub enum ServerEvent {
     HierarchyChanged(HierarchySnapshot),
     Output {
         session: SessionId,
+        run: SessionRunId,
         revision: u64,
         bytes: Vec<u8>,
     },
     ScreenDirty {
         session: SessionId,
+        run: SessionRunId,
         revision: u64,
     },
     SessionChanged(Box<SessionSummary>),
@@ -401,14 +417,16 @@ mod wire_snapshot {
 
     fn summary() -> SessionSummary {
         SessionSummary {
-            title: None,
             id: SessionId(1),
+            run: SessionRunId(4),
+            kind: SessionKind::Terminal,
+            recovery: None,
             project: "p".into(),
             workspace: "w".into(),
             name: "n".into(),
             label: "l".into(),
             pid: Some(2),
-            started_unix_ms: 3,
+            started_unix_ms: Some(3),
             phase: SessionPhase::Running,
             activity: AgentActivity::Unknown,
             agent: Some(crate::AgentSnapshot {
@@ -444,6 +462,7 @@ mod wire_snapshot {
                 },
                 received_unix_ms: 6,
             }),
+            title: None,
         }
     }
 
@@ -491,6 +510,7 @@ mod wire_snapshot {
                     name: "c".into(),
                     label: None,
                     argv: vec!["sh".into()],
+                    kind: SessionKind::Terminal,
                 }),
             ),
             (
@@ -528,6 +548,7 @@ mod wire_snapshot {
                 "Input",
                 Request::Input {
                     session: SessionId(1),
+                    run: SessionRunId(4),
                     bytes: vec![7],
                 },
             ),
@@ -559,6 +580,7 @@ mod wire_snapshot {
                 "CloseTerminal",
                 Request::CloseTerminal {
                     session: SessionId(1),
+                    expected_run: SessionRunId(1),
                 },
             ),
             ("Task", Request::Task(Box::new(TaskRequest::ListTasks))),
@@ -602,6 +624,7 @@ mod wire_snapshot {
                         revision: 3,
                         panes: vec![PaneTarget {
                             session: SessionId(1),
+                            run: SessionRunId(4),
                             size: size(),
                         }],
                         focused: Some(SessionId(1)),
@@ -617,6 +640,7 @@ mod wire_snapshot {
                     launch: Some(SessionLaunch {
                         argv: vec!["sh".into()],
                         label: None,
+                        kind: SessionKind::Terminal,
                     }),
                 },
             ),
@@ -644,9 +668,18 @@ mod wire_snapshot {
                 },
             ),
             (
-                "RelaunchSession",
-                Request::RelaunchSession {
+                "ReopenSession",
+                Request::ReopenSession {
                     session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                    acknowledge_stopped: false,
+                },
+            ),
+            (
+                "AcknowledgeSessionStopped",
+                Request::AcknowledgeSessionStopped {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
                 },
             ),
         ]
@@ -669,6 +702,7 @@ mod wire_snapshot {
                 "Screen",
                 Response::Screen {
                     session: SessionId(1),
+                    run: SessionRunId(4),
                     revision: 3,
                     size: size(),
                     bytes: vec![7],
@@ -746,6 +780,7 @@ mod wire_snapshot {
                 "Output",
                 ServerEvent::Output {
                     session: SessionId(1),
+                    run: SessionRunId(4),
                     revision: 3,
                     bytes: vec![7],
                 },
@@ -754,6 +789,7 @@ mod wire_snapshot {
                 "ScreenDirty",
                 ServerEvent::ScreenDirty {
                     session: SessionId(1),
+                    run: SessionRunId(4),
                     revision: 3,
                 },
             ),
@@ -857,19 +893,19 @@ mod wire_snapshot {
         ("Request::RemoveProject", "040161"),
         ("Request::CreateWorkspace", "0501610162010163"),
         ("Request::RemoveWorkspace", "0601610162"),
-        ("Request::CreateSession", "07016101620163000100027368"),
+        ("Request::CreateSession", "0701610162016300010002736800"),
         ("Request::RemoveSession", "0801"),
         ("Request::KillSession", "0901"),
         ("Request::PauseSession", "0a01"),
         ("Request::ResumeSession", "0b01"),
         ("Request::Select", "0c010102"),
-        ("Request::Input", "0d010107"),
+        ("Request::Input", "0d01040107"),
         ("Request::Resize", "0e010102"),
         ("Request::Shutdown", "0f01"),
         ("Request::Inspect", "10"),
         ("Request::ReadTerminal", "11010103"),
         ("Request::SendTerminal", "1201017401"),
-        ("Request::CloseTerminal", "1301"),
+        ("Request::CloseTerminal", "130101"),
         ("Request::Task", "1400"),
         (
             "Request::AgentReport",
@@ -878,10 +914,10 @@ mod wire_snapshot {
         ("Request::HistoryBegin", "1601"),
         ("Request::HistoryPage", "17010203040506"),
         ("Request::HistoryEnd", "180102"),
-        ("Request::SetView", "1903010101020101"),
+        ("Request::SetView", "190301010401020101"),
         (
             "Request::CreateWorkspaceWithLaunch",
-            "1f0161016201016301010002736800",
+            "1f016101620101630101000273680000",
         ),
         (
             "Request::CreateWorkspaceWithoutLaunch",
@@ -889,7 +925,8 @@ mod wire_snapshot {
         ),
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
-        ("Request::RelaunchSession", "2101"),
+        ("Request::ReopenSession", "21010400"),
+        ("Request::AcknowledgeSessionStopped", "220104"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -898,13 +935,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "020104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
-        ("Response::Screen", "03010301020107"),
+        ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "0500010104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -914,11 +951,11 @@ mod wire_snapshot {
             "090102030401010101780100020102030000",
         ),
         ("ServerEvent::HierarchyChanged", "0000"),
-        ("ServerEvent::Output", "0101030107"),
-        ("ServerEvent::ScreenDirty", "020103"),
+        ("ServerEvent::Output", "010104030107"),
+        ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030101700177016e016c0102030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "030104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),
@@ -1024,6 +1061,7 @@ mod tests {
             revision: 1,
             panes: vec![PaneTarget {
                 session: SessionId(1),
+                run: SessionRunId(4),
                 size,
             }],
             focused: Some(SessionId(1)),

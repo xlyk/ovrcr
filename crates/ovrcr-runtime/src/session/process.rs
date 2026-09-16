@@ -112,18 +112,21 @@ pub(super) fn short_tty_name(path: &std::path::Path) -> Option<String> {
 /// only the leader's group leaves background jobs behind. Ownership is
 /// defined by the controlling terminal: anything still attached to the
 /// session's PTY belongs to the session; anything that called `setsid` does
-/// not. `ps -t` filters in the kernel, so this costs well under a
-/// millisecond. A failure to run `ps` yields an empty set so termination can
-/// still proceed against the leader's group.
-pub(super) fn attached_groups(tty: &str, leader: libc::pid_t) -> BTreeSet<libc::pid_t> {
-    let mut groups = BTreeSet::new();
-    let Ok(output) = Command::new("ps").args(["-t", tty, "-o", "pgid="]).output() else {
-        return groups;
-    };
+/// not. `ps -t` filters in the kernel. Discovery errors propagate so
+/// terminate cannot treat a failed listing as "no attached jobs".
+pub(super) fn attached_groups_checked(
+    tty: &str,
+    leader: libc::pid_t,
+) -> Result<BTreeSet<libc::pid_t>> {
+    let output = Command::new("ps")
+        .args(["-t", tty, "-o", "pgid="])
+        .output()
+        .context("list processes attached to session PTY")?;
     if !output.status.success() {
-        return groups;
+        bail!("ps could not list processes attached to session PTY");
     }
     let own_group = unsafe { libc::getpgrp() };
+    let mut groups = BTreeSet::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let Ok(pgid) = line.trim().parse::<libc::pid_t>() else {
             continue;
@@ -133,7 +136,7 @@ pub(super) fn attached_groups(tty: &str, leader: libc::pid_t) -> BTreeSet<libc::
         }
         groups.insert(pgid);
     }
-    groups
+    Ok(groups)
 }
 
 /// Deliver `signal` to every group in `groups`, tolerating groups that have

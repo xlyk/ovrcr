@@ -83,6 +83,7 @@ pub enum KeyEncoding {
 
 pub(crate) struct PaneState {
     pub session: Option<SessionId>,
+    pub run: Option<ovrcr_protocol::SessionRunId>,
     pub parser: vt100::Parser,
     pub size: TerminalSize,
     pub desired_size: TerminalSize,
@@ -93,6 +94,7 @@ impl PaneState {
     pub fn new(size: TerminalSize) -> Self {
         Self {
             session: None,
+            run: None,
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             size,
             desired_size: size,
@@ -256,7 +258,6 @@ pub struct Dashboard {
     settings: settings::DashboardSettings,
     settings_path: Option<std::path::PathBuf>,
     config_dir: std::path::PathBuf,
-    settings_path: Option<std::path::PathBuf>,
     /// Ids of requests that own the error banner, so their plain `Ok` may clear it. Requests the
     /// dashboard sends on its own behalf, such as a synthetic mouse release, are absent.
     error_owning_requests: HashSet<u64>,
