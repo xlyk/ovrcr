@@ -291,8 +291,13 @@ impl ServerState {
             .map_err(|error| lifecycle_error(input_error_code(&error), error_chain_string(&error)))
     }
 
-    pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let target = self.control_target(id)?;
+    pub fn close_terminal(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        grace: Duration,
+    ) -> Result<()> {
+        let target = self.control_target(id, Some(expected_run))?;
         let termination = match &target.session {
             Some(session) => session.terminate(grace),
             None => Err(anyhow::Error::new(AlreadyExited)),
@@ -306,12 +311,22 @@ impl ServerState {
     }
 
     /// Capture the owned run before waiting without the mutation lock.
-    fn control_target(&self, id: SessionId) -> Result<SessionControlTarget> {
+    fn control_target(
+        &self,
+        id: SessionId,
+        expected_run: Option<SessionRunId>,
+    ) -> Result<SessionControlTarget> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if expected_run.is_some_and(|expected| summary.run != expected) {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session run changed; refresh inventory",
+            ));
+        }
         if summary
             .recovery
             .as_ref()
@@ -792,7 +807,7 @@ impl ServerState {
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
-        let target = self.control_target(id)?;
+        let target = self.control_target(id, None)?;
         let termination = match &target.session {
             Some(session) => session.terminate(grace),
             None => Err(anyhow::Error::new(AlreadyExited)),

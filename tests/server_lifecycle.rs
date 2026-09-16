@@ -375,7 +375,8 @@ fn agent_hook_capability_and_exit_are_enforced() {
     );
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: first.session
+            session: first.session,
+            expected_run: fixture.session_summary(first.session).run
         }),
         Response::Ok
     );
@@ -1451,7 +1452,10 @@ fn workspace_remove_succeeds_after_directory_deleted() {
     fixture.ready("feature/vanished-dir");
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     let workspace_dir = fixture.workspace_root.join("work");
@@ -1497,7 +1501,10 @@ fn shutdown_without_kill_allows_retained_exited_records() {
     fixture.ready("feature/exited-record");
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     let exited = fixture.create_session("exits", vec!["sh".into(), "-c".into(), "exit 0".into()]);
@@ -4618,12 +4625,18 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         Response::Ok
     );
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session }),
+        fixture.request(Request::CloseTerminal {
+            session,
+            expected_run: fixture.session_summary(session).run
+        }),
         Response::Ok
     );
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     assert_eq!(
@@ -4834,17 +4847,22 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
     assert_eq!(
         fixture.request(Request::CloseTerminal {
             session: background,
+            expected_run: fixture.session_summary(background).run
         }),
         Response::Ok
     );
     wait_for_group_absent(background_pid as libc::pid_t, Duration::from_secs(2));
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     assert!(matches!(
         fixture.request(Request::CloseTerminal {
             session: background,
+            expected_run: ovrcr_protocol::SessionRunId(1)
         }),
         Response::Error {
             code: ErrorCode::NotFound,
@@ -4880,7 +4898,10 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     // Remove the implicit shell so every one of the fifty exercised slots has a marker.
     let local = fixture.only_session_id();
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: local }),
+        fixture.request(Request::CloseTerminal {
+            session: local,
+            expected_run: fixture.session_summary(local).run
+        }),
         Response::Ok
     );
     let sessions = (0..50)
@@ -10714,7 +10735,10 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
     }
     assert!(fixture.session_summary(first.id).unread.is_some());
     assert_eq!(
-        fixture.request(Request::CloseTerminal { session: first.id }),
+        fixture.request(Request::CloseTerminal {
+            session: first.id,
+            expected_run: fixture.session_summary(first.id).run
+        }),
         Response::Ok
     );
     let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
@@ -13345,7 +13369,8 @@ fn installed_omp_managed_launch_binds_the_real_session_and_stays_idle() {
     // keystroke cannot be delivered here (SendTerminal brackets its bytes as pasted text).
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: summary.id
+            session: summary.id,
+            expected_run: fixture.session_summary(summary.id).run
         }),
         Response::Ok
     );
@@ -13409,7 +13434,8 @@ fn installed_pi_managed_launch_binds_the_real_session_and_stays_idle() {
     // product's own termination path instead and require a real exit.
     assert_eq!(
         fixture.request(Request::CloseTerminal {
-            session: summary.id
+            session: summary.id,
+            expected_run: fixture.session_summary(summary.id).run
         }),
         Response::Ok
     );

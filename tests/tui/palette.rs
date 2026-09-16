@@ -659,7 +659,8 @@ fn uppercase_x_confirms_session_close_without_closing_pane() {
     assert_eq!(
         message.request,
         Request::CloseTerminal {
-            session: SessionId(1)
+            session: SessionId(1),
+            expected_run: ovrcr::protocol::SessionRunId(1),
         }
     );
 }
@@ -765,7 +766,8 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
     assert_eq!(
         message.request,
         Request::CloseTerminal {
-            session: SessionId(3)
+            session: SessionId(3),
+            expected_run: ovrcr::protocol::SessionRunId(1),
         }
     );
 }
@@ -1666,6 +1668,7 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             't',
             Request::CloseTerminal {
                 session: SessionId(1),
+                expected_run: ovrcr::protocol::SessionRunId(1),
             },
         ),
         (

@@ -342,8 +342,11 @@ pub(super) fn handle_request_with_id(
         } => state
             .send_terminal(session, &text, submit)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
-        Request::CloseTerminal { session } => state
-            .close_terminal(session, requested_kill_grace())
+        Request::CloseTerminal {
+            session,
+            expected_run,
+        } => state
+            .close_terminal(session, expected_run, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| {
                 state
                     .dashboard

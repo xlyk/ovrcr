@@ -247,6 +247,7 @@ pub enum Request {
     },
     CloseTerminal {
         session: SessionId,
+        expected_run: SessionRunId,
     },
     Task(Box<TaskRequest>),
     AgentReport(AgentReport),
@@ -579,6 +580,7 @@ mod wire_snapshot {
                 "CloseTerminal",
                 Request::CloseTerminal {
                     session: SessionId(1),
+                    expected_run: SessionRunId(1),
                 },
             ),
             ("Task", Request::Task(Box::new(TaskRequest::ListTasks))),
@@ -903,7 +905,7 @@ mod wire_snapshot {
         ("Request::Inspect", "10"),
         ("Request::ReadTerminal", "11010103"),
         ("Request::SendTerminal", "1201017401"),
-        ("Request::CloseTerminal", "1301"),
+        ("Request::CloseTerminal", "130101"),
         ("Request::Task", "1400"),
         (
             "Request::AgentReport",

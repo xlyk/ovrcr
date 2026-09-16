@@ -561,7 +561,7 @@ impl Dashboard {
         let matches_close = matches!(
             self.palette.as_ref().map(|palette| &palette.page),
             Some(Page::Confirm {
-                request: Some(Request::CloseTerminal { session: id }),
+                request: Some(Request::CloseTerminal { session: id, .. }),
                 ..
             }) if *id == session
         );
@@ -632,7 +632,10 @@ impl Dashboard {
             Command::CloseTerminal(id) => {
                 let session = find_session(self, id).expect("close target exists");
                 Page::Confirm {
-                    request: Some(Request::CloseTerminal { session: id }),
+                    request: Some(Request::CloseTerminal {
+                        session: id,
+                        expected_run: session.run,
+                    }),
                     target: format!(
                         "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
                         session.project,
@@ -3481,7 +3484,8 @@ mod launch_tests {
             &d.palette.as_ref().unwrap().page,
             Page::Confirm {
                 request: Some(Request::CloseTerminal {
-                    session: SessionId(1)
+                    session: SessionId(1),
+                    expected_run: crate::protocol::SessionRunId(1),
                 }),
                 ..
             }

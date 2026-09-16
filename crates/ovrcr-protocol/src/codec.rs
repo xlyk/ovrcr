@@ -15,7 +15,7 @@ pub const MAX_FRAME_BYTES: usize = 1_048_576;
 /// exchange it in an 8-byte preamble before the first frame so a client and
 /// a long-running server built from different sources fail with a clear
 /// message instead of decoding one request as another.
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 const PREAMBLE_MAGIC: [u8; 4] = *b"OVRC";
 
@@ -301,6 +301,7 @@ mod tests {
             },
             Request::CloseTerminal {
                 session: SessionId(3),
+                expected_run: crate::SessionRunId(3),
             },
         ] {
             let (mut left, mut right) = UnixStream::pair().unwrap();

@@ -4042,7 +4042,7 @@ fn kill_and_close_refresh_failures_keep_exited_records() {
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
         let error = if close {
-            state.close_terminal(id, Duration::from_millis(250))
+            state.close_terminal(id, session.run(), Duration::from_millis(250))
         } else {
             state.kill_session(id, Duration::from_millis(250))
         }
@@ -4797,7 +4797,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     }
 
     let error = state
-        .close_terminal(id, Duration::from_millis(20))
+        .close_terminal(id, session.run(), Duration::from_millis(20))
         .unwrap_err();
     assert!(
         error
@@ -4819,7 +4819,7 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
         session.apply_event(event);
     }
     let error = state
-        .close_terminal(id, Duration::from_millis(20))
+        .close_terminal(id, session.run(), Duration::from_millis(20))
         .unwrap_err();
     assert!(
         state.sessions.lock().unwrap().contains_key(&id),
@@ -4854,7 +4854,7 @@ fn close_after_natural_exit_does_not_certify_stopped_or_remove_row() {
         "exit event must not persist stop proof before close"
     );
 
-    let _ = state.close_terminal(id, Duration::from_millis(200));
+    let _ = state.close_terminal(id, session.run(), Duration::from_millis(200));
     assert!(
         state.sessions.lock().unwrap().contains_key(&id),
         "close of an already-exited run must not remove the row"
@@ -4916,7 +4916,13 @@ fn close_after_ack_removes_already_exited_in_memory_row() {
         "acknowledgement must clear close ownership uncertainty: {acknowledged:?}"
     );
     assert_eq!(
-        state.handle_request(&mut role, Request::CloseTerminal { session: id }),
+        state.handle_request(
+            &mut role,
+            Request::CloseTerminal {
+                session: id,
+                expected_run: run,
+            },
+        ),
         Response::Ok,
         "acknowledged already-exited close must succeed without treating AlreadyExited as stop proof"
     );
@@ -4928,6 +4934,41 @@ fn close_after_ack_removes_already_exited_in_memory_row() {
         state.retained.lock().get(id).is_none(),
         "acknowledged close must remove the retained record"
     );
+}
+
+#[test]
+fn stale_close_does_not_revoke_or_stop_current_run() {
+    let id = SessionId(22);
+    let (_cwd, session, receiver) = spawn_live_test_session(id);
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let current = session.run();
+    let mut role = ClientRole::Control;
+    assert!(
+        matches!(
+            state.handle_request(
+                &mut role,
+                Request::CloseTerminal {
+                    session: id,
+                    expected_run: ovrcr_protocol::SessionRunId(current.0.saturating_add(1)),
+                },
+            ),
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "stale CloseTerminal must conflict without acting on the live run"
+    );
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "stale close must not stop the current run: {:?}",
+        session.summary().phase
+    );
+    assert_eq!(state.session_summary(id).unwrap().run, current);
+    assert!(state.sessions.lock().unwrap().contains_key(&id));
+    cleanup_test_session(&session, events).unwrap();
 }
 
 #[test]
@@ -4974,7 +5015,11 @@ fn close_and_kill_without_live_arc_do_not_mark_stopped() {
         );
         if close {
             state
-                .close_terminal(id, Duration::from_millis(50))
+                .close_terminal(
+                    id,
+                    state.session_summary(id).unwrap().run,
+                    Duration::from_millis(50),
+                )
                 .expect("boot-resolved close with no Arc must remove the row");
             assert!(
                 state.retained.lock().get(id).is_none(),
@@ -5010,7 +5055,7 @@ fn listing_failure_pause_kill_close_are_ownership_uncertain_and_do_not_mark_stop
         let error = match op {
             "pause" => state.set_session_paused(id, true),
             "kill" => state.kill_session(id, Duration::from_millis(250)),
-            "close" => state.close_terminal(id, Duration::from_millis(250)),
+            "close" => state.close_terminal(id, session.run(), Duration::from_millis(250)),
             _ => unreachable!(),
         }
         .unwrap_err();
@@ -5091,7 +5136,10 @@ fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() 
     );
 
     let close_state = Arc::clone(&state);
-    let closer = thread::spawn(move || close_state.close_terminal(id, Duration::from_millis(200)));
+    let close_run = session.run();
+    let closer = thread::spawn(move || {
+        close_state.close_terminal(id, close_run, Duration::from_millis(200))
+    });
     let report = AgentReport {
         session: id,
         capability,

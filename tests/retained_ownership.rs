@@ -2,6 +2,8 @@
 mod live;
 
 use live::Live;
+use ovrcr::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response, SessionRunId};
+use ovrcr::session::{AgentActivity, SessionId};
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::Path;
@@ -298,26 +300,22 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
     let live = Live::binary();
     live.ready("feature/natural-exit-ownership");
     let pid_file = live.root.path().join("natural-survivor.pid");
-    let survivor_py = live.root.path().join("natural-survivor.py");
-    std::fs::write(
-        &survivor_py,
-        "import os, signal, sys, time\n\
-         os.setsid()\n\
-         open(sys.argv[1], 'w').write(str(os.getpid()))\n\
-         signal.signal(signal.SIGHUP, signal.SIG_IGN)\n\
-         signal.signal(signal.SIGTERM, signal.SIG_IGN)\n\
-         time.sleep(3600)\n",
-    )
-    .unwrap();
+    let helper = std::env::current_exe().unwrap();
+    // The survivor is this test binary in `natural_survivor_helper` mode: its own
+    // session and group, stdio off the PTY so the leader's exit reaches the
+    // reader, and the leader waits for the published pid instead of racing a
+    // fixed sleep against process startup.
     let created = create_terminal(
         &live,
         "natural-survivor",
         &[
             "/bin/sh",
             "-c",
-            "/usr/bin/python3 \"$1\" \"$2\" &\nexec /bin/sleep 1",
+            "OVRCR_SURVIVOR_PID_FILE=\"$2\" \"$1\" --ignored --exact natural_survivor_helper --nocapture </dev/null >/dev/null 2>&1 &\n\
+             i=0; while [ ! -s \"$2\" ] && [ \"$i\" -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n\
+             exit 0",
             "natural-leader",
-            survivor_py.to_str().unwrap(),
+            helper.to_str().unwrap(),
             pid_file.to_str().unwrap(),
         ],
     );
@@ -345,6 +343,125 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
     if leader_pgid > 1 {
         reap_group(&live, leader_pgid);
     }
+}
+
+/// Child of `natural_leader_exit_with_attached_job_requires_ack_before_reopen`;
+/// never meaningful on its own. Leaves the leader's session, ignores its hangup,
+/// publishes its pid atomically and waits to be reaped.
+#[test]
+#[ignore]
+fn natural_survivor_helper() {
+    let pid_file = std::path::PathBuf::from(std::env::var_os("OVRCR_SURVIVOR_PID_FILE").unwrap());
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+        libc::signal(libc::SIGTERM, libc::SIG_IGN);
+        assert_ne!(
+            libc::setsid(),
+            -1,
+            "survivor could not leave the leader's session"
+        );
+    }
+    let staged = pid_file.with_extension("pid.tmp");
+    std::fs::write(&staged, std::process::id().to_string()).unwrap();
+    std::fs::rename(&staged, &pid_file).unwrap();
+    std::thread::sleep(Duration::from_secs(3600));
+}
+
+fn wait_capability(path: &Path) -> [u8; 32] {
+    let deadline = Instant::now() + live::wait_deadline();
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            let text = text.trim();
+            if text.len() == 64
+                && let Ok(bytes) = (0..32)
+                    .map(|index| u8::from_str_radix(&text[index * 2..index * 2 + 2], 16))
+                    .collect::<Result<Vec<u8>, _>>()
+            {
+                return bytes.try_into().unwrap();
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "reopened shell did not publish its hook capability at {}",
+            path.display()
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn stale_close_of_previous_run_cannot_revoke_or_stop_reopened_run() {
+    let live = Live::binary();
+    live.ready("feature/stale-close-fence");
+    let created = create_terminal(&live, "stale-close", &["/bin/sh", "-c", "exit 0"]);
+    let id = created["id"].as_u64().unwrap();
+    let old_run = created["run"].as_u64().unwrap();
+    wait_phase(&live, id, "exited");
+    let id_arg = id.to_string();
+    json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
+    let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+    track_groups(&live);
+    assert_eq!(reopened["run"], old_run + 1);
+    assert_eq!(reopened["phase"], "running");
+    let pid = reopened["pid"].as_u64().unwrap() as libc::pid_t;
+    let pgid = unsafe { libc::getpgid(pid) };
+    assert!(pgid > 1, "reopened shell has no process group");
+
+    // The fresh shell publishes the capability the server issued to run N+1.
+    let token_file = live.root.path().join("reopened.token");
+    let publish = format!(
+        "printf '%s' \"$OVRCR_HOOK_TOKEN\" > '{}'",
+        token_file.display()
+    );
+    json(&live, &["terminal", "send", &id_arg, "--text", &publish]);
+    let capability = wait_capability(&token_file);
+
+    // A close captured before the reopen (TUI confirm, CLI inventory, Enter
+    // before HierarchyChanged arrives) still names run N. It must conflict
+    // without stopping run N+1 or revoking its capability.
+    let session = SessionId(id);
+    let stale = live.request(Request::CloseTerminal {
+        session,
+        expected_run: SessionRunId(old_run),
+    });
+    assert!(
+        matches!(
+            stale,
+            Response::Error {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        ),
+        "stale close must conflict: {stale:?}"
+    );
+    let current = row(&live, id);
+    assert_eq!(current["run"], old_run + 1);
+    assert_eq!(current["phase"], "running");
+    assert!(pid_exists(pid), "stale close stopped run N+1");
+    assert_eq!(
+        live.request(Request::AgentReport(AgentReport {
+            session,
+            capability,
+            sequence: None,
+            update: AgentUpdate::Activity(AgentActivity::Busy),
+        })),
+        Response::Ok,
+        "stale close revoked the capability of run N+1"
+    );
+
+    // The same request naming the current run is the real close.
+    assert_eq!(
+        live.request(Request::CloseTerminal {
+            session,
+            expected_run: SessionRunId(old_run + 1),
+        }),
+        Response::Ok
+    );
+    assert!(
+        live::wait_group_absent(pgid, Duration::from_secs(2)),
+        "current-run close left the shell group alive"
+    );
+    live.forget_group(pgid);
 }
 
 #[test]
