@@ -3251,6 +3251,7 @@ impl Dashboard {
         if !changed {
             return false;
         }
+        self.dismiss_close_confirm_for(summary.id);
         self.unread.forget_session(summary.id);
         if self
             .copy
@@ -3272,6 +3273,7 @@ impl Dashboard {
                 begin.cancelled = true;
             }
             if let Some(view) = self.history.take() {
+                self.mode = InputMode::Browse;
                 let request_id = self.error_owning_request_id();
                 self.push_request(ClientMessage {
                     request_id,
@@ -3405,4 +3407,71 @@ pub(super) fn find_session(
         .flat_map(|project| project.workspaces.iter())
         .flat_map(|workspace| workspace.sessions.iter())
         .find(|session| session.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{
+        AgentActivity, ProjectSummary, SessionKind, SessionPhase, SessionSummary, WorkspaceSummary,
+    };
+
+    fn hierarchy_with_run(id: u64, run: u64) -> HierarchySnapshot {
+        HierarchySnapshot {
+            projects: vec![ProjectSummary {
+                name: "demo".into(),
+                workspaces: vec![WorkspaceSummary {
+                    project: "demo".into(),
+                    name: "root".into(),
+                    path: "/tmp/unused".into(),
+                    sessions: vec![SessionSummary {
+                        id: crate::session::SessionId(id),
+                        run: SessionRunId(run),
+                        kind: SessionKind::Terminal,
+                        recovery: None,
+                        project: "demo".into(),
+                        workspace: "root".into(),
+                        name: format!("root-{id}"),
+                        title: None,
+                        label: "shell".into(),
+                        pid: None,
+                        started_unix_ms: Some(0),
+                        phase: SessionPhase::Running,
+                        activity: AgentActivity::Unknown,
+                        context_usage: None,
+                        agent: None,
+                        agent_epoch: 0,
+                        unread: None,
+                    }],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn run_replacement_leaves_history_mode() {
+        let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+        dashboard.hierarchy = hierarchy_with_run(1, 1);
+        dashboard.select_session(crate::session::SessionId(1));
+        dashboard.mode = InputMode::History;
+        dashboard.history = Some(HistoryView::new(
+            HistoryOpened {
+                session: crate::session::SessionId(1),
+                snapshot: HistorySnapshotId(7),
+                revision: 1,
+                size: TerminalSize { rows: 24, cols: 80 },
+                history_rows: 0,
+                total_rows: 1,
+            },
+            0,
+        ));
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            hierarchy_with_run(1, 2),
+        )));
+        assert_eq!(dashboard.mode, InputMode::Browse);
+        assert!(
+            dashboard.history.is_none(),
+            "history capture must be gone after run replacement"
+        );
+    }
 }

@@ -617,10 +617,11 @@ fn dispatch_set_view_with_resize(
         })
         .collect::<Vec<_>>();
     // Panes were resolved before the resizes, which can block for as long as a
-    // PTY takes, and `remove_session` runs on connection threads. Hold the
-    // session registry from this membership re-check through publication so a
-    // session removed in between cannot be published as a focused pane at a
-    // valid revision and then admit input that only fails at the PTY.
+    // PTY takes, and `remove_session` runs on connection threads. Hold retained
+    // then the session registry from this membership re-check through
+    // publication so a row removed in between cannot be published as a focused
+    // pane at a valid revision and then admit input that only fails at the PTY.
+    let retained = state.retained.lock();
     let registered = state.sessions.lock().unwrap();
     let mut published = view.clone();
     published.panes.retain(|pane| {
@@ -641,7 +642,9 @@ fn dispatch_set_view_with_resize(
                     true
                 }
                 Some(_) => false,
-                None => true,
+                None => retained
+                    .get(pane.session)
+                    .is_some_and(|record| record.run == pane.run),
             },
         }
     });
@@ -650,6 +653,7 @@ fn dispatch_set_view_with_resize(
         .filter(|focused| !published.panes.iter().any(|pane| pane.session == *focused))
     {
         drop(registered);
+        drop(retained);
         view_error(
             state,
             owner,
@@ -682,6 +686,7 @@ fn dispatch_set_view_with_resize(
         return;
     }
     drop(registered);
+    drop(retained);
     let _ = completion.send(DispatchCompletion::Complete);
 }
 

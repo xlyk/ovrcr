@@ -557,6 +557,19 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
+    pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
+        let matches_close = matches!(
+            self.palette.as_ref().map(|palette| &palette.page),
+            Some(Page::Confirm {
+                request: Some(Request::CloseTerminal { session: id }),
+                ..
+            }) if *id == session
+        );
+        if matches_close {
+            self.palette = None;
+        }
+    }
+
     pub(super) fn open_remove_context(&mut self, workspace: bool) -> DashboardAction {
         let (project, name) = self.creation_context();
         if project.is_empty() || (workspace && name.is_empty()) {
@@ -3455,6 +3468,43 @@ mod launch_tests {
                 expected_run: crate::protocol::SessionRunId(4),
                 acknowledge_stopped: false,
             }
+        );
+    }
+
+    #[test]
+    fn close_confirm_does_not_submit_after_run_replacement() {
+        let mut d = dashboard();
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![summary(1)];
+        d.select_session(SessionId(1));
+        d.open_close_terminal();
+        assert!(matches!(
+            &d.palette.as_ref().unwrap().page,
+            Page::Confirm {
+                request: Some(Request::CloseTerminal {
+                    session: SessionId(1)
+                }),
+                ..
+            }
+        ));
+        let mut advanced = d.hierarchy.clone();
+        advanced.projects[0].workspaces[0].sessions[0].run = crate::protocol::SessionRunId(4);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            advanced,
+        )));
+        let action = if d.palette.is_some() {
+            submit(&mut d)
+        } else {
+            DashboardAction::None
+        };
+        assert!(
+            !matches!(
+                action,
+                DashboardAction::Request(ClientMessage {
+                    request: Request::CloseTerminal { .. },
+                    ..
+                })
+            ),
+            "must not send CloseTerminal for the old confirmation without a new explicit confirm"
         );
     }
 }

@@ -1333,6 +1333,123 @@ fn set_view_drops_a_session_removed_before_publication() {
 }
 
 #[test]
+fn set_view_drops_a_retained_session_removed_before_publication() {
+    let retained_id = SessionId(67);
+    let live_id = SessionId(68);
+    let (_retained_cwd, retained_session, retained_receiver) =
+        spawn_exiting_test_session(retained_id);
+    let retained_events =
+        apply_test_session_events(Arc::clone(&retained_session), retained_receiver);
+    let (_live_cwd, live, live_receiver) = spawn_live_test_session(live_id);
+    let live_events = apply_test_session_events(Arc::clone(&live), live_receiver);
+    let owner = Arc::new(());
+    let (server_stream, _client_stream) = UnixStream::pair().unwrap();
+    let sink = DashboardSink::new();
+    let (state, dispatch_receiver) =
+        test_state_with_dispatch(Some(sink.clone()), Some((owner.clone(), server_stream)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline
+        && !matches!(
+            retained_session.summary().phase,
+            SessionPhase::Exited { .. }
+        )
+    {
+        thread::yield_now();
+    }
+    assert!(matches!(
+        retained_session.summary().phase,
+        SessionPhase::Exited { .. }
+    ));
+    state
+        .retained
+        .lock()
+        .register_fixture(&retained_session)
+        .unwrap();
+    register_test_session(&state, live_id, live.clone());
+    // Remove the focused retained row between pane resolution and publication:
+    // the live pane's resize seam is the window a slow PTY leaves open for a
+    // concurrent RemoveSession on a connection thread.
+    let hook_state = Arc::downgrade(&state);
+    *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
+        let state = hook_state
+            .upgrade()
+            .expect("server state outlives the resize hook");
+        state
+            .remove_session(retained_id)
+            .and_then(|()| session.resize(size))
+    }));
+    let dispatcher_state = Arc::clone(&state);
+    let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
+    let (completion, result) = mpsc::sync_channel(1);
+    state
+        .dispatch
+        .send(DispatchMessage::SetView {
+            owner: owner.clone(),
+            request_id: 84,
+            view: DashboardView {
+                revision: 1,
+                panes: vec![
+                    PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
+                        session: retained_id,
+                        size: TerminalSize { rows: 25, cols: 81 },
+                    },
+                    PaneTarget {
+                        run: ovrcr_protocol::SessionRunId(1),
+                        session: live_id,
+                        size: TerminalSize { rows: 26, cols: 82 },
+                    },
+                ],
+                focused: Some(retained_id),
+            },
+            completion,
+        })
+        .unwrap();
+    assert!(matches!(
+        result.recv_timeout(Duration::from_secs(2)).unwrap(),
+        DispatchCompletion::Complete
+    ));
+    assert!(matches!(
+        queued_dashboard_message(&sink),
+        ServerMessage::Response {
+            request_id: 84,
+            response: Response::Error {
+                code: ErrorCode::NotFound,
+                ..
+            },
+        }
+    ));
+    assert!(sink.queue.lock().unwrap().messages.is_empty());
+    assert!(state.dashboard.view().is_none());
+    assert!(
+        state.retained.lock().get(retained_id).is_none(),
+        "removed retained row must stay deleted"
+    );
+    let mut role = ClientRole::Dashboard;
+    assert!(matches!(
+        handle_request_with_id(
+            &state,
+            &mut role,
+            Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
+                session: retained_id,
+                bytes: b"stale".to_vec(),
+            },
+            85,
+            Some(&owner),
+        ),
+        Response::Error {
+            code: ErrorCode::InvalidRequest,
+            ..
+        }
+    ));
+    state.dispatch.send(DispatchMessage::Stop).unwrap();
+    dispatcher.join().unwrap();
+    cleanup_test_session(&live, live_events).unwrap();
+    cleanup_test_session(&retained_session, retained_events).unwrap();
+}
+
+#[test]
 fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
     let focused_id = SessionId(65);
     let removed_id = SessionId(66);
