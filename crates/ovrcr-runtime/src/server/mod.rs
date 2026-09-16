@@ -2,8 +2,8 @@ use crate::config::{ProjectRecord, Registry, initialize_registry, save_registry_
 use crate::git::{self, BranchSpec};
 use crate::retained::{RetainedSession, SessionMetadata, SessionStore};
 use crate::session::{
-    HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId, SessionPhase,
-    SessionSpec, SessionSummary, TerminalSize,
+    AlreadyExited, HookEnvironment, InputAdmissionError, Session, SessionEvent, SessionId,
+    SessionPhase, SessionSpec, SessionSummary, TerminalSize,
 };
 use crate::task_manager::TaskManager;
 use anyhow::{Context, Result, bail};
@@ -164,6 +164,7 @@ const MAX_LIVE_SESSIONS: usize = 50;
 struct SessionControlTarget {
     run: SessionRunId,
     session: Option<Arc<Session>>,
+    already_exited: bool,
 }
 
 pub struct ServerState {
@@ -205,11 +206,7 @@ impl ServerState {
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
             if !summary.phase.is_live() {
-                let mut recovery = record.recovery(boot_id);
-                if session.ownership_resolved() {
-                    recovery.requires_ack = false;
-                }
-                summary.recovery = Some(recovery);
+                summary.recovery = Some(record.recovery(boot_id));
             }
             return summary;
         }
@@ -251,21 +248,7 @@ impl ServerState {
     }
 
     pub(crate) fn persist_session_exit(&self, session: &Session) -> Result<()> {
-        self.persist_session_titles(session)?;
-        if !session.is_live() {
-            session.capture_exit_ownership();
-            let resolved = session.ownership_resolved();
-            let mut retained = self.retained.lock();
-            if resolved {
-                retained.mark_stopped(session.id(), session.run())?;
-            }
-        }
-        eprintln!(
-            "persist exit {} resolved={}",
-            session.id().0,
-            session.ownership_resolved()
-        );
-        Ok(())
+        self.persist_session_titles(session)
     }
 
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
@@ -316,7 +299,7 @@ impl ServerState {
             .map_or(Ok(()), |session| session.terminate(grace));
         let _mutation = self.mutation_lock.lock().unwrap();
         self.ensure_control_target(id, &target)?;
-        let termination = termination.and_then(|()| self.persist_control_stop(id, &target));
+        let termination = self.finish_control_stop(id, &target, termination);
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)?;
         self.remove_session_locked(id)
@@ -352,23 +335,31 @@ impl ServerState {
         Ok(SessionControlTarget {
             run: summary.run,
             session,
+            already_exited: !summary.phase.is_live(),
         })
     }
 
     fn persist_control_stop(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
         if let Some(session) = &target.session {
             self.persist_session_titles(session)?;
-            if !session.is_live() {
-                self.retained
-                    .lock()
-                    .mark_stopped(session.id(), session.run())?;
-            }
-            Ok(())
-        } else {
-            self.retained.lock().mark_stopped(id, target.run)?;
-            Ok(())
+        }
+        self.retained.lock().mark_stopped(id, target.run)?;
+        Ok(())
+    }
+
+    fn finish_control_stop(
+        &self,
+        id: SessionId,
+        target: &SessionControlTarget,
+        termination: Result<()>,
+    ) -> Result<()> {
+        match termination {
+            Ok(()) => self.persist_control_stop(id, target),
+            Err(error) if error.is::<AlreadyExited>() && target.already_exited => Ok(()),
+            Err(error) => Err(error),
         }
     }
+
     fn ensure_control_target(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
         let current = self
             .session_summary(id)
@@ -788,7 +779,12 @@ impl ServerState {
             })?;
         let old = self.sessions.lock().unwrap().get(&id).cloned();
         if let Some(old) = old {
-            old.terminate(Duration::from_secs(2))?;
+            match old.terminate(Duration::from_secs(2)) {
+                Ok(()) => {}
+                Err(error) if error.is::<AlreadyExited>() => {}
+                Err(error) => return Err(error),
+            }
+
             self.persist_session_exit(&old)?;
         }
         self.spawn_record_locked(id, expected_run, vec![shell], None)
@@ -802,7 +798,7 @@ impl ServerState {
             .map_or(Ok(()), |session| session.terminate(grace));
         let _mutation = self.mutation_lock.lock().unwrap();
         self.ensure_control_target(id, &target)?;
-        let termination = termination.and_then(|()| self.persist_control_stop(id, &target));
+        let termination = self.finish_control_stop(id, &target, termination);
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)
     }
@@ -914,12 +910,31 @@ impl ServerState {
                         .unwrap_or_else(|_| Err(anyhow::anyhow!("termination worker panicked"))),
                     Err(error) => Err(error).context("spawn termination worker"),
                 };
+                let verified = termination.is_ok();
+                let termination = match termination {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.is::<AlreadyExited>() => Ok(()),
+                    Err(error) => Err(error),
+                };
                 let termination = termination.and_then(|()| {
                     let session = self.sessions.lock().unwrap().get(&id).cloned();
-                    session
-                        .as_ref()
-                        .map_or(Ok(()), |session| self.persist_session_exit(session))
+                    let Some(session) = session else {
+                        return Ok(());
+                    };
+                    if verified {
+                        self.persist_control_stop(
+                            id,
+                            &SessionControlTarget {
+                                run: session.run(),
+                                session: Some(session),
+                                already_exited: false,
+                            },
+                        )
+                    } else {
+                        self.persist_session_exit(&session)
+                    }
                 });
+
                 let refresh = self.refresh_session_locked(id);
                 if let Err(error) = combine_control_and_refresh(id, termination, refresh) {
                     failures.push(format!("session {}: {}", id.0, error_chain_string(&error)));

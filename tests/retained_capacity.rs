@@ -288,7 +288,7 @@ fn exited_row_does_not_reduce_live_capacity_and_overflow_publishes_nothing() {
     let overflow_reopen = live.request(Request::ReopenSession {
         session: exited.id,
         expected_run: exited.run,
-        acknowledge_stopped: false,
+        acknowledge_stopped: true,
     });
     let message = conflict(overflow_reopen);
     assert!(message.contains("50 live process slots"), "{message}");
@@ -334,7 +334,15 @@ fn exited_row_does_not_reduce_live_capacity_and_overflow_publishes_nothing() {
     assert!(created["pid"].as_u64().is_some());
     assert_eq!(live_count(&live), 49);
 
-    let reopened = json(&live, &["terminal", "reopen", &exited.id.0.to_string()]);
+    let reopened = json(
+        &live,
+        &[
+            "terminal",
+            "reopen",
+            &exited.id.0.to_string(),
+            "--ack-stopped",
+        ],
+    );
     track_groups(&live);
     assert_eq!(reopened["id"], exited.id.0);
     assert_eq!(reopened["run"], exited.run.0 + 1);
@@ -559,7 +567,10 @@ fn dashboard_rejects_old_run_input_after_same_row_reopen() {
     );
     wait_until(&live, id, wait_deadline(), |row| !row.phase.is_live());
 
-    let reopened = json(&live, &["terminal", "reopen", &id.0.to_string()]);
+    let reopened = json(
+        &live,
+        &["terminal", "reopen", &id.0.to_string(), "--ack-stopped"],
+    );
     track_groups(&live);
     let new_run = SessionRunId(reopened["run"].as_u64().unwrap());
     assert_eq!(reopened["id"], id.0);

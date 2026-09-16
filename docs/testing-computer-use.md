@@ -146,8 +146,12 @@ In the disposable fixture, also verify:
 7. Exercise Agent using a disposable configured preset, recording that this proves
    the launch UI only, not provider reporting. Verify its project preference after
    dashboard restart. Verify Terminal custom command text is absent from settings.
-8. Exit a session and reopen explicitly. Confirm the same row and title remain,
-   the old output is gone, and a fresh shell executes a separate marker line.
+8. Exit an owned session. Verify Reopen explicitly asks you to confirm that old
+   agent/background processes stopped; cancel once and verify no new process.
+   After independently verifying the fixture processes are gone, confirm.
+   Check the same row/title, absence of old output, and a separate fresh-shell
+   execution marker. An older capture without this acknowledgement is not
+   evidence for the current recovery policy.
 
 For a deliberate server-loss check, record the fixture paths and owned processes
 first. Verify restored rows without launching processes, then explicitly confirm
@@ -237,6 +241,7 @@ t=$(rtk proxy "$c" terminal create --project consigint --workspace auth-handoff 
 rtk proxy "$c" terminal list --json
 rtk proxy "$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
 rtk proxy "$c" terminal read "$t" --json
+```
 
 Confirm the new sidebar row and `CUA_BACKGROUND_OK` in the read result. The original terminal must remain selected. If output has not arrived, read again after observing progress. Reads contain the current screen only.
 

@@ -2,8 +2,6 @@ use super::*;
 use crate::server::ReportingSender;
 use std::io::{self, Read};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 pub(super) fn read_pty(
     mut reader: Box<dyn Read + Send>,
@@ -41,15 +39,7 @@ pub(super) fn wait_for_child(
     session: Arc<Session>,
     events: ReportingSender<SessionEvent>,
 ) {
-    let phase = match (|| -> Result<_> {
-        loop {
-            session.capture_exit_ownership();
-            if let Some(status) = child.try_wait()? {
-                break Ok(status);
-            }
-            thread::park_timeout(Duration::from_millis(5));
-        }
-    })() {
+    let phase = match child.wait() {
         Ok(status) => SessionPhase::Exited {
             code: Some(status.exit_code()),
             signal: status.signal().map(str::to_owned),

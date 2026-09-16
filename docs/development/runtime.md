@@ -21,3 +21,11 @@ Persist the native OS boot identity with every run. Only validated, different
 boot identities establish prior-process exit without explicit acknowledgement.
 Missing, malformed or same-boot evidence fails closed. Never signal remembered
 PIDs or infer descendant exit from the leader or server disappearing.
+
+Natural exit retains ownership uncertainty: process-group or TTY disappearance
+is not proof about background jobs. Keep `stopped` as the durable authority;
+do not add process-table polling or a parallel cached proof. An already-exited
+termination result is not a controlled stop. Only a verified stop of the current
+owned run may certify that control outcome; failed discovery, races and partial
+termination retain uncertainty. Explicit acknowledgement is fenced to its
+captured session and run.

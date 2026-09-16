@@ -2196,7 +2196,7 @@ fn automatic_titles_pin_reset_and_reopen_through_cli() {
     assert_eq!(pinned["display_name"], "Pinned review");
     run(&["terminal", "rename", &id_text, "--automatic", "--json"]);
     assert_eq!(wait_exited(id)["display_name"], "Build complete");
-    let reopened = run(&["terminal", "reopen", &id_text, "--json"]);
+    let reopened = run(&["terminal", "reopen", &id_text, "--ack-stopped", "--json"]);
     assert_eq!(reopened["id"], id);
     assert_eq!(
         reopened["run"].as_u64().unwrap(),

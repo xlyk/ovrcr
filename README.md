@@ -267,10 +267,15 @@ Stopping things:
 ovrcr pause ID          # SIGSTOP the session's process group
 ovrcr resume ID         # SIGCONT it
 ovrcr kill ID           # stop it, keep the final screen
-ovrcr session remove ID # drop the exited record
+ovrcr session remove ID # drop a stopped or acknowledged record
 ovrcr terminal reopen ID # fresh shell in the same row
 ovrcr shutdown          # stop a server with no live processes; --kill also stops them
 ```
+
+A natural shell exit is not proof that its background jobs stopped. Confirm
+cleanup with `terminal reopen ID --ack-stopped`, or `terminal acknowledge-stopped ID`
+before closing/removing an ownership-uncertain row. Inventory restoration never
+performs that acknowledgement for you.
 
 The [CLI reference](docs/cli-reference.md) has the full command list and aliases,
 JSON record shapes, removal guards, the exact signal sequence `kill` uses, and a

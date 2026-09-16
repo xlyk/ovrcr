@@ -234,6 +234,7 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "demo",
     ]);
     assert!(!occupied.status.success());
+    fixture.ok(&["terminal", "acknowledge-stopped", &id]);
     fixture.ok(&["terminal", "close", &id]);
     assert!(
         !fixture
@@ -868,8 +869,8 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     assert_eq!(offline["terminal_count"], 1);
     let retained = fixture.json(&["terminal", "list"]);
     assert_eq!(retained.as_array().unwrap().len(), 1);
-    assert_eq!(retained[0]["phase"], "interrupted");
-    assert_eq!(retained[0]["recovery"]["requires_ack"], true);
+    assert_eq!(retained[0]["phase"], "stopped");
+    assert_eq!(retained[0]["recovery"]["requires_ack"], false);
     let retained_id = retained[0]["id"].as_u64().unwrap().to_string();
     assert!(
         !fixture.socket.exists(),

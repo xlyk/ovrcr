@@ -106,6 +106,14 @@ a session, but starts the server on demand when it is not running. Agent rows
 cannot be resumed. Reopen starts the server if it is not running. With `--json`,
 reopen returns the terminal object and rename returns `{"ok":true}`.
 
+A natural exit does not prove that background jobs stopped. Such a row keeps
+`recovery.requires_ack=true`, even while its current phase is `exited`. Confirm
+that the old processes are gone with `terminal reopen ID --ack-stopped`, or use
+`terminal acknowledge-stopped ID` before closing or removing the row. A verified
+different boot also resolves prior-run ownership; no process is signalled by a
+saved PID. A successfully verified controlled stop does not need another
+acknowledgement; a raced, failed or unverifiable stop does not certify cleanup.
+
 `terminal send` respects bracketed-paste mode and then sends Enter; `--no-submit`
 omits that final Enter. Embedded newlines remain part of the text, so a program
 without bracketed-paste support may process them as input. A successful send means

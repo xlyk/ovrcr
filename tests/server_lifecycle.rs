@@ -1896,7 +1896,21 @@ fn control_lifecycle_enforces_every_removal_gate() {
         }
     ));
     assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: local,
+            expected_run: fixture.session_summary(local).run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
         fixture.request(Request::RemoveSession { session: local }),
+        Response::Ok
+    );
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: review,
+            expected_run: fixture.session_summary(review).run,
+        }),
         Response::Ok
     );
     assert_eq!(
@@ -1991,6 +2005,13 @@ fn fast_exit_session_is_retained_as_exited() {
         vec!["sh".into(), "-c".into(), "printf retained".into()],
     );
     fixture.wait_exited(fast);
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: fast,
+            expected_run: fixture.session_summary(fast).run,
+        }),
+        Response::Ok
+    );
     assert_eq!(
         fixture.request(Request::RemoveSession { session: fast }),
         Response::Ok
@@ -3437,53 +3458,120 @@ fn pause_resume_control_races_body() {
         unsafe { libc::getpgid(reaped_descendant.pid) },
         reaped_descendant.pgid
     );
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::PauseSession { session: reaped }),
-        Response::Ok
-    );
-    wait_peer_stopped(&reaped_descendant, Duration::from_secs(2));
-    send_peer_command(&harness.control, &reaped_descendant, "RESUME_SURVIVOR_1");
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::ResumeSession { session: reaped }),
-        Response::Ok
-    );
-    expect_peer_reply(&harness.control, "RESUME_SURVIVOR_1");
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::KillSession { session: reaped }),
-        Response::Ok
-    );
-    let reaped_drain_ok = expect_term_acks_and_descendant_final(
-        &harness.control,
-        &[&reaped_descendant],
-        &[&reaped_descendant],
-    );
-    if !cfg!(target_os = "macos") {
-        assert!(
-            reaped_drain_ok,
-            "reaped survivor did not drain final PTY bytes"
-        );
+    let before = session_summary(&harness.fixture, reaped);
+    assert!(before.phase.is_live(), "reaped-leader row must still be live");
+    let pause = harness
+        .fixture
+        .request(Request::PauseSession { session: reaped });
+    match pause {
+        Response::Ok => {
+            wait_peer_stopped(&reaped_descendant, Duration::from_secs(2));
+            send_peer_command(&harness.control, &reaped_descendant, "RESUME_SURVIVOR_1");
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::ResumeSession { session: reaped }),
+                Response::Ok
+            );
+            expect_peer_reply(&harness.control, "RESUME_SURVIVOR_1");
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::KillSession { session: reaped }),
+                Response::Ok
+            );
+            let reaped_drain_ok = expect_term_acks_and_descendant_final(
+                &harness.control,
+                &[&reaped_descendant],
+                &[&reaped_descendant],
+            );
+            if !cfg!(target_os = "macos") {
+                assert!(
+                    reaped_drain_ok,
+                    "reaped survivor did not drain final PTY bytes"
+                );
+            }
+            let mut reaped_terminal_markers = vec![reaped_descendant.preexit_marker.as_str()];
+            if reaped_drain_ok {
+                reaped_terminal_markers.push("FINAL_DESCENDANT_AFTER_TERM");
+            }
+            wait_exited_and_assert_terminal_contains(
+                &harness.fixture,
+                reaped,
+                &reaped_terminal_markers,
+            );
+            assert!(live::wait_group_absent(
+                reaped_descendant.pgid,
+                Duration::from_secs(2)
+            ));
+            assert_eq!(
+                harness
+                    .fixture
+                    .request(Request::RemoveSession { session: reaped }),
+                Response::Ok
+            );
+        }
+        Response::Error {
+            code: ErrorCode::Conflict,
+            message,
+        } if message.contains("list processes attached") => {
+            let after = session_summary(&harness.fixture, reaped);
+            assert_eq!(
+                after.phase, before.phase,
+                "listing refusal must not claim pause: {after:?}"
+            );
+            assert_eq!(
+                unsafe { libc::getpgid(reaped_descendant.pid) },
+                reaped_descendant.pgid
+            );
+            let kill = harness
+                .fixture
+                .request(Request::KillSession { session: reaped });
+            match kill {
+                Response::Ok => {
+                    wait_exited_and_assert_terminal_contains(
+                        &harness.fixture,
+                        reaped,
+                        &[reaped_descendant.preexit_marker.as_str()],
+                    );
+                    assert!(live::wait_group_absent(
+                        reaped_descendant.pgid,
+                        Duration::from_secs(2)
+                    ));
+                    assert_eq!(
+                        harness
+                            .fixture
+                            .request(Request::RemoveSession { session: reaped }),
+                        Response::Ok
+                    );
+                }
+                Response::Error {
+                    code: ErrorCode::Conflict,
+                    message: kill_message,
+                } if kill_message.contains("list processes attached") => {
+                    assert!(live::wait_group_absent(
+                        reaped_descendant.pgid,
+                        Duration::from_secs(2)
+                    ));
+                    assert_eq!(
+                        harness.fixture.request(Request::AcknowledgeSessionStopped {
+                            session: reaped,
+                            expected_run: after.run,
+                        }),
+                        Response::Ok
+                    );
+                    assert_eq!(
+                        harness
+                            .fixture
+                            .request(Request::RemoveSession { session: reaped }),
+                        Response::Ok
+                    );
+                }
+                other => panic!("unexpected kill after listing pause refusal: {other:?}"),
+            }
+        }
+        other => panic!("unexpected pause after EXIT_LEADER: {other:?}"),
     }
-    let mut reaped_terminal_markers = vec![reaped_descendant.preexit_marker.as_str()];
-    if reaped_drain_ok {
-        reaped_terminal_markers.push("FINAL_DESCENDANT_AFTER_TERM");
-    }
-    wait_exited_and_assert_terminal_contains(&harness.fixture, reaped, &reaped_terminal_markers);
-    assert!(live::wait_group_absent(
-        reaped_descendant.pgid,
-        Duration::from_secs(2)
-    ));
-    assert_eq!(
-        harness
-            .fixture
-            .request(Request::RemoveSession { session: reaped }),
-        Response::Ok
-    );
     harness.finish();
 }
 
@@ -4511,7 +4599,13 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         hex.contains(&format!("{a} {b}")) || hex.contains(&format!("{b} {a}")),
         "concurrent paste bytes interleaved: {text:?}"
     );
-
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session,
+            expected_run: fixture.session_summary(session).run,
+        }),
+        Response::Ok
+    );
     assert_eq!(
         fixture.request(Request::CloseTerminal { session }),
         Response::Ok
@@ -4720,6 +4814,13 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
 
     fixture.wait_exited(background);
     assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: background,
+            expected_run: fixture.session_summary(background).run,
+        }),
+        Response::Ok
+    );
+    assert_eq!(
         fixture.request(Request::CloseTerminal {
             session: background,
         }),
@@ -4765,8 +4866,13 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.ready("feature/fifty-sessions");
-    // `ready` creates one implicit shell, so 49 named rows fill all 50 live slots.
-    let sessions = (0..49)
+    // Remove the implicit shell so every one of the fifty exercised slots has a marker.
+    let local = fixture.only_session_id();
+    assert_eq!(
+        fixture.request(Request::CloseTerminal { session: local }),
+        Response::Ok
+    );
+    let sessions = (0..50)
         .map(|index| {
             fixture.create_session(
                 &format!("waiting-{index}"),
@@ -4820,8 +4926,8 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         .collect::<Vec<_>>();
     assert_eq!(
         pgids.len(),
-        sessions.len(),
-        "all named managed process groups must be saved",
+        50,
+        "all 50 managed process groups must be saved",
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
@@ -4865,13 +4971,9 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
                 .all(|summary| summary.pid.is_none())
         );
     }
-    let local = fixture.only_session_id();
-    fixture.request(Request::KillSession { session: local });
-    fixture.wait_exited(local);
     for session in sessions_for_cleanup(&fixture) {
         fixture.request(Request::RemoveSession { session });
     }
-    fixture.request(Request::RemoveSession { session: local });
     fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "work".into(),
@@ -5103,7 +5205,7 @@ impl ControlFixture {
                     submit: true,
                 });
                 self.wait_exited(session.id);
-            } else {
+            } else if session.phase.is_live() {
                 assert_eq!(
                     self.request(Request::KillSession {
                         session: session.id

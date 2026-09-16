@@ -2410,14 +2410,25 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
             message: "process ownership is uncertain".into(),
         },
     });
-    assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
+    assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
     let text = palette_text(&dashboard);
     assert!(
         text.contains("previous agent or background processes") || text.contains("Acknowledge"),
         "{text}"
     );
+    if let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) {
+        match next.request {
+            Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                panic!("uncertain create must not replay creation or acknowledge a guessed row")
+            }
+            other => panic!("unexpected request {other:?}"),
+        }
+    }
+    dashboard.install_focus(SessionId(99));
+    palette_search(&mut dashboard, "Acknowledge stopped without reopening");
+    dashboard.key(KeyCode::Enter);
     let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) else {
-        panic!("uncertain launch must not leave a create form");
+        panic!("explicit ack after selecting the retained row");
     };
     assert_eq!(
         next.request,
@@ -2427,4 +2438,120 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         }
     );
     let _ = retained;
+}
+
+#[test]
+fn ownership_uncertain_create_does_not_guess_among_two_rows() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    let focused = dashboard.focused_session();
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("form did not submit");
+    };
+    let Request::CreateSession(request) = &message.request else {
+        panic!("wrong request");
+    };
+    let mut hierarchy = fixture_hierarchy();
+    let workspace = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == request.project)
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter_mut()
+                .find(|workspace| workspace.name == request.workspace)
+        })
+        .expect("create form must target a fixture workspace");
+    for id in [98, 99] {
+        workspace.sessions.push(SessionSummary {
+            id: SessionId(id),
+            run: ovrcr::protocol::SessionRunId(3),
+            kind: ovrcr::protocol::SessionKind::Terminal,
+            recovery: Some(ovrcr::protocol::SessionRecovery {
+                requires_ack: true,
+                unavailable: None,
+                failure: Some("spawn uncertain".into()),
+            }),
+            project: request.project.clone(),
+            workspace: request.workspace.clone(),
+            name: format!("uncertain-{id}"),
+            title: None,
+            label: request.label.clone().unwrap_or_default(),
+            pid: None,
+            started_unix_ms: None,
+            phase: SessionPhase::Stopped,
+            activity: AgentActivity::Unknown,
+            context_usage: None,
+            agent: None,
+            agent_epoch: 0,
+            unread: None,
+        });
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::OwnershipUncertain,
+            message: "process ownership is uncertain".into(),
+        },
+    });
+    assert_eq!(dashboard.focused_session(), focused);
+    if let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) {
+        match next.request {
+            Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                panic!("uncertain create must not replay creation or acknowledge a guessed row")
+            }
+            other => panic!("unexpected request {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_focus(SessionId(2));
+    palette_search(&mut dashboard, "Reopen in a fresh shell");
+    dashboard.key(KeyCode::Enter);
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[0].sessions[0].run = ovrcr::protocol::SessionRunId(4);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
+        panic!("confirming reopen must send a request");
+    };
+    assert_eq!(
+        first.request,
+        Request::ReopenSession {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+            acknowledge_stopped: false,
+        }
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first.request_id,
+        response: Response::Error {
+            code: ErrorCode::Conflict,
+            message: "run moved".into(),
+        },
+    });
+    let DashboardAction::Request(second) = dashboard.key(KeyCode::Enter) else {
+        panic!("Conflict must wait for another Enter");
+    };
+    assert_eq!(
+        second.request,
+        Request::ReopenSession {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(4),
+            acknowledge_stopped: false,
+        }
+    );
 }

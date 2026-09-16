@@ -1747,7 +1747,6 @@ impl Dashboard {
                     } => Some((*session, false)),
                     _ => None,
                 };
-                let mut outgoing = Vec::new();
                 if let Some((id, reopen)) = reopen {
                     if find_session(self, id).is_some() {
                         palette.page = if reopen {
@@ -1758,7 +1757,11 @@ impl Dashboard {
                         palette.error = Some(format!("{code:?}: {message}"));
                     }
                 } else if code == crate::protocol::ErrorCode::OwnershipUncertain {
-                    outgoing = self.present_uncertain_launch(&mut palette);
+                    palette.failed_launch = None;
+                    palette.page = Page::Confirm {
+                        request: None,
+                        target: "Launch ownership is uncertain. No process-stop acknowledgement was sent. Close this notice, select the intended retained row, then use its Reopen or Acknowledge action after stopping old processes. Do not create another session.".into(),
+                    };
                 } else if code == crate::protocol::ErrorCode::PartialFailure
                     && matches!(
                         palette.page,
@@ -1789,7 +1792,7 @@ impl Dashboard {
                     };
                 }
                 self.palette = Some(palette);
-                return Some(outgoing);
+                return Some(Vec::new());
             }
             Response::Ok if workspace_form => {
                 self.palette.as_mut().unwrap().workspace_acknowledged = true;
@@ -1836,60 +1839,6 @@ impl Dashboard {
             }
         }
         Some(Vec::new())
-    }
-
-    fn find_uncertain_session(&self, launch: &CreateSessionRequest) -> Option<SessionId> {
-        self.hierarchy
-            .projects
-            .iter()
-            .find(|project| project.name == launch.project)
-            .and_then(|project| {
-                project
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace.name == launch.workspace)
-            })
-            .and_then(|workspace| {
-                workspace.sessions.iter().rev().find(|session| {
-                    !session.phase.is_live()
-                        && session.recovery.as_ref().is_some_and(|recovery| {
-                            recovery.requires_ack || recovery.failure.is_some()
-                        })
-                })
-            })
-            .map(|session| session.id)
-    }
-
-    fn present_uncertain_launch(&mut self, palette: &mut Palette) -> Vec<ClientMessage> {
-        let launch = palette.failed_launch.take();
-        let session = launch
-            .as_ref()
-            .and_then(|launch| self.find_uncertain_session(launch));
-        palette.page = if let Some(id) = session {
-            self.select_session(id);
-            if find_session(self, id)
-                .and_then(|summary| summary.recovery.as_ref())
-                .is_some_and(|recovery| recovery.requires_ack)
-            {
-                self.command_page(Command::AcknowledgeStopped(id))
-            } else {
-                Page::Confirm {
-                    request: None,
-                    target: "Launch ownership is uncertain. This session row already exists. Acknowledge that previous agent or background processes have stopped, or reopen this row; do not create another session.".into(),
-                }
-            }
-        } else {
-            Page::Confirm {
-                request: None,
-                target: "Launch ownership is uncertain. A session row may already exist. Acknowledge that previous agent or background processes have stopped, or reopen that row; do not create another session.".into(),
-            }
-        };
-        let mut outgoing = self.drain_outbox();
-        let request_id = self.next_request_id();
-        if let Ok(Some(request)) = self.view_request(self.outer_area, request_id) {
-            outgoing.push(request);
-        }
-        outgoing
     }
 
     pub(super) fn attach_created_workspace(&mut self) -> Vec<ClientMessage> {
@@ -2704,8 +2653,8 @@ mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
     use crate::protocol::{
-        AgentActivity, ErrorCode, ProjectSummary, ServerMessage, SessionKind, SessionPhase,
-        SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
+        AgentActivity, ErrorCode, ProjectSummary, ServerEvent, ServerMessage, SessionKind,
+        SessionPhase, SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
     };
 
     fn dashboard() -> Dashboard {
@@ -3301,7 +3250,20 @@ mod launch_tests {
                 message: "process ownership is uncertain".into(),
             },
         });
-        assert_eq!(d.focused_session(), Some(SessionId(7)));
+        assert_eq!(d.focused_session(), None);
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                    panic!("uncertain create must not replay creation or acknowledge a guessed row")
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+        d.select_session(SessionId(7));
+        d.palette = Some(Palette {
+            page: d.command_page(Command::AcknowledgeStopped(SessionId(7))),
+            ..Palette::new()
+        });
         assert_eq!(
             request(&mut d).request,
             Request::AcknowledgeSessionStopped {
@@ -3349,6 +3311,94 @@ mod launch_tests {
         assert!(
             matches!(request(&mut d).request, Request::CreateSession(_)),
             "Retry recovers by creating in the existing workspace, without stopped-process acknowledgement"
+        );
+    }
+
+    #[test]
+    fn ownership_uncertain_create_does_not_guess_among_two_rows() {
+        let mut d = dashboard();
+        let mut first = summary(1);
+        first.phase = SessionPhase::Stopped;
+        first.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        let mut second = summary(2);
+        second.phase = SessionPhase::Stopped;
+        second.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![first, second];
+        d.select_session(SessionId(1));
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        assert!(matches!(launched.request, Request::CreateSession(_)));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                message: "process ownership is uncertain".into(),
+            },
+        });
+        assert_eq!(d.focused_session(), Some(SessionId(1)));
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_) | Request::AcknowledgeSessionStopped { .. } => {
+                    panic!("uncertain create must not replay creation or acknowledge a guessed row")
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
+        let mut d = dashboard();
+        let mut stopped = summary(1);
+        stopped.phase = SessionPhase::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![stopped];
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        let mut advanced = d.hierarchy.clone();
+        advanced.projects[0].workspaces[0].sessions[0].run = crate::protocol::SessionRunId(4);
+        d.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+            advanced,
+        )));
+        let first = request(&mut d);
+        assert_eq!(
+            first.request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
+            }
+        );
+        d.handle_server_message(ServerMessage::Response {
+            request_id: first.request_id,
+            response: Response::Error {
+                code: ErrorCode::Conflict,
+                message: "run moved".into(),
+            },
+        });
+        assert!(
+            d.palette.is_some(),
+            "Conflict rebuilds confirmation and waits for another Enter"
+        );
+        assert_eq!(
+            request(&mut d).request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(4),
+                acknowledge_stopped: false,
+            }
         );
     }
 }

@@ -203,13 +203,13 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         automatic: bool,
     },
-    /// Reopen a retained session in a fresh shell. `--ack-stopped` confirms previous processes stopped.
+    /// Reopen in a fresh shell. Natural exit does not prove background jobs stopped; confirm with --ack-stopped.
     Reopen {
         id: u64,
         #[arg(long)]
         ack_stopped: bool,
     },
-    /// Resolve ownership of an uncertain retained row without launching a process.
+    /// Confirm old processes stopped without launching a session. Required after unverified or natural exits.
     AcknowledgeStopped {
         id: u64,
     },

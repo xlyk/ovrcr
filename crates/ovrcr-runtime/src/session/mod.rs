@@ -6,10 +6,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{
-    Arc, Condvar, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,6 +25,18 @@ impl std::fmt::Display for NoProcessStarted {
 }
 
 impl std::error::Error for NoProcessStarted {}
+
+/// The session's owned process had already exited before terminate ran.
+#[derive(Debug)]
+pub(crate) struct AlreadyExited;
+
+impl std::fmt::Display for AlreadyExited {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("session already exited")
+    }
+}
+
+impl std::error::Error for AlreadyExited {}
 
 mod io;
 mod process;
@@ -267,6 +276,9 @@ struct TerminalState {
     revision: u64,
 }
 
+#[cfg(test)]
+type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
+
 pub struct Session {
     // Keep startup files alive until the shell has finished using them.
     _shell_startup: Option<tempfile::TempDir>,
@@ -289,10 +301,11 @@ pub struct Session {
     signal_result_hook: Option<Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>>,
     #[cfg(test)]
     history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    #[cfg(test)]
+    listing_error_hook: Mutex<Option<ListingErrorHook>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
-    exit_ownership_resolved: AtomicBool,
     handles: Mutex<JoinHandles>,
 }
 
@@ -521,7 +534,6 @@ impl Session {
             writer: Mutex::new(writer),
             pgid,
             tty,
-            exit_ownership_resolved: AtomicBool::new(false),
             terminate_lock: Mutex::new(()),
             reader_done: Mutex::new(false),
             reader_changed: Condvar::new(),
@@ -535,6 +547,8 @@ impl Session {
             signal_result_hook,
             #[cfg(test)]
             history_capture_hook: Mutex::new(None),
+            #[cfg(test)]
+            listing_error_hook: Mutex::new(None),
         });
 
         // Publish the session before anything can emit an event for it.
@@ -650,29 +664,17 @@ impl Session {
 
     /// Process groups attached to this session's terminal other than the
     /// leader's own group: jobs an interactive shell started with `&`.
-    fn attached_subgroups(&self) -> std::collections::BTreeSet<libc::pid_t> {
-        self.tty
-            .as_deref()
-            .map(|tty| attached_groups(tty, self.pgid))
-            .unwrap_or_default()
-    }
-
-    /// Whether the owned PTY and every still-attached job-control group are gone.
-    ///
-    /// A leader's exit alone is not ownership proof: interactive shells can
-    /// leave jobs in separate process groups on the same controlling terminal.
-    pub(crate) fn ownership_resolved(&self) -> bool {
-        self.exit_ownership_resolved.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn capture_exit_ownership(&self) {
-        let Some(tty) = self.tty.as_deref() else {
-            return;
-        };
-        if let Ok(groups) = attached_groups_checked(tty, self.pgid) {
-            self.exit_ownership_resolved
-                .store(groups.is_empty(), Ordering::Release);
+    fn attached_subgroups(&self) -> Result<std::collections::BTreeSet<libc::pid_t>> {
+        #[cfg(test)]
+        if let Some(hook) = self.listing_error_hook.lock().unwrap().clone()
+            && let Some(error) = hook()
+        {
+            return Err(error);
         }
+        let Some(tty) = self.tty.as_deref() else {
+            return Ok(std::collections::BTreeSet::new());
+        };
+        attached_groups_checked(tty, self.pgid)
     }
 
     pub fn set_paused(&self, paused: bool) -> Result<bool> {
@@ -682,11 +684,14 @@ impl Session {
             bail!("session has exited");
         }
         verify_owned_group(self)?;
+
+        let subgroups = self.attached_subgroups()?;
         let signal = if paused { libc::SIGSTOP } else { libc::SIGCONT };
         if !signal_group(self.pgid, signal)? {
             bail!("PTY process group no longer exists");
         }
-        signal_attached_groups(&self.attached_subgroups(), signal);
+        signal_attached_groups(&subgroups, signal);
+
         let next = if paused {
             SessionPhase::Paused
         } else {
@@ -856,6 +861,11 @@ impl Session {
         *self.history_capture_hook.lock().unwrap() = hook;
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_listing_error_hook(&self, hook: Option<ListingErrorHook>) {
+        *self.listing_error_hook.lock().unwrap() = hook;
+    }
+
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
         let bracketed_paste = {
             let terminal = self.terminal.lock().unwrap();
@@ -886,7 +896,7 @@ impl Session {
             SessionPhase::Exited { .. }
         ) {
             self.join_threads()?;
-            return Ok(());
+            return Err(anyhow::Error::new(AlreadyExited));
         }
 
         // Ownership is the controlling terminal, so every attached group is
@@ -896,10 +906,19 @@ impl Session {
         // `HANGUP_DELAY` get SIGHUP, which is what a closed terminal delivers
         // and the only signal interactive shells honour, so `local` shells
         // exit without waiting out the grace period.
-        let subgroups = self.attached_subgroups();
         let mut signal_error = None;
-        if should_signal_group(self)? {
-            signal_group(self.pgid, libc::SIGTERM)?;
+        let initially_owned = should_signal_group(self)?;
+        let mut listing_error = None;
+        let subgroups = match self.attached_subgroups() {
+            Ok(groups) => groups,
+            Err(error) => {
+                listing_error = Some(error);
+                std::collections::BTreeSet::new()
+            }
+        };
+        let mut leader_signal_delivered = false;
+        if initially_owned {
+            leader_signal_delivered = signal_group(self.pgid, libc::SIGTERM)?;
             if should_signal_group(self)? {
                 #[cfg(test)]
                 if let Some(signal_hook) = &self.signal_hook {
@@ -1017,6 +1036,17 @@ impl Session {
                 }));
             }
             Err(error) => return Err(signal_error.unwrap_or(error)),
+        }
+        if let Some(error) = listing_error {
+            return Err(signal_error.unwrap_or(error));
+        }
+        if !leader_signal_delivered {
+            return Err(if initially_owned {
+                signal_error
+                    .unwrap_or_else(|| anyhow::anyhow!("controlled stop did not deliver SIGTERM"))
+            } else {
+                anyhow::Error::new(AlreadyExited)
+            });
         }
         Ok(())
     }

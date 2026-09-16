@@ -43,10 +43,7 @@ fn title_program() -> SessionLaunch {
 fn created(live: &Live, request: Request) -> SessionSummary {
     let response = live.request(request);
     let Response::CreatedSession(summary) = response else {
-        panic!(
-            "session creation failed: {response:?}; inventory={:?}",
-            sessions(live)
-        )
+        panic!("session creation failed: {response:?}")
     };
     if let Some(pid) = summary.pid {
         live.own_group(pid as libc::pid_t);
@@ -203,7 +200,7 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
         Request::ReopenSession {
             session: original.id,
             expected_run: original.run,
-            acknowledge_stopped: false,
+            acknowledge_stopped: true,
         },
     );
     assert_eq!(reopened.id, original.id);
@@ -289,7 +286,7 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
         Request::ReopenSession {
             session: explicit.id,
             expected_run: explicit.run,
-            acknowledge_stopped: false,
+            acknowledge_stopped: true,
         },
     );
     assert_eq!(reopened.id, explicit.id);

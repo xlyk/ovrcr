@@ -50,7 +50,9 @@ impl Drop for TerminationGuard {
         } else {
             self.0.terminate(Duration::from_millis(200))
         };
-        if let Err(error) = result {
+        if let Err(error) = result
+            && !error.is::<AlreadyExited>()
+        {
             eprintln!(
                 "session test cleanup failed for process group {}: {error}",
                 self.0.pgid
@@ -982,21 +984,126 @@ fn terminate_removes_the_whole_process_group() {
         thread::park_timeout(Duration::from_millis(5));
     };
     assert!(pid_exists(descendant));
-    let termination = session.terminate(Duration::from_millis(200));
-    if termination.is_err() {
-        let owned_group = unsafe { libc::getpgid(descendant as libc::pid_t) } == session.pgid;
-        assert!(owned_group, "negative-control cleanup lost PTY ownership");
-        signal_group(session.pgid, libc::SIGKILL).unwrap();
-        assert!(
-            wait_for_group_exit(session.pgid, Instant::now() + Duration::from_secs(2)).unwrap()
-        );
-        let _ = session.wait_until_exited(Duration::from_secs(2));
+    let pgid = session.pgid;
+    struct GroupTeardown {
+        pgid: libc::pid_t,
     }
-    termination.unwrap();
+    impl Drop for GroupTeardown {
+        fn drop(&mut self) {
+            if group_exists(self.pgid).unwrap_or(true) {
+                let _ = signal_group(self.pgid, libc::SIGKILL);
+                let _ = wait_for_group_exit(self.pgid, Instant::now() + Duration::from_secs(2));
+            }
+        }
+    }
+    let _teardown = GroupTeardown { pgid };
+    let _termination = session.terminate(Duration::from_millis(200));
     dispatcher.join().unwrap();
     assert_pid_is_gone(leader);
     assert_pid_is_gone(descendant);
     assert!(!group_exists(session.pgid).unwrap());
+}
+
+#[test]
+fn terminate_listing_failure_does_not_certify_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tx, rx) = crate::server::event_channel(None);
+    let session = Session::spawn_registered(
+        SessionId(23),
+        SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "listing-fail".into(),
+            label: "sh".into(),
+            cwd: dir.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' HUP; sleep 30 & printf 'OVRCR_DESC:%s\\n' \"$!\"; exit".into(),
+            ],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        tx,
+        NO_REGISTER,
+    )
+    .unwrap();
+    let dispatcher = dispatch_test_events(session.clone(), rx);
+    let leader = session.summary().pid.unwrap();
+    let screen_deadline = Instant::now() + Duration::from_secs(2);
+    let descendant = loop {
+        if let Some(pid) = extract_tagged_pid(&session.current_screen(), b"OVRCR_DESC:")
+            && pid_exists(pid)
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < screen_deadline,
+            "descendant PID was not observed: {}",
+            String::from_utf8_lossy(&session.current_screen())
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    };
+    assert!(pid_exists(descendant));
+    session.set_listing_error_hook(Some(Arc::new(|| {
+        Some(anyhow::anyhow!("ovrcr-test-injected-listing-failure"))
+    })));
+    let pgid = session.pgid;
+    struct ListingFailTeardown {
+        pgid: libc::pid_t,
+    }
+    impl Drop for ListingFailTeardown {
+        fn drop(&mut self) {
+            if group_exists(self.pgid).unwrap_or(true) {
+                let _ = signal_group(self.pgid, libc::SIGKILL);
+                let _ = wait_for_group_exit(self.pgid, Instant::now() + Duration::from_secs(2));
+            }
+        }
+    }
+    let _teardown = ListingFailTeardown { pgid };
+    let termination = session.terminate(Duration::from_millis(200));
+    let error = match termination {
+        Err(error) => error,
+        Ok(()) => panic!("listing failure must not certify stop"),
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("ovrcr-test-injected-listing-failure"),
+        "must surface injected discovery error, not another path: {error:#}"
+    );
+    dispatcher.join().unwrap();
+    assert_pid_is_gone(leader);
+    assert_pid_is_gone(descendant);
+    assert!(!group_exists(session.pgid).unwrap());
+}
+
+#[test]
+fn pause_listing_failure_does_not_claim_paused() {
+    let session = spawn_test_shell();
+    let _cleanup = TerminationGuard(Arc::clone(&session));
+    let before = session.summary().phase;
+    assert!(before.is_live());
+    session.set_listing_error_hook(Some(Arc::new(|| {
+        Some(anyhow::anyhow!("ovrcr-test-injected-listing-failure"))
+    })));
+    let error = session
+        .set_paused(true)
+        .expect_err("listing failure must not pause");
+    assert!(
+        error
+            .to_string()
+            .contains("ovrcr-test-injected-listing-failure"),
+        "must surface injected discovery error: {error:#}"
+    );
+    assert_eq!(
+        session.summary().phase,
+        before,
+        "listing refusal must not claim pause"
+    );
+    session.set_listing_error_hook(None);
 }
 
 #[test]

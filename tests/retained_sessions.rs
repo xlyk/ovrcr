@@ -173,7 +173,7 @@ fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() 
     let id_arg = id.to_string();
     let old_run = created["run"].as_u64().unwrap();
     wait_phase(&live, id, "exited");
-    let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+    let reopened = json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     track_groups(&live);
     assert_eq!(reopened["id"], id);
     assert_eq!(reopened["name"], created["name"]);
@@ -239,7 +239,7 @@ fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() 
             assert!(summary.pid.is_none());
         }
     });
-    let explicit_next = json(&live, &["terminal", "reopen", &id_arg]);
+    let explicit_next = json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     track_groups(&live);
     assert_eq!(explicit_next["run"], old_run + 2);
     assert_eq!(std::fs::read_to_string(marker).unwrap(), "once\n");

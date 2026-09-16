@@ -338,6 +338,90 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
         reap_group(&live, leader_pgid);
     }
 }
+
+#[test]
+fn ordinary_natural_exit_requires_ack_and_accepts_acknowledgement() {
+    let live = Live::binary();
+    live.ready("feature/natural-exit-ack");
+    let created = create_terminal(&live, "natural-exit", &["/bin/sh", "-c", "exit 0"]);
+    let id = created["id"].as_u64().unwrap();
+    let old_run = created["run"].as_u64().unwrap();
+    wait_phase(&live, id, "exited");
+    let exited = row(&live, id);
+    assert_eq!(exited["id"], id);
+    assert_eq!(exited["run"], old_run);
+    assert_eq!(exited["phase"], "exited");
+    assert_requires_ack(&exited, true);
+    let stopped: i64 = retained_sql(&live)
+        .query_row(
+            "SELECT stopped FROM retained_sessions WHERE id = ?1",
+            [i64::try_from(id).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        stopped, 0,
+        "natural exit must not persist stop proof: {exited}"
+    );
+
+    let id_arg = id.to_string();
+    assert_ownership_uncertain(&json_error(&live, &["terminal", "reopen", &id_arg]));
+    assert_eq!(row(&live, id)["run"], old_run);
+
+    json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
+    let acknowledged = row(&live, id);
+    assert_eq!(acknowledged["id"], id);
+    assert_eq!(acknowledged["run"], old_run);
+    assert_requires_ack(&acknowledged, false);
+    let stopped: i64 = retained_sql(&live)
+        .query_row(
+            "SELECT stopped FROM retained_sessions WHERE id = ?1",
+            [i64::try_from(id).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        stopped, 1,
+        "acknowledgement must persist stop: {acknowledged}"
+    );
+
+    let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+    track_groups(&live);
+    assert_eq!(reopened["id"], id);
+    assert_eq!(reopened["run"], old_run + 1);
+    assert_eq!(reopened["phase"], "running");
+}
+
+#[test]
+fn acknowledged_natural_exit_close_removes_row() {
+    let live = Live::binary();
+    live.ready("feature/ack-close");
+    let created = create_terminal(&live, "ack-close", &["/bin/sh", "-c", "exit 0"]);
+    let id = created["id"].as_u64().unwrap();
+    let old_run = created["run"].as_u64().unwrap();
+    wait_phase(&live, id, "exited");
+    let id_arg = id.to_string();
+    assert_ownership_uncertain(&json_error(&live, &["terminal", "close", &id_arg]));
+    assert_eq!(row(&live, id)["run"], old_run);
+    assert_requires_ack(&row(&live, id), true);
+
+    json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
+    assert_requires_ack(&row(&live, id), false);
+    assert_eq!(
+        json(&live, &["terminal", "close", &id_arg]),
+        serde_json::json!({"ok": true})
+    );
+    let remaining = json(&live, &["terminal", "list"]);
+    assert!(
+        remaining
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|session| session["id"] != id),
+        "acknowledged close must remove the row: {remaining}"
+    );
+}
+
 #[test]
 fn acknowledge_stopped_starts_only_the_server_when_cold() {
     let live = Live::binary();

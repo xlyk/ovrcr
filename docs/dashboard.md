@@ -444,14 +444,16 @@ Retry does not confirm that a previous process has stopped.
 
 If a program starts and later exits, or the server restarts, the session row
 stays. Reopen in a fresh shell is an explicit action on that same row; it does
-not keep the previous output, history, copy selection, or unread marker. When
-previous agent or background processes may still be running, confirm they have
-stopped before reopen, or acknowledge stopped without launching. Retry is not
-that confirmation. A failed reopen asks again using the row's current run. If
-a first launch cannot prove that no process started, the existing row stays and
-the form does not create another session; acknowledge stopped or reopen that
-row instead. Agent resume is unavailable. Workspace removal remains a separate
-action.
+not keep the previous output, history, copy selection, or unread marker.
+Natural exit alone does not prove background jobs stopped. Confirm they have
+stopped before reopening, or acknowledge stopped without launching. Retry is not
+that confirmation. A stale confirmation is rejected; a fresh confirmation names
+the current run and requires another explicit submission.
+If a first launch cannot prove that no process started, the retained row stays.
+The failed create form cannot launch another session. Select the intended row
+yourself, then use its Reopen or Acknowledge action; the Dashboard never guesses
+which uncertain row to acknowledge. Agent resume is unavailable. Workspace
+removal remains a separate action.
 
 ### Automatic and pinned titles
 

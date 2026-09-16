@@ -1264,11 +1264,14 @@ fn set_view_drops_a_session_removed_before_publication() {
     // resize seam is the window a slow PTY leaves open for a concurrent
     // RemoveSession on a connection thread.
     let hook_state = Arc::downgrade(&state);
+    let run = session.run();
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |_, _| {
-        hook_state
+        let state = hook_state
             .upgrade()
-            .expect("server state outlives the resize hook")
-            .remove_session(id)
+            .expect("server state outlives the resize hook");
+        state
+            .acknowledge_session_stopped(id, run)
+            .and_then(|()| state.remove_session(id))
     }));
     let dispatcher_state = Arc::clone(&state);
     let dispatcher = thread::spawn(move || run_dispatcher(dispatcher_state, dispatch_receiver));
@@ -1359,14 +1362,17 @@ fn set_view_publishes_without_an_unfocused_pane_removed_before_publication() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let calls_for_hook = Arc::clone(&calls);
     let hook_state = Arc::downgrade(&state);
+    let removed_run = removed.run();
     *state.resize_hook.lock().unwrap() = Some(Arc::new(move |session, size| {
         if calls_for_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             session.resize(size)
         } else {
-            hook_state
+            let state = hook_state
                 .upgrade()
-                .expect("server state outlives the resize hook")
-                .remove_session(removed_id)
+                .expect("server state outlives the resize hook");
+            state
+                .acknowledge_session_stopped(removed_id, removed_run)
+                .and_then(|()| state.remove_session(removed_id))
         }
     }));
     let dispatcher_state = Arc::clone(&state);
@@ -1706,6 +1712,9 @@ fn view_revision_floor_survives_exit_and_removal() {
         state.dashboard.view().as_ref().map(|view| view.revision),
         Some(10)
     );
+    state
+        .acknowledge_session_stopped(exited_id, exited.run())
+        .unwrap();
     state.remove_session(exited_id).unwrap();
     let after_removal = state.dashboard.view().unwrap();
     assert_eq!(after_removal.revision, 10);
@@ -1746,7 +1755,9 @@ fn view_revision_floor_survives_exit_and_removal() {
     state.dispatch.send(DispatchMessage::Stop).unwrap();
     dispatcher.join().unwrap();
     exited_thread.join().unwrap();
-    exited.terminate(Duration::from_secs(2)).unwrap();
+    if let Err(error) = exited.terminate(Duration::from_secs(2)) {
+        assert!(error.is::<crate::session::AlreadyExited>(), "{error:#}");
+    }
 }
 
 #[test]
@@ -2420,6 +2431,9 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
     );
     session.wait_until_exited(Duration::from_secs(2)).unwrap();
     event_thread.join().unwrap();
+    state
+        .acknowledge_session_stopped(summary.id, session.run())
+        .unwrap();
     state.remove_session(summary.id).unwrap();
 
     drop(listener);
@@ -2685,7 +2699,12 @@ fn saturated_control_state(
 
 fn cleanup_test_session(session: &Session, events: TestSessionEvents) -> Result<()> {
     let _ = session.set_paused(false);
-    let termination = session.terminate(Duration::from_secs(2));
+    let termination = match session.terminate(Duration::from_secs(2)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.is::<crate::session::AlreadyExited>() => Ok(()),
+        Err(error) => Err(error),
+    };
+
     if termination.is_err() {
         events.cancel();
     }
@@ -3183,6 +3202,9 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let removal_session = Arc::clone(&race_session);
     let removal = thread::spawn(move || {
         removal_session.terminate(Duration::from_secs(2)).unwrap();
+        removal_state
+            .acknowledge_session_stopped(race_id, removal_session.run())
+            .unwrap();
         removal_state.remove_session(race_id).unwrap();
         removed.send(()).unwrap();
     });
@@ -3321,10 +3343,13 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     let disconnected_before_release = completion_before_release && !state.dashboard.is_claimed();
     let _ = parser_holder_release.send(());
     let parser_holder_joined = parser_holder.join().is_ok();
+    let cleanup_result = cleanup_test_session(&page_session, page_events);
+    let acknowledged = state
+        .acknowledge_session_stopped(SessionId(12), page_session.run())
+        .is_ok();
+    let removed = state.remove_session(SessionId(12)).is_ok();
     let dispatcher_stopped = state.dispatch.send(DispatchMessage::Stop).is_ok();
     let dispatcher_joined = dispatcher.join().is_ok();
-    let cleanup_result = cleanup_test_session(&page_session, page_events);
-    let removed = state.remove_session(SessionId(12)).is_ok();
     assert!(parser_was_held);
     assert!(queue_filled);
     assert!(page_sent);
@@ -3334,6 +3359,7 @@ fn history_page_overflow_disconnects_without_parser_wait() {
     assert!(dispatcher_stopped);
     assert!(dispatcher_joined);
     assert!(cleanup_result.is_ok());
+    assert!(acknowledged);
     assert!(removed);
 }
 
@@ -4429,6 +4455,7 @@ fn kill_session_termination_failure_revokes_and_retains_session() {
         original_pgid,
         waiter,
         dispatcher,
+        true,
     );
     let deadline = Instant::now() + Duration::from_secs(2);
     while !String::from_utf8_lossy(&session.current_screen()).contains("READY") {
@@ -4516,6 +4543,7 @@ fn kill_failure_cleanup_retains_original_group_after_leader_exit() {
         original_pgid,
         waiter,
         dispatcher,
+        false,
     );
     assert_eq!(
         unsafe { libc::getpgid(original_pgid) },
@@ -4673,11 +4701,225 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     for event in pending {
         session.apply_event(event);
     }
-    state.close_terminal(id, Duration::from_millis(20)).unwrap();
-    assert!(!state.sessions.lock().unwrap().contains_key(&id));
-    assert!(state.dashboard.view().as_ref().is_some_and(|view| {
-        view.revision == 1 && view.panes.is_empty() && view.focused.is_none()
-    }));
+    let error = state
+        .close_terminal(id, Duration::from_millis(20))
+        .unwrap_err();
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "close after natural exit must retain the row: {error:#}"
+    );
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "close after natural exit must not certify stopped"
+    );
+    assert!(
+        state
+            .session_summary(id)
+            .unwrap()
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "close after natural exit must leave acknowledgement required"
+    );
+}
+
+#[test]
+fn close_after_natural_exit_does_not_certify_stopped_or_remove_row() {
+    let id = SessionId(19);
+    let (_cwd, session, receiver) = spawn_exiting_test_session(id);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "exit event must not persist stop proof before close"
+    );
+
+    let _ = state.close_terminal(id, Duration::from_millis(200));
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "close of an already-exited run must not remove the row"
+    );
+    let retained = state.retained.lock();
+    let record = retained.get(id).expect("retained row missing");
+    assert!(
+        !record.stopped,
+        "already-exited close must not certify stopped"
+    );
+    drop(retained);
+    let summary = state.session_summary(id).unwrap();
+    assert!(
+        summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "already-exited close must leave acknowledgement required: {summary:?}"
+    );
+}
+
+#[test]
+fn close_after_ack_removes_already_exited_in_memory_row() {
+    let id = SessionId(20);
+    let (_cwd, session, receiver) = spawn_exiting_test_session(id);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    let run = session.run();
+    assert!(
+        state
+            .session_summary(id)
+            .unwrap()
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "natural exit must require acknowledgement before close"
+    );
+
+    let mut role = ClientRole::Control;
+    assert_eq!(
+        state.handle_request(
+            &mut role,
+            Request::AcknowledgeSessionStopped {
+                session: id,
+                expected_run: run,
+            },
+        ),
+        Response::Ok
+    );
+    let acknowledged = state.session_summary(id).unwrap();
+    assert!(
+        !acknowledged
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "acknowledgement must clear close ownership uncertainty: {acknowledged:?}"
+    );
+    assert_eq!(
+        state.handle_request(&mut role, Request::CloseTerminal { session: id }),
+        Response::Ok,
+        "acknowledged already-exited close must succeed without treating AlreadyExited as stop proof"
+    );
+    assert!(
+        !state.sessions.lock().unwrap().contains_key(&id),
+        "acknowledged close must drop the in-memory row"
+    );
+    assert!(
+        state.retained.lock().get(id).is_none(),
+        "acknowledged close must remove the retained record"
+    );
+}
+
+#[test]
+fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() {
+    let id = SessionId(21);
+    let cwd = tempfile::tempdir().unwrap();
+    let (events, receiver) = event_channel(None);
+    let capability = [0x21; 32];
+    let (hold_entered_tx, hold_entered_rx) = mpsc::sync_channel(1);
+    let (hold_release_tx, hold_release_rx) = mpsc::sync_channel(1);
+    let hold_release_rx = Mutex::new(hold_release_rx);
+    let session = Session::spawn_with_test_hooks(
+        id,
+        SessionSpec {
+            run: ovrcr_protocol::SessionRunId(1),
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            project: "p".into(),
+            workspace: "w".into(),
+            name: "captured-exit".into(),
+            label: "sh".into(),
+            cwd: cwd.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap '' HUP TERM; printf READY; IFS= read -r _; exit 0".into(),
+            ],
+            hook_env: Some(HookEnvironment {
+                socket: PathBuf::from("/private/test/ovrcr.sock"),
+                session: id,
+                capability,
+            }),
+        },
+        TerminalSize { rows: 24, cols: 80 },
+        events,
+        None,
+        Some(Arc::new(move || {
+            let _ = hold_entered_tx.send(());
+            let _ = hold_release_rx.lock().unwrap().recv();
+        })),
+        None,
+    )
+    .unwrap();
+    let events = apply_test_session_events(Arc::clone(&session), receiver);
+    let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+    register_test_session(&state, id, Arc::clone(&session));
+    assert!(
+        wait_test_screen(&session, "READY", Duration::from_secs(2)),
+        "captured-exit fixture did not start"
+    );
+
+    let hold_session = Arc::clone(&session);
+    let holder = thread::spawn(move || hold_session.terminate(Duration::from_secs(2)));
+    hold_entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("holder must enter terminate before close captures");
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "holder SIGTERM must not finish the trapped process"
+    );
+
+    let close_state = Arc::clone(&state);
+    let closer = thread::spawn(move || close_state.close_terminal(id, Duration::from_millis(200)));
+    let report = AgentReport {
+        session: id,
+        capability,
+        sequence: None,
+        update: ovrcr_protocol::AgentUpdate::Activity(AgentActivity::Busy),
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while session.apply_agent_report(&report).is_ok() {
+        assert!(
+            Instant::now() < deadline,
+            "close did not capture/revoke the live target"
+        );
+        thread::park_timeout(Duration::from_millis(5));
+    }
+    assert!(
+        matches!(session.summary().phase, SessionPhase::Running),
+        "close must capture the target while it is still live"
+    );
+
+    session.write(b"\r").unwrap();
+    session.wait_until_exited(Duration::from_secs(2)).unwrap();
+    events.finish(Duration::from_secs(1)).unwrap();
+    let _ = hold_release_tx.send(());
+    let _ = holder.join();
+    let close_result = closer.join().expect("close thread panicked");
+
+    assert!(
+        close_result.is_err(),
+        "live capture then natural exit must not close-success: {close_result:?}"
+    );
+    assert!(
+        state.sessions.lock().unwrap().contains_key(&id),
+        "captured-before-exit close must not remove the row"
+    );
+    assert!(
+        !state.retained.lock().get(id).unwrap().stopped,
+        "captured-before-exit close must not certify stopped"
+    );
+    let summary = state.session_summary(id).unwrap();
+    assert_eq!(summary.run, ovrcr_protocol::SessionRunId(1));
+    assert!(
+        summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack),
+        "captured-before-exit close must leave acknowledgement required: {summary:?}"
+    );
 }
 
 #[test]
@@ -5230,6 +5472,7 @@ struct KillFailureCleanup {
     original_pgid: libc::pid_t,
     waiter: Option<JoinHandle<()>>,
     dispatcher: Option<JoinHandle<()>>,
+    ack_before_stop: bool,
 }
 
 impl KillFailureCleanup {
@@ -5240,6 +5483,7 @@ impl KillFailureCleanup {
         original_pgid: libc::pid_t,
         waiter: JoinHandle<()>,
         dispatcher: JoinHandle<()>,
+        ack_before_stop: bool,
     ) -> Self {
         Self {
             session,
@@ -5248,6 +5492,7 @@ impl KillFailureCleanup {
             original_pgid,
             waiter: Some(waiter),
             dispatcher: Some(dispatcher),
+            ack_before_stop,
         }
     }
 
@@ -5268,6 +5513,14 @@ impl KillFailureCleanup {
                     .session
                     .wait_until_exited(Duration::from_secs(2))
                     .is_ok();
+        }
+
+        if cleaned && self.ack_before_stop {
+            let id = self.session.id();
+            let run = self.session.run();
+            if self.state.acknowledge_session_stopped(id, run).is_err() {
+                cleaned = false;
+            }
         }
 
         if self.dispatcher.is_some() {
@@ -5717,7 +5970,13 @@ mod agent_reporting {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            self.session.terminate(Duration::from_millis(100)).unwrap();
+            if let Err(error) = self.session.terminate(Duration::from_millis(100)) {
+                assert!(
+                    error.is::<crate::session::AlreadyExited>(),
+                    "agent reporting fixture terminate: {error:#}"
+                );
+            }
+
             self.bridge.take().unwrap().join().unwrap();
             self.state.dispatch.send(DispatchMessage::Stop).unwrap();
             self.dispatcher.take().unwrap().join().unwrap();

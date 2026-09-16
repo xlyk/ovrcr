@@ -112,60 +112,25 @@ pub(super) fn short_tty_name(path: &std::path::Path) -> Option<String> {
 /// only the leader's group leaves background jobs behind. Ownership is
 /// defined by the controlling terminal: anything still attached to the
 /// session's PTY belongs to the session; anything that called `setsid` does
-/// not. `ps -t` filters in the kernel, so this costs well under a
-/// millisecond. A failure to run `ps` yields an empty set so termination can
-/// still proceed against the leader's group.
-pub(super) fn attached_groups(tty: &str, leader: libc::pid_t) -> BTreeSet<libc::pid_t> {
-    attached_groups_checked(tty, leader).unwrap_or_default()
-}
-
+/// not. `ps -t` filters in the kernel. Discovery errors propagate so
+/// terminate cannot treat a failed listing as "no attached jobs".
 pub(super) fn attached_groups_checked(
     tty: &str,
     leader: libc::pid_t,
 ) -> Result<BTreeSet<libc::pid_t>> {
     let output = Command::new("ps")
-        .args(["-axo", "pid=,ppid=,pgid=,tty="])
+        .args(["-t", tty, "-o", "pgid="])
         .output()
         .context("list processes attached to session PTY")?;
     if !output.status.success() {
         bail!("ps could not list processes attached to session PTY");
     }
-    let mut processes = Vec::new();
-    let process_lines = String::from_utf8_lossy(&output.stdout);
-    for line in process_lines.lines() {
-        let mut fields = line.split_whitespace();
-        let (Some(pid), Some(ppid), Some(pgid), Some(process_tty)) =
-            (fields.next(), fields.next(), fields.next(), fields.next())
-        else {
-            continue;
-        };
-        let (Ok(pid), Ok(ppid), Ok(pgid)) = (
-            pid.parse::<libc::pid_t>(),
-            ppid.parse::<libc::pid_t>(),
-            pgid.parse::<libc::pid_t>(),
-        ) else {
-            continue;
-        };
-        processes.push((pid, ppid, pgid, process_tty));
-    }
-    let mut descendants = BTreeSet::from([leader]);
-    loop {
-        let before = descendants.len();
-        for (pid, ppid, _, _) in &processes {
-            if descendants.contains(ppid) {
-                descendants.insert(*pid);
-            }
-        }
-        if descendants.len() == before {
-            break;
-        }
-    }
     let own_group = unsafe { libc::getpgrp() };
     let mut groups = BTreeSet::new();
-    for (pid, _, pgid, process_tty) in processes {
-        if process_tty != tty && !descendants.contains(&pid) {
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(pgid) = line.trim().parse::<libc::pid_t>() else {
             continue;
-        }
+        };
         if pgid <= 1 || pgid == leader || pgid == own_group {
             continue;
         }
