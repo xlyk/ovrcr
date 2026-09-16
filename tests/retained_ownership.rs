@@ -302,7 +302,7 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
     std::fs::write(
         &survivor_py,
         "import os, signal, sys, time\n\
-         os.setpgrp()\n\
+         os.setsid()\n\
          open(sys.argv[1], 'w').write(str(os.getpid()))\n\
          signal.signal(signal.SIGHUP, signal.SIG_IGN)\n\
          signal.signal(signal.SIGTERM, signal.SIG_IGN)\n\
@@ -315,7 +315,7 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
         &[
             "/bin/sh",
             "-c",
-            "/usr/bin/python3 \"$1\" \"$2\" &\n/bin/sleep 1\nexit 0",
+            "/usr/bin/python3 \"$1\" \"$2\" &\nexec /bin/sleep 1",
             "natural-leader",
             survivor_py.to_str().unwrap(),
             pid_file.to_str().unwrap(),
