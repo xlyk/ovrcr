@@ -179,7 +179,7 @@ fn inspect() -> AppResult<(Registry, Vec<SessionSummary>)> {
     let path = RegistryPath::resolve().map_err(RuntimeError::internal)?.0;
     Ok((
         load_registry(&path).map_err(RuntimeError::internal)?,
-        Vec::new(),
+        ovrcr::retained::load_session_summaries(&path).map_err(RuntimeError::internal)?,
     ))
 }
 

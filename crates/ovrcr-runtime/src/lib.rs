@@ -1,6 +1,7 @@
 pub mod agent_runner;
 pub mod config;
 pub mod git;
+pub mod retained;
 pub mod server;
 pub mod session;
 pub mod task_manager;

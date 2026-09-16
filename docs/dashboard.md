@@ -182,7 +182,7 @@ Motion waits when a target cell still needs loading.
   for each finite burst.
 - Eviction can leave a wrapped continuation after the beginning of its logical
   line is gone. Retained rows preserve their original physical widths.
-- Exited session records keep their retained rows until the record is removed.
+- Within a server run, exited terminals keep their history until reopened or removed.
 - A dashboard connection owns at most one frozen snapshot, and its client cache
   keeps at most sixteen bounded pages. History pages hold at most 16 rows by
   128 columns within the 128 KiB response bound.
@@ -440,9 +440,18 @@ which Branch and Base accept free text. Submission waits for pending suggestions
 
 If the workspace is created but its first program cannot launch, the workspace
 remains. Retry, choose another agent, or open a shell in that existing workspace.
-If a program starts and later exits, its session and output remain visible;
-relaunching is an explicit action and creates a new session while retaining the
-old output. Workspace removal remains a separate action.
+Retry does not confirm that a previous process has stopped.
+
+If a program starts and later exits, or the server restarts, the session row
+stays. Reopen in a fresh shell is an explicit action on that same row; it does
+not keep the previous output, history, copy selection, or unread marker. When
+previous agent or background processes may still be running, confirm they have
+stopped before reopen, or acknowledge stopped without launching. Retry is not
+that confirmation. A failed reopen asks again using the row's current run. If
+a first launch cannot prove that no process started, the existing row stays and
+the form does not create another session; acknowledge stopped or reopen that
+row instead. Agent resume is unavailable. Workspace removal remains a separate
+action.
 
 ### Automatic and pinned titles
 
@@ -455,9 +464,9 @@ session identifier so they can be distinguished.
 Use **Rename terminal** in the command palette to pin a title. Clear it to return
 to Automatic. Title changes never change the session ID or retarget an action.
 Activity indicators remain separate, and desktop notifications continue to use
-stable identity rather than application titles. Titles and exited output survive
-dashboard detach while the server remains alive; this feature does not restore
-sessions after server restart.
+stable identity rather than application titles. Titles survive dashboard detach.
+A stopped or interrupted row keeps its title; reopen replaces the process, not
+the row.
 
 ### Register project (`a`)
 

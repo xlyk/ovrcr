@@ -9,9 +9,9 @@ use super::event_loop::{
 use super::state::{HistoryCursor, HistoryView};
 use super::{Dashboard, InputMode, PANIC_TERMINAL_RESTORED};
 use crate::protocol::{
-    ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow, HistoryRows,
-    HistorySnapshotId, Request, Response, ServerEvent, ServerMessage, SessionId, TerminalSize,
-    write_frame,
+    AgentBinding, AgentProvider, ErrorCode, HistoryCell, HistoryColor, HistoryOpened, HistoryRow,
+    HistoryRows, HistorySnapshotId, ReadyObservation, Request, Response, ServerEvent,
+    ServerMessage, SessionId, SessionPhase, SessionRunId, TerminalSize, write_frame,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ovrcr_terminal::vt100;
@@ -91,13 +91,16 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             path: "/tmp/auth-handoff".into(),
             sessions: vec![SessionSummary {
                 id: SessionId(12),
+                run: crate::protocol::SessionRunId(1),
+                kind: crate::protocol::SessionKind::Terminal,
+                recovery: None,
                 project: "consigint".into(),
                 workspace: "auth-handoff".into(),
                 name: "agent".into(),
                 title: None,
                 label: "shell".into(),
                 pid: None,
-                started_unix_ms: 0,
+                started_unix_ms: Some(0),
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
@@ -187,6 +190,7 @@ fn dashboard_surfaces_hello_refusal_and_reader_disconnect() {
 fn initial_selection_completes_zero_target_view_on_ok() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let request = dashboard
         .view_request(Rect::new(0, 0, 1, 1), 3)
         .unwrap()
@@ -221,8 +225,10 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         cols: 120,
     });
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
+    second.run = Some(ovrcr_protocol::SessionRunId(1));
     dashboard.panes.push(second);
     dashboard.focused_pane = 1;
     let request = dashboard
@@ -239,6 +245,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
         sender
             .send(ServerMessage::Event(ServerEvent::Output {
                 session: SessionId(1),
+                run: ovrcr_protocol::SessionRunId(1),
                 revision,
                 bytes: b"ignored while unready".to_vec(),
             }))
@@ -250,6 +257,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
                 request_id: request.request_id,
                 response: Response::Screen {
                     session: target.session,
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision,
                     size: target.size,
                     bytes: format!("SCREEN_{index}").into_bytes(),
@@ -266,6 +274,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
     sender
         .send(ServerMessage::Event(ServerEvent::Output {
             session: SessionId(1),
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             bytes: b"TAIL_A".to_vec(),
         }))
@@ -273,6 +282,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
     sender
         .send(ServerMessage::Event(ServerEvent::Output {
             session: SessionId(2),
+            run: ovrcr_protocol::SessionRunId(1),
             revision,
             bytes: b"TAIL_B".to_vec(),
         }))
@@ -350,6 +360,7 @@ fn dashboard_reader_reconciles_two_pane_burst_at_ack_boundary() {
 fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let request = dashboard
         .view_request(Rect::new(0, 0, 40, 8), 4)
         .unwrap()
@@ -363,6 +374,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
                 request_id: request.request_id,
                 response: Response::Screen {
                     session: SessionId(2),
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision,
                     size,
                     bytes: b"wrong".to_vec(),
@@ -388,6 +400,7 @@ fn initial_selection_does_not_complete_after_wrong_screen_and_ok() {
 fn initial_selection_ignores_wrong_screen_before_matching_ok() {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 8, cols: 40 });
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let request = dashboard
         .view_request(Rect::new(0, 0, 40, 8), 3)
         .unwrap()
@@ -404,6 +417,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                 request_id: request.request_id.saturating_add(1),
                 response: Response::Screen {
                     session: SessionId(1),
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision,
                     size,
                     bytes: b"wrong request".to_vec(),
@@ -411,6 +425,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
             },
             ServerMessage::Event(ServerEvent::Output {
                 session: SessionId(1),
+                run: ovrcr_protocol::SessionRunId(1),
                 revision,
                 bytes: b"intervening".to_vec(),
             }),
@@ -418,6 +433,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                 request_id: request.request_id,
                 response: Response::Screen {
                     session: SessionId(2),
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision,
                     size,
                     bytes: b"wrong".to_vec(),
@@ -430,6 +446,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                 request_id: request.request_id,
                 response: Response::Screen {
                     session: SessionId(1),
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision: revision.saturating_sub(1),
                     size,
                     bytes: b"wrong revision".to_vec(),
@@ -439,6 +456,7 @@ fn initial_selection_ignores_wrong_screen_before_matching_ok() {
                 request_id: request.request_id,
                 response: Response::Screen {
                     session: SessionId(1),
+                    run: ovrcr_protocol::SessionRunId(1),
                     revision,
                     size,
                     bytes: b"right".to_vec(),
@@ -712,6 +730,7 @@ impl Write for FailingWriter {
 fn staged_history_copy_dashboard() -> Dashboard {
     let mut dashboard = Dashboard::new(TerminalSize { rows: 4, cols: 20 });
     dashboard.select_session(SessionId(1));
+    dashboard.panes[0].run = Some(crate::protocol::SessionRunId(1));
     dashboard.mode = InputMode::History;
     dashboard.install_screen(SessionId(1), &[]);
     let opened = HistoryOpened {
@@ -837,15 +856,22 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     use crate::protocol::{HierarchySnapshot, ProjectSummary, WorkspaceSummary};
     use crate::session::{SessionPhase, SessionSummary};
     let mut dashboard = staged_history_copy_dashboard();
+    let mut other = super::PaneState::new(TerminalSize { rows: 4, cols: 20 });
+    other.session = Some(SessionId(2));
+    other.run = Some(crate::protocol::SessionRunId(1));
+    dashboard.panes.push(other);
     let summary = |id| SessionSummary {
         id: SessionId(id),
+        run: crate::protocol::SessionRunId(1),
+        kind: crate::protocol::SessionKind::Terminal,
+        recovery: None,
         project: "p".into(),
         workspace: "w".into(),
         name: format!("s{id}"),
         title: None,
         label: "zsh".into(),
         pid: Some(1),
-        started_unix_ms: 0,
+        started_unix_ms: Some(0),
         phase: SessionPhase::Running,
         activity: crate::session::AgentActivity::Unknown,
         agent: None,
@@ -976,13 +1002,16 @@ fn mouse_release_precedes_the_replacement_view_request() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let summary = |id: u64| SessionSummary {
         id: SessionId(id),
+        run: crate::protocol::SessionRunId(1),
+        kind: crate::protocol::SessionKind::Terminal,
+        recovery: None,
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "session".into(),
         title: None,
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
-        started_unix_ms: 0,
+        started_unix_ms: Some(0),
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -1009,8 +1038,10 @@ fn mouse_release_precedes_the_replacement_view_request() {
     dashboard.outer_area = area;
     dashboard.hierarchy = hierarchy(&[1, 2]);
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
+    second.run = Some(ovrcr_protocol::SessionRunId(1));
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
 
@@ -1027,6 +1058,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
             request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -1106,13 +1138,16 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     use crossterm::event::MouseEventKind;
     let summary = |id: u64| SessionSummary {
         id: SessionId(id),
+        run: crate::protocol::SessionRunId(1),
+        kind: crate::protocol::SessionKind::Terminal,
+        recovery: None,
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "session".into(),
         title: None,
         label: "zsh".into(),
         pid: Some(100 + u32::try_from(id).unwrap()),
-        started_unix_ms: 0,
+        started_unix_ms: Some(0),
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -1139,8 +1174,10 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     dashboard.outer_area = area;
     dashboard.hierarchy = hierarchy(&[1, 2]);
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     let mut second = super::PaneState::new(TerminalSize { rows: 36, cols: 40 });
     second.session = Some(SessionId(2));
+    second.run = Some(ovrcr_protocol::SessionRunId(1));
     dashboard.panes.push(second);
     dashboard.focused_pane = 0;
     let request = dashboard
@@ -1156,6 +1193,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
             request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -1224,6 +1262,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
             request_id: replacement.request_id,
             response: Response::Screen {
                 session: pane.session,
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: pane.size,
                 bytes: Vec::new(),
@@ -1336,6 +1375,9 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
                 id: SessionId(1),
+                run: crate::protocol::SessionRunId(1),
+                kind: crate::protocol::SessionKind::Terminal,
+                recovery: None,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "claude".into(),
@@ -1343,7 +1385,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
                 label: "claude".into(),
                 pid: Some(1),
                 // Ten minutes of session, one second since the latest sample.
-                started_unix_ms: now - 600_000,
+                started_unix_ms: Some(now - 600_000),
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Busy,
                 context_usage: None,
@@ -1487,13 +1529,16 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
                 id: SessionId(1),
+                run: crate::protocol::SessionRunId(1),
+                kind: crate::protocol::SessionKind::Terminal,
+                recovery: None,
                 project: "p".into(),
                 workspace: "w".into(),
                 name: "claude".into(),
                 title: None,
                 label: "claude".into(),
                 pid: Some(1),
-                started_unix_ms: now,
+                started_unix_ms: Some(now),
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Busy,
                 context_usage: Some(ContextUsageSnapshot {
@@ -2143,13 +2188,16 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                     .iter()
                     .map(|id| SessionSummary {
                         id: SessionId(*id),
+                        run: crate::protocol::SessionRunId(1),
+                        kind: crate::protocol::SessionKind::Terminal,
+                        recovery: None,
                         project: "consigint".into(),
                         workspace: "auth".into(),
                         name: "session".into(),
                         title: None,
                         label: "zsh".into(),
                         pid: Some(100 + u32::try_from(*id).unwrap()),
-                        started_unix_ms: 0,
+                        started_unix_ms: Some(0),
                         phase: SessionPhase::Running,
                         activity: AgentActivity::Unknown,
                         context_usage: None,
@@ -2242,6 +2290,7 @@ fn mouse_cleanup_precedes_the_replacement_set_view() {
     dashboard.outer_area = area;
     dashboard.hierarchy = session_hierarchy(&[1, 2]);
     dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(ovrcr_protocol::SessionRunId(1));
     dashboard.mouse.held[0] = Some(super::HeldMouse {
         session: SessionId(1),
         event: MouseEvent {
@@ -2336,13 +2385,16 @@ fn keymap_session(
     use crate::protocol::{AgentActivity, SessionSummary};
     SessionSummary {
         id: SessionId(id),
+        run: crate::protocol::SessionRunId(1),
+        kind: crate::protocol::SessionKind::Terminal,
+        recovery: None,
         project: "consigint".into(),
         workspace: "auth".into(),
         name: "agent".into(),
         title: None,
         label: "shell".into(),
         pid: None,
-        started_unix_ms: 0,
+        started_unix_ms: Some(0),
         phase,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -2894,4 +2946,235 @@ fn alert_toggle_refuses_dangling_symlink_and_read_only_config() {
         std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
         0o640
     );
+}
+
+#[test]
+fn same_row_run_replacement_clears_parser_and_requests_a_new_view() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.hierarchy = session_hierarchy(&[1]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(SessionRunId(1));
+    dashboard.install_screen(SessionId(1), b"OLD_OUTPUT");
+    let mut next = session_hierarchy(&[1]);
+    next.projects[0].workspaces[0].sessions[0].run = SessionRunId(2);
+    let outgoing =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(next)));
+    assert_eq!(dashboard.panes[0].run, Some(SessionRunId(2)));
+    let screen = dashboard.panes[0].parser.screen().contents();
+    assert!(
+        !screen.contains("OLD_OUTPUT"),
+        "replacement run must drop the previous parser contents: {screen:?}"
+    );
+    assert!(
+        outgoing
+            .iter()
+            .any(|message| matches!(message.request, Request::SetView { .. })),
+        "run replacement must request a fresh run-bound view"
+    );
+}
+
+#[test]
+fn old_run_packets_are_ignored_after_same_row_replacement() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.hierarchy = session_hierarchy(&[1]);
+    dashboard.panes[0].session = Some(SessionId(1));
+    dashboard.panes[0].run = Some(SessionRunId(1));
+    dashboard.install_screen(SessionId(1), b"OLD_OUTPUT");
+    let mut next = session_hierarchy(&[1]);
+    next.projects[0].workspaces[0].sessions[0].run = SessionRunId(2);
+    next.projects[0].workspaces[0].sessions[0].title = Some("Pinned".into());
+    let outgoing =
+        dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(next)));
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .title
+            .as_deref(),
+        Some("Pinned")
+    );
+    assert_eq!(dashboard.panes[0].session, Some(SessionId(1)));
+    let set_view = outgoing
+        .into_iter()
+        .find(|message| matches!(message.request, Request::SetView { .. }))
+        .expect("run replacement requests a view");
+    let Request::SetView { view } = &set_view.request else {
+        panic!("expected SetView");
+    };
+    assert!(
+        view.panes
+            .iter()
+            .any(|pane| pane.session == SessionId(1) && pane.run == SessionRunId(2)),
+        "replacement view must name the current run: {view:?}"
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: set_view.request_id,
+        response: Response::Screen {
+            session: SessionId(1),
+            run: SessionRunId(1),
+            revision: view.revision,
+            size: view.panes[0].size,
+            bytes: b"STALE_SCREEN".to_vec(),
+        },
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        session: SessionId(1),
+        run: SessionRunId(1),
+        revision: view.revision,
+        bytes: b"STALE_OUTPUT".to_vec(),
+    }));
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        session: SessionId(1),
+        run: SessionRunId(1),
+        revision: view.revision,
+    }));
+    let screen = dashboard.panes[0].parser.screen().contents();
+    assert!(
+        !screen.contains("STALE_SCREEN")
+            && !screen.contains("STALE_OUTPUT")
+            && !screen.contains("OLD_OUTPUT"),
+        "old-run packets must not populate the replacement pane: {screen:?}"
+    );
+    assert!(!dashboard.pane_ready(&dashboard.panes[0]));
+    dashboard.set_error("keep me");
+    let mut stale = session_hierarchy(&[1]).projects[0].workspaces[0].sessions[0].clone();
+    stale.run = SessionRunId(1);
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: 99,
+        response: Response::CreatedSession(Box::new(stale)),
+    });
+    assert_eq!(dashboard.error.as_deref(), Some("keep me"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: set_view.request_id,
+        response: Response::Screen {
+            session: SessionId(1),
+            run: SessionRunId(2),
+            revision: view.revision,
+            size: view.panes[0].size,
+            bytes: b"FRESH".to_vec(),
+        },
+    });
+    let screen = dashboard.panes[0].parser.screen().contents();
+    assert!(screen.contains("FRESH"), "{screen:?}");
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: set_view.request_id,
+        response: Response::Ok,
+    });
+    dashboard.key(KeyCode::Enter);
+    assert!(
+        dashboard.input_request(b"before".to_vec(), 98).is_some(),
+        "the replacement must accept input before a delayed event arrives"
+    );
+    let mut retired = session_hierarchy(&[1]);
+    retired.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Exited {
+        code: Some(99),
+        signal: None,
+    };
+    retired.projects[0].workspaces[0].sessions[0].title = Some("Retired title".into());
+    let retired_session = retired.projects[0].workspaces[0].sessions[0].clone();
+    for event in [
+        ServerEvent::SessionChanged(Box::new(retired_session)),
+        ServerEvent::HierarchyChanged(retired),
+    ] {
+        dashboard.handle_server_message(ServerMessage::Event(event));
+        assert_eq!(
+            dashboard
+                .input_request(b"current".to_vec(), 100)
+                .map(|message| message.request),
+            Some(Request::Input {
+                session: SessionId(1),
+                run: SessionRunId(2),
+                bytes: b"current".to_vec()
+            }),
+            "a delayed lifecycle update must not revoke or retarget current-run input",
+        );
+        assert!(
+            dashboard.panes[0]
+                .parser
+                .screen()
+                .contents()
+                .contains("FRESH")
+        );
+        assert_eq!(
+            dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+                .title
+                .as_deref(),
+            Some("Pinned")
+        );
+    }
+}
+
+#[test]
+fn inactive_to_live_clears_prior_view_state_and_keeps_the_row() {
+    let mut dashboard = Dashboard::new(TerminalSize { rows: 24, cols: 80 });
+    dashboard.hierarchy = session_hierarchy(&[1, 2]);
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].title = Some("Pinned".into());
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].phase = SessionPhase::Stopped;
+    dashboard.hierarchy.projects[0].workspaces[0].sessions[0].pid = None;
+    dashboard.select_session(SessionId(1));
+    dashboard.panes[0].run = Some(SessionRunId(1));
+    dashboard.install_screen(SessionId(1), b"OLD_OUTPUT");
+    assert!(dashboard.split_pane());
+    assert_eq!(dashboard.panes[0].session, Some(SessionId(1)));
+    assert_eq!(dashboard.panes[1].session, Some(SessionId(2)));
+    dashboard.copy = Some(CopySelection::capture(
+        SessionId(1),
+        dashboard.panes[0].parser.screen(),
+    ));
+    dashboard.mode = InputMode::Copy;
+    dashboard.history = Some(HistoryView::new(
+        HistoryOpened {
+            session: SessionId(1),
+            snapshot: HistorySnapshotId(3),
+            revision: 1,
+            size: TerminalSize { rows: 24, cols: 80 },
+            history_rows: 0,
+            total_rows: 1,
+        },
+        0,
+    ));
+    dashboard.unread.commit_presented(Some((
+        SessionId(1),
+        ReadyObservation {
+            binding: AgentBinding {
+                provider: AgentProvider::Codex,
+                invocation: "inv".into(),
+                conversation: "conv".into(),
+                generation: 1,
+            },
+            turn: Some("old-turn".into()),
+            activity_revision: 1,
+        },
+    )));
+    let mut live = dashboard.hierarchy.projects[0].workspaces[0].sessions[0].clone();
+    live.phase = SessionPhase::Running;
+    live.pid = Some(101);
+    live.title = Some("Pinned".into());
+    let outgoing = dashboard.handle_server_message(ServerMessage::Event(
+        ServerEvent::SessionChanged(Box::new(live)),
+    ));
+    assert_eq!(dashboard.panes[0].session, Some(SessionId(1)));
+    assert_eq!(dashboard.panes[1].session, Some(SessionId(2)));
+    assert_eq!(
+        dashboard.hierarchy.projects[0].workspaces[0].sessions[0]
+            .title
+            .as_deref(),
+        Some("Pinned")
+    );
+    let screen = dashboard.panes[0].parser.screen().contents();
+    assert!(
+        !screen.contains("OLD_OUTPUT"),
+        "inactive-to-live must drop the previous parser contents: {screen:?}"
+    );
+    assert!(dashboard.copy.is_none());
+    assert!(dashboard.history.is_none());
+    assert!(matches!(
+        dashboard.mark_reviewed_request(),
+        super::DashboardAction::None
+    ));
+    assert!(
+        outgoing
+            .iter()
+            .any(|message| matches!(message.request, Request::SetView { .. })),
+        "inactive-to-live must request a current-run view"
+    );
+    assert!(!dashboard.pane_ready(&dashboard.panes[0]));
 }

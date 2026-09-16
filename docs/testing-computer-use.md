@@ -146,7 +146,20 @@ In the disposable fixture, also verify:
 7. Exercise Agent using a disposable configured preset, recording that this proves
    the launch UI only, not provider reporting. Verify its project preference after
    dashboard restart. Verify Terminal custom command text is absent from settings.
-8. Exit a session, relaunch explicitly, and confirm the old output remains.
+8. Exit a session and reopen explicitly. Confirm the same row and title remain,
+   the old output is gone, and a fresh shell executes a separate marker line.
+
+For a deliberate server-loss check, record the fixture paths and owned processes
+first. Verify restored rows without launching processes, then explicitly confirm
+that old agents and background processes have stopped before reopening a shell.
+A host reboot is not required: `retained_ownership` tests deterministic boot-ID
+transitions and independently checks the native reader on macOS and Linux.
+
+The GUI helper deliberately preserves its fixture after an unexpected server
+exit. Record that cleanup-guard result separately. Shut down any replacement
+server through the fixture socket, verify every owned process group is gone,
+stop only the task-owned GUI launcher, and remove only its recorded disposable
+root. Do not weaken the normal cleanup guard to make a crash check pass.
 
 ## 3. Mouse forwarding and wheel history
 
@@ -236,7 +249,7 @@ Return to the original `local` shell, where `$c` and `$t` are still set:
 rtk proxy "$c" terminal close "$t" --json
 ```
 
-Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell can take several seconds.
+Wait for `{"ok":true}` and confirm the sidebar row remains inactive. Closing a shell can take several seconds.
 
 ## 5. Verify cleanup and report evidence
 

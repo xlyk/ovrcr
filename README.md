@@ -32,6 +32,8 @@ sessions.
   History input modes.
 - PTYs and child process groups survive dashboard detach; reattaching rebuilds
   the current screen from the running session.
+- Session rows survive a server restart as metadata. Reopen starts a fresh shell
+  in the same row; it does not restore output, and agent resume is unavailable.
 - 512 rows of retained scrollback per session, with keyboard selection and
   clipboard copy over OSC52.
 - Pause and resume a session's process group with SIGSTOP and SIGCONT.
@@ -252,9 +254,10 @@ Three behaviours worth knowing before scripting against it:
   server running, project and workspace queries read `config.toml.sqlite3` after
   migration. They read the preserved `config.toml` if the database is absent or
   still empty and uninitialized after an interrupted import. A foreign, damaged,
-  or incompatible database is an error, not a TOML fallback. Terminal lists are
-  empty. Only `new`, `terminal create`, `project add`, `workspace create`, and the
-  dashboard start one on demand.
+  or incompatible database is an error, not a TOML fallback. Terminal lists include
+  retained rows without starting their processes. `new`, `terminal create`,
+  `terminal reopen`, `terminal acknowledge-stopped`, `project add`,
+  `workspace create`, and the dashboard start a server on demand.
 - Requests are bounded: 30 seconds for an ordinary request, 60 for `kill`,
   `close`, and `shutdown`.
 
@@ -265,7 +268,8 @@ ovrcr pause ID          # SIGSTOP the session's process group
 ovrcr resume ID         # SIGCONT it
 ovrcr kill ID           # stop it, keep the final screen
 ovrcr session remove ID # drop the exited record
-ovrcr shutdown          # stop an empty server; --kill also stops sessions
+ovrcr terminal reopen ID # fresh shell in the same row
+ovrcr shutdown          # stop a server with no live processes; --kill also stops them
 ```
 
 The [CLI reference](docs/cli-reference.md) has the full command list and aliases,
@@ -353,8 +357,8 @@ version 3; stop the old server with `ovrcr shutdown --kill` (or restart the
 installed service) and retry
 ```
 
-Close its terminals and run `ovrcr shutdown`, then launch the updated binary. Use
-`ovrcr shutdown --kill` if you intend to stop all sessions together. The CLI never
+Stop live sessions or run `ovrcr shutdown --kill`, then launch the updated binary.
+Retained exited or stopped rows do not block `ovrcr shutdown`. The CLI never
 stops an old server automatically and never restores its lost PTYs.
 
 The first start of this binary against an existing `config.toml` imports project
@@ -478,19 +482,21 @@ you ran to verify it, and anything still unverified.
 ## Roadmap and limits
 
 Shipped: split panes, historical scrollback, keyboard copy mode, pause and resume,
-agent activity hooks, context usage accounting, and mouse forwarding.
+agent activity hooks, context usage accounting, mouse forwarding, and retained
+session rows that reopen in a fresh shell after a server restart.
 
 Not shipped, with priorities and dates undecided:
 
-- [ ] Session restore after a server crash or reboot, including saved session
-      metadata, new PTYs, and agent conversation resumption where supported.
+- [ ] Native provider / agent conversation resume.
 - [ ] Multiple dashboards connected to one server. **Deferred.**
 
 Know the current limits before relying on it: one server and one attached
-dashboard, a workload tested at 50 sessions, and live PTYs plus retained history
-held in memory. Detaching and reattaching connects to a surviving PTY, but a server
-crash or reboot loses those sessions — reattaching successfully is never evidence
-of crash recovery.
+dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
+history. Detaching reconnects to a surviving PTY. A server crash loses those
+PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
+and workspace stay in the store so you can reopen a fresh shell in the same row.
+Agent resume is unavailable. Tests simulate boot-identity changes while reading
+native boot IDs; they do not reboot the machine.
 
 ## License
 

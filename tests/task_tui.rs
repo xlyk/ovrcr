@@ -54,12 +54,15 @@ fn task_hierarchy() -> HierarchySnapshot {
                 sessions: vec![SessionSummary {
                     title: None,
                     id: SessionId(1),
+                    run: ovrcr_protocol::SessionRunId(1),
+                    kind: ovrcr_protocol::SessionKind::Terminal,
+                    recovery: None,
                     project: "project".into(),
                     workspace: "workspace".into(),
                     name: "local".into(),
                     label: "shell".into(),
                     pid: Some(1),
-                    started_unix_ms: 0,
+                    started_unix_ms: Some(0),
                     phase: SessionPhase::Running,
                     activity: AgentActivity::Unknown,
                     context_usage: None,
@@ -105,6 +108,7 @@ fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
     let text = dashboard_text(&d, 80, 24);
     assert!(!text.contains("OVRCR  Tasks"), "{text}");
     let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        run: ovrcr_protocol::SessionRunId(1),
         session: SessionId(1),
         revision: 0,
     }));
@@ -117,6 +121,7 @@ fn browse_opens_tasks_and_terminal_ctrl_t_is_literal() {
             d.handle_server_message(ServerMessage::Response {
                 request_id,
                 response: Response::Screen {
+                    run: ovrcr_protocol::SessionRunId(1),
                     session: pane.session,
                     revision: view.revision,
                     size: pane.size,
@@ -584,11 +589,13 @@ fn dashboard_keeps_consuming_output_and_screen_dirty_while_tasks_open() {
     let mut d = ready_dashboard();
     assert_eq!(d.ctrl('t'), DashboardAction::Redraw);
     d.handle_server_message(ServerMessage::Event(ServerEvent::Output {
+        run: ovrcr_protocol::SessionRunId(1),
         session: SessionId(1),
         revision: 0,
         bytes: b"still draining".to_vec(),
     }));
     let requests = d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+        run: ovrcr_protocol::SessionRunId(1),
         session: SessionId(1),
         revision: 0,
     }));

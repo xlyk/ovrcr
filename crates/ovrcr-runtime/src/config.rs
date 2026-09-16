@@ -14,7 +14,7 @@ pub use ovrcr_protocol::{ProjectRecord, Registry, WorkspaceRecord};
 pub struct RegistryPath(pub PathBuf);
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 impl RegistryPath {
     pub fn resolve() -> Result<Self> {
@@ -37,9 +37,18 @@ pub fn database_path(path: &Path) -> PathBuf {
 
 /// Offline inspection never creates storage or imports legacy records.
 pub fn load_registry(path: &Path) -> Result<Registry> {
+    let Some(mut connection) = open_readonly_registry(path)? else {
+        return load_legacy_registry(path);
+    };
+    let transaction = connection.transaction()?;
+    check_schema(&transaction)?;
+    read_registry(&transaction)
+}
+
+pub(crate) fn open_readonly_registry(path: &Path) -> Result<Option<Connection>> {
     let database = database_path(path);
     if !database.try_exists()? {
-        return load_legacy_registry(path);
+        return Ok(None);
     }
     let mut connection =
         Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -47,10 +56,11 @@ pub fn load_registry(path: &Path) -> Result<Registry> {
     connection.busy_timeout(Duration::from_secs(1))?;
     let transaction = connection.transaction()?;
     if is_uninitialized(&transaction)? {
-        return load_legacy_registry(path);
+        return Ok(None);
     }
     check_schema(&transaction)?;
-    read_registry(&transaction)
+    drop(transaction);
+    Ok(Some(connection))
 }
 
 /// Called by the owning server before publishing inventory.
@@ -85,7 +95,7 @@ pub fn save_registry_atomic(registry: &Registry, path: &Path) -> Result<()> {
     transaction.commit().context("commit registry")
 }
 
-fn open_writable_registry(path: &Path) -> Result<Connection> {
+pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     let database = database_path(path);
     let parent = database
         .parent()
@@ -133,9 +143,13 @@ fn open_writable_registry(path: &Path) -> Result<Connection> {
         )?;
         write_registry(&transaction, &registry)?;
         transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
-        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        transaction.pragma_update(None, "user_version", 1)?;
     } else {
         check_schema(&transaction)?;
+    }
+    if schema_identity(&transaction)?.1 == 1 {
+        crate::retained::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     transaction.commit().context("commit registry migration")?;
     Ok(connection)
@@ -160,9 +174,9 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
     Ok(objects == 0)
 }
 
-fn check_schema(connection: &Connection) -> Result<()> {
+pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
-    if application != APPLICATION_ID || version != SCHEMA_VERSION {
+    if application != APPLICATION_ID || !matches!(version, 1 | SCHEMA_VERSION) {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \
              expected OVRCR schema {SCHEMA_VERSION}; original storage was not replaced"

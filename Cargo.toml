@@ -24,6 +24,7 @@ directories = "6"
 # The GUI helper builds a macOS app bundle only, so no Linux windowing backend.
 eframe = { version = "0.36.1", default-features = false, features = ["accesskit", "default_fonts", "glow"] }
 libc = "0.2"
+parking_lot = "0.12"
 portable-pty = "0.9"
 ratatui = "0.30"
 rusqlite = { version = "0.40.2", features = ["bundled"] }

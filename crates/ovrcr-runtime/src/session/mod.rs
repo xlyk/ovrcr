@@ -10,7 +10,21 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub use ovrcr_protocol::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
+pub use ovrcr_protocol::{
+    AgentActivity, SessionId, SessionKind, SessionPhase, SessionRunId, SessionSummary, TerminalSize,
+};
+
+/// The native spawn primitive failed before the requested program could execute.
+#[derive(Debug)]
+pub(crate) struct NoProcessStarted;
+
+impl std::fmt::Display for NoProcessStarted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("no process was started")
+    }
+}
+
+impl std::error::Error for NoProcessStarted {}
 
 mod io;
 mod process;
@@ -109,6 +123,8 @@ pub struct SessionSpec {
     pub cwd: PathBuf,
     pub argv: Vec<OsString>,
     pub hook_env: Option<HookEnvironment>,
+    pub run: SessionRunId,
+    pub kind: SessionKind,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -167,8 +183,16 @@ impl ReportOrder {
 
 #[derive(Clone, Debug)]
 pub enum SessionEvent {
-    Output { id: SessionId, bytes: Vec<u8> },
-    Exited { id: SessionId, phase: SessionPhase },
+    Output {
+        id: SessionId,
+        run: SessionRunId,
+        bytes: Vec<u8>,
+    },
+    Exited {
+        id: SessionId,
+        run: SessionRunId,
+        phase: SessionPhase,
+    },
 }
 
 struct SessionState {
@@ -189,10 +213,11 @@ struct JoinHandles {
 
 /// Keep application and manual titles with the parser. No callback acquires
 /// session-state or server locks.
-#[derive(Default)]
-struct SessionTitles {
-    application: Option<String>,
-    pinned: Option<String>,
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SessionTitles {
+    pub(crate) revision: u64,
+    pub(crate) application: Option<String>,
+    pub(crate) pinned: Option<String>,
 }
 
 const MAX_TITLE_CHARS: usize = 128;
@@ -207,7 +232,11 @@ pub(crate) fn sanitize_title(title: &str) -> Option<String> {
 
 impl vt100::Callbacks for SessionTitles {
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
-        self.application = sanitize_title(&String::from_utf8_lossy(title));
+        let next = sanitize_title(&String::from_utf8_lossy(title));
+        if self.application != next {
+            self.application = next;
+            self.revision = self.revision.saturating_add(1);
+        }
     }
 
     fn unhandled_osc(&mut self, screen: &mut vt100::Screen, params: &[&[u8]]) {
@@ -239,7 +268,8 @@ pub struct Session {
     // Keep startup files alive until the shell has finished using them.
     _shell_startup: Option<tempfile::TempDir>,
     summary: SessionSummary,
-    launch: ovrcr_protocol::SessionLaunch,
+    #[cfg(test)]
+    pub(crate) initial_cwd: PathBuf,
     state: Mutex<SessionState>,
     state_changed: Condvar,
     terminal: Mutex<TerminalState>,
@@ -364,19 +394,25 @@ impl Session {
         let argv0 = spec
             .argv
             .first()
-            .context("session command cannot be empty")?
+            .context("session command cannot be empty")
+            .context(NoProcessStarted)?
             .clone();
         let pty = native_pty_system();
-        let pair = pty.openpty(PtySize {
-            rows: size.rows,
-            cols: size.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        let pair = pty
+            .openpty(PtySize {
+                rows: size.rows,
+                cols: size.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .context(NoProcessStarted)?;
         let mut command = CommandBuilder::new(argv0);
         command.args(spec.argv.iter().skip(1));
+        #[cfg(test)]
+        let initial_cwd = spec.cwd.clone();
         command.cwd(spec.cwd);
-        let shell_startup = shell_prompt::configure(&mut command, &spec.argv)?;
+        let shell_startup =
+            shell_prompt::configure(&mut command, &spec.argv).context(NoProcessStarted)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
         command.env_remove("OVRCR_AGENT_TOKEN");
         command.env_remove("OVRCR_HOOK_SOCKET");
@@ -387,7 +423,10 @@ impl Session {
             command.env("OVRCR_SESSION_ID", hook_env.session.0.to_string());
             command.env("OVRCR_HOOK_TOKEN", capability_hex(&hook_env.capability));
         }
-        let mut child = pair.slave.spawn_command(command)?;
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .context(NoProcessStarted)?;
         let pid = child.process_id().context("PTY child has no process ID")?;
 
         let (leader_timeout, leader_probe) = match &leader_wait {
@@ -428,25 +467,26 @@ impl Session {
             .as_millis() as u64;
         let session = Arc::new(Self {
             _shell_startup: shell_startup,
-            launch: ovrcr_protocol::SessionLaunch {
-                argv: spec.argv.clone(),
-                label: Some(spec.label.clone()),
-            },
+            #[cfg(test)]
+            initial_cwd,
             summary: SessionSummary {
                 title: None,
                 id,
+                run: spec.run,
+                kind: spec.kind.clone(),
                 project: spec.project,
                 workspace: spec.workspace,
                 name: spec.name.clone(),
                 label: spec.label,
                 pid: Some(pid),
-                started_unix_ms,
+                started_unix_ms: Some(started_unix_ms),
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,
                 agent: None,
                 agent_epoch: 0,
                 unread: None,
+                recovery: None,
             },
             state: Mutex::new(SessionState {
                 reporting: reporting::ReportingState::default(),
@@ -465,6 +505,7 @@ impl Session {
                     size.cols,
                     HISTORY_ROWS,
                     SessionTitles {
+                        revision: 0,
                         application: None,
                         pinned: sanitize_title(&spec.name),
                     },
@@ -521,25 +562,46 @@ impl Session {
         Ok(session)
     }
 
-    pub(crate) fn launch(&self) -> ovrcr_protocol::SessionLaunch {
-        self.launch.clone()
+    pub fn run(&self) -> SessionRunId {
+        self.summary.run
     }
 
-    pub(crate) fn pinned_title(&self) -> Option<String> {
-        self.terminal
-            .lock()
-            .unwrap()
-            .parser
-            .callbacks()
-            .pinned
-            .clone()
+    pub fn id(&self) -> SessionId {
+        self.summary.id
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(
+            self.state.lock().unwrap().phase,
+            SessionPhase::Running | SessionPhase::Paused
+        )
+    }
+
+    pub(crate) fn title_revision(&self) -> u64 {
+        self.terminal.lock().unwrap().parser.callbacks().revision
+    }
+
+    pub(crate) fn title_snapshot(&self) -> SessionTitles {
+        self.terminal.lock().unwrap().parser.callbacks().clone()
+    }
+
+    pub(crate) fn restore_titles(&self, pinned: Option<String>, application: Option<String>) {
+        let mut terminal = self.terminal.lock().unwrap();
+        let titles = terminal.parser.callbacks_mut();
+        titles.pinned = pinned.and_then(|title| sanitize_title(&title));
+        titles.application = application.and_then(|title| sanitize_title(&title));
     }
 
     pub(crate) fn set_title(&self, title: Option<String>) -> Result<()> {
         let title = title
             .map(|value| sanitize_title(&value).context("title must contain visible text"))
             .transpose()?;
-        self.terminal.lock().unwrap().parser.callbacks_mut().pinned = title;
+        let mut terminal = self.terminal.lock().unwrap();
+        let titles = terminal.parser.callbacks_mut();
+        if titles.pinned != title {
+            titles.pinned = title;
+            titles.revision = titles.revision.saturating_add(1);
+        }
         Ok(())
     }
 
@@ -552,6 +614,7 @@ impl Session {
     pub fn summary(&self) -> SessionSummary {
         let mut summary = self.summary.clone();
         summary.title = self.effective_title();
+        summary.recovery = None;
         let state = self.state.lock().unwrap();
         summary.phase = state.phase.clone();
         summary.pid = state.pid;
@@ -592,7 +655,7 @@ impl Session {
     pub fn set_paused(&self, paused: bool) -> Result<bool> {
         let _control = self.terminate_lock.lock().unwrap();
         let mut state = self.state.lock().unwrap();
-        if matches!(state.phase, SessionPhase::Exited { .. }) {
+        if !matches!(state.phase, SessionPhase::Running | SessionPhase::Paused) {
             bail!("session has exited");
         }
         verify_owned_group(self)?;
@@ -613,11 +676,12 @@ impl Session {
     }
 
     fn admit_input(&self) -> std::result::Result<(), InputAdmissionError> {
-        let phase = self.state.lock().unwrap().phase.clone();
-        match phase {
+        match self.state.lock().unwrap().phase {
             SessionPhase::Running => Ok(()),
             SessionPhase::Paused => Err(InputAdmissionError::Paused),
-            SessionPhase::Exited { .. } => Err(InputAdmissionError::Exited),
+            SessionPhase::Exited { .. } | SessionPhase::Stopped | SessionPhase::Interrupted => {
+                Err(InputAdmissionError::Exited)
+            }
         }
     }
 
@@ -657,13 +721,17 @@ impl Session {
 
     pub fn apply_event(&self, event: SessionEvent) {
         match event {
-            SessionEvent::Output { id, bytes } if id == self.summary.id => {
+            SessionEvent::Output { id, run, bytes }
+                if id == self.summary.id && run == self.run() =>
+            {
                 let mut terminal = self.terminal.lock().unwrap();
                 terminal.parser.process(&bytes);
                 terminal.revision = terminal.revision.saturating_add(1);
                 self.parser_changed.notify_all();
             }
-            SessionEvent::Exited { id, phase } if id == self.summary.id => {
+            SessionEvent::Exited { id, run, phase }
+                if id == self.summary.id && run == self.run() =>
+            {
                 let mut state = self.state.lock().unwrap();
                 state.phase = phase;
                 state.pid = None;

@@ -23,6 +23,7 @@ pub(super) fn read_pty(
         if events
             .send(SessionEvent::Output {
                 id: session.summary.id,
+                run: session.run(),
                 bytes: buffer[..read].to_vec(),
             })
             .is_err()
@@ -60,6 +61,7 @@ pub(super) fn wait_for_child(
     }
     let _ = events.send(SessionEvent::Exited {
         id: session.summary.id,
+        run: session.run(),
         phase,
     });
 }

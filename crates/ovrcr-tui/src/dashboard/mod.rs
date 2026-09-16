@@ -83,6 +83,7 @@ pub enum KeyEncoding {
 
 pub(crate) struct PaneState {
     pub session: Option<SessionId>,
+    pub run: Option<ovrcr_protocol::SessionRunId>,
     pub parser: vt100::Parser,
     pub size: TerminalSize,
     pub desired_size: TerminalSize,
@@ -93,6 +94,7 @@ impl PaneState {
     pub fn new(size: TerminalSize) -> Self {
         Self {
             session: None,
+            run: None,
             parser: vt100::Parser::new(size.rows, size.cols, 0),
             size,
             desired_size: size,

@@ -5,7 +5,7 @@ pub use ovrcr_protocol::freshness;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub use ovrcr_protocol as protocol;
-pub use ovrcr_runtime::{config, git, session};
+pub use ovrcr_runtime::{config, git, retained, session};
 pub mod report;
 pub mod server {
     pub use crate::client::{

@@ -15,6 +15,31 @@ pub enum AgentProvider {
 }
 
 impl AgentProvider {
+    /// Canonical executable/preset name for this provider.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Grok => "grok",
+            Self::Pi => "pi",
+            Self::Hermes => "hermes",
+            Self::Omp => "omp",
+        }
+    }
+
+    /// Inverse of [`Self::name`]. Unknown labels are not providers.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "claude" => Self::Claude,
+            "codex" => Self::Codex,
+            "grok" => Self::Grok,
+            "pi" => Self::Pi,
+            "hermes" => Self::Hermes,
+            "omp" => Self::Omp,
+            _ => return None,
+        })
+    }
+
     /// The providers whose root response cycles may become Ready, Unread, a review
     /// target, and an alert. One owner for what used to be four Codex-pinned checks.
     pub const fn supports_readiness(self) -> bool {
@@ -565,6 +590,23 @@ pub(crate) mod tests {
         let mut invalid = set(2);
         invalid[1].id = "bad\nid".into();
         assert!(report(invalid).validate().is_err());
+    }
+
+    #[test]
+    fn provider_names_round_trip_the_six_known_executables() {
+        for (provider, name) in [
+            (AgentProvider::Claude, "claude"),
+            (AgentProvider::Codex, "codex"),
+            (AgentProvider::Grok, "grok"),
+            (AgentProvider::Pi, "pi"),
+            (AgentProvider::Hermes, "hermes"),
+            (AgentProvider::Omp, "omp"),
+        ] {
+            assert_eq!(provider.name(), name);
+            assert_eq!(AgentProvider::from_name(name), Some(provider));
+        }
+        assert_eq!(AgentProvider::from_name("aider"), None);
+        assert_eq!(AgentProvider::from_name("Claude"), None);
     }
 
     #[test]

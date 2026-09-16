@@ -2,7 +2,9 @@
 //! request, revision, and session, readiness granted only by a complete final `Ok`.
 //! Readiness is derived here, never written by a caller.
 use anyhow::anyhow;
-use ovrcr_protocol::{ClientMessage, DashboardView, PaneTarget, Request, SessionId, TerminalSize};
+use ovrcr_protocol::{
+    ClientMessage, DashboardView, PaneTarget, Request, SessionId, SessionRunId, TerminalSize,
+};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -12,7 +14,7 @@ pub(super) const VIEW_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 #[derive(Clone, Debug)]
 pub(super) struct RequestedView {
     pub revision: u64,
-    pub targets: Vec<(SessionId, TerminalSize)>,
+    pub targets: Vec<(SessionId, SessionRunId, TerminalSize)>,
     pub focused: Option<SessionId>,
 }
 
@@ -22,7 +24,14 @@ impl RequestedView {
     }
 
     fn contains(&self, session: SessionId) -> bool {
-        self.targets.iter().any(|(id, _)| *id == session)
+        self.targets.iter().any(|(id, _, _)| *id == session)
+    }
+
+    fn run_of(&self, session: SessionId) -> Option<SessionRunId> {
+        self.targets
+            .iter()
+            .find(|(id, _, _)| *id == session)
+            .map(|(_, run, _)| *run)
     }
 }
 
@@ -193,8 +202,9 @@ impl ViewHandshake {
                     panes: view
                         .targets
                         .iter()
-                        .map(|(session, size)| PaneTarget {
+                        .map(|(session, run, size)| PaneTarget {
                             session: *session,
+                            run: *run,
                             size: *size,
                         })
                         .collect(),
@@ -218,13 +228,22 @@ impl ViewHandshake {
         request_id: u64,
         revision: u64,
         session: SessionId,
+        run: SessionRunId,
     ) -> bool {
         revision == self.revision
             && self.pending.as_ref().is_some_and(|pending| {
                 pending.request_id == request_id
                     && pending.view.revision == revision
-                    && pending.view.contains(session)
+                    && pending.view.run_of(session) == Some(run)
             })
+    }
+
+    pub(super) fn current_run(&self, session: SessionId) -> Option<SessionRunId> {
+        self.pending
+            .as_ref()
+            .map(|pending| &pending.view)
+            .or(self.acknowledged.as_ref())
+            .and_then(|view| view.run_of(session))
     }
 
     pub(super) fn record_snapshot(&mut self, session: SessionId) {
@@ -245,7 +264,7 @@ impl ViewHandshake {
             .view
             .targets
             .iter()
-            .all(|(session, _)| self.snapshots.contains(session));
+            .all(|(session, _, _)| self.snapshots.contains(session));
         self.snapshots.clear();
         if !complete {
             // `Ok` is final and every snapshot precedes it, so a missing one is a failed view
@@ -313,7 +332,13 @@ mod tests {
             revision: 0,
             targets: sessions
                 .iter()
-                .map(|id| (SessionId(*id), TerminalSize { rows: 10, cols: 20 }))
+                .map(|id| {
+                    (
+                        SessionId(*id),
+                        SessionRunId(1),
+                        TerminalSize { rows: 10, cols: 20 },
+                    )
+                })
                 .collect(),
             focused: sessions.first().map(|id| SessionId(*id)),
         }
@@ -339,18 +364,22 @@ mod tests {
             Desire::Coalesced
         ));
         assert!(!h.is_ready(SessionId(1)));
-        assert!(h.snapshot_matches(10, revision, SessionId(1)));
+        assert!(h.snapshot_matches(10, revision, SessionId(1), SessionRunId(1)));
         assert!(
-            !h.snapshot_matches(10, revision + 1, SessionId(1)),
+            !h.snapshot_matches(10, revision + 1, SessionId(1), SessionRunId(1)),
             "wrong revision"
         );
         assert!(
-            !h.snapshot_matches(99, revision, SessionId(1)),
+            !h.snapshot_matches(99, revision, SessionId(1), SessionRunId(1)),
             "wrong request"
         );
         assert!(
-            !h.snapshot_matches(10, revision, SessionId(3)),
+            !h.snapshot_matches(10, revision, SessionId(3), SessionRunId(1)),
             "wrong session"
+        );
+        assert!(
+            !h.snapshot_matches(10, revision, SessionId(1), SessionRunId(2)),
+            "wrong run"
         );
         h.record_snapshot(SessionId(1));
         let Some(Acknowledged::Incomplete { view: incomplete }) = h.acknowledge(10, &v) else {
@@ -450,7 +479,7 @@ mod tests {
         assert!(h.is_ready(SessionId(1)));
 
         let mut resized = granted.clone();
-        resized.targets[0].1 = TerminalSize { rows: 20, cols: 40 };
+        resized.targets[0].2 = TerminalSize { rows: 20, cols: 40 };
         send(&mut h, &resized, 2);
         let Some(Acknowledged::Incomplete { view: first }) = h.acknowledge(2, &resized) else {
             panic!("a missing snapshot must not complete the view");

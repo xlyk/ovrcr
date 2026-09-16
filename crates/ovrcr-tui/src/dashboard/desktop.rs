@@ -539,13 +539,16 @@ mod tests {
                     path: "/private/path-must-not-leak".into(),
                     sessions: vec![SessionSummary {
                         id: SessionId(1),
+                        run: crate::protocol::SessionRunId(1),
+                        kind: crate::protocol::SessionKind::Terminal,
+                        recovery: None,
                         project: "project".into(),
                         workspace: "workspace".into(),
                         name: "session".into(),
                         title: None,
                         label: "PRIVATE_LABEL".into(),
                         pid: Some(1),
-                        started_unix_ms: 0,
+                        started_unix_ms: Some(0),
                         phase: SessionPhase::Running,
                         activity: state,
                         context_usage: None,
@@ -1495,6 +1498,7 @@ mod tests {
             request_id: 77,
             response: Response::Screen {
                 session: SessionId(1),
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: view.panes[0].size,
                 bytes: Vec::new(),
@@ -1671,6 +1675,7 @@ mod tests {
             request_id: 78,
             response: Response::Screen {
                 session: SessionId(1),
+                run: ovrcr_protocol::SessionRunId(1),
                 revision: view.revision,
                 size: view.panes[0].size,
                 bytes: Vec::new(),

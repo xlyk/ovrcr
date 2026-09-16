@@ -210,7 +210,24 @@ impl ActiveDashboard {
             return false;
         };
         before_publish();
-        if focus_changed {
+        let previous = self.view.lock().unwrap().clone();
+        if focus_changed
+            || current.history.as_ref().is_some_and(|history| {
+                let session = history.opened().session;
+                let old_run = previous.as_ref().and_then(|view| {
+                    view.panes
+                        .iter()
+                        .find(|pane| pane.session == session)
+                        .map(|pane| pane.run)
+                });
+                let new_run = published
+                    .panes
+                    .iter()
+                    .find(|pane| pane.session == session)
+                    .map(|pane| pane.run);
+                old_run != new_run
+            })
+        {
             current.history.take();
         }
         let focused_size = published
@@ -406,10 +423,18 @@ pub(super) fn spawn_writer(
                     DashboardDelivery::Terminal(outbound) => {
                         (outbound.message, outbound.completion, None, true)
                     }
-                    DashboardDelivery::Dirty { revision, session } => (
-                        ServerMessage::Event(ServerEvent::ScreenDirty { session, revision }),
+                    DashboardDelivery::Dirty {
+                        revision,
+                        session,
+                        run,
+                    } => (
+                        ServerMessage::Event(ServerEvent::ScreenDirty {
+                            session,
+                            run,
+                            revision,
+                        }),
                         None,
-                        Some((revision, session)),
+                        Some((revision, session, run)),
                         false,
                     ),
                 };
@@ -424,9 +449,9 @@ pub(super) fn spawn_writer(
                     None => Err("dashboard writer stream unavailable".into()),
                 };
                 if result.is_ok()
-                    && let Some((revision, session)) = dirty
+                    && let Some((revision, session, run)) = dirty
                 {
-                    sink.dirty_sent(revision, session);
+                    sink.dirty_sent(revision, session, run);
                 }
                 if let Some(completion) = completion {
                     let _ = completion.send(result.clone());
@@ -448,7 +473,7 @@ pub(super) fn spawn_writer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ovrcr_protocol::PaneTarget;
+    use ovrcr_protocol::{PaneTarget, SessionRunId};
 
     fn pair() -> (UnixStream, UnixStream) {
         UnixStream::pair().unwrap()
@@ -516,6 +541,7 @@ mod tests {
                     revision: 1,
                     panes: vec![PaneTarget {
                         session: SessionId(1),
+                        run: SessionRunId(1),
                         size: TerminalSize { rows: 5, cols: 7 },
                     }],
                     focused: Some(SessionId(1)),
@@ -580,10 +606,12 @@ mod tests {
             panes: vec![
                 PaneTarget {
                     session: SessionId(1),
+                    run: SessionRunId(1),
                     size: TerminalSize { rows: 1, cols: 1 },
                 },
                 PaneTarget {
                     session: SessionId(2),
+                    run: SessionRunId(1),
                     size: TerminalSize { rows: 1, cols: 1 },
                 },
             ],

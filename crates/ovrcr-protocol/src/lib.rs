@@ -14,7 +14,10 @@ pub use codec::{
     read_preamble, write_frame, write_preamble,
 };
 pub use registry::{ProjectRecord, Registry, WorkspaceRecord, validate_name};
-pub use session::{AgentActivity, SessionId, SessionPhase, SessionSummary, TerminalSize};
+pub use session::{
+    AgentActivity, SessionId, SessionKind, SessionPhase, SessionRecovery, SessionRunId,
+    SessionSummary, TerminalSize,
+};
 pub use task::{
     Run, RunId, RunStatus, RunTrigger, Schedule, Task, TaskId, TaskRequest, TaskResponse, TaskSpec,
     TaskTarget,

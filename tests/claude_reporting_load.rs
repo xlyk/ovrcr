@@ -191,10 +191,8 @@ fn fifty_session_reporting_capacity() {
     let mut pty_pids = Vec::new();
     for index in 0..50 {
         let path = fixture.root.path().join(format!("identity-{index}"));
-        let Response::CreatedSession(session) = send(&mut control, Request::CreateSession(CreateSessionRequest {
-            project: "load".into(), workspace: "work".into(), name: format!("load-{index}"), label: None,
-            argv: vec!["sh".into(), "-c".into(), "printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(), "load".into(), path.clone().into_os_string()],
-        })) else { panic!("create session"); };
+        let Response::CreatedSession(session) = send(&mut control, Request::CreateSession(CreateSessionRequest { kind: ovrcr_protocol::SessionKind::Terminal, project: "load".into(), workspace: "work".into(), name: format!("load-{index}"), label: None,
+        argv: vec!["sh".into(), "-c".into(), "printf '%s' \"$OVRCR_HOOK_TOKEN\" > \"$1\"; while IFS= read -r line; do :; done".into(), "load".into(), path.clone().into_os_string()], })) else { panic!("create session"); };
         let deadline = Instant::now() + Duration::from_secs(5);
         let token = loop {
             if let Ok(token) = fs::read_to_string(&path)
@@ -243,6 +241,7 @@ fn fifty_session_reporting_capacity() {
                         revision: 1,
                         panes: vec![PaneTarget {
                             session: dashboard_session,
+                            run: ovrcr_protocol::SessionRunId(1),
                             size: TerminalSize { rows: 24, cols: 80 },
                         }],
                         focused: Some(dashboard_session),

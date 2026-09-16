@@ -23,7 +23,8 @@ pub(super) const SPINNER_INTERVAL: Duration = Duration::from_millis(SPINNER_FRAM
 /// both read this, so the redraw cadence and the drawn glyph are a single decision.
 fn fixed_glyph(session: &SessionSummary) -> Option<(char, Color)> {
     Some(match (&session.phase, super::ready::activity(session)) {
-        (SessionPhase::Exited { .. }, _) => ('·', MUTED),
+        (SessionPhase::Exited { .. } | SessionPhase::Stopped, _) => ('·', MUTED),
+        (SessionPhase::Interrupted, _) => ('!', YELLOW),
         (SessionPhase::Paused, _) => ('P', SUBTEXT),
         (_, AgentActivity::Unknown) => ('-', MUTED),
         (_, AgentActivity::Idle) => (' ', MUTED),
@@ -46,6 +47,7 @@ pub(super) struct SessionStatus {
     pub glyph: char,
     pub color: Color,
     pub exited: bool,
+    pub live: bool,
     pub paused: bool,
     /// A Ready observation is present: the headers give its wording the whole line.
     pub ready: bool,
@@ -75,6 +77,7 @@ impl SessionStatus {
                 color
             },
             exited,
+            live: session.phase.is_live(),
             paused: matches!(session.phase, SessionPhase::Paused),
             ready: super::ready::ready(session).is_some(),
             pid: if exited {
@@ -84,7 +87,10 @@ impl SessionStatus {
                     .pid
                     .map_or_else(|| "—".to_string(), |pid| pid.to_string())
             },
-            elapsed: format_elapsed_at(session.started_unix_ms, now_unix_ms),
+            elapsed: session
+                .started_unix_ms
+                .map(|started| format_elapsed_at(started, now_unix_ms))
+                .unwrap_or_default(),
             activity: activity_clause(session),
             unread: session.unread.as_ref().map(|_| unread_clause(session)),
         }
@@ -129,6 +135,26 @@ fn unread_clause(session: &SessionSummary) -> String {
 }
 
 fn activity_clause(session: &SessionSummary) -> String {
+    if let Some(recovery) = &session.recovery {
+        let mut parts = Vec::new();
+        if let Some(unavailable) = &recovery.unavailable {
+            parts.push(unavailable.clone());
+        }
+        if let Some(failure) = &recovery.failure {
+            parts.push(failure.clone());
+        }
+        if recovery.requires_ack {
+            parts.push("confirm previous processes stopped".into());
+        }
+        if !parts.is_empty() {
+            return format!(" {}", parts.join(" · "));
+        }
+    }
+    match session.phase {
+        SessionPhase::Stopped => return " stopped".into(),
+        SessionPhase::Interrupted => return " interrupted".into(),
+        _ => {}
+    }
     let Some(agent) = &session.agent else {
         return match session.activity {
             AgentActivity::Unknown => " unknown",
@@ -204,13 +230,16 @@ mod tests {
     fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
         SessionSummary {
             id: SessionId(1),
+            run: crate::protocol::SessionRunId(1),
+            kind: crate::protocol::SessionKind::Terminal,
+            recovery: None,
             project: "p".into(),
             workspace: "w".into(),
             name: "s".into(),
             title: None,
             label: "claude/sonnet".into(),
             pid: Some(42),
-            started_unix_ms: 0,
+            started_unix_ms: Some(0),
             phase,
             activity: AgentActivity::Unknown,
             context_usage: None,

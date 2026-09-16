@@ -264,6 +264,9 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
             let request: ClientMessage = read_frame(&mut stream).unwrap();
             assert_eq!(request.request, Request::Inspect);
             let session = SessionSummary {
+                run: ovrcr_protocol::SessionRunId(1),
+                kind: ovrcr_protocol::SessionKind::Terminal,
+                recovery: None,
                 title: None,
                 id: SessionId(7),
                 project: "p".into(),
@@ -271,7 +274,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
                 name: "n".into(),
                 label: "claude".into(),
                 pid: None,
-                started_unix_ms: 0,
+                started_unix_ms: Some(0),
                 phase: SessionPhase::Running,
                 activity: AgentActivity::Unknown,
                 context_usage: None,

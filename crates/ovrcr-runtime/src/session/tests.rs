@@ -193,6 +193,8 @@ fn spawn_test_shell() -> Arc<Session> {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "local".into(),
@@ -224,6 +226,57 @@ fn dispatch_test_events(
             }
         }
     })
+}
+
+#[test]
+fn retired_run_output_and_exit_cannot_mutate_a_live_replacement() {
+    let directory = tempfile::tempdir().unwrap();
+    let (events, receiver) = crate::server::event_channel(None);
+    let session = Session::spawn_registered(
+        SessionId(44),
+        SessionSpec {
+            run: SessionRunId(2), kind: SessionKind::Terminal,
+            project: "p".into(), workspace: "w".into(), name: "replacement".into(),
+            label: "sh".into(), cwd: directory.path().to_path_buf(),
+            argv: vec!["/bin/sh".into(), "-c".into(),
+                "stty -echo; printf 'CURRENT_READY\\n'; IFS= read -r line; printf 'ACK:%s\\n' \"$line\"; IFS= read -r done".into()],
+            hook_env: None,
+        },
+        TerminalSize { rows: 24, cols: 80 }, events, NO_REGISTER,
+    ).unwrap();
+    let _cleanup = TerminationGuard(session.clone());
+    let dispatcher = dispatch_test_events(session.clone(), receiver);
+    assert!(wait_for_screen(
+        &session,
+        "CURRENT_READY",
+        Duration::from_secs(3)
+    ));
+    session.apply_event(SessionEvent::Output {
+        id: session.id(),
+        run: SessionRunId(1),
+        bytes: b"RETIRED_OUTPUT".to_vec(),
+    });
+    session.apply_event(SessionEvent::Exited {
+        id: session.id(),
+        run: SessionRunId(1),
+        phase: SessionPhase::Exited {
+            code: Some(99),
+            signal: None,
+        },
+    });
+    assert!(
+        session.is_live(),
+        "retired exit changed the replacement's lifecycle"
+    );
+    assert!(!String::from_utf8_lossy(&session.current_screen()).contains("RETIRED_OUTPUT"));
+    session.send_text("still-live", true).unwrap();
+    assert!(wait_for_screen(
+        &session,
+        "ACK:still-live",
+        Duration::from_secs(3)
+    ));
+    session.terminate(Duration::from_millis(200)).unwrap();
+    dispatcher.join().unwrap();
 }
 
 fn wait_for_screen(session: &Session, marker: &str, timeout: Duration) -> bool {
@@ -265,6 +318,8 @@ fn spawn_term_race_session(reap_gate: Arc<ReapGate>) -> (Arc<Session>, JoinHandl
     let session = Session::spawn_with_test_hooks(
         SessionId(50),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "term-race".into(),
@@ -297,6 +352,8 @@ fn spawn_live_refusal_session(
     let session = Session::spawn_with_test_hooks(
         SessionId(51),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "live-refusal".into(),
@@ -361,6 +418,8 @@ fn agent_report_requires_capability_and_preserves_order_on_rejection() {
     let session = Session::spawn_registered(
         SessionId(700),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "agent".into(),
@@ -448,20 +507,18 @@ fn pause_resume_terminate_runs_term_handler() {
     let (tx, rx) = crate::server::event_channel(None);
     let session = Session::spawn_registered(
             SessionId(5),
-            SessionSpec {
-                project: "p".into(),
-                workspace: "w".into(),
-                name: "term-handler".into(),
-                label: "sh".into(),
-                cwd: dir.path().to_path_buf(),
-                argv: vec![
-                    "sh".into(),
-                    "-c".into(),
-                    "trap 'printf TERM_HANDLED; exit 0' HUP TERM; printf READY; while :; do read line; done"
-                        .into(),
-                ],
-                hook_env: None,
-            },
+            SessionSpec { run: SessionRunId(1), kind: SessionKind::Terminal, project: "p".into(),
+            workspace: "w".into(),
+            name: "term-handler".into(),
+            label: "sh".into(),
+            cwd: dir.path().to_path_buf(),
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "trap 'printf TERM_HANDLED; exit 0' HUP TERM; printf READY; while :; do read line; done"
+                    .into(),
+            ],
+            hook_env: None, },
             TerminalSize { rows: 24, cols: 80 },
             tx, NO_REGISTER)
         .unwrap();
@@ -685,6 +742,8 @@ fn pause_resume_exit_event_cannot_be_overwritten() {
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "exit-race".into(),
@@ -792,6 +851,8 @@ fn shell_round_trip_updates_the_current_screen() {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "local".into(),
@@ -823,6 +884,8 @@ fn final_output_is_parsed_before_session_becomes_removable() {
     let session = Session::spawn_registered(
         SessionId(2),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "final".into(),
@@ -883,6 +946,8 @@ fn terminate_removes_the_whole_process_group() {
     let session = Session::spawn_registered(
         SessionId(3),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "group".into(),
@@ -945,6 +1010,8 @@ fn terminate_removes_job_control_subgroups() {
     let session = Session::spawn_registered(
         SessionId(4),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "jobs".into(),
@@ -1051,6 +1118,8 @@ fn group_leader_timeout_kills_the_child() {
     let spawned = Session::spawn_with_leader_wait(
         SessionId(70),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "wedged".into(),
@@ -1073,6 +1142,10 @@ fn group_leader_timeout_kills_the_child() {
     let Err(error) = spawned else {
         panic!("spawn must fail when the child never leads a process group");
     };
+    assert!(
+        !error.is::<NoProcessStarted>(),
+        "a started program may have spawned descendants"
+    );
     let waited = started.elapsed();
     assert!(
         waited >= Duration::from_millis(200),
@@ -1149,6 +1222,8 @@ fn compact_zsh_prompt_preserves_config_and_reports_failure() {
     let session = Session::spawn_registered(
         SessionId(1),
         SessionSpec {
+            run: SessionRunId(1),
+            kind: SessionKind::Terminal,
             project: "p".into(),
             workspace: "w".into(),
             name: "local".into(),
@@ -1213,21 +1288,27 @@ fn automatic_title_callbacks_handle_fragments_unicode_controls_and_bounds() {
     let mut parser = vt100::Parser::new_with_callbacks(3, 30, 0, SessionTitles::default());
     parser.process(b"\x1b]2;frag");
     assert_eq!(parser.callbacks().application, None);
+    assert_eq!(parser.callbacks().revision, 0);
     parser.process("mented 🦀\x07".as_bytes());
     assert_eq!(
         parser.callbacks().application.as_deref(),
         Some("fragmented 🦀")
     );
+    assert_eq!(parser.callbacks().revision, 1);
     parser.process("\x1b]0;next title\x1b\\".as_bytes());
     assert_eq!(
         parser.callbacks().application.as_deref(),
         Some("next title")
     );
+    assert_eq!(parser.callbacks().revision, 2);
     parser.process(b"\x1b]1;icon only\x07");
     assert_eq!(
         parser.callbacks().application.as_deref(),
         Some("next title")
     );
+    assert_eq!(parser.callbacks().revision, 2);
+    parser.process("\x1b]0;next title\x07".as_bytes());
+    assert_eq!(parser.callbacks().revision, 2);
     parser.process(format!("\x1b]2;{}\x07", "🦀".repeat(300)).as_bytes());
     assert_eq!(
         parser
@@ -1239,12 +1320,14 @@ fn automatic_title_callbacks_handle_fragments_unicode_controls_and_bounds() {
             .count(),
         MAX_TITLE_CHARS
     );
+    assert_eq!(parser.callbacks().revision, 3);
     assert_eq!(
         sanitize_title("  hi\n\t\u{202e}there  ").as_deref(),
         Some("hithere")
     );
     parser.process(b"\x1b]2;   \x07");
     assert_eq!(parser.callbacks().application, None);
+    assert_eq!(parser.callbacks().revision, 4);
     parser.process(b"\x1b]2;semi;colon\x07");
     assert_eq!(
         parser.callbacks().application.as_deref(),
@@ -1252,4 +1335,5 @@ fn automatic_title_callbacks_handle_fragments_unicode_controls_and_bounds() {
     );
     parser.process(b"\x1b]2;bad\xfftitle\x07");
     assert_eq!(parser.callbacks().application.as_deref(), Some("bad�title"));
+    assert_eq!(parser.callbacks().revision, 6);
 }

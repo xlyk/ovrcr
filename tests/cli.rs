@@ -597,6 +597,7 @@ done
         dashboard_request(
             &mut dashboard,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: SessionId(id),
                 bytes: [generic.as_slice(), b"\n"].concat(),
             },
@@ -646,6 +647,7 @@ done
         dashboard_request(
             &mut dashboard,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: SessionId(id),
                 bytes: [claude.as_slice(), b"\n"].concat(),
             },
@@ -783,6 +785,7 @@ done
         dashboard_request(
             &mut dashboard,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: SessionId(id),
                 bytes: [valid.as_slice(), b"\n"].concat()
             }
@@ -819,6 +822,7 @@ done
         dashboard_request(
             &mut dashboard,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: SessionId(id),
                 bytes: [invalid.as_slice(), b"\n"].concat()
             }

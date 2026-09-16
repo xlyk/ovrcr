@@ -267,6 +267,15 @@ impl Live {
         }
     }
 
+    /// Forget a test-owned group only after its disappearance has been observed.
+    pub fn forget_group(&self, pgid: libc::pid_t) {
+        assert!(
+            pgid > 1 && !group_exists(pgid),
+            "owned process group still exists"
+        );
+        self.pgids.lock().unwrap().retain(|owned| *owned != pgid);
+    }
+
     /// The process groups this fixture is responsible for reaping.
     pub fn owned_groups(&self) -> Vec<libc::pid_t> {
         self.pgids.lock().unwrap().clone()

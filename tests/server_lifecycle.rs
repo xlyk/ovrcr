@@ -1717,6 +1717,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
                 response: Response::Screen { bytes, .. },
             }
             | ServerMessage::Event(ovrcr::protocol::ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 bytes,
                 session: _,
                 revision: _,
@@ -1731,6 +1732,7 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         &ClientMessage {
             request_id: 20,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: vec![b'x'; 512 * 1024],
             },
@@ -1850,6 +1852,7 @@ fn control_lifecycle_enforces_every_removal_gate() {
     let review = fixture.create_session("review", vec!["sh".into(), "-c".into(), "exit 0".into()]);
     assert!(matches!(
         fixture.request(Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr::protocol::SessionKind::Terminal,
             project: "fixture".into(),
             workspace: "work".into(),
             name: "review".into(),
@@ -2081,6 +2084,7 @@ fn pause_resume_server_refuses_removal_and_late_mutation() {
         &ClientMessage {
             request_id: 11,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"paused".to_vec(),
             },
@@ -2534,6 +2538,7 @@ impl HistoryDashboardParser {
 
     fn forward(&mut self, message: &ServerMessage) {
         if let ServerMessage::Event(ServerEvent::Output {
+            run: _,
             session,
             bytes,
             revision: _,
@@ -3133,6 +3138,7 @@ fn pause_resume_stops_group_and_rejects_input() {
             &mut dashboard,
             3,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 bytes: b"REJECTED_WHILE_PAUSED".to_vec(),
             },
@@ -3177,6 +3183,7 @@ fn pause_resume_stops_group_and_rejects_input() {
             &mut dashboard,
             5,
             Request::Input {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 bytes: b"PTY_AFTER_RESUME_1".to_vec(),
             },
@@ -3530,6 +3537,7 @@ fn pause_resume_backpressured_input_keeps_controls_available() {
         &ClientMessage {
             request_id: 20,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: vec![b'x'; 512 * 1024],
             },
@@ -4235,6 +4243,7 @@ fn history_slow_dashboard_recovers_after_finite_burst() {
     while Instant::now() < drain_deadline {
         match dashboard.next(Instant::now() + Duration::from_millis(50)) {
             Ok(Some(ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: dirty_session,
                 revision: _,
             }))) if dirty_session == session => dirty = true,
@@ -4336,6 +4345,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     while !saw_dirty {
         match read_frame::<ServerMessage>(&mut dashboard).unwrap() {
             ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision: _,
             }) if session == burst => saw_dirty = true,
@@ -4382,6 +4392,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     while Instant::now() < quiet_deadline {
         match read_frame::<ServerMessage>(&mut dashboard) {
             Ok(ServerMessage::Event(ovrcr::protocol::ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision: _,
             })) if session == burst => dirty_count += 1,
@@ -4683,6 +4694,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
         &ClientMessage {
             request_id: 3,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session: local,
                 bytes: b"printf SELECTED_OK\r".to_vec(),
             },
@@ -4911,6 +4923,7 @@ impl ControlFixture {
         argv: Vec<OsString>,
     ) -> ovrcr::session::SessionSummary {
         match self.request(Request::CreateSession(CreateSessionRequest {
+            kind: ovrcr_protocol::SessionKind::Terminal,
             project: PROJECT.into(),
             workspace: WORKSPACE.into(),
             name: name.into(),
@@ -5427,6 +5440,7 @@ fn selection_snapshot_precedes_later_quiet_tail_output() {
         &ClientMessage {
             request_id: 3,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"\n".to_vec(),
             },
@@ -5565,6 +5579,7 @@ fn split_view_parsers(
             ServerMessage::Response {
                 response:
                     Response::Screen {
+                        run: ovrcr::protocol::SessionRunId(1),
                         session,
                         revision,
                         size,
@@ -5583,6 +5598,7 @@ fn split_view_parsers(
                 screens.insert(*session);
             }
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision,
                 bytes,
@@ -5591,9 +5607,12 @@ fn split_view_parsers(
                     parsers.get_mut(session).unwrap().process(bytes);
                 }
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
-                if view.panes.iter().any(|pane| pane.session == *session)
-                    && screens.contains(session) =>
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
+                session,
+                revision,
+            }) if view.panes.iter().any(|pane| pane.session == *session)
+                && screens.contains(session) =>
             {
                 assert_eq!(
                     *revision, view.revision,
@@ -5620,6 +5639,7 @@ fn split_input_marker(
         &ClientMessage {
             request_id,
             request: Request::Input {
+                run: ovrcr_protocol::SessionRunId(1),
                 session,
                 bytes: b"SIZE\n".to_vec(),
             },
@@ -5648,6 +5668,7 @@ fn split_input_marker(
                 response => panic!("split input returned unexpected response: {response:?}"),
             },
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: output_session,
                 revision: output_revision,
                 bytes,
@@ -5660,6 +5681,7 @@ fn split_input_marker(
                 parser.process(&bytes);
             }
             ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
                 session: dirty_session,
                 revision: dirty_revision,
             }) if dirty_session == session => {
@@ -5778,10 +5800,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
         revision: 1,
         panes: vec![
             PaneTarget {
+                run: left.run,
                 session: left.id,
                 size: ovrcr::session::TerminalSize { rows: 36, cols: 39 },
             },
             PaneTarget {
+                run: right.run,
                 session: right.id,
                 size: ovrcr::session::TerminalSize { rows: 36, cols: 40 },
             },
@@ -5826,10 +5850,12 @@ fn split_server_two_streams_resize_resync_and_detach() {
         revision: 3,
         panes: vec![
             PaneTarget {
+                run: left.run,
                 session: left.id,
                 size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
             },
             PaneTarget {
+                run: right.run,
                 session: right.id,
                 size: ovrcr::session::TerminalSize { rows: 26, cols: 30 },
             },
@@ -5952,6 +5978,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
         );
         match message {
             ServerMessage::Event(ServerEvent::Output {
+                run: ovrcr::protocol::SessionRunId(1),
                 session,
                 revision,
                 bytes,
@@ -5962,9 +5989,11 @@ fn split_server_two_streams_resize_resync_and_detach() {
                 );
                 let _ = bytes;
             }
-            ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
-                if session == left.id || session == right.id =>
-            {
+            ServerMessage::Event(ServerEvent::ScreenDirty {
+                run: ovrcr::protocol::SessionRunId(1),
+                session,
+                revision,
+            }) if session == left.id || session == right.id => {
                 assert_eq!(
                     revision, resized_focus_right_view.revision,
                     "old-revision burst dirty notification arrived after replacement"
@@ -6018,6 +6047,7 @@ fn split_server_two_streams_resize_resync_and_detach() {
     let singleton_view = DashboardView {
         revision: 1,
         panes: vec![PaneTarget {
+            run: left.run,
             session: left.id,
             size: ovrcr::session::TerminalSize { rows: 26, cols: 29 },
         }],

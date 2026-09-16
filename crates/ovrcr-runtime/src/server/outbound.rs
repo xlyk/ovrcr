@@ -15,7 +15,7 @@ enum DirtyState {
 pub(super) struct DashboardQueue {
     pub(super) messages: VecDeque<DashboardOutbound>,
     terminal: Option<DashboardOutbound>,
-    dirty: HashMap<(u64, SessionId), DirtyState>,
+    dirty: HashMap<(u64, SessionId, ovrcr_protocol::SessionRunId), DirtyState>,
     closed: bool,
     closing: bool,
     #[cfg(any(test, feature = "acceptance-diagnostics"))]
@@ -76,9 +76,10 @@ impl DashboardQueue {
         let dirty_bytes = self
             .dirty
             .keys()
-            .map(|(revision, session)| {
+            .map(|(revision, session, run)| {
                 encoded_len(&ServerMessage::Event(ServerEvent::ScreenDirty {
                     session: *session,
+                    run: *run,
                     revision: *revision,
                 }))
             })
@@ -119,9 +120,12 @@ impl DashboardQueue {
         let mut sessions = Vec::new();
         self.messages.retain(|queued| match queued.message {
             ServerMessage::Event(ServerEvent::Output {
-                session, revision, ..
+                session,
+                run,
+                revision,
+                ..
             }) => {
-                sessions.push((revision, session));
+                sessions.push((revision, session, run));
                 false
             }
             _ => true,
@@ -140,7 +144,11 @@ pub struct DashboardSink {
 pub(super) enum DashboardDelivery {
     Message(DashboardOutbound),
     Terminal(DashboardOutbound),
-    Dirty { revision: u64, session: SessionId },
+    Dirty {
+        revision: u64,
+        session: SessionId,
+        run: ovrcr_protocol::SessionRunId,
+    },
 }
 
 /// Outcome of offering one message to a dashboard queue.
@@ -187,10 +195,13 @@ impl DashboardSink {
             return Enqueue::Draining;
         }
         if let ServerMessage::Event(ServerEvent::Output {
-            session, revision, ..
+            session,
+            run,
+            revision,
+            ..
         }) = &outbound.message
         {
-            let key = (*revision, *session);
+            let key = (*revision, *session, *run);
             if queue.dirty.contains_key(&key) {
                 return Enqueue::Queued;
             }
@@ -200,9 +211,10 @@ impl DashboardSink {
                         queued.message,
                         ServerMessage::Event(ServerEvent::Output {
                             session: queued_session,
+                            run: queued_run,
                             revision: queued_revision,
                             ..
-                        }) if queued_session == *session && queued_revision == *revision
+                        }) if queued_session == *session && queued_run == *run && queued_revision == *revision
                     )
                 });
                 queue.dirty.insert(key, DirtyState::Pending);
@@ -245,6 +257,7 @@ impl DashboardSink {
                     request_id,
                     response: Response::Screen {
                         session: pane.session,
+                        run: pane.run,
                         revision: view.revision,
                         size: pane.size,
                         bytes,
@@ -339,7 +352,7 @@ impl DashboardSink {
             if let Some(message) = queue.terminal.take() {
                 return Some(DashboardDelivery::Terminal(message));
             }
-            if let Some(((revision, session), state)) = queue
+            if let Some(((revision, session, run), state)) = queue
                 .dirty
                 .iter_mut()
                 .find(|(_, state)| **state == DirtyState::Pending)
@@ -348,16 +361,24 @@ impl DashboardSink {
                 return Some(DashboardDelivery::Dirty {
                     revision: *revision,
                     session: *session,
+                    run: *run,
                 });
             }
             queue = self.wake.wait(queue).unwrap();
         }
     }
 
-    pub(super) fn dirty_sent(&self, revision: u64, session: SessionId) {
+    pub(super) fn dirty_sent(
+        &self,
+        revision: u64,
+        session: SessionId,
+        run: ovrcr_protocol::SessionRunId,
+    ) {
         let mut queue = self.queue.lock().unwrap();
-        if queue.dirty.get(&(revision, session)) == Some(&DirtyState::Sending) {
-            queue.dirty.insert((revision, session), DirtyState::Sent);
+        if queue.dirty.get(&(revision, session, run)) == Some(&DirtyState::Sending) {
+            queue
+                .dirty
+                .insert((revision, session, run), DirtyState::Sent);
         }
     }
 
@@ -381,7 +402,7 @@ impl DashboardSink {
     }
 
     #[cfg(test)]
-    pub(super) fn dirty_keys(&self) -> Vec<(u64, SessionId)> {
+    pub(super) fn dirty_keys(&self) -> Vec<(u64, SessionId, ovrcr_protocol::SessionRunId)> {
         self.queue.lock().unwrap().dirty.keys().copied().collect()
     }
 }

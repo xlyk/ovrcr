@@ -243,7 +243,11 @@ fn set_view_from(messages: &[ClientMessage]) -> ClientMessage {
 }
 
 fn screen_dirty(session: SessionId, revision: u64) -> ServerMessage {
-    ServerMessage::Event(ServerEvent::ScreenDirty { session, revision })
+    ServerMessage::Event(ServerEvent::ScreenDirty {
+        session,
+        run: ovrcr_protocol::SessionRunId(1),
+        revision,
+    })
 }
 
 #[test]
@@ -266,6 +270,7 @@ fn resize_matching_screen_restores_snapshot_and_ignores_stale_screen() {
         request_id: resize.request_id.wrapping_sub(1),
         response: Response::Screen {
             session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: TerminalSize { rows: 20, cols: 40 },
             bytes: b"STALE_SCREEN".to_vec(),
@@ -277,6 +282,7 @@ fn resize_matching_screen_restores_snapshot_and_ignores_stale_screen() {
         request_id: resize.request_id,
         response: Response::Screen {
             session,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: TerminalSize { rows: 20, cols: 40 },
             bytes: b"RESTORED_SCREEN".to_vec(),
@@ -320,6 +326,7 @@ fn copy_mode_routes_keys_and_freezes_output() {
     );
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"\rNEW".to_vec(),
     }));
@@ -526,6 +533,7 @@ fn copy_render_tiny_pane_and_footer() {
     let id = dashboard.focused_session().unwrap();
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"\rLIVE".to_vec(),
     }));
@@ -644,7 +652,10 @@ fn copy_mode_waits_for_matching_screen() {
     let mut dashboard = dashboard_fixture();
     let first = dashboard.focused_session().unwrap();
     dashboard.install_focus(SessionId(5));
-    let pending = set_view_from(&dashboard.handle_server_message(screen_dirty(SessionId(5), 0)));
+    let pending = dashboard
+        .request_view_at(Rect::new(0, 0, 88, 38))
+        .expect("expected focus SetView");
+    dashboard.drain_outbox();
     let Request::SetView { ref view } = pending.request else {
         panic!("expected SetView");
     };
@@ -652,6 +663,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: pending.request_id,
         response: Response::Screen {
             session: first,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: b"late-first".to_vec(),
@@ -662,6 +674,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: pending.request_id.wrapping_sub(1),
         response: Response::Screen {
             session: SessionId(5),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: b"old-request".to_vec(),
@@ -672,6 +685,7 @@ fn copy_mode_waits_for_matching_screen() {
         request_id: pending.request_id,
         response: Response::Screen {
             session: SessionId(5),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: b"matching".to_vec(),
@@ -705,6 +719,7 @@ fn copy_mode_keeps_alternate_and_resync_snapshots() {
         request_id: view_request.request_id,
         response: Response::Screen {
             session: id,
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: b"\x1b[?1049lPRIMARY".to_vec(),
@@ -716,6 +731,7 @@ fn copy_mode_keeps_alternate_and_resync_snapshots() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: id,
+        run: ovrcr_protocol::SessionRunId(1),
         revision: view.revision,
         bytes: b"-LIVE".to_vec(),
     }));
@@ -770,7 +786,13 @@ fn pause_resume_browse_keys_send_explicit_requests() {
 
     dashboard.install_focus(SessionId(2));
     assert_eq!(dashboard.key(KeyCode::Char('p')), DashboardAction::Redraw);
-    assert!(footer(&dashboard, 120, 40).contains("exited"));
+    assert!(
+        dashboard
+            .drain_outbox()
+            .iter()
+            .all(|message| { !matches!(message.request, Request::PauseSession { .. }) }),
+        "an exited terminal must not receive a pause request"
+    );
 
     dashboard.install_focus(SessionId(5));
     dashboard.install_screen(SessionId(5), &[]);
@@ -982,6 +1004,7 @@ fn history_live_output_preserves_anchor() {
     });
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"LIVE_MARKER".to_vec(),
     }));
@@ -999,6 +1022,7 @@ fn history_live_output_preserves_anchor() {
         request_id: view_request.request_id,
         response: Response::Screen {
             session: SessionId(1),
+            run: ovrcr_protocol::SessionRunId(1),
             revision: view.revision,
             size: view.panes[0].size,
             bytes: b"SCREEN_MARKER".to_vec(),
@@ -1268,6 +1292,7 @@ fn copy_history_range_survives_live_eviction() {
     pump_frozen_action(&mut dashboard, &mut frozen, right);
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::Output {
         session: SessionId(1),
+        run: ovrcr_protocol::SessionRunId(1),
         revision: 0,
         bytes: b"LIVE_MARKER\r\n".to_vec(),
     }));
@@ -1538,7 +1563,10 @@ fn history_waits_for_coalesced_focus_view_before_capture() {
     assert_eq!(dashboard.key(KeyCode::PageUp), DashboardAction::Redraw);
     assert!(footer(&dashboard, 120, 40).contains("Pane is loading; retry history"));
     let captured_session = dashboard.focused_session().unwrap();
-    let view = set_view_from(&dashboard.handle_server_message(screen_dirty(captured_session, 0)));
+    let view = dashboard
+        .request_view_at(Rect::new(0, 0, 88, 38))
+        .expect("expected split SetView");
+    dashboard.drain_outbox();
     acknowledge_all_view_targets(&mut dashboard, view);
     let DashboardAction::Request(begin) = dashboard.key(KeyCode::PageUp) else {
         panic!("history must open after the committed focus is acknowledged");

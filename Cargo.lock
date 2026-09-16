@@ -2753,6 +2753,7 @@ dependencies = [
  "libc",
  "ovrcr-protocol",
  "ovrcr-terminal",
+ "parking_lot",
  "portable-pty",
  "rusqlite",
  "serde",

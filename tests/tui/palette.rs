@@ -781,6 +781,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             vec!["consigint", "new-space", "new", "feature/palette", "main"],
             Request::CreateWorkspaceWithLaunch {
                 launch: Some(ovrcr::protocol::SessionLaunch {
+                    kind: ovrcr::protocol::SessionKind::Terminal,
                     argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                     label: None,
                 }),
@@ -797,6 +798,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             vec!["consigint", "existing", "existing", "topic"],
             Request::CreateWorkspaceWithLaunch {
                 launch: Some(ovrcr::protocol::SessionLaunch {
+                    kind: ovrcr::protocol::SessionKind::Terminal,
                     argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                     label: None,
                 }),
@@ -907,6 +909,7 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
         message.request,
         Request::CreateWorkspaceWithLaunch {
             launch: Some(ovrcr::protocol::SessionLaunch {
+                kind: ovrcr::protocol::SessionKind::Terminal,
                 argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                 label: None
             }),
@@ -1027,6 +1030,7 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
         message.request,
         Request::CreateWorkspaceWithLaunch {
             launch: Some(ovrcr::protocol::SessionLaunch {
+                kind: ovrcr::protocol::SessionKind::Terminal,
                 argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                 label: None
             }),
@@ -1066,6 +1070,7 @@ fn typed_existing_branch_survives_hint_arrival() {
         message.request,
         Request::CreateWorkspaceWithLaunch {
             launch: Some(ovrcr::protocol::SessionLaunch {
+                kind: ovrcr::protocol::SessionKind::Terminal,
                 argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                 label: None
             }),
@@ -1102,6 +1107,7 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
         message.request,
         Request::CreateWorkspaceWithLaunch {
             launch: Some(ovrcr::protocol::SessionLaunch {
+                kind: ovrcr::protocol::SessionKind::Terminal,
                 argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
                 label: None
             }),
@@ -1337,13 +1343,16 @@ fn created_session_enters_terminal_mode() {
     };
     let session = SessionSummary {
         id: SessionId(99),
+        run: ovrcr::protocol::SessionRunId(1),
+        kind: ovrcr::protocol::SessionKind::Terminal,
+        recovery: None,
         project: request.project.clone(),
         workspace: request.workspace.clone(),
         name: request.name.clone(),
         title: None,
         label: request.label.clone().unwrap_or_default(),
         pid: Some(1),
-        started_unix_ms: 0,
+        started_unix_ms: Some(0),
         phase: SessionPhase::Running,
         activity: AgentActivity::Unknown,
         context_usage: None,
@@ -2254,4 +2263,168 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         dashboard.key(KeyCode::Char('n'));
         assert!(palette_text(&dashboard).contains("consigint / pick-demo"));
     }
+}
+
+#[test]
+fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
+    use ovrcr::tui::DashboardAction;
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[0].sessions[0].recovery =
+        Some(ovrcr::protocol::SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: None,
+        });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    palette_search(&mut dashboard, "Reopen in a fresh shell");
+    dashboard.key(KeyCode::Enter);
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("Previous agent or background processes"),
+        "{text}"
+    );
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("confirming reopen must send a request");
+    };
+    assert_eq!(
+        message.request,
+        Request::ReopenSession {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+            acknowledge_stopped: true,
+        }
+    );
+}
+
+#[test]
+fn failed_reopen_retries_the_current_run_from_the_confirm() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_focus(SessionId(2));
+    palette_search(&mut dashboard, "Reopen in a fresh shell");
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
+        panic!("reopen confirm must send");
+    };
+    assert_eq!(
+        first.request,
+        Request::ReopenSession {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(1),
+            acknowledge_stopped: false,
+        }
+    );
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[0].sessions[0].run = ovrcr::protocol::SessionRunId(4);
+    hierarchy.projects[1].workspaces[0].sessions[0].recovery =
+        Some(ovrcr::protocol::SessionRecovery {
+            requires_ack: false,
+            unavailable: None,
+            failure: Some("cwd missing".into()),
+        });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "reopen failed".into(),
+        },
+    });
+    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
+        panic!("failed reopen must offer an explicit retry");
+    };
+    assert_eq!(
+        retry.request,
+        Request::ReopenSession {
+            session: SessionId(2),
+            expected_run: ovrcr::protocol::SessionRunId(4),
+            acknowledge_stopped: false,
+        }
+    );
+}
+
+#[test]
+fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Enter);
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("form did not submit");
+    };
+    let Request::CreateSession(request) = &message.request else {
+        panic!("wrong request");
+    };
+    let retained = SessionSummary {
+        id: SessionId(99),
+        run: ovrcr::protocol::SessionRunId(3),
+        kind: ovrcr::protocol::SessionKind::Terminal,
+        recovery: Some(ovrcr::protocol::SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        }),
+        project: request.project.clone(),
+        workspace: request.workspace.clone(),
+        name: request.name.clone(),
+        title: None,
+        label: request.label.clone().unwrap_or_default(),
+        pid: None,
+        started_unix_ms: None,
+        phase: SessionPhase::Stopped,
+        activity: AgentActivity::Unknown,
+        context_usage: None,
+        agent: None,
+        agent_epoch: 0,
+        unread: None,
+    };
+    let mut hierarchy = fixture_hierarchy();
+    if let Some(workspace) = hierarchy
+        .projects
+        .iter_mut()
+        .find(|project| project.name == retained.project)
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter_mut()
+                .find(|workspace| workspace.name == retained.workspace)
+        })
+    {
+        workspace.sessions.push(retained.clone());
+    } else {
+        panic!("create form must target a fixture workspace");
+    }
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Error {
+            code: ErrorCode::OwnershipUncertain,
+            message: "process ownership is uncertain".into(),
+        },
+    });
+    assert_eq!(dashboard.focused_session(), Some(SessionId(99)));
+    let text = palette_text(&dashboard);
+    assert!(
+        text.contains("previous agent or background processes") || text.contains("Acknowledge"),
+        "{text}"
+    );
+    let DashboardAction::Request(next) = dashboard.key(KeyCode::Enter) else {
+        panic!("uncertain launch must not leave a create form");
+    };
+    assert_eq!(
+        next.request,
+        Request::AcknowledgeSessionStopped {
+            session: SessionId(99),
+            expected_run: ovrcr::protocol::SessionRunId(3),
+        }
+    );
+    let _ = retained;
 }

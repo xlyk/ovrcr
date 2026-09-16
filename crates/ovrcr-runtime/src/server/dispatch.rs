@@ -115,11 +115,8 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                         let before = session.summary();
                         match session.agent_command(&request, owner.as_ref()) {
                             Ok(response) => {
-                                let after = session.summary();
-                                if after != before {
-                                    state.dashboard.try_send(ServerMessage::Event(
-                                        ServerEvent::SessionChanged(Box::new(after)),
-                                    ));
+                                if session.summary() != before {
+                                    publish_session_changed(&state, id);
                                 }
                                 response
                             }
@@ -131,14 +128,11 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                 let _ = completion.send(response);
             }
             DispatchMessage::AgentDisconnected { session, owner } => {
-                if let Some(session) = state.sessions.lock().unwrap().get(&session).cloned()
+                let session = state.sessions.lock().unwrap().get(&session).cloned();
+                if let Some(session) = session
                     && session.agent_supervisor_disconnected(&owner)
                 {
-                    state
-                        .dashboard
-                        .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
-                            session.summary(),
-                        ))));
+                    publish_session_changed(&state, session.id());
                 }
             }
             DispatchMessage::Stop => break,
@@ -345,64 +339,82 @@ fn dispatch_agent_report(
     completion: SyncSender<Response>,
 ) {
     let session = state.sessions.lock().unwrap().get(&report.session).cloned();
-    let response =
-        match session {
-            Some(session) => match session.apply_agent_report(&report) {
-                Ok(changed) => {
-                    if changed {
-                        state.dashboard.try_send(ServerMessage::Event(
-                            ServerEvent::SessionChanged(Box::new(session.summary())),
-                        ));
-                    }
-                    Response::Ok
+    let response = match session {
+        Some(session) => match session.apply_agent_report(&report) {
+            Ok(changed) => {
+                if changed {
+                    publish_session_changed(state, report.session);
                 }
-                Err(error) => error_for_lifecycle(error),
-            },
-            None => error_response(ErrorCode::NotFound, "session not found"),
-        };
+                Response::Ok
+            }
+            Err(error) => error_for_lifecycle(error),
+        },
+        None => error_response(ErrorCode::NotFound, "session not found"),
+    };
     let _ = completion.send(response);
 }
 
+fn persist_session_titles(state: &ServerState, session: &Session) {
+    if let Err(error) = state.persist_session_titles(session) {
+        eprintln!("persist session {} titles: {error:#}", session.id().0);
+    }
+}
+
+fn persist_session_exit(state: &ServerState, session: &Session) {
+    if let Err(error) = state.persist_session_exit(session) {
+        eprintln!("persist session {} exit: {error:#}", session.id().0);
+    }
+}
+
+fn publish_session_changed(state: &ServerState, id: SessionId) {
+    if let Some(summary) = state.session_summary(id) {
+        state
+            .dashboard
+            .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
+                summary,
+            ))));
+    }
+}
+
 fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
-    let id = match &event {
-        SessionEvent::Output { id, .. } | SessionEvent::Exited { id, .. } => *id,
+    let (id, run) = match &event {
+        SessionEvent::Output { id, run, .. } | SessionEvent::Exited { id, run, .. } => (*id, *run),
     };
     let session = state.sessions.lock().unwrap().get(&id).cloned();
     let Some(session) = session else { return };
+    if session.run() != run {
+        return;
+    }
     let output = match &event {
         SessionEvent::Output { bytes, .. } => Some(bytes.clone()),
         SessionEvent::Exited { .. } => None,
     };
-    let before_title = session.effective_title();
+    let before_revision = session.title_revision();
     session.apply_event(event);
     if let Some(bytes) = output {
-        if session.effective_title() != before_title {
-            state
-                .dashboard
-                .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
-                    session.summary(),
-                ))));
+        if session.title_revision() != before_revision {
+            persist_session_titles(state, &session);
+            publish_session_changed(state, id);
         }
-        let revision = state
-            .dashboard
-            .view()
-            .filter(|view| view.panes.iter().any(|pane| pane.session == id))
-            .map(|view| view.revision);
+        let revision = state.dashboard.view().and_then(|view| {
+            view.panes
+                .iter()
+                .any(|pane| pane.session == id && pane.run == run)
+                .then_some(view.revision)
+        });
         if let Some(revision) = revision {
             state
                 .dashboard
                 .try_send(ServerMessage::Event(ServerEvent::Output {
                     session: id,
+                    run,
                     revision,
                     bytes,
                 }));
         }
     } else {
-        state
-            .dashboard
-            .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
-                session.summary(),
-            ))));
+        persist_session_exit(state, &session);
+        publish_session_changed(state, id);
         state
             .dashboard
             .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
@@ -412,13 +424,7 @@ fn dispatch_session_event(state: &Arc<ServerState>, event: SessionEvent) {
 }
 
 fn dispatch_refresh_session(state: &Arc<ServerState>, id: SessionId) {
-    let session = state.sessions.lock().unwrap().get(&id).cloned();
-    let Some(session) = session else { return };
-    state
-        .dashboard
-        .try_send(ServerMessage::Event(ServerEvent::SessionChanged(Box::new(
-            session.summary(),
-        ))));
+    publish_session_changed(state, id);
 }
 
 fn view_error(
@@ -469,6 +475,28 @@ fn dispatch_set_view(
     );
 }
 
+enum ViewPane {
+    Live(Arc<Session>),
+    Retained,
+}
+
+fn resolve_view_pane(
+    state: &ServerState,
+    pane: &ovrcr_protocol::PaneTarget,
+) -> Result<ViewPane, String> {
+    let live = state.sessions.lock().unwrap().get(&pane.session).cloned();
+    if let Some(session) = live {
+        if session.run() != pane.run {
+            return Err(format!("session {} not found", pane.session.0));
+        }
+        return Ok(ViewPane::Live(session));
+    }
+    match state.session_summary(pane.session) {
+        Some(summary) if summary.run == pane.run => Ok(ViewPane::Retained),
+        _ => Err(format!("session {} not found", pane.session.0)),
+    }
+}
+
 fn dispatch_set_view_with_resize(
     state: &ServerState,
     owner: &Arc<()>,
@@ -501,39 +529,39 @@ fn dispatch_set_view_with_resize(
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     }
-    let sessions = {
-        let sessions = state.sessions.lock().unwrap();
-        let mut resolved = Vec::with_capacity(view.panes.len());
-        for pane in &view.panes {
-            let Some(session) = sessions.get(&pane.session).cloned() else {
-                view_error(
-                    state,
-                    owner,
-                    request_id,
-                    ErrorCode::NotFound,
-                    format!("session {} not found", pane.session.0),
-                );
+    let mut resolved = Vec::with_capacity(view.panes.len());
+    for pane in &view.panes {
+        match resolve_view_pane(state, pane) {
+            Ok(target) => resolved.push(target),
+            Err(message) => {
+                view_error(state, owner, request_id, ErrorCode::NotFound, message);
                 let _ = completion.send(DispatchCompletion::Complete);
                 return;
-            };
-            resolved.push((session, pane.size));
+            }
         }
-        resolved
-    };
-    let targets = sessions
+    }
+    let targets = view
+        .panes
         .iter()
-        .filter(|(session, size)| {
-            previous
-                .as_ref()
-                .and_then(|current| {
-                    current
-                        .panes
-                        .iter()
-                        .find(|pane| pane.session == session.summary().id)
-                })
-                .is_none_or(|pane| pane.size != *size)
+        .zip(resolved.iter())
+        .filter_map(|(pane, target)| {
+            let ViewPane::Live(session) = target else {
+                return None;
+            };
+            let previous_pane = previous.as_ref().and_then(|current| {
+                current
+                    .panes
+                    .iter()
+                    .find(|current| current.session == pane.session)
+            });
+            if previous_pane
+                .is_some_and(|current| current.run == pane.run && current.size == pane.size)
+            {
+                None
+            } else {
+                Some((Arc::clone(session), pane.size))
+            }
         })
-        .cloned()
         .collect::<Vec<_>>();
     let mut resized = 0;
     let resize_result = resize_view_targets(&targets, |session, size| {
@@ -581,9 +609,12 @@ fn dispatch_set_view_with_resize(
         let _ = completion.send(DispatchCompletion::Complete);
         return;
     };
-    let screens = sessions
+    let mut screens = resolved
         .iter()
-        .map(|(session, _)| session.current_screen())
+        .map(|target| match target {
+            ViewPane::Live(session) => session.current_screen(),
+            ViewPane::Retained => Vec::new(),
+        })
         .collect::<Vec<_>>();
     // Panes were resolved before the resizes, which can block for as long as a
     // PTY takes, and `remove_session` runs on connection threads. Hold the
@@ -591,9 +622,32 @@ fn dispatch_set_view_with_resize(
     // session removed in between cannot be published as a focused pane at a
     // valid revision and then admit input that only fails at the PTY.
     let registered = state.sessions.lock().unwrap();
+    let mut published = view.clone();
+    published.panes.retain(|pane| {
+        let Some(index) = view
+            .panes
+            .iter()
+            .position(|requested| requested.session == pane.session)
+        else {
+            return false;
+        };
+        match &resolved[index] {
+            ViewPane::Live(captured) => registered
+                .get(&pane.session)
+                .is_some_and(|session| Arc::ptr_eq(session, captured) && session.run() == pane.run),
+            ViewPane::Retained => match registered.get(&pane.session) {
+                Some(session) if session.run() == pane.run => {
+                    screens[index] = session.current_screen();
+                    true
+                }
+                Some(_) => false,
+                None => true,
+            },
+        }
+    });
     if let Some(focused) = view
         .focused
-        .filter(|focused| !registered.contains_key(focused))
+        .filter(|focused| !published.panes.iter().any(|pane| pane.session == *focused))
     {
         drop(registered);
         view_error(
@@ -609,10 +663,6 @@ fn dispatch_set_view_with_resize(
     // The client still gets one snapshot per pane it asked for; only the
     // published view drops the panes whose sessions are gone, so neither output
     // nor input is admitted for them.
-    let mut published = view.clone();
-    published
-        .panes
-        .retain(|pane| registered.contains_key(&pane.session));
     if !snapshot.sink.replace_view(&view, request_id, screens) {
         state.dashboard.disconnect(snapshot);
         let _ = completion.send(DispatchCompletion::Complete);

@@ -16,14 +16,22 @@ One Reporter (`src/report/reporter.rs`) owns every managed invocation's reportin
 
 Root `src/` and control-role tests speak to the server through `ovrcr_protocol::client` for request/response round trips; dashboard-role code that consumes events reads frames directly. Do not hand-roll `ClientMessage` frames for a plain request.
 
-Project and workspace metadata use SQLite as the sole writable store, per #112.
-The database path is the full `config.toml` path with `.sqlite3` appended. First
-server start creates the schema (`application_id` `0x4f565243`, `user_version` 1)
-and imports leftover TOML in the same transaction. After that transaction commits,
+Project, workspace, and retained interactive-session metadata use SQLite as the
+sole writable store. The database path is the full `config.toml` path with
+`.sqlite3` appended. Initial migration imports legacy projects/workspaces;
+schema version 2 adds session metadata without changing settings or task storage.
+After each migration transaction commits,
 later starts and every save use SQLite only. Offline readers open the database
 read-only. They read preserved TOML only if the database is absent, or both its
 application ID and version are zero and it has no user objects. That uninitialized
 state can be retried on startup. A foreign, nonempty unversioned, or unsupported
 database fails without replacement and without falling back to TOML.
 `dashboard.toml` and the `config.tasks` directory stay outside this store.
-Session retention and native resume are later work (#114–#120).
+`retained::SessionStore` owns durable session IDs, per-row run identities, title
+metadata, original directory and launch kind, and boot-aware recovery state.
+Current process runs remain `Arc<Session>` values; inactive rows allocate no PTY
+or terminal parser. The existing mutation lock reserves one of fifty live slots
+from admission through spawn publication. Reopening retires the prior run's
+capability, view and history; run-tagged events and snapshots cannot affect its
+replacement. No argv, environments, output, prompts, live activity or timing are
+stored. Native provider resume and archive behavior remain later work.
