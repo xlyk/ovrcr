@@ -298,18 +298,26 @@ fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
     let live = Live::binary();
     live.ready("feature/natural-exit-ownership");
     let pid_file = live.root.path().join("natural-survivor.pid");
+    let survivor_py = live.root.path().join("natural-survivor.py");
+    std::fs::write(
+        &survivor_py,
+        "import os, signal, sys, time\n\
+         os.setpgrp()\n\
+         open(sys.argv[1], 'w').write(str(os.getpid()))\n\
+         signal.signal(signal.SIGHUP, signal.SIG_IGN)\n\
+         signal.signal(signal.SIGTERM, signal.SIG_IGN)\n\
+         time.sleep(3600)\n",
+    )
+    .unwrap();
     let created = create_terminal(
         &live,
         "natural-survivor",
         &[
             "/bin/sh",
             "-c",
-            r#"/bin/sh -c '
-            exec /usr/bin/python3 -c '"'"'import os, time, signal; os.setpgrp(); open("'"'"'"$1"'"'"'", "w").write(str(os.getpid())); signal.signal(signal.SIGHUP, signal.SIG_IGN); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(3600)'"'"'
-        ' owned-descendant "$1" &
-        /bin/sleep 2
-        exit 0"#,
+            "/usr/bin/python3 \"$1\" \"$2\" &\n/bin/sleep 1\nexit 0",
             "natural-leader",
+            survivor_py.to_str().unwrap(),
             pid_file.to_str().unwrap(),
         ],
     );
