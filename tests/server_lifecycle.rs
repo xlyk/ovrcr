@@ -3459,7 +3459,10 @@ fn pause_resume_control_races_body() {
         reaped_descendant.pgid
     );
     let before = session_summary(&harness.fixture, reaped);
-    assert!(before.phase.is_live(), "reaped-leader row must still be live");
+    assert!(
+        before.phase.is_live(),
+        "reaped-leader row must still be live"
+    );
     let pause = harness
         .fixture
         .request(Request::PauseSession { session: reaped });
@@ -3512,9 +3515,9 @@ fn pause_resume_control_races_body() {
             );
         }
         Response::Error {
-            code: ErrorCode::Conflict,
-            message,
-        } if message.contains("list processes attached") => {
+            code: ErrorCode::OwnershipUncertain,
+            ..
+        } => {
             let after = session_summary(&harness.fixture, reaped);
             assert_eq!(
                 after.phase, before.phase,
@@ -3529,10 +3532,18 @@ fn pause_resume_control_races_body() {
                 .request(Request::KillSession { session: reaped });
             match kill {
                 Response::Ok => {
+                    assert!(expect_term_acks_and_descendant_final(
+                        &harness.control,
+                        &[&reaped_descendant],
+                        &[&reaped_descendant],
+                    ));
                     wait_exited_and_assert_terminal_contains(
                         &harness.fixture,
                         reaped,
-                        &[reaped_descendant.preexit_marker.as_str()],
+                        &[
+                            reaped_descendant.preexit_marker.as_str(),
+                            "FINAL_DESCENDANT_AFTER_TERM",
+                        ],
                     );
                     assert!(live::wait_group_absent(
                         reaped_descendant.pgid,
@@ -3546,9 +3557,9 @@ fn pause_resume_control_races_body() {
                     );
                 }
                 Response::Error {
-                    code: ErrorCode::Conflict,
-                    message: kill_message,
-                } if kill_message.contains("list processes attached") => {
+                    code: ErrorCode::OwnershipUncertain,
+                    ..
+                } => {
                     assert!(live::wait_group_absent(
                         reaped_descendant.pgid,
                         Duration::from_secs(2)

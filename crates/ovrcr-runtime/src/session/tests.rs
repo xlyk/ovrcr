@@ -1107,6 +1107,19 @@ fn pause_listing_failure_does_not_claim_paused() {
 }
 
 #[test]
+fn terminate_noop_sigterm_does_not_ok() {
+    let session = spawn_test_shell();
+    let _cleanup = TerminationGuard(Arc::clone(&session));
+    session.set_term_result_hook(Some(Arc::new(|| Some(false))));
+    let result = session.terminate(Duration::from_millis(200));
+    assert!(
+        result.is_err(),
+        "no-op SIGTERM must not certify stop: {result:?}"
+    );
+    session.set_term_result_hook(None);
+}
+
+#[test]
 fn terminate_removes_job_control_subgroups() {
     // An interactive shell puts each background job in its own process
     // group, so the job is invisible to leader-group signalling. Ownership

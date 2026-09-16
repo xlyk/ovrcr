@@ -801,12 +801,7 @@ fn dispatch_history_request(
 
 pub(super) fn error_for_lifecycle(error: anyhow::Error) -> Response {
     let message = error_chain_string(&error);
-    let code = error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
-        .map(|failure| failure.code.clone())
-        .unwrap_or(ErrorCode::Conflict);
-    error_response(code, message)
+    error_response(lifecycle_code(&error), message)
 }
 
 pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
@@ -821,10 +816,16 @@ pub(super) fn input_error_code(error: &anyhow::Error) -> ErrorCode {
 }
 
 fn lifecycle_code(error: &anyhow::Error) -> ErrorCode {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<LifecycleFailure>())
-        .map_or(ErrorCode::Conflict, |failure| failure.code.clone())
+    if let Some(failure) = error.downcast_ref::<LifecycleFailure>() {
+        return failure.code.clone();
+    }
+    if error
+        .downcast_ref::<crate::session::DiscoveryFailed>()
+        .is_some()
+    {
+        return ErrorCode::OwnershipUncertain;
+    }
+    ErrorCode::Conflict
 }
 
 pub(super) fn combine_control_and_refresh(

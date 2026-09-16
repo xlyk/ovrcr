@@ -293,10 +293,10 @@ impl ServerState {
 
     pub fn close_terminal(&self, id: SessionId, grace: Duration) -> Result<()> {
         let target = self.control_target(id)?;
-        let termination = target
-            .session
-            .as_ref()
-            .map_or(Ok(()), |session| session.terminate(grace));
+        let termination = match &target.session {
+            Some(session) => session.terminate(grace),
+            None => Err(anyhow::Error::new(AlreadyExited)),
+        };
         let _mutation = self.mutation_lock.lock().unwrap();
         self.ensure_control_target(id, &target)?;
         let termination = self.finish_control_stop(id, &target, termination);
@@ -354,7 +354,8 @@ impl ServerState {
         termination: Result<()>,
     ) -> Result<()> {
         match termination {
-            Ok(()) => self.persist_control_stop(id, target),
+            Ok(()) if target.session.is_some() => self.persist_control_stop(id, target),
+            Ok(()) => Err(anyhow::Error::new(AlreadyExited)),
             Err(error) if error.is::<AlreadyExited>() && target.already_exited => Ok(()),
             Err(error) => Err(error),
         }
@@ -792,10 +793,10 @@ impl ServerState {
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {
         let target = self.control_target(id)?;
-        let termination = target
-            .session
-            .as_ref()
-            .map_or(Ok(()), |session| session.terminate(grace));
+        let termination = match &target.session {
+            Some(session) => session.terminate(grace),
+            None => Err(anyhow::Error::new(AlreadyExited)),
+        };
         let _mutation = self.mutation_lock.lock().unwrap();
         self.ensure_control_target(id, &target)?;
         let termination = self.finish_control_stop(id, &target, termination);

@@ -3355,6 +3355,62 @@ mod launch_tests {
     }
 
     #[test]
+    fn ownership_uncertain_create_does_not_parse_session_id_from_error_text() {
+        let mut d = dashboard();
+        let mut first = summary(7);
+        first.phase = SessionPhase::Stopped;
+        first.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        let mut bait = summary(42);
+        bait.phase = SessionPhase::Stopped;
+        bait.recovery = Some(SessionRecovery {
+            requires_ack: true,
+            unavailable: None,
+            failure: Some("spawn uncertain".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![first, bait];
+        d.open_create_terminal();
+        let launched = request(&mut d);
+        assert!(matches!(launched.request, Request::CreateSession(_)));
+        d.handle_server_message(ServerMessage::Response {
+            request_id: launched.request_id,
+            response: Response::Error {
+                code: ErrorCode::OwnershipUncertain,
+                message: "process ownership is uncertain for session 42 run 7".into(),
+            },
+        });
+        assert_eq!(
+            d.focused_session(),
+            None,
+            "error text must not select the bait session, and inventory order must not guess a row"
+        );
+        let palette = d.palette.as_ref().expect("uncertain notice stays open");
+        assert!(
+            palette.failed_launch.is_none(),
+            "uncertain create must not keep a recoverable launch"
+        );
+        assert!(
+            matches!(palette.page, Page::Confirm { request: None, .. }),
+            "uncertain create must keep a request-less notice"
+        );
+        if let DashboardAction::Request(message) = submit(&mut d) {
+            match message.request {
+                Request::CreateSession(_)
+                | Request::AcknowledgeSessionStopped { .. }
+                | Request::ReopenSession { .. } => {
+                    panic!(
+                        "uncertain create must not parse error text to create, ack, or reopen a row"
+                    )
+                }
+                other => panic!("unexpected request {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
         let mut d = dashboard();
         let mut stopped = summary(1);

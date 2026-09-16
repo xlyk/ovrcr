@@ -38,6 +38,22 @@ impl std::fmt::Display for AlreadyExited {
 
 impl std::error::Error for AlreadyExited {}
 
+/// Attached-group discovery (`ps -t` / listing) failed, so ownership is unknown.
+#[derive(Debug)]
+pub(crate) struct DiscoveryFailed;
+
+impl std::fmt::Display for DiscoveryFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("process ownership is uncertain")
+    }
+}
+
+impl std::error::Error for DiscoveryFailed {}
+
+fn discovery_error(error: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(DiscoveryFailed).context(error)
+}
+
 mod io;
 mod process;
 mod reporting;
@@ -277,6 +293,9 @@ struct TerminalState {
 }
 
 #[cfg(test)]
+type TermResultHook = Arc<dyn Fn() -> Option<bool> + Send + Sync>;
+
+#[cfg(test)]
 type ListingErrorHook = Arc<dyn Fn() -> Option<anyhow::Error> + Send + Sync>;
 
 pub struct Session {
@@ -303,6 +322,8 @@ pub struct Session {
     history_capture_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     listing_error_hook: Mutex<Option<ListingErrorHook>>,
+    #[cfg(test)]
+    term_result_hook: Mutex<Option<TermResultHook>>,
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
@@ -549,6 +570,8 @@ impl Session {
             history_capture_hook: Mutex::new(None),
             #[cfg(test)]
             listing_error_hook: Mutex::new(None),
+            #[cfg(test)]
+            term_result_hook: Mutex::new(None),
         });
 
         // Publish the session before anything can emit an event for it.
@@ -669,12 +692,12 @@ impl Session {
         if let Some(hook) = self.listing_error_hook.lock().unwrap().clone()
             && let Some(error) = hook()
         {
-            return Err(error);
+            return Err(discovery_error(error));
         }
         let Some(tty) = self.tty.as_deref() else {
             return Ok(std::collections::BTreeSet::new());
         };
-        attached_groups_checked(tty, self.pgid)
+        attached_groups_checked(tty, self.pgid).map_err(discovery_error)
     }
 
     pub fn set_paused(&self, paused: bool) -> Result<bool> {
@@ -866,6 +889,11 @@ impl Session {
         *self.listing_error_hook.lock().unwrap() = hook;
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_term_result_hook(&self, hook: Option<TermResultHook>) {
+        *self.term_result_hook.lock().unwrap() = hook;
+    }
+
     pub fn send_text(&self, text: &str, submit: bool) -> Result<()> {
         let bracketed_paste = {
             let terminal = self.terminal.lock().unwrap();
@@ -918,7 +946,25 @@ impl Session {
         };
         let mut leader_signal_delivered = false;
         if initially_owned {
-            leader_signal_delivered = signal_group(self.pgid, libc::SIGTERM)?;
+            let term_result = {
+                #[cfg(test)]
+                {
+                    let override_result = self
+                        .term_result_hook
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .and_then(|hook| hook());
+                    if let Some(delivered) = override_result {
+                        Ok(delivered)
+                    } else {
+                        signal_group(self.pgid, libc::SIGTERM)
+                    }
+                }
+                #[cfg(not(test))]
+                signal_group(self.pgid, libc::SIGTERM)
+            };
+            leader_signal_delivered = term_result?;
             if should_signal_group(self)? {
                 #[cfg(test)]
                 if let Some(signal_hook) = &self.signal_hook {

@@ -4814,6 +4814,108 @@ fn close_after_ack_removes_already_exited_in_memory_row() {
 }
 
 #[test]
+fn close_and_kill_without_live_arc_do_not_mark_stopped() {
+    let current = crate::retained::current_boot_id();
+    let other = "11111111-2222-3333-4444-555555555555";
+    assert!(
+        crate::retained::different_boot(Some(other), current.as_deref()),
+        "need two verified boot ids to reach missing-Arc control; current={current:?}"
+    );
+    for close in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.toml");
+        crate::config::initialize_registry(&config).unwrap();
+        let cwd = {
+            use std::os::unix::ffi::OsStrExt;
+            dir.path().as_os_str().as_bytes().to_vec()
+        };
+        let kind = serde_json::to_string(&ovrcr_protocol::SessionKind::Terminal).unwrap();
+        let name = if close { "no-arc-close" } else { "no-arc-kill" };
+        {
+            let connection = crate::config::open_writable_registry(&config).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO retained_sessions
+                     (run, project, workspace, name, label, cwd, kind, pinned_title,
+                      application_title, title_revision, boot_id, stopped, failure)
+                     VALUES (1, 'p', 'w', ?1, 'sh', ?2, ?3, NULL, NULL, 0, ?4, 0, NULL)",
+                    rusqlite::params![name, cwd, kind, other],
+                )
+                .unwrap();
+        }
+        let store = crate::retained::SessionStore::open(&config).unwrap();
+        let id = store.records().next().unwrap().id;
+        let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+        *state.retained.lock() = store;
+        assert!(
+            state.sessions.lock().unwrap().get(&id).is_none(),
+            "fixture must have no live Arc"
+        );
+        assert!(
+            !state.retained.lock().get(id).unwrap().stopped,
+            "fixture must not already be certified stopped"
+        );
+        if close {
+            state
+                .close_terminal(id, Duration::from_millis(50))
+                .expect("boot-resolved close with no Arc must remove the row");
+            assert!(
+                state.retained.lock().get(id).is_none(),
+                "close must remove the boot-resolved row without a controlled-stop certificate"
+            );
+        } else {
+            state.kill_session(id, Duration::from_millis(50)).expect(
+                "boot-resolved kill with no Arc must not fail after boot resolved ownership",
+            );
+            assert!(
+                !state.retained.lock().get(id).unwrap().stopped,
+                "missing Arc must not mark_stopped"
+            );
+        }
+        let _ = dir;
+    }
+}
+
+#[test]
+fn listing_failure_pause_kill_close_are_ownership_uncertain_and_do_not_mark_stopped() {
+    for (id, op) in [
+        (SessionId(90), "pause"),
+        (SessionId(91), "kill"),
+        (SessionId(92), "close"),
+    ] {
+        let (_cwd, session, receiver) = spawn_live_test_session(id);
+        let events = apply_test_session_events(Arc::clone(&session), receiver);
+        let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
+        register_test_session(&state, id, Arc::clone(&session));
+        session.set_listing_error_hook(Some(Arc::new(|| {
+            Some(anyhow::anyhow!("ovrcr-test-injected-listing-failure"))
+        })));
+        let error = match op {
+            "pause" => state.set_session_paused(id, true),
+            "kill" => state.kill_session(id, Duration::from_millis(250)),
+            "close" => state.close_terminal(id, Duration::from_millis(250)),
+            _ => unreachable!(),
+        }
+        .unwrap_err();
+        let response = error_for_lifecycle(error);
+        assert_eq!(
+            match &response {
+                Response::Error { code, .. } => code,
+                other => panic!("{op} listing failure mapped to {other:?}"),
+            },
+            &ErrorCode::OwnershipUncertain,
+            "{op} listing failure must be typed OwnershipUncertain"
+        );
+        assert!(
+            !state.retained.lock().get(id).unwrap().stopped,
+            "{op} listing failure must not mark_stopped"
+        );
+        session.set_listing_error_hook(None);
+        let _ = cleanup_test_session(&session, events);
+    }
+}
+
+#[test]
 fn close_of_captured_live_target_that_exits_before_terminate_does_not_certify() {
     let id = SessionId(21);
     let cwd = tempfile::tempdir().unwrap();
