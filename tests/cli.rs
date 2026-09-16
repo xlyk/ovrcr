@@ -2130,7 +2130,7 @@ fn codex_setup_and_doctor_help_expose_provider_dispatch() {
 }
 
 #[test]
-fn automatic_titles_pin_reset_and_relaunch_through_cli() {
+fn automatic_titles_pin_reset_and_reopen_through_cli() {
     let fixture = live::Live::binary();
     fixture.ready("feature/cli-titles");
     let run = |args: &[&str]| {
@@ -2138,7 +2138,8 @@ fn automatic_titles_pin_reset_and_relaunch_through_cli() {
         command
             .args(args)
             .env("OVRCR_CONFIG", &fixture.config)
-            .env("OVRCR_SOCKET", &fixture.socket);
+            .env("OVRCR_SOCKET", &fixture.socket)
+            .env("SHELL", "/bin/sh");
         let output = run_cli_bounded(command).unwrap();
         assert!(
             output.status.success(),
@@ -2195,14 +2196,44 @@ fn automatic_titles_pin_reset_and_relaunch_through_cli() {
     assert_eq!(pinned["display_name"], "Pinned review");
     run(&["terminal", "rename", &id_text, "--automatic", "--json"]);
     assert_eq!(wait_exited(id)["display_name"], "Build complete");
-    let relaunched = run(&["terminal", "relaunch", &id_text, "--json"]);
-    let next = relaunched["id"].as_u64().unwrap();
-    assert_ne!(next, id);
-    assert_eq!(wait_exited(next)["display_name"], "Build complete");
+    let reopened = run(&["terminal", "reopen", &id_text, "--json"]);
+    assert_eq!(reopened["id"], id);
+    assert_eq!(
+        reopened["run"].as_u64().unwrap(),
+        exited["run"].as_u64().unwrap() + 1
+    );
+    assert_eq!(reopened["name"], exited["name"]);
+    assert_eq!(reopened["display_name"], "Build complete");
     assert!(
-        run(&["terminal", "read", &id_text, "--json"])["text"]
+        !run(&["terminal", "read", &id_text, "--json"])["text"]
             .as_str()
             .unwrap()
             .contains("CLI_TITLE_OUTPUT")
     );
+    run(&[
+        "terminal",
+        "send",
+        &id_text,
+        "--text",
+        "printf 'CLI_REOPEN_%s\\n' OK",
+        "--json",
+    ]);
+    let deadline = Instant::now() + live::wait_deadline();
+    loop {
+        let screen = run(&["terminal", "read", &id_text, "--json"]);
+        if screen["text"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .any(|line| line.trim() == "CLI_REOPEN_OK")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fresh shell did not execute input: {screen}"
+        );
+        std::thread::yield_now();
+    }
+    run(&["terminal", "close", &id_text, "--json"]);
 }
