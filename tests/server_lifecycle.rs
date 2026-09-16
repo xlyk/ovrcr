@@ -5062,8 +5062,34 @@ impl ControlFixture {
         name: &str,
         argv: Vec<OsString>,
     ) -> ovrcr::session::SessionSummary {
+        self.create_session_with_kind(ovrcr_protocol::SessionKind::Terminal, name, argv)
+    }
+
+    /// The codex fixture launches `ovrcr agent run codex`, so its row carries the
+    /// Agent kind exactly as the TUI and CLI launch paths do. Retention must keep
+    /// that kind and report native resume unavailable instead of reopening as a shell.
+    fn create_codex_session_summary(
+        &self,
+        name: &str,
+        argv: Vec<OsString>,
+    ) -> ovrcr::session::SessionSummary {
+        self.create_session_with_kind(
+            ovrcr_protocol::SessionKind::Agent {
+                name: "codex".into(),
+            },
+            name,
+            argv,
+        )
+    }
+
+    fn create_session_with_kind(
+        &self,
+        kind: ovrcr_protocol::SessionKind,
+        name: &str,
+        argv: Vec<OsString>,
+    ) -> ovrcr::session::SessionSummary {
         match self.request(Request::CreateSession(CreateSessionRequest {
-            kind: ovrcr_protocol::SessionKind::Terminal,
+            kind,
             project: PROJECT.into(),
             workspace: WORKSPACE.into(),
             name: name.into(),
@@ -9613,7 +9639,7 @@ fn codex_session_named(
     std::fs::write(&native, "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit; fi\nexec \"$OVRCR_TEST_EXECUTABLE\" --ignored --exact codex_hook_native_helper --nocapture\n").unwrap();
     std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
     let probe = fixture.root.path().join(format!("{name}-channel"));
-    let summary = fixture.create_session_summary(name, vec![
+    let summary = fixture.create_codex_session_summary(name, vec![
         "/bin/sh".into(), "-c".into(),
         r#"stty -echo; printf '%s\n' "$OVRCR_HOOK_TOKEN" > "$4.capability"; export OVRCR_TEST_EXECUTABLE="$3" OVRCR_TEST_PROBE="$4" OVRCR_HOOK_SOCKET="$5"; "$1" agent run codex -- "$2"; printf 'CODEX_NATIVE_EXIT=%s\n' "$?"; IFS= read -r done"#.into(),
         "codex-fixture".into(), env!("CARGO_BIN_EXE_ovrcr").into(), native.into_os_string(), std::env::current_exe().unwrap().into_os_string(), probe.clone().into_os_string(), socket.as_os_str().into(),
@@ -10774,6 +10800,17 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         .iter()
         .find(|session| session.id == second.id)
         .expect("retained stopped row survives server restart");
+    assert!(
+        matches!(restored.kind, ovrcr::protocol::SessionKind::Agent { .. }),
+        "restart must keep the Agent kind"
+    );
+    assert!(
+        restored
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.unavailable.is_some()),
+        "Agent rows must not reopen as a shell"
+    );
     assert!(
         restored.unread.is_none(),
         "Unread is runtime state, not retained metadata"

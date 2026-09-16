@@ -127,7 +127,10 @@ lines and requires a positive number. It does not expose scrollback. CLI reads a
 sends do not select or resize the dashboard terminal.
 
 `terminal close` stops the whole process group, waits for cleanup, and removes the
-record. Cleanup failure leaves the record available. To retain the final screen,
+record. The close captures the session's current run from inventory first, and a
+close whose run has advanced since that snapshot fails with a conflict, so a stale
+close cannot stop a replacement process started by reopening the same row. Cleanup
+failure leaves the record available. To retain the final screen,
 use `terminal kill ID`, then `terminal remove ID` when finished.
 
 ## Agent reporting commands

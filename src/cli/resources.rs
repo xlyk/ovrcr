@@ -257,11 +257,6 @@ fn session_kind_from_argv(argv: &[std::ffi::OsString]) -> SessionKind {
 }
 
 fn managed_wrapper_kind(argv: &[std::ffi::OsString]) -> Option<SessionKind> {
-    if argv.get(1).and_then(|arg| arg.to_str()) != Some("agent")
-        || argv.get(2).and_then(|arg| arg.to_str()) != Some("run")
-    {
-        return None;
-    }
     let cli = Cli::try_parse_from(argv).ok()?;
     match cli.command {
         Some(Command::Agent {
@@ -435,6 +430,25 @@ mod session_kind_tests {
                 "/usr/bin/pi"
             ])),
             SessionKind::Agent { name: "pi".into() }
+        );
+    }
+
+    #[test]
+    fn managed_wrapper_global_flag_before_agent_stays_agent() {
+        assert_eq!(
+            session_kind_from_argv(&argv(&[
+                "ovrcr",
+                "--json",
+                "agent",
+                "run",
+                "--provider",
+                "codex",
+                "--",
+                "codex"
+            ])),
+            SessionKind::Agent {
+                name: "codex".into()
+            }
         );
     }
 
