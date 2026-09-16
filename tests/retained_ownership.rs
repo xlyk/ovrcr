@@ -294,6 +294,87 @@ fn current_boot_id_matches_macos_or_linux_os_source() {
 }
 
 #[test]
+fn natural_leader_exit_with_attached_job_requires_ack_before_reopen() {
+    let live = Live::binary();
+    live.ready("feature/natural-exit-ownership");
+    let pid_file = live.root.path().join("natural-survivor.pid");
+    let created = create_terminal(
+        &live,
+        "natural-survivor",
+        &[
+            "/bin/sh",
+            "-c",
+            r#"/bin/sh -c '
+            exec /usr/bin/python3 -c '"'"'import os, time, signal; os.setpgrp(); open("'"'"'"$1"'"'"'", "w").write(str(os.getpid())); signal.signal(signal.SIGHUP, signal.SIG_IGN); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(3600)'"'"'
+        ' owned-descendant "$1" &
+        /bin/sleep 2
+        exit 0"#,
+            "natural-leader",
+            pid_file.to_str().unwrap(),
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let leader_pid = created["pid"].as_u64().unwrap() as libc::pid_t;
+    let leader_pgid = unsafe { libc::getpgid(leader_pid) };
+    let survivor = wait_pid_file(&pid_file);
+    let survivor_pgid = unsafe { libc::getpgid(survivor) };
+    assert_ne!(
+        survivor_pgid, leader_pgid,
+        "survivor must occupy its own job-control group"
+    );
+    live.own_group(survivor_pgid);
+    wait_phase(&live, id, "exited");
+    let row = row(&live, id);
+    assert_eq!(row["phase"], "exited");
+    assert_requires_ack(&row, true);
+    let id_arg = id.to_string();
+    assert_ownership_uncertain(&json_error(&live, &["terminal", "reopen", &id_arg]));
+    assert!(
+        pid_exists(survivor),
+        "natural leader exit reaped its attached job"
+    );
+    reap_group(&live, survivor_pgid);
+    if leader_pgid > 1 {
+        reap_group(&live, leader_pgid);
+    }
+}
+#[test]
+fn acknowledge_stopped_starts_only_the_server_when_cold() {
+    let live = Live::binary();
+    live.ready("feature/cold-ack");
+    let created = create_terminal(
+        &live,
+        "cold-ack",
+        &["/bin/sh", "-c", "while :; do sleep 1; done"],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    assert_eq!(cli(&live, &["shutdown", "--kill"]).status.code(), Some(0));
+    live.join();
+    assert!(!live.socket.exists());
+
+    let acknowledged = json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
+    assert_eq!(acknowledged["ok"], true);
+    let stopped = row(&live, id);
+    assert_eq!(stopped["phase"], "stopped");
+    assert_requires_ack(&stopped, false);
+    assert!(
+        live.socket.exists(),
+        "cold acknowledgement should start the server"
+    );
+    assert_eq!(
+        json(&live, &["terminal", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|session| session["pid"].is_u64())
+            .count(),
+        0,
+        "acknowledgement must not launch a session",
+    );
+    assert_eq!(cli(&live, &["shutdown", "--kill"]).status.code(), Some(0));
+}
+#[test]
 fn same_boot_crash_with_surviving_descendant_requires_ack_before_fresh_shell_reopen() {
     let live = Live::binary();
     live.ready("feature/ownership-crash");
@@ -525,7 +606,7 @@ fn missing_recorded_directory_refuses_reopen_without_fallback() {
     std::fs::create_dir(&decoy).unwrap();
 
     live.start_binary();
-    let refused = json_error(&live, &["terminal", "reopen", &id_arg]);
+    let refused = json_error(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     assert_eq!(refused["error"]["code"], "NotFound", "{refused}");
     let message = refused["error"]["message"].as_str().unwrap_or_default();
     assert!(
@@ -565,7 +646,7 @@ fn exclusive_registry_lock_does_not_publish_reopen_success() {
         let blocker = retained_sql(&live);
         blocker.busy_timeout(Duration::from_millis(50)).unwrap();
         blocker.execute_batch("BEGIN EXCLUSIVE").unwrap();
-        let refused = json_error(&live, &["terminal", "reopen", &id_arg]);
+        let refused = json_error(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
         assert_ne!(refused["error"]["code"], Value::Null, "{refused}");
         assert_eq!(row(&live, id)["id"], id);
         assert_eq!(row(&live, id)["run"], old_run);
@@ -577,7 +658,7 @@ fn exclusive_registry_lock_does_not_publish_reopen_success() {
         assert!(row(&live, id)["pid"].is_null());
     }
 
-    let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+    let reopened = json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
     track_groups(&live);
     assert_eq!(reopened["id"], id);
     assert_eq!(reopened["run"], old_run + 1);

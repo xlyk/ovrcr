@@ -101,9 +101,10 @@ Rename changes the display title, not the stable session name or ID. Reopen
 starts a fresh shell in the same session row. It does not keep the previous
 process output. `--ack-stopped` is required when the inventory says previous
 agent or background processes may still be running; Retry is not that
-confirmation. `acknowledge-stopped` records that confirmation without launching.
-Agent rows cannot be resumed. Reopen starts the server if it is not running.
-With `--json`, reopen returns the terminal object and rename returns `{"ok":true}`.
+confirmation. `acknowledge-stopped` records that confirmation without launching
+a session, but starts the server on demand when it is not running. Agent rows
+cannot be resumed. Reopen starts the server if it is not running. With `--json`,
+reopen returns the terminal object and rename returns `{"ok":true}`.
 
 `terminal send` respects bracketed-paste mode and then sends Enter; `--no-submit`
 omits that final Enter. Embedded newlines remain part of the text, so a program

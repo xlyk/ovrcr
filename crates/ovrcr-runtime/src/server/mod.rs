@@ -206,8 +206,9 @@ impl ServerState {
             let mut summary = session.summary();
             if !summary.phase.is_live() {
                 let mut recovery = record.recovery(boot_id);
-                // This runtime observed the owned group's exit, not just a saved PID.
-                recovery.requires_ack = false;
+                if session.ownership_resolved() {
+                    recovery.requires_ack = false;
+                }
                 summary.recovery = Some(recovery);
             }
             return summary;
@@ -252,10 +253,18 @@ impl ServerState {
     pub(crate) fn persist_session_exit(&self, session: &Session) -> Result<()> {
         self.persist_session_titles(session)?;
         if !session.is_live() {
-            self.retained
-                .lock()
-                .mark_stopped(session.id(), session.run())?;
+            session.capture_exit_ownership();
+            let resolved = session.ownership_resolved();
+            let mut retained = self.retained.lock();
+            if resolved {
+                retained.mark_stopped(session.id(), session.run())?;
+            }
         }
+        eprintln!(
+            "persist exit {} resolved={}",
+            session.id().0,
+            session.ownership_resolved()
+        );
         Ok(())
     }
 
@@ -348,13 +357,18 @@ impl ServerState {
 
     fn persist_control_stop(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
         if let Some(session) = &target.session {
-            self.persist_session_exit(session)
+            self.persist_session_titles(session)?;
+            if !session.is_live() {
+                self.retained
+                    .lock()
+                    .mark_stopped(session.id(), session.run())?;
+            }
+            Ok(())
         } else {
             self.retained.lock().mark_stopped(id, target.run)?;
             Ok(())
         }
     }
-
     fn ensure_control_target(&self, id: SessionId, target: &SessionControlTarget) -> Result<()> {
         let current = self
             .session_summary(id)

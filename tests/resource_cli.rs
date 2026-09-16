@@ -687,7 +687,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             agent.clone()
         };
         let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
-            "id":7,"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
+            "id":7,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -844,6 +844,7 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         "migrated",
     ]);
     assert_eq!(online["branch"], "feature/migrated");
+    assert_eq!(online["terminal_count"], 1);
     assert_eq!(
         std::fs::read_to_string(&fixture.config).unwrap(),
         original,
@@ -864,7 +865,12 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
     ]);
     assert_eq!(offline["path"], online["path"]);
     assert_eq!(offline["branch"], online["branch"]);
-    assert_eq!(offline["terminal_count"], 0);
+    assert_eq!(offline["terminal_count"], 1);
+    let retained = fixture.json(&["terminal", "list"]);
+    assert_eq!(retained.as_array().unwrap().len(), 1);
+    assert_eq!(retained[0]["phase"], "interrupted");
+    assert_eq!(retained[0]["recovery"]["requires_ack"], true);
+    let retained_id = retained[0]["id"].as_u64().unwrap().to_string();
     assert!(
         !fixture.socket.exists(),
         "offline inspection must not start a server"
@@ -876,6 +882,7 @@ fn sqlite_migration_is_authoritative_across_online_offline_and_restart() {
         2,
         "restart must neither discard nor re-import workspace records"
     );
+    fixture.ok(&["terminal", "remove", &retained_id]);
     fixture.ok(&[
         "workspace",
         "remove",

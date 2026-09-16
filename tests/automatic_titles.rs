@@ -43,7 +43,10 @@ fn title_program() -> SessionLaunch {
 fn created(live: &Live, request: Request) -> SessionSummary {
     let response = live.request(request);
     let Response::CreatedSession(summary) = response else {
-        panic!("session creation failed: {response:?}")
+        panic!(
+            "session creation failed: {response:?}; inventory={:?}",
+            sessions(live)
+        )
     };
     if let Some(pid) = summary.pid {
         live.own_group(pid as libc::pid_t);

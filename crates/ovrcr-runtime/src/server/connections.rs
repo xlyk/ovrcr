@@ -686,18 +686,17 @@ pub(super) fn handle_request_with_id(
                 },
             )
         }
-        Request::CreateSession(request) => {
-            state
-                .create_session(request)
-                .map_or_else(error_for_lifecycle, |summary| {
-                    state
-                        .dashboard
-                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
-                            state.hierarchy(),
-                        )));
-                    Response::CreatedSession(Box::new(summary))
-                })
-        }
+        Request::CreateSession(request) => state.create_session(request).map_or_else(
+            |error| lifecycle_response_with_partial_hierarchy(state, error),
+            |summary| {
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
+                Response::CreatedSession(Box::new(summary))
+            },
+        ),
         Request::KillSession { session } => state
             .kill_session(session, requested_kill_grace())
             .map_or_else(error_for_lifecycle, |_| Response::Ok),

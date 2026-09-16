@@ -6,7 +6,10 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{
+    Arc, Condvar, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -289,6 +292,7 @@ pub struct Session {
     terminate_lock: Mutex<()>,
     reader_done: Mutex<bool>,
     reader_changed: Condvar,
+    exit_ownership_resolved: AtomicBool,
     handles: Mutex<JoinHandles>,
 }
 
@@ -517,6 +521,7 @@ impl Session {
             writer: Mutex::new(writer),
             pgid,
             tty,
+            exit_ownership_resolved: AtomicBool::new(false),
             terminate_lock: Mutex::new(()),
             reader_done: Mutex::new(false),
             reader_changed: Condvar::new(),
@@ -650,6 +655,24 @@ impl Session {
             .as_deref()
             .map(|tty| attached_groups(tty, self.pgid))
             .unwrap_or_default()
+    }
+
+    /// Whether the owned PTY and every still-attached job-control group are gone.
+    ///
+    /// A leader's exit alone is not ownership proof: interactive shells can
+    /// leave jobs in separate process groups on the same controlling terminal.
+    pub(crate) fn ownership_resolved(&self) -> bool {
+        self.exit_ownership_resolved.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn capture_exit_ownership(&self) {
+        let Some(tty) = self.tty.as_deref() else {
+            return;
+        };
+        if let Ok(groups) = attached_groups_checked(tty, self.pgid) {
+            self.exit_ownership_resolved
+                .store(groups.is_empty(), Ordering::Release);
+        }
     }
 
     pub fn set_paused(&self, paused: bool) -> Result<bool> {

@@ -237,7 +237,6 @@ t=$(rtk proxy "$c" terminal create --project consigint --workspace auth-handoff 
 rtk proxy "$c" terminal list --json
 rtk proxy "$c" terminal send "$t" --text "printf 'CUA_%s\n' BACKGROUND_OK"
 rtk proxy "$c" terminal read "$t" --json
-```
 
 Confirm the new sidebar row and `CUA_BACKGROUND_OK` in the read result. The original terminal must remain selected. If output has not arrived, read again after observing progress. Reads contain the current screen only.
 
@@ -249,7 +248,7 @@ Return to the original `local` shell, where `$c` and `$t` are still set:
 rtk proxy "$c" terminal close "$t" --json
 ```
 
-Wait for `{"ok":true}` and confirm the sidebar row remains inactive. Closing a shell can take several seconds.
+Wait for `{"ok":true}` and confirm the sidebar row disappears. Closing a shell can take several seconds.
 
 ## 5. Verify cleanup and report evidence
 

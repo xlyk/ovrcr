@@ -1491,7 +1491,7 @@ fn workspace_remove_succeeds_after_directory_deleted() {
 }
 
 #[test]
-fn shutdown_without_kill_rejects_exited_record() {
+fn shutdown_without_kill_allows_retained_exited_records() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.ready("feature/exited-record");
@@ -1502,19 +1502,24 @@ fn shutdown_without_kill_rejects_exited_record() {
     );
     let exited = fixture.create_session("exits", vec!["sh".into(), "-c".into(), "exit 0".into()]);
     fixture.wait_exited(exited);
-    // An exited record still awaiting removal keeps the final screen; a
-    // non-kill shutdown must refuse just as it does for a live session.
-    assert!(matches!(
-        fixture.request(Request::Shutdown { kill: false }),
-        Response::Error {
-            code: ErrorCode::SessionsRemain,
-            ..
-        }
-    ));
     assert_eq!(
+        fixture.request(Request::Shutdown { kill: false }),
+        Response::Ok,
+        "retained exited rows do not block a non-kill shutdown",
+    );
+    fixture.join();
+    fixture.start();
+    assert_eq!(
+        fixture.request(Request::AcknowledgeSessionStopped {
+            session: exited,
+            expected_run: ovrcr_protocol::SessionRunId(1),
+        }),
+        Response::Ok,
+    );
+    assert!(matches!(
         fixture.request(Request::RemoveSession { session: exited }),
         Response::Ok
-    );
+    ));
     assert_eq!(
         fixture.request(Request::Shutdown { kill: false }),
         Response::Ok
@@ -4760,7 +4765,8 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
     fixture.ready("feature/fifty-sessions");
-    let sessions = (0..50)
+    // `ready` creates one implicit shell, so 49 named rows fill all 50 live slots.
+    let sessions = (0..49)
         .map(|index| {
             fixture.create_session(
                 &format!("waiting-{index}"),
@@ -4814,8 +4820,8 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
         .collect::<Vec<_>>();
     assert_eq!(
         pgids.len(),
-        50,
-        "all 50 managed process groups must be saved"
+        sessions.len(),
+        "all named managed process groups must be saved",
     );
     assert!(pgids.iter().all(|pgid| *pgid > 1 && group_exists(*pgid)));
 
@@ -10451,11 +10457,9 @@ fn codex_unread_real_cli_and_dashboard_review_preserve_native_reporting() {
     );
     let text = cli_with_output(bin, &config, &fixture.socket, &["terminal", "list"]);
     assert!(text.status.success());
-    assert!(
-        String::from_utf8_lossy(&text.stdout)
-            .lines()
-            .any(|line| line.contains("codex-hooks") && line.ends_with("unread"))
-    );
+    assert!(String::from_utf8_lossy(&text.stdout).lines().any(|line| {
+        line.contains("codex-hooks") && line.split('\t').any(|field| field == "unread")
+    }));
 
     let mut dashboard = DesktopAlertDashboard::start(&fixture, None);
     dashboard.select("codex-hooks", "CODEX_CALLBACK=1");
@@ -10629,9 +10633,17 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
         !registry.projects.is_empty(),
         "restart uses the same saved configuration"
     );
+    let restored = sessions
+        .iter()
+        .find(|session| session.id == second.id)
+        .expect("retained stopped row survives server restart");
     assert!(
-        sessions.is_empty(),
-        "new server cannot resurrect live terminals or unread results from saved configuration"
+        restored.unread.is_none(),
+        "Unread is runtime state, not retained metadata"
+    );
+    assert!(
+        !restored.phase.is_live(),
+        "restart must not resurrect a PTY"
     );
 }
 

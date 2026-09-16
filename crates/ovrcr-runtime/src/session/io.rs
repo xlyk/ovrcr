@@ -41,7 +41,15 @@ pub(super) fn wait_for_child(
     session: Arc<Session>,
     events: ReportingSender<SessionEvent>,
 ) {
-    let phase = match child.wait() {
+    let phase = match (|| -> Result<_> {
+        loop {
+            session.capture_exit_ownership();
+            if let Some(status) = child.try_wait()? {
+                break Ok(status);
+            }
+            thread::park_timeout(Duration::from_millis(5));
+        }
+    })() {
         Ok(status) => SessionPhase::Exited {
             code: Some(status.exit_code()),
             signal: status.signal().map(str::to_owned),

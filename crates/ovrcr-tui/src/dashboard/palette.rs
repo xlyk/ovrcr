@@ -1351,7 +1351,6 @@ impl Dashboard {
                 }
                 Page::Confirm { request, .. } => {
                     if let Some(request) = request.clone() {
-                        let request = self.current_run_request(request);
                         action = self.palette_submit(&mut palette, request);
                     } else {
                         self.palette = None;
@@ -1837,32 +1836,6 @@ impl Dashboard {
             }
         }
         Some(Vec::new())
-    }
-
-    fn current_run_request(&self, request: Request) -> Request {
-        match request {
-            Request::ReopenSession {
-                session,
-                expected_run,
-                acknowledge_stopped,
-            } => Request::ReopenSession {
-                session,
-                expected_run: find_session(self, session)
-                    .map(|summary| summary.run)
-                    .unwrap_or(expected_run),
-                acknowledge_stopped,
-            },
-            Request::AcknowledgeSessionStopped {
-                session,
-                expected_run,
-            } => Request::AcknowledgeSessionStopped {
-                session,
-                expected_run: find_session(self, session)
-                    .map(|summary| summary.run)
-                    .unwrap_or(expected_run),
-            },
-            other => other,
-        }
     }
 
     fn find_uncertain_session(&self, launch: &CreateSessionRequest) -> Option<SessionId> {
