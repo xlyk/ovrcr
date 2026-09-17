@@ -918,6 +918,18 @@ mod wire_snapshot {
             "ConversationReference::Omp".into(),
             encode(&crate::ConversationReference::Omp(extension)),
         ));
+        all.push((
+            "ConversationReference::Codex".into(),
+            encode(&crate::ConversationReference::Codex(
+                crate::CodexConversation {
+                    conversation: "native".into(),
+                    executable: "/bin/provider".into(),
+                    history: Some("/history.jsonl".into()),
+                    config_dir: "/config".into(),
+                    options: vec![],
+                },
+            )),
+        ));
         all
     }
 
@@ -1085,6 +1097,10 @@ mod wire_snapshot {
         (
             "ConversationReference::Omp",
             "02066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "ConversationReference::Codex",
+            "03066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
         ),
     ];
 

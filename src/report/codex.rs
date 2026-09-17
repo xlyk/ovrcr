@@ -85,12 +85,65 @@ pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandle
     if let Some(reason) = unavailable {
         reporter.unavailable("Codex", reason);
     }
-    reporter.handler(Hooks { active: None })
+    let recovery = (|| {
+        let executable = std::path::PathBuf::from(argv.first()?);
+        let executable = if executable.is_absolute() {
+            executable
+        } else {
+            std::env::split_paths(&std::env::var_os("PATH")?)
+                .map(|directory| directory.join(&executable))
+                .find(|path| path.is_absolute() && path.is_file())?
+        };
+        Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable,
+            history: None,
+            config_dir: ovrcr_runtime::codex_recovery::config_dir().ok()?,
+            options: ovrcr_runtime::codex_recovery::launch_options(argv).ok()?,
+        })
+    })();
+    reporter.handler(Hooks {
+        active: None,
+        recovery,
+    })
 }
 
 /// Codex's frames: one open response cycle at a time, identified by its session and turn.
 struct Hooks {
     active: Option<String>,
+    recovery: Option<ovrcr_protocol::CodexConversation>,
+}
+
+impl Hooks {
+    fn retain(
+        &self,
+        reporter: &mut Reporter,
+        payload: &serde_json::Value,
+        session: &str,
+        deadline: Instant,
+    ) {
+        let Some(mut reference) = self.recovery.clone() else {
+            return;
+        };
+        reference.conversation = session.into();
+        reference.history = payload["transcript_path"]
+            .as_str()
+            .filter(|path| Path::new(path).is_absolute())
+            .map(Into::into);
+        if ovrcr_runtime::codex_recovery::validate(&reference).is_err() {
+            reporter.invalidate_conversation(deadline);
+            return;
+        }
+        if ovrcr_runtime::codex_recovery::validate_history(&reference).is_err() {
+            reference.history = None;
+        }
+        // Recovery persistence is independent of activity publication. Reporter
+        // retries a failed durable write with the same certified binding.
+        reporter.retain_conversation(
+            ovrcr_protocol::ConversationReference::Codex(reference),
+            deadline,
+        );
+    }
 }
 
 impl reporter::Frames for Hooks {
@@ -123,7 +176,7 @@ impl reporter::Frames for Hooks {
         }
         if !matches!(
             event,
-            "UserPromptSubmit" | "Stop" | "Interrupt" | "SessionEnd"
+            "SessionStart" | "UserPromptSubmit" | "Stop" | "Interrupt" | "SessionEnd"
         ) {
             return reporter::IGNORED.to_vec();
         }
@@ -133,6 +186,20 @@ impl reporter::Frames for Hooks {
         else {
             return reporter::IGNORED.to_vec();
         };
+        if event == "SessionStart" {
+            if payload["source"] != "startup" || self.recovery.is_none() {
+                return reporter::IGNORED.to_vec();
+            }
+            if self.active.is_some() {
+                reporter.invalidate_conversation(deadline);
+                return reporter::UNAVAILABLE.to_vec();
+            }
+            if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
+                return unavailable;
+            }
+            self.retain(reporter, payload, session, deadline);
+            return reporter::ACCEPTED.to_vec();
+        }
         let Some(turn) = payload["turn_id"]
             .as_str()
             .filter(|s| ovrcr_protocol::validate_agent_id(s).is_ok())
@@ -166,6 +233,7 @@ impl reporter::Frames for Hooks {
             if let Some(unavailable) = reporter.bind_or_disable(session, deadline, false) {
                 return unavailable;
             }
+            self.retain(reporter, payload, session, deadline);
             self.active = Some(identity);
             AgentActivity::Busy
         } else {
@@ -198,7 +266,14 @@ mod tests {
 
     fn start() -> (Hooks, Reporter, Supervisor) {
         let (reporter, supervisor) = Supervisor::reporter(AgentProvider::Codex);
-        (Hooks { active: None }, reporter, supervisor)
+        (
+            Hooks {
+                active: None,
+                recovery: None,
+            },
+            reporter,
+            supervisor,
+        )
     }
     fn deadline() -> Instant {
         Instant::now() + std::time::Duration::from_secs(10)
@@ -219,6 +294,108 @@ mod tests {
             .into_iter()
             .map(|(generation, _, state, turn, quality)| (generation, state, turn, quality))
             .collect()
+    }
+
+    #[test]
+    fn recovery_uses_only_certified_root_identity_and_missing_replacement_history_cannot_reopen_old_identity()
+     {
+        use crate::report::reporter::scripted::Observed;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("exact.jsonl");
+        let a = "01a08e5c-7480-7052-9964-9224aadebef0";
+        let b = "01a08e94-0deb-76c3-a2b5-540c4874a53f";
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{a}\",\"source\":\"cli\"}}}}\n"
+            ),
+        )
+        .unwrap();
+        let (mut hooks, mut reporter, supervisor) = start();
+        hooks.recovery = Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable: "/bin/codex".into(),
+            history: None,
+            config_dir: root.path().into(),
+            options: vec![],
+        });
+        let frame = |id: &str, child: bool| {
+            serde_json::to_vec(&serde_json::json!({
+                "provider": "codex", "origin": "codex-hook", "payload": {
+                    "hook_event_name": "SessionStart", "source": "startup", "session_id": id,
+                    "transcript_path": path, "agent_id": if child { "child" } else { "" },
+                }
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            hooks.frame(&mut reporter, &frame(a, false), false, deadline()),
+            reporter::IGNORED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame(a, true)),
+            reporter::IGNORED
+        );
+        assert!(reporter.binding().is_none());
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame(a, false)),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &frame(b, false)),
+            reporter::ACCEPTED
+        );
+        let observed = supervisor.observed();
+        assert!(
+            Supervisor::activity(&observed).is_empty(),
+            "startup must not invent Ready"
+        );
+        let retained: Vec<_> = observed
+            .into_iter()
+            .filter_map(|event| match event {
+                Observed::Retain {
+                    reference: ovrcr_protocol::ConversationReference::Codex(reference),
+                    ..
+                } => Some(reference),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(retained.len(), 2);
+        assert_eq!(retained[0].conversation, a);
+        assert_eq!(retained[0].history, Some(path));
+        assert_eq!(retained[1].conversation, b);
+        assert_eq!(
+            retained[1].history, None,
+            "mismatched file retained an old recoverable identity"
+        );
+    }
+
+    #[test]
+    fn non_resumable_reporting_identity_still_produces_ready() {
+        let (mut hooks, mut reporter, supervisor) = start();
+        hooks.recovery = Some(ovrcr_protocol::CodexConversation {
+            conversation: String::new(),
+            executable: "/bin/codex".into(),
+            history: None,
+            config_dir: "/config".into(),
+            options: vec![],
+        });
+        assert_eq!(
+            drive(
+                &mut hooks,
+                &mut reporter,
+                &hook("UserPromptSubmit", "root", "t1")
+            ),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            drive(&mut hooks, &mut reporter, &hook("Stop", "root", "t1")),
+            reporter::ACCEPTED
+        );
+        assert_eq!(
+            states(supervisor).last().unwrap().1,
+            AgentActivity::ResponseReady
+        );
     }
 
     #[test]
