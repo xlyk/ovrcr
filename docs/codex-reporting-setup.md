@@ -1,6 +1,6 @@
 # Codex response readiness setup
 
-**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using exact Codex CLI **0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
+**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using stable Codex CLI **>=0.153.0, <0.154.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
 That acceptance used a disposable fixture. It does not establish that your installed OVRCR binary, running server, Codex configuration or native hook trust is ready. Follow [How to install Codex readiness reporting](codex-ready-installation.md) to prepare an exact-revision build, review the configuration change, protect existing sessions during a server transition, and verify the installed result.
 
@@ -63,7 +63,7 @@ command = "exec '/absolute/path/to/ovrcr' report codex --stdin"
 
 Keep these command hooks synchronous and use direct `exec` so receiver process attribution reaches the native Codex parent. The helper returns successful exit with empty stdout as a native no-op response, including outside a managed launch. It never returns an approval decision. Review and individually trust the five OVRCR reporters through Codex's native UI. Preserve the existing trust and enablement of unrelated JSON and plugin hooks, including any that still need review; trusting the OVRCR reporters does not establish that those other hooks ran. Setup and doctor do not bypass trust or change permission policy. To remove this setup, remove only the exact added reporter handlers, preserving other handlers and their declaration order.
 
-Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. `probe_status: supported` establishes exact-version compatibility. `configuration.status: supplied_file_supported` establishes the presence of expected synchronous commands in that supplied file. The `effective_configuration`, `hook_trust` and `delivery` fields remain `unverified`, including when those checks pass. Its `release_status` names the accepted implementation contract; it is not an installed-session result. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot and complete the [native installation check](codex-ready-installation.md#verify-the-installed-path-natively).
+Doctor invokes only the selected executable's bounded `--version` probe. Its default executable is `codex`; `--executable PATH` overrides it. It neither needs a running OVRCR server nor starts a provider conversation or reads credentials. `probe_status: supported` establishes stable patch-range compatibility. `configuration.status: supplied_file_supported` establishes the presence of expected synchronous commands in that supplied file. The `effective_configuration`, `hook_trust` and `delivery` fields remain `unverified`, including when those checks pass. Its `release_status` names the accepted implementation contract; it is not an installed-session result. `--session` does not inspect a Codex session; use `ovrcr session usage ID` for the current server snapshot and complete the [native installation check](codex-ready-installation.md#verify-the-installed-path-natively).
 
 ## What the indicator means
 
@@ -103,7 +103,7 @@ Initial resume, picker/last, fork, exec, remote and unknown versions/options are
 
 ## Retained conversation recovery
 
-Managed fresh Codex CLI **0.153.0** launches capture the exact conversation UUID
+Managed fresh compatible Codex CLI **0.153.x** launches capture the exact conversation UUID
 and hook-supplied history path at an authenticated root startup or prompt. The
 bounded native `session_meta` header must match the UUID and CLI source. Missing
 or mismatched history leaves that identity unavailable; it never selects an older
@@ -154,3 +154,7 @@ The [final verification record](../research/codex-response-ready-acceptance/fina
 ## Earlier broader investigation
 
 The [history invalidation probe](../research/codex-reporting-acceptance/history-invalidation.md) demonstrated that native backtracking can switch lineage without an observation hook until the next prompt. The [source contract](../research/codex-reporting-acceptance/source-contract.md) therefore remains blocked for continuous foreground identity and ongoing rollout metrics. Its earlier prohibition on Tasks 2–3 applies to that superseded broader scope. The separately approved hooks-first milestone uses last-observed-turn semantics and no transcript route. Historical attempts and failures remain evidence; they are not release acceptance for this implementation.
+
+## Version compatibility
+
+Doctor reports `compatible_versions`, `tested_versions`, `version_compatible` and `version_tested` separately. Later stable 0.153.x patches are eligible without claiming new native acceptance. New minor/major releases require review. See [provider version policy](agent-versions.md).

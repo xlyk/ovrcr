@@ -36,7 +36,7 @@ Native automatic-recovery acceptance belongs to #127, separate from development.
 
 ## Codex adapter
 
-Exact Codex CLI 0.153.0 managed fresh launches retain authenticated root startup
+Compatible stable Codex CLI 0.153.x managed fresh launches retain authenticated root startup
 or prompt hook identity and the exact `transcript_path`, checked against the
 bounded `session_meta` header. No history discovery or latest-session fallback is
 used. Resume invokes `codex resume UUID` through the existing managed launcher.

@@ -11,7 +11,13 @@ use std::{
     time::Instant,
 };
 
-pub const PINNED_VERSION: &str = "0.153.0";
+pub fn version(bytes: &[u8]) -> Option<&str> {
+    let value = std::str::from_utf8(bytes)
+        .ok()?
+        .strip_prefix("codex-cli ")?
+        .strip_suffix('\n')?;
+    super::versions::parse(value).map(|_| value)
+}
 
 /// Fresh interactive grammar only. Provider arguments are never rewritten.
 pub fn eligible_argv(argv: &[OsString]) -> bool {
@@ -69,7 +75,10 @@ pub fn eligible_argv(argv: &[OsString]) -> bool {
     true
 }
 pub fn supported_version(executable: &OsStr) -> bool {
-    super::admission::probe_version(executable).as_deref() == Some(b"codex-cli 0.153.0\n")
+    super::admission::probe_version(executable)
+        .as_deref()
+        .and_then(version)
+        .is_some_and(|v| super::versions::CODEX.accepts(v))
 }
 pub fn receiver(lease: Option<InvocationLease>, argv: &[OsString]) -> HookHandler {
     let unavailable = reporter::preflight(

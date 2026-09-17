@@ -7,6 +7,7 @@ pub mod extension;
 pub mod omp;
 pub mod pi;
 pub mod reporter;
+pub mod versions;
 
 use crate::protocol::client;
 use crate::protocol::{AgentReport, AgentUpdate, ErrorCode, Request, Response};
