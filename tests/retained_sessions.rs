@@ -160,7 +160,11 @@ fn wait_output(live: &Live, id: &str, marker: &str) {
         if String::from_utf8_lossy(&output.stdout).contains(marker) {
             return;
         }
-        assert!(Instant::now() < deadline, "missing output marker {marker}");
+        assert!(
+            Instant::now() < deadline,
+            "missing output marker {marker}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         std::thread::yield_now();
     }
 }
@@ -172,8 +176,20 @@ fn claude_reopen_retains_exact_conversation_before_another_callback() {
     }
 }
 
-fn assert_claude_recovery(initial_resume: bool) {
+fn install_claude_fixture(live: &Live, native: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
+    let helper = std::env::current_exe().unwrap();
+    // Only the provider is controlled; managed launch, Reporter, server and PTY are real.
+    let quote =
+        |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2.1.268 (Claude Code)\\n'; exit 0; fi\nexport RETAINED_CLAUDE_ROOT={} RETAINED_CLAUDE_SOURCE=\"$1\" RETAINED_CLAUDE_ID=\"$2\"\nprintf '%s\\n' \"$@\" >> \"$RETAINED_CLAUDE_ROOT/argv\"\nexec {} --ignored --exact retained_claude_native_helper --nocapture\n",
+        quote(live.root.path()), quote(&helper),
+    )).unwrap();
+    std::fs::set_permissions(native, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+fn assert_claude_recovery(initial_resume: bool) {
     let live = Live::idle().bounded();
     let config_dir = live.root.path().join("claude-config");
     std::fs::create_dir(&config_dir).unwrap();
@@ -187,16 +203,7 @@ fn assert_claude_recovery(initial_resume: bool) {
         .unwrap()
         .path
         .clone();
-    let helper = std::env::current_exe().unwrap();
-    // The script is an executable fixture only; the production managed launcher,
-    // Reporter, server and PTY all run normally.
-    let quote =
-        |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
-    std::fs::write(&native, format!(
-        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2.1.268 (Claude Code)\\n'; exit 0; fi\nexport RETAINED_CLAUDE_ROOT={} RETAINED_CLAUDE_SOURCE=\"$1\" RETAINED_CLAUDE_ID=\"$2\"\nprintf '%s\\n' \"$@\" >> \"$RETAINED_CLAUDE_ROOT/argv\"\nexec {} --ignored --exact retained_claude_native_helper --nocapture\n",
-        quote(live.root.path()), quote(&helper),
-    )).unwrap();
-    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    install_claude_fixture(&live, &native);
     let mut launch = vec![
         live.executable.to_str().unwrap(),
         "agent",
@@ -353,6 +360,510 @@ fn assert_claude_recovery(initial_resume: bool) {
     );
 }
 
+fn prepare_interrupted_claude() -> (Live, u64, u64) {
+    let live = Live::idle().bounded();
+    let config_dir = live.root.path().join("claude-config");
+    std::fs::create_dir(&config_dir).unwrap();
+    live.start_binary_env(&[("CLAUDE_CONFIG_DIR", config_dir.as_os_str())]);
+    live.ready("feature/automatic-recovery");
+    let native = live.root.path().join("claude");
+    install_claude_fixture(&live, &native);
+    let created = create_terminal(
+        &live,
+        "automatic-agent",
+        &[
+            live.executable.to_str().unwrap(),
+            "agent",
+            "run",
+            "claude",
+            "--",
+            native.to_str().unwrap(),
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let run = created["run"].as_u64().unwrap();
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+    json(
+        &live,
+        &["terminal", "send", &id.to_string(), "--text", "attach"],
+    );
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_ATTACHED");
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    // Simulate an interrupted run from another boot, after stopping all fixture-owned
+    // processes. Discard the diagnostic produced by that deliberate fixture cleanup.
+    let current = ovrcr::retained::current_boot_id().expect("native boot identity");
+    let other = if current.starts_with('a') { "b" } else { "a" }.to_owned() + &current[1..];
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    assert_eq!(
+        database
+            .execute(
+                "UPDATE retained_sessions SET stopped = 0, failure = NULL, boot_id = ?1 WHERE id = ?2",
+                rusqlite::params![other, i64::try_from(id).unwrap()]
+            )
+            .unwrap(),
+        1
+    );
+    (live, id, run)
+}
+
+fn restart_claude_fixture(live: &Live) {
+    let config_dir = live.root.path().join("claude-config");
+    live.start_binary_env(&[("CLAUDE_CONFIG_DIR", config_dir.as_os_str())]);
+}
+
+#[test]
+fn displayed_interrupted_claude_recovers_through_real_dashboard_and_coalesces_duplicates() {
+    use ovrcr::protocol::{
+        Request, Response, ServerMessage, SessionId, SessionRunId, TerminalSize, client,
+        read_frame, write_frame,
+    };
+    let (live, id, run) = prepare_interrupted_claude();
+    let initial_args = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    let conversation = initial_args.lines().nth(1).unwrap();
+    restart_claude_fixture(&live);
+    assert!(
+        live.session_groups().is_empty(),
+        "inventory startup launched work"
+    );
+    let mut stream = ovrcr::protocol::connect_server(&live.socket).unwrap();
+    stream
+        .set_read_timeout(Some(live::wait_deadline()))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(live::wait_deadline()))
+        .unwrap();
+    let Response::Hierarchy(hierarchy) =
+        client::request(&mut stream, 1000, Request::DashboardHello).unwrap()
+    else {
+        panic!("dashboard handshake")
+    };
+    let mut dashboard = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(id));
+    dashboard.request_view_at(ratatui::layout::Rect::new(0, 0, 120, 40));
+    let requests = dashboard.drain_outbox();
+    let automatic = requests
+        .iter()
+        .find(|request| matches!(request.request, Request::RecoverSession { .. }))
+        .unwrap()
+        .request
+        .clone();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| matches!(request.request, Request::RecoverSession { .. }))
+            .count(),
+        1
+    );
+    for request in requests {
+        write_frame(&mut stream, &request).unwrap();
+    }
+    // Queue duplicates before consuming any launch receipt. The synchronous connection
+    // imposes the exact recover -> explicit -> recover ordering, not a sleep-based race.
+    for (request_id, request) in [
+        (
+            1001,
+            Request::ReopenSession {
+                session: SessionId(id),
+                expected_run: SessionRunId(run),
+                acknowledge_stopped: false,
+            },
+        ),
+        (1002, automatic.clone()),
+    ] {
+        write_frame(
+            &mut stream,
+            &ovrcr::protocol::ClientMessage {
+                request_id,
+                request,
+            },
+        )
+        .unwrap();
+    }
+    let mut duplicate_receipts = 0;
+    let deadline = Instant::now() + live::wait_deadline();
+    let mut replacement_screen = false;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "replacement view was not acknowledged"
+        );
+        let message: ServerMessage = read_frame(&mut stream).unwrap();
+        if let ServerMessage::Response {
+            request_id: 1001 | 1002,
+            response,
+        } = &message
+        {
+            let Response::CreatedSession(summary) = response else {
+                panic!("duplicate: {response:?}")
+            };
+            assert_eq!(summary.run, SessionRunId(run + 1));
+            duplicate_receipts += 1;
+        }
+        if matches!(&message, ServerMessage::Response { response: Response::Screen { session, run: current, .. }, .. } if *session == SessionId(id) && *current == SessionRunId(run + 1))
+        {
+            replacement_screen = true;
+        }
+        let acknowledged = replacement_screen
+            && matches!(
+                &message,
+                ServerMessage::Response {
+                    response: Response::Ok,
+                    ..
+                }
+            );
+        for request in dashboard.handle_server_message(message) {
+            write_frame(&mut stream, &request).unwrap();
+        }
+        // The production event loop requests the current view after each message batch.
+        dashboard.request_view_at(ratatui::layout::Rect::new(0, 0, 120, 40));
+        for request in dashboard.drain_outbox() {
+            write_frame(&mut stream, &request).unwrap();
+        }
+        if acknowledged {
+            break;
+        }
+    }
+    assert_eq!(duplicate_receipts, 2);
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+    assert_eq!(
+        std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+        format!("{initial_args}--resume\n{conversation}\n")
+    );
+    // Force delayed duplicates after publication, including an explicit request from another client.
+    for request in [
+        automatic.clone(),
+        Request::ReopenSession {
+            session: SessionId(id),
+            expected_run: SessionRunId(run),
+            acknowledge_stopped: false,
+        },
+    ] {
+        let Response::CreatedSession(summary) = live.request(request) else {
+            panic!("duplicate did not reuse run")
+        };
+        assert_eq!(summary.run, SessionRunId(run + 1));
+    }
+    // Reconnecting and redrawing the live row does not request another launch.
+    let Response::Hierarchy(hierarchy) = live.request(Request::List) else {
+        panic!("hierarchy")
+    };
+    let mut reconnected = ovrcr::tui::Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    reconnected.install_hierarchy(hierarchy);
+    reconnected.install_focus(SessionId(id));
+    reconnected.request_view_at(ratatui::layout::Rect::new(0, 0, 120, 40));
+    assert!(
+        reconnected
+            .drain_outbox()
+            .iter()
+            .all(|r| !matches!(r.request, Request::RecoverSession { .. }))
+    );
+    json(&live, &["terminal", "close", &id.to_string()]);
+    let response = live.request(automatic);
+    assert!(!matches!(response, Response::CreatedSession(ref row) if row.phase.is_live()));
+    assert!(
+        live.session_groups().is_empty(),
+        "late display restarted closed session"
+    );
+}
+
+#[test]
+fn automatic_recovery_failure_requires_explicit_retry_even_after_reconnect() {
+    use ovrcr::protocol::{Request, Response, SessionId, SessionRunId};
+    let (live, id, run) = prepare_interrupted_claude();
+    let arguments = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    let conversation = arguments.lines().nth(1).unwrap();
+    let history = live.root.path().join(format!("{conversation}.jsonl"));
+    let displaced = history.with_extension("missing");
+    std::fs::rename(&history, &displaced).unwrap();
+    restart_claude_fixture(&live);
+    let automatic = Request::RecoverSession {
+        session: SessionId(id),
+        expected_run: SessionRunId(run),
+    };
+    assert!(matches!(
+        live.request(automatic.clone()),
+        Response::Error { .. }
+    ));
+    std::fs::rename(displaced, history).unwrap();
+    assert!(matches!(
+        live.request(automatic.clone()),
+        Response::Error { .. }
+    ));
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert!(
+        row["recovery"]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("history")
+    );
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    restart_claude_fixture(&live);
+    assert!(matches!(live.request(automatic), Response::Error { .. }));
+    assert_eq!(
+        std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+        arguments
+    );
+    assert!(matches!(
+        live.request(Request::ReopenSession {
+            session: SessionId(id),
+            expected_run: SessionRunId(run),
+            acknowledge_stopped: false
+        }),
+        Response::CreatedSession(_)
+    ));
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+}
+
+#[test]
+fn automatic_recovery_rechecks_ownership_disposition_and_identity_on_server() {
+    use ovrcr::protocol::{Request, Response, SessionId, SessionRunId};
+    let (live, id, run) = prepare_interrupted_claude();
+    let arguments = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    let current = ovrcr::retained::current_boot_id().unwrap();
+    let sql_id = i64::try_from(id).unwrap();
+    let database_path = ovrcr::config::database_path(&live.config);
+    let saved_boot: String = rusqlite::Connection::open(&database_path)
+        .unwrap()
+        .query_row(
+            "SELECT boot_id FROM retained_sessions WHERE id = ?1",
+            [sql_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for case in [
+        "same boot",
+        "missing boot",
+        "malformed boot",
+        "stopped",
+        "archived",
+        "unarchived",
+        "invalid identity",
+    ] {
+        let database = rusqlite::Connection::open(&database_path).unwrap();
+        database.execute("UPDATE retained_sessions SET stopped = 0, disposition = 0, boot_id = ?1 WHERE id = ?2", rusqlite::params![saved_boot, sql_id]).unwrap();
+        match case {
+            "same boot" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET boot_id = ?1 WHERE id = ?2",
+                        rusqlite::params![current, sql_id],
+                    )
+                    .unwrap();
+            }
+            "missing boot" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET boot_id = NULL WHERE id = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            "malformed boot" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET boot_id = 'not-a-boot' WHERE id = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            "stopped" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET stopped = 1 WHERE id = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            "archived" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET disposition = 1 WHERE id = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            "unarchived" => {
+                database
+                    .execute(
+                        "UPDATE retained_sessions SET disposition = 2 WHERE id = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            "invalid identity" => {
+                database
+                    .execute(
+                        "UPDATE agent_conversations SET invalid = 1 WHERE session = ?1",
+                        [sql_id],
+                    )
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        drop(database);
+        restart_claude_fixture(&live);
+        assert!(
+            matches!(
+                live.request(Request::RecoverSession {
+                    session: SessionId(id),
+                    expected_run: SessionRunId(run)
+                }),
+                Response::Error { .. }
+            ),
+            "{case}"
+        );
+        assert!(live.session_groups().is_empty(), "{case}");
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+    }
+    assert_eq!(
+        std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+        arguments
+    );
+}
+
+#[test]
+fn attached_agent_natural_exit_stays_explicit_after_a_verified_reboot() {
+    use ovrcr::protocol::{Request, Response, SessionId, SessionRunId};
+    let (live, id, run) = prepare_interrupted_claude();
+    let database_path = ovrcr::config::database_path(&live.config);
+    let sql_id = i64::try_from(id).unwrap();
+    let prior_boot: String = rusqlite::Connection::open(&database_path)
+        .unwrap()
+        .query_row(
+            "SELECT boot_id FROM retained_sessions WHERE id = ?1",
+            [sql_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    restart_claude_fixture(&live);
+    assert!(matches!(
+        live.request(Request::RecoverSession {
+            session: SessionId(id),
+            expected_run: SessionRunId(run)
+        }),
+        Response::CreatedSession(_)
+    ));
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+    json(
+        &live,
+        &["terminal", "send", &id.to_string(), "--text", "attach"],
+    );
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_ATTACHED");
+    json(
+        &live,
+        &["terminal", "send", &id.to_string(), "--text", "exit"],
+    );
+    wait_phase(&live, id, "exited");
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let database = rusqlite::Connection::open(database_path).unwrap();
+    database
+        .execute(
+            "UPDATE retained_sessions SET boot_id = ?1 WHERE id = ?2",
+            rusqlite::params![prior_boot, sql_id],
+        )
+        .unwrap();
+    drop(database);
+    restart_claude_fixture(&live);
+    assert!(
+        matches!(
+            live.request(Request::RecoverSession {
+                session: SessionId(id),
+                expected_run: SessionRunId(run + 1)
+            }),
+            Response::Error { .. }
+        ),
+        "natural exit was mistaken for interrupted work after reboot"
+    );
+    assert!(live.session_groups().is_empty());
+}
+
+#[test]
+fn full_capacity_records_automatic_failure_without_retrying_when_a_slot_opens() {
+    use ovrcr::protocol::{
+        CreateSessionRequest, Request, Response, SessionId, SessionKind, SessionRunId,
+    };
+    let (live, id, run) = prepare_interrupted_claude();
+    restart_claude_fixture(&live);
+    let mut first = None;
+    for index in 0..50 {
+        let Response::CreatedSession(session) =
+            live.request(Request::CreateSession(CreateSessionRequest {
+                project: live::PROJECT.into(),
+                workspace: live::WORKSPACE.into(),
+                name: format!("capacity-{index}"),
+                label: None,
+                argv: vec!["/bin/sh".into()],
+                kind: SessionKind::Terminal,
+            }))
+        else {
+            panic!("slot {index} not admitted")
+        };
+        first.get_or_insert(session.id);
+        let pgid = unsafe { libc::getpgid(session.pid.unwrap() as i32) };
+        assert!(pgid > 1);
+        live.own_group(pgid);
+    }
+    let automatic = Request::RecoverSession {
+        session: SessionId(id),
+        expected_run: SessionRunId(run),
+    };
+    assert!(matches!(
+        live.request(automatic.clone()),
+        Response::Error { .. }
+    ));
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == id)
+        .unwrap();
+    assert!(
+        row["recovery"]["failure"].is_string(),
+        "capacity must leave visible Retry state: {row}"
+    );
+    assert!(matches!(
+        live.request(Request::KillSession {
+            session: first.unwrap()
+        }),
+        Response::Ok
+    ));
+    assert!(
+        matches!(live.request(automatic), Response::Error { .. }),
+        "free capacity must not retry automatically"
+    );
+    assert!(matches!(
+        live.request(Request::ReopenSession {
+            session: SessionId(id),
+            expected_run: SessionRunId(run),
+            acknowledge_stopped: false
+        }),
+        Response::CreatedSession(_)
+    ));
+    track_groups(&live);
+    wait_output(&live, &id.to_string(), "RETAINED_CLAUDE_READY");
+}
+
 // Reproduce the metadata schema written by the previous PR revision. Both
 // offline reads and the next production startup must preserve its exact state.
 fn restore_legacy_claude_schema(live: &Live) {
@@ -394,6 +905,9 @@ fn retained_claude_native_helper() {
     println!("RETAINED_CLAUDE_READY");
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
+        if line == "exit" {
+            break;
+        }
         if line == "attach" || line == "clear" {
             let payload = serde_json::to_vec(&serde_json::json!({
                 "hook_event_name": "SessionStart", "source": if line == "clear" { "clear" } else { source },

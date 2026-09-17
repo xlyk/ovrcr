@@ -105,9 +105,15 @@ starts a fresh shell in the same session row. It does not keep the previous
 process output. `--ack-stopped` is required when the inventory says previous
 agent or background processes may still be running; Retry is not that
 confirmation. `acknowledge-stopped` records that confirmation without launching
-a session, but starts the server on demand when it is not running. Agent rows
-cannot be resumed. Reopen starts the server if it is not running. With `--json`,
+a session, but starts the server on demand when it is not running. Certified Agent
+rows use their installed provider adapter to resume the exact retained conversation
+without a new prompt (currently Claude only). Reopen starts the server if it is not running. With `--json`,
 reopen returns the terminal object and rename returns `{"ok":true}`.
+
+CLI inventory remains passive. The Dashboard's first visible display can recover
+an eligible interrupted Agent after a verified reboot; it never acknowledges
+uncertain ownership. Failed automatic attempts require explicit `terminal reopen`
+or the Dashboard's Retry action, even after capacity or missing files are restored.
 
 A natural exit does not prove that background jobs stopped. Such a row keeps
 `recovery.requires_ack=true`, even while its current phase is `exited`. Confirm

@@ -12,11 +12,33 @@ This contract enables #117, #118 and #119 to develop against the shared reopen p
 - SQLite schema 5 owns one `agent_conversations` table. Schema 3 from archive mainline and the earlier Claude draft is distinguished by table/column markers; schema 4 from the interface amendment is also accepted. Migration preserves archive disposition, exact references and invalidation flags; offline reads remain read-only. Do not add a provider-specific store. Protocol 17 adds the reference tag.
 - `ServerState` remains the only process owner. All launches use the existing reopen operation, mutation lock, capacity admission, boot acknowledgment, run fencing and production spawn. Inventory reads never launch work. Current reporting resets on reopen; `recovery.attached` requires a matching provider and identity from the new invocation.
 
+## Display-triggered recovery (protocol 18)
+
+`Request::RecoverSession { session, expected_run }` is the automatic counterpart
+to explicit `ReopenSession`. The Dashboard emits it once per displayed eligible
+run using the same nonzero pane geometry as `SetView`. Sidebar inventory and hidden
+pane assignments are not displays. `SessionSummary::can_auto_recover` shares the
+eligibility predicate: interrupted Agent, unarchived, supported reference, no
+ownership acknowledgement required and no recorded failure.
+
+The server rechecks eligibility under the existing mutation lock and calls the
+same locked reopen implementation. It records pre-spawn failures, including full
+capacity, so reconnects cannot retry them. Explicit reopen remains Retry; automatic
+requests cannot acknowledge stopped processes. Natural Agent exits also retain an
+explicit-action diagnostic in the existing recovery failure field; they never mark
+process ownership as stopped. This prevents a later reboot from making a completed
+conversation look like interrupted work. Duplicate old-run requests reuse the
+successor, while archive/unarchive and stale-run fences still apply. Hierarchy events
+install replacement runs; late automatic receipts cannot retarget panes or clear a
+new pane's error. No persistence schema or provider registration changes are needed.
+
+Native automatic-recovery acceptance belongs to #127, separate from development.
+
 ## Parallel work ownership
 
 | Ticket | Owns | Uses without duplicating |
 | --- | --- | --- |
-| #117 | Dashboard display trigger, request coalescing, race handling and GUI acceptance | Existing recovery availability and reopen request; no provider detection in the Dashboard |
+| #117 | Dashboard display trigger, request coalescing, race handling and automated tests (#127 owns native acceptance) | Existing recovery availability and reopen request; no provider detection in the Dashboard |
 | #118 | Codex authoritative capture and resume adapter; Codex-specific tests | Reporter retention, generic reference store and shared reopen |
 | #119 | Pi/OMP accepted identity changes in the shared extension receiver, separate native adapters and acceptance | Reporter producer fences, retention and shared reopen |
 

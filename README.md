@@ -501,8 +501,9 @@ dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
 history. Detaching reconnects to a surviving PTY. A server crash loses those
 PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
 and workspace stay in the store so you can reopen a fresh shell in the same row.
-Claude recovery uses explicit same-row resume through managed launch; other
-providers show resume unavailable. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
+Claude recovery uses same-row resume through managed launch. Displaying an eligible
+interrupted Agent after a verified reboot requests recovery automatically; uncertain
+ownership and failed attempts require explicit action. Other providers show resume unavailable. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
 Tests simulate boot-identity changes while reading
 native boot IDs; they do not reboot the machine.
 

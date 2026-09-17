@@ -466,8 +466,18 @@ working directory or matching configuration blocks recovery with a diagnostic;
 Retry never starts fresh. An observed unsupported clear/resume/fork transition
 permanently disables recovery for that row, retaining its old UUID as context.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
-Inventory restoration never launches a process; Claude resume is explicit in
-this slice. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
+Inventory restoration never launches a process. First display in a visible pane
+requests one native resume for an unarchived interrupted Agent with an available
+adapter and no previous failure. A verified different boot permits automatic
+recovery; same-boot or unknown ownership still requires explicit confirmation
+that old agents and descendants stopped. Live runs are reused. Shells, deliberately
+stopped/exited rows and newly unarchived rows do not launch automatically.
+
+Missing prerequisites or full live capacity leave a diagnostic and **Retry resume
+conversation** in the command palette. Fix the prerequisite, then explicitly retry;
+redraws and reconnects do not retry failed launches. Hidden panes and sidebar rows
+do not trigger recovery. Native GUI acceptance of this automatic path is tracked
+separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
 
 ### Automatic and pinned titles
 

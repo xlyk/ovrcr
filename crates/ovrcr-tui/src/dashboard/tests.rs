@@ -2178,6 +2178,162 @@ fn history_footer_names_escape_back_when_copy_notice_is_clear() {
 }
 
 /// One project, one workspace, a running session per id.
+#[test]
+fn first_display_requests_recovery_once_without_recovering_inventory() {
+    let mut hierarchy = session_hierarchy(&[1, 2]);
+    for session in &mut hierarchy.projects[0].workspaces[0].sessions {
+        session.kind = crate::protocol::SessionKind::Agent {
+            name: "claude".into(),
+        };
+        session.phase = SessionPhase::Interrupted;
+        session.recovery = Some(crate::protocol::SessionRecovery {
+            requires_ack: false,
+            unavailable: None,
+            failure: None,
+            attached: false,
+            conversation: None,
+        });
+    }
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    dashboard.select_session(SessionId(1));
+    dashboard.request_view_at(Rect::new(0, 0, 120, 40));
+    let requests = dashboard.drain_outbox();
+    let launches: Vec<_> = requests
+        .iter()
+        .filter(|r| !matches!(r.request, Request::SetView { .. }))
+        .collect();
+    assert_eq!(
+        launches.len(),
+        1,
+        "first display must request one recovery, not recover inventory: {requests:?}"
+    );
+    assert_eq!(
+        launches[0].request,
+        Request::RecoverSession {
+            session: SessionId(1),
+            expected_run: SessionRunId(1)
+        }
+    );
+    dashboard.request_view_at(Rect::new(0, 0, 120, 40));
+    assert!(
+        dashboard.drain_outbox().is_empty(),
+        "repeated display must not retry"
+    );
+}
+
+#[test]
+fn display_recovery_excludes_ineligible_and_hidden_rows() {
+    for case in [
+        "shell",
+        "stopped",
+        "exited",
+        "live",
+        "archived",
+        "ack",
+        "unavailable",
+        "failed",
+        "tiny",
+    ] {
+        let mut hierarchy = session_hierarchy(&[1]);
+        let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+        session.kind = crate::protocol::SessionKind::Agent {
+            name: "claude".into(),
+        };
+        session.phase = SessionPhase::Interrupted;
+        session.recovery = Some(crate::protocol::SessionRecovery {
+            requires_ack: false,
+            unavailable: None,
+            failure: None,
+            attached: false,
+            conversation: None,
+        });
+        match case {
+            "shell" => session.kind = crate::protocol::SessionKind::Terminal,
+            "stopped" => session.phase = SessionPhase::Stopped,
+            "exited" => {
+                session.phase = SessionPhase::Exited {
+                    code: Some(0),
+                    signal: None,
+                }
+            }
+            "live" => session.phase = SessionPhase::Running,
+            "archived" => session.archived = true,
+            "ack" => session.recovery.as_mut().unwrap().requires_ack = true,
+            "unavailable" => {
+                session.recovery.as_mut().unwrap().unavailable =
+                    Some("invalidated reference".into())
+            }
+            "failed" => session.recovery.as_mut().unwrap().failure = Some("Retry required".into()),
+            "tiny" => (),
+            _ => unreachable!(),
+        }
+        let mut dashboard = Dashboard::new(TerminalSize {
+            rows: 40,
+            cols: 120,
+        });
+        dashboard.install_hierarchy(hierarchy);
+        dashboard.select_session(SessionId(1));
+        dashboard.request_view_at(if case == "tiny" {
+            Rect::new(0, 0, 0, 0)
+        } else {
+            Rect::new(0, 0, 120, 40)
+        });
+        assert!(
+            dashboard
+                .drain_outbox()
+                .iter()
+                .all(|request| !matches!(request.request, Request::RecoverSession { .. })),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn late_display_recovery_receipt_does_not_retarget_or_clear_new_error() {
+    let mut hierarchy = session_hierarchy(&[1, 2]);
+    let session = &mut hierarchy.projects[0].workspaces[0].sessions[0];
+    session.kind = crate::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    session.phase = SessionPhase::Interrupted;
+    session.recovery = Some(crate::protocol::SessionRecovery {
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+        attached: false,
+        conversation: None,
+    });
+    let mut replacement = session.clone();
+    replacement.run = SessionRunId(2);
+    replacement.phase = SessionPhase::Running;
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.select_session(SessionId(1));
+    dashboard.request_view_at(Rect::new(0, 0, 120, 40));
+    let request = dashboard
+        .drain_outbox()
+        .into_iter()
+        .find(|request| matches!(request.request, Request::RecoverSession { .. }))
+        .unwrap();
+    dashboard.select_session(SessionId(2));
+    dashboard.error = Some("new pane error".into());
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::CreatedSession(Box::new(replacement)),
+    });
+    assert_eq!(dashboard.focused_session(), Some(SessionId(2)));
+    assert_eq!(dashboard.error.as_deref(), Some("new pane error"));
+}
+
 fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
     use crate::protocol::{
         AgentActivity, HierarchySnapshot, ProjectSummary, SessionPhase, SessionSummary,
