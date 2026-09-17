@@ -218,6 +218,7 @@ impl Session {
         &self,
         request: &Request,
         owner: Option<&Arc<()>>,
+        persist: impl FnOnce(&AgentCommand) -> Result<()>,
     ) -> Result<Response> {
         let mut state = self.state.lock().unwrap();
         if let Request::MarkReviewed { expected, .. } = request {
@@ -319,6 +320,28 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
+            AgentCommand::InvalidateConversation => {
+                // Invalidation concerns the entire authenticated invocation, even
+                // when a successful Bind receipt was lost before this callback.
+                if reporting
+                    .reservation
+                    .as_ref()
+                    .is_none_or(|(reserve, _)| !crate::recovery::supported(reserve.provider))
+                {
+                    bail!("managed invocation does not support conversation recovery");
+                }
+                persist(&r.command)?;
+                AgentOperationResult::ConversationInvalidated
+            }
+            AgentCommand::RetainConversation { binding, reference } => {
+                reporting.expected(Some(binding))?;
+                if !reference.matches_binding(binding) {
+                    bail!("Recovery must match the certified provider binding");
+                }
+                crate::recovery::validate(reference)?;
+                persist(&r.command)?;
+                AgentOperationResult::ConversationRetained
+            }
             AgentCommand::Bind {
                 expected_binding,
                 conversation,

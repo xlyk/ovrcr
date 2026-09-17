@@ -2275,6 +2275,8 @@ fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[0].sessions[0].recovery =
         Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: None,
@@ -2324,6 +2326,8 @@ fn failed_reopen_retries_the_current_run_from_the_confirm() {
     hierarchy.projects[1].workspaces[0].sessions[0].run = ovrcr::protocol::SessionRunId(4);
     hierarchy.projects[1].workspaces[0].sessions[0].recovery =
         Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: false,
             unavailable: None,
             failure: Some("cwd missing".into()),
@@ -2371,6 +2375,8 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         run: ovrcr::protocol::SessionRunId(3),
         kind: ovrcr::protocol::SessionKind::Terminal,
         recovery: Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -2479,6 +2485,8 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
             run: ovrcr::protocol::SessionRunId(3),
             kind: ovrcr::protocol::SessionKind::Terminal,
             recovery: Some(ovrcr::protocol::SessionRecovery {
+                conversation: None,
+                attached: false,
                 requires_ack: true,
                 unavailable: None,
                 failure: Some("spawn uncertain".into()),
@@ -2643,4 +2651,60 @@ fn close_confirms_live_work_but_archives_exited_work_immediately() {
             expected_run
         }
     );
+}
+
+#[test]
+fn exited_agent_keeps_actionable_recovery_reason_in_the_header() {
+    let mut hierarchy = fixture_hierarchy();
+    let row = &mut hierarchy.projects[1].workspaces[0].sessions[0];
+    row.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    row.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    row.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: true,
+        unavailable: Some("No certified conversation; use managed launch".into()),
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let text = rendered_rows(&dashboard, 180, 24).join("\n");
+    assert!(
+        text.contains("No certified conversation; use managed launch"),
+        "{text}"
+    );
+}
+
+#[test]
+fn exited_agent_with_empty_recovery_keeps_stale_activity_out_of_header() {
+    let mut hierarchy = fixture_hierarchy();
+    let row = &mut hierarchy.projects[1].workspaces[0].sessions[0];
+    row.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    row.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    row.activity = ovrcr::protocol::AgentActivity::Busy;
+    row.agent = None;
+    row.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let text = rendered_rows(&dashboard, 180, 24).join("\n");
+    assert!(text.contains("pid: closed"), "{text}");
+    assert!(!text.contains("busy"), "{text}");
 }

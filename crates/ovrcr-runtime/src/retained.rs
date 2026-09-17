@@ -34,6 +34,56 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn has_table(connection: &Connection, name: &str) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1)",
+        [name],
+        |row| row.get(0),
+    )?)
+}
+
+pub(crate) fn has_disposition(connection: &Connection) -> Result<bool> {
+    Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name = 'disposition')", [], |row| row.get(0))?)
+}
+
+pub(crate) fn create_conversation_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE agent_conversations (session INTEGER PRIMARY KEY REFERENCES retained_sessions(id) ON DELETE CASCADE, reference TEXT, invalid INTEGER NOT NULL CHECK(invalid IN (0, 1)));")?;
+    Ok(())
+}
+
+/// Called inside the registry migration transaction. Retain the exact old
+/// reference and invalidation marker; never infer a replacement identity.
+pub(crate) fn migrate_claude_conversations(connection: &Connection) -> Result<()> {
+    create_conversation_schema(connection)?;
+    let mut query =
+        connection.prepare("SELECT session, reference, invalid FROM claude_conversations")?;
+    let rows = query.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, bool>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, reference, invalid) = row?;
+        let reference = reference
+            .map(|value| -> Result<String> {
+                let reference: ovrcr_protocol::ClaudeConversation = serde_json::from_str(&value)?;
+                Ok(serde_json::to_string(
+                    &ovrcr_protocol::ConversationReference::Claude(reference),
+                )?)
+            })
+            .transpose()?;
+        connection.execute(
+            "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)",
+            params![id, reference, invalid],
+        )?;
+    }
+    drop(query);
+    connection.execute_batch("DROP TABLE claude_conversations")?;
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionMetadata {
     pub project: String,
@@ -64,6 +114,8 @@ pub(crate) struct RetainedSession {
     pub stopped: bool,
     pub disposition: Disposition,
     pub failure: Option<String>,
+    pub conversation: Option<ovrcr_protocol::ConversationReference>,
+    pub identity_invalid: bool,
 }
 
 impl RetainedSession {
@@ -73,12 +125,19 @@ impl RetainedSession {
 
     pub fn recovery(&self, current_boot: Option<&str>) -> SessionRecovery {
         SessionRecovery {
+            conversation: self
+                .conversation
+                .as_ref()
+                .map(|reference| reference.identity().to_owned()),
+            attached: false,
             requires_ack: self.requires_ack(current_boot),
             unavailable: match &self.metadata.kind {
                 SessionKind::Terminal => None,
-                SessionKind::Agent { name } => {
-                    Some(format!("Native resume is not available for {name}"))
-                }
+                SessionKind::Agent { name } => crate::recovery::unavailable(
+                    name,
+                    self.conversation.as_ref(),
+                    self.identity_invalid,
+                ),
             },
             failure: self.failure.clone(),
         }
@@ -140,6 +199,7 @@ impl SessionStore {
     pub(crate) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
+        create_conversation_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
     }
 
@@ -164,6 +224,8 @@ impl SessionStore {
             boot_id: self.boot_id.clone(),
             stopped: !session.is_live(),
             failure: None,
+            conversation: None,
+            identity_invalid: false,
             disposition: Disposition::Active,
         };
         let metadata = &record.metadata;
@@ -202,6 +264,38 @@ impl SessionStore {
         self.boot_id.as_deref()
     }
 
+    pub fn retain_conversation(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        reference: Option<&ovrcr_protocol::ConversationReference>,
+    ) -> Result<()> {
+        let record = self.records.get(&id).context("session not found")?;
+        if record.run != run {
+            bail!("session run changed");
+        }
+        if record.identity_invalid && reference.is_some() {
+            bail!("Recovery identity was invalidated");
+        }
+        if reference.is_none() {
+            // Fail closed in the running owner even if the durable write fails.
+            // The caller receives failure and must retry until it is committed.
+            self.records.get_mut(&id).unwrap().identity_invalid = true;
+        }
+        let encoded = reference.map(serde_json::to_string).transpose()?;
+        self.connection.execute(
+            "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)
+             ON CONFLICT(session) DO UPDATE SET reference = COALESCE(excluded.reference, reference), invalid = excluded.invalid",
+            params![sql_integer(id.0)?, encoded, reference.is_none()],
+        )?;
+        let record = self.records.get_mut(&id).unwrap();
+        if let Some(reference) = reference {
+            record.conversation = Some(reference.clone());
+        }
+        record.identity_invalid = reference.is_none();
+        Ok(())
+    }
+
     pub fn get(&self, id: SessionId) -> Option<&RetainedSession> {
         self.records.get(&id)
     }
@@ -238,6 +332,8 @@ impl SessionStore {
             boot_id: None,
             stopped: true,
             failure: None,
+            conversation: None,
+            identity_invalid: false,
             disposition: Disposition::Active,
         };
         self.records.insert(id, record.clone());
@@ -434,7 +530,7 @@ pub fn load_session_summaries(config: &Path) -> Result<Vec<SessionSummary>> {
         return Ok(Vec::new());
     }
     let boot_id = current_boot_id();
-    Ok(read_records(&transaction, version >= 3)?
+    Ok(read_records(&transaction, has_disposition(&transaction)?)?
         .values()
         .map(|record| record.summary(boot_id.as_deref()))
         .collect())
@@ -491,6 +587,8 @@ fn read_records(
             boot_id: row.get(11)?,
             stopped,
             failure: row.get(13)?,
+            conversation: None,
+            identity_invalid: false,
             disposition: match row.get::<_, i64>(14)? {
                 0 => Disposition::Active,
                 1 => Disposition::Archived,
@@ -508,6 +606,44 @@ fn read_records(
         ovrcr_protocol::validate_name(&record.metadata.project, "project")?;
         ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
         records.insert(record.id, record);
+    }
+    let legacy = has_table(connection, "claude_conversations")?;
+    let table = if legacy {
+        "claude_conversations"
+    } else {
+        "agent_conversations"
+    };
+    let table_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1)",
+        [table],
+        |row| row.get(0),
+    )?;
+    if table_exists {
+        let mut query =
+            connection.prepare(&format!("SELECT session, reference, invalid FROM {table}"))?;
+        let rows = query.query_map([], |row| {
+            Ok((
+                read_integer(row, 0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, reference, invalid) = row?;
+            if let Some(record) = records.get_mut(&SessionId(id)) {
+                record.conversation = reference
+                    .map(|value| {
+                        if legacy {
+                            serde_json::from_str(&value)
+                                .map(ovrcr_protocol::ConversationReference::Claude)
+                        } else {
+                            serde_json::from_str(&value)
+                        }
+                    })
+                    .transpose()?;
+                record.identity_invalid = invalid;
+            }
+        }
     }
     Ok(records)
 }
@@ -583,6 +719,43 @@ mod tests {
             Some(BOOT_A),
             Some("00000000-0000-0000-0000-000000000000")
         ));
+    }
+
+    #[test]
+    fn archive_schema_three_migrates_without_reviving_archived_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.toml");
+        let mut store = SessionStore::open(&config).unwrap();
+        let record = store
+            .create(SessionMetadata {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "saved".into(),
+                label: "sh".into(),
+                cwd: root.path().to_path_buf(),
+                kind: SessionKind::Terminal,
+                pinned_title: Some("Archived title".into()),
+                application_title: None,
+            })
+            .unwrap();
+        store.set_archived(record.id, record.run, true).unwrap();
+        let expected = store.get(record.id).unwrap().summary(store.boot_id());
+        drop(store);
+        let connection = Connection::open(crate::config::database_path(&config)).unwrap();
+        connection
+            .execute_batch("DROP TABLE agent_conversations; PRAGMA user_version = 3;")
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            load_session_summaries(&config).unwrap(),
+            vec![expected.clone()]
+        );
+        let mut reopened = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            reopened.get(record.id).unwrap().summary(reopened.boot_id()),
+            expected
+        );
+        assert!(reopened.begin_run(record.id, expected.run).is_err());
     }
 
     #[test]

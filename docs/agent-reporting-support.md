@@ -525,3 +525,35 @@ against the real home once, recorded there as an operator breach. No file inside
 directory changed in either record, and every credential copy stayed inside the fixture.
 `PI_CODING_AGENT_DIR` must never be exported for these runs because Oh My Pi honours the same
 variable.
+
+
+## Retained Claude conversations
+
+Issue #116 adds explicit retained-session recovery through the existing Reopen
+operation. `ovrcr terminal reopen ID` runs managed `claude --resume UUID` with no
+new task prompt, preserving the row/title and reference before another callback.
+`recovery.conversation` reports the saved UUID; `recovery.attached` is false until
+the current invocation certifies the matching conversation. Process launch alone
+is not attachment. Inventory restoration does not run Claude.
+
+The existing admission contract remains exact Claude Code 2.1.267/2.1.268.
+Capture requires managed launch, configured synchronous native hooks and a
+certified root SessionStart with its exact transcript path. Saved configuration
+includes the executable, Claude configuration directory and conservative options:
+model, permission mode, named agent, file-based settings, setting sources,
+strict MCP, verbose and existing explicit permission flags. Inline settings,
+inline agent definitions, system prompts and other unsupported configurations
+are not persisted and leave resume unavailable. Task prompts are never saved.
+Native trust and approvals remain in force.
+
+Reopen checks the recorded directory, executable, history and configuration
+references. A missing resource leaves an actionable failure; Retry uses the same
+UUID. Unsupported clear/resume/fork observations invalidate recovery through SQLite,
+retaining the prior UUID only for context. Reporting failures and missing
+callbacks alone preserve a valid reference. Start new conversation creates a
+separate session; other provider rows remain retained with resume unavailable.
+SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 17. The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119; only Claude is enabled.
+
+Acceptance remains open. The [issue #116 verification record](../research/issue-116-claude-recovery/README.md) records the passing automated suite and controlled executable/real PTY tests, including exact arguments, repeated restart before another callback, unsupported clear before attachment, missing resources, database failures and prompt non-persistence. Native Claude continuity, Dashboard input and Linux acceptance remain unverified.
+
+Durable acknowledgments follow successful SQLite writes. Temporary write failures retain pending work for retry and block recovery in the current owner after invalidation. If storage remains unwritable until that owner dies, the last committed reference may survive; no durability guarantee is made across an uncommitted invalidation.

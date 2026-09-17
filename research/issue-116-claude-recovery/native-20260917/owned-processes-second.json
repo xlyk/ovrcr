@@ -1,0 +1,80 @@
+[
+  [
+    "83998",
+    "83290",
+    "83281",
+    "/Users/xlyk/Code/ovrcr/.worktrees/issue-116/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  ],
+  [
+    "84029",
+    "83998",
+    "83281",
+    "/Users/xlyk/Code/ovrcr/.worktrees/issue-116/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  ],
+  [
+    "84088",
+    "84029",
+    "84088",
+    "/bin/zsh"
+  ],
+  [
+    "84122",
+    "84029",
+    "84122",
+    "/bin/zsh"
+  ],
+  [
+    "84167",
+    "84029",
+    "84167",
+    "/bin/zsh"
+  ],
+  [
+    "84227",
+    "84029",
+    "84227",
+    "/bin/zsh"
+  ],
+  [
+    "84233",
+    "84029",
+    "84233",
+    "/bin/sh -i"
+  ],
+  [
+    "84246",
+    "84029",
+    "84246",
+    "/bin/sh -i"
+  ],
+  [
+    "84257",
+    "84029",
+    "84257",
+    "/bin/sh -i"
+  ],
+  [
+    "84268",
+    "84029",
+    "84268",
+    "/bin/sh -i"
+  ],
+  [
+    "84278",
+    "84029",
+    "84278",
+    "/bin/sh -i"
+  ],
+  [
+    "84286",
+    "84029",
+    "84286",
+    "/bin/sh -i"
+  ],
+  [
+    "84293",
+    "83998",
+    "84293",
+    "/Users/xlyk/Code/ovrcr/.worktrees/issue-116/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  ]
+]

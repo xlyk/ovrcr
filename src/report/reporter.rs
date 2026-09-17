@@ -103,10 +103,21 @@ pub enum Fence {
     LostClose,
 }
 
+enum ConversationInvalidation {
+    Pending(String),
+    Committed,
+}
+
 pub struct Reporter {
     provider: AgentProvider,
     lease: Option<InvocationLease>,
     closed: bool,
+    conversation_invalidation: Option<ConversationInvalidation>,
+    conversation_retention: Option<(
+        String,
+        ovrcr_protocol::AgentBinding,
+        ovrcr_protocol::ConversationReference,
+    )>,
     /// One revision set for every observation this reporter publishes. The server keeps
     /// a watermark per observation kind, so one monotonic counter satisfies all of them
     /// and no two kinds can disagree about which sample is newer.
@@ -137,6 +148,8 @@ impl Reporter {
             provider,
             lease,
             closed: false,
+            conversation_invalidation: None,
+            conversation_retention: None,
             revision: 0,
             pending: None,
             paused: None,
@@ -158,10 +171,32 @@ impl Reporter {
                 deadline,
             } => frames.frame(&mut self, input, native_root, deadline),
             HookEvent::Poll { deadline } => {
+                if matches!(
+                    self.conversation_invalidation,
+                    Some(ConversationInvalidation::Pending(_))
+                ) {
+                    self.invalidate_conversation(deadline);
+                }
+                if !self.closed
+                    && let Some((_, _, reference)) = self.conversation_retention.clone()
+                {
+                    self.retain_conversation(reference, deadline);
+                }
                 frames.poll(&mut self, deadline);
                 Vec::new()
             }
             HookEvent::NativeCompleted { deadline } => {
+                if matches!(
+                    self.conversation_invalidation,
+                    Some(ConversationInvalidation::Pending(_))
+                ) {
+                    self.invalidate_conversation(deadline);
+                }
+                if !self.closed
+                    && let Some((_, _, reference)) = self.conversation_retention.clone()
+                {
+                    self.retain_conversation(reference, deadline);
+                }
                 frames.finish(&mut self, deadline);
                 Vec::new()
             }
@@ -222,6 +257,133 @@ impl Reporter {
     /// of a generation and survive it.
     pub fn bind(&mut self, conversation: &str, deadline: Instant, force: bool) -> bool {
         self.bind_within(conversation, deadline, force, false)
+    }
+
+    /// Persist provider-owned identity only after the certified binding is accepted.
+    pub fn retain_conversation(
+        &mut self,
+        reference: ovrcr_protocol::ConversationReference,
+        deadline: Instant,
+    ) -> bool {
+        if self.closed {
+            return false;
+        }
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
+        let Some(binding) = lease.binding.clone() else {
+            return false;
+        };
+        if !reference.matches_binding(&binding) {
+            return false;
+        }
+        // Every retry belongs to its original certified generation. A newly
+        // accepted identity supersedes an old pending write with a new operation.
+        if self.conversation_retention.as_ref().is_none_or(
+            |(_, pending_binding, pending_reference)| {
+                pending_binding != &binding || pending_reference != &reference
+            },
+        ) {
+            let Ok(operation) = private_identifier() else {
+                return false;
+            };
+            self.conversation_retention = Some((operation, binding, reference));
+        }
+        let (operation, binding, reference) = self.conversation_retention.as_ref().unwrap();
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = lease.command(
+            operation.clone(),
+            AgentCommand::RetainConversation {
+                binding: binding.clone(),
+                reference: Box::new(reference.clone()),
+            },
+            Instant::now() + remaining / 2,
+        );
+        let response = match response {
+            Err(_) if Instant::now() < deadline => {
+                lease.operation_status(operation.clone(), deadline)
+            }
+            response => response,
+        };
+        if matches!(
+            response,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::ConversationRetained
+            ))
+        ) {
+            self.conversation_retention = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn invalidate_conversation(&mut self, deadline: Instant) -> bool {
+        self.closed = true;
+        self.conversation_retention = None;
+        if matches!(
+            self.conversation_invalidation,
+            Some(ConversationInvalidation::Committed)
+        ) {
+            return true;
+        }
+        if self.conversation_invalidation.is_none() {
+            let Ok(operation) = private_identifier() else {
+                return false;
+            };
+            self.conversation_invalidation = Some(ConversationInvalidation::Pending(operation));
+        }
+        // The server retains one operation receipt. Recover a lost Bind before
+        // invalidation replaces that receipt, preserving its observed generation.
+        // Invalidation still proceeds if that old receipt cannot be recovered.
+        let unresolved_binding = if let Some(operation) = self.pending.clone() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if self.settle(Instant::now() + remaining / 2) {
+                false
+            } else {
+                self.pending = Some(operation);
+                true
+            }
+        } else {
+            false
+        };
+        let Some(ConversationInvalidation::Pending(operation)) = &self.conversation_invalidation
+        else {
+            unreachable!()
+        };
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = lease.command(
+            operation.clone(),
+            AgentCommand::InvalidateConversation,
+            Instant::now() + remaining / 2,
+        );
+        let response = match response {
+            Err(_) if Instant::now() < deadline => {
+                lease.operation_status(operation.clone(), deadline)
+            }
+            response => response,
+        };
+        if matches!(
+            response,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::ConversationInvalidated
+            ))
+        ) {
+            self.conversation_invalidation = Some(ConversationInvalidation::Committed);
+            if unresolved_binding {
+                self.disable();
+            } else {
+                self.health(Some("identity_transition_unavailable"), deadline);
+            }
+            true
+        } else {
+            // Retain the obligation and lease. The handler retries on poll and
+            // native completion, while closed prevents any further admission.
+            false
+        }
     }
 
     /// `reserve_receipt` keeps half the budget back so a lost reply can still be re-read
@@ -569,6 +731,13 @@ impl Reporter {
     /// a forced one starts its response-cycle identities over too, because the server
     /// reads the same turn under a new generation as a new response.
     fn bound(&mut self, binding: AgentBinding, force: bool) {
+        if self
+            .conversation_retention
+            .as_ref()
+            .is_some_and(|(_, pending_binding, _)| pending_binding != &binding)
+        {
+            self.conversation_retention = None;
+        }
         if let Some(lease) = self.lease.as_mut() {
             lease.binding = Some(binding);
         }

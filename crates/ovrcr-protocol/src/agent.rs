@@ -300,6 +300,11 @@ pub enum AgentCommand {
         expected_binding: Option<AgentBinding>,
     },
     Health(ProviderReport),
+    RetainConversation {
+        binding: AgentBinding,
+        reference: Box<ConversationReference>,
+    },
+    InvalidateConversation,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupervisorRequest {
@@ -313,6 +318,44 @@ pub enum AgentOperationResult {
     Bound(AgentBinding),
     Released,
     HealthUpdated,
+    ConversationRetained,
+    ConversationInvalidated,
+}
+
+/// Exact provider-owned history and non-secret launch configuration references.
+/// Prompts, environments and transcript contents are never part of this record.
+/// Provider-tagged, non-secret recovery metadata. Add verified provider payloads
+/// here; lifecycle, persistence and reopening stay shared.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversationReference {
+    Claude(ClaudeConversation),
+}
+
+impl ConversationReference {
+    pub fn provider(&self) -> AgentProvider {
+        match self {
+            Self::Claude(_) => AgentProvider::Claude,
+        }
+    }
+
+    pub fn identity(&self) -> &str {
+        match self {
+            Self::Claude(reference) => &reference.conversation,
+        }
+    }
+
+    pub fn matches_binding(&self, binding: &AgentBinding) -> bool {
+        self.provider() == binding.provider && self.identity() == binding.conversation
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaudeConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub history: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
+    pub options: Vec<String>,
 }
 
 pub fn validate_agent_id(value: &str) -> Result<()> {
@@ -759,6 +802,17 @@ pub(crate) mod tests {
                 expected_binding: Some(binding.clone()),
             },
             AgentCommand::Health(health.clone()),
+            AgentCommand::RetainConversation {
+                binding: binding.clone(),
+                reference: Box::new(ConversationReference::Claude(ClaudeConversation {
+                    conversation: "conv".into(),
+                    executable: "/bin/claude".into(),
+                    history: "/history/conv.jsonl".into(),
+                    config_dir: "/config/claude".into(),
+                    options: vec![],
+                })),
+            },
+            AgentCommand::InvalidateConversation,
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),
@@ -812,6 +866,8 @@ pub(crate) mod tests {
             AgentOperationResult::Bound(binding),
             AgentOperationResult::Released,
             AgentOperationResult::HealthUpdated,
+            AgentOperationResult::ConversationRetained,
+            AgentOperationResult::ConversationInvalidated,
         ]
         .into_iter()
         .map(Response::AgentOperation)

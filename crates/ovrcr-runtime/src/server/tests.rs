@@ -6112,6 +6112,108 @@ mod agent_reporting {
     use super::*;
     use ovrcr_protocol::*;
 
+    #[test]
+    fn retained_conversation_changes_are_fenced_by_binding_and_lease() {
+        let fixture = Fixture::new();
+        let auth = fixture.acquire();
+        let a = "5ebc5f9b-54b5-4928-9955-dc81c23743dd";
+        let b = "4ebc5f9b-54b5-4928-9955-dc81c23743dd";
+        let reference = |id: &str| {
+            Box::new(ConversationReference::Claude(ClaudeConversation {
+                conversation: id.into(),
+                executable: "/bin/claude".into(),
+                history: "/history".into(),
+                config_dir: "/config".into(),
+                options: vec![],
+            }))
+        };
+        let mut binding = fixture.bind(&auth, None, a, "bind-a");
+        let original = binding.clone();
+        for (index, id) in [a, b, a].into_iter().enumerate() {
+            if index != 0 {
+                binding = fixture.bind(&auth, Some(binding), id, &format!("bind-{index}"));
+            }
+            assert!(matches!(
+                fixture.command(
+                    &auth,
+                    &format!("retain-{index}"),
+                    AgentCommand::RetainConversation {
+                        binding: binding.clone(),
+                        reference: reference(id)
+                    }
+                ),
+                Response::AgentOperation(AgentOperationResult::ConversationRetained)
+            ));
+            let summary = fixture.state.session_summary(SessionId(900)).unwrap();
+            let recovery = summary.recovery.unwrap();
+            assert_eq!(recovery.conversation.as_deref(), Some(id));
+            assert!(recovery.attached);
+        }
+        // A -> B -> A must not make the first A generation current again.
+        assert!(matches!(
+            fixture.command(
+                &auth,
+                "late-a",
+                AgentCommand::RetainConversation {
+                    binding: original,
+                    reference: reference(a)
+                }
+            ),
+            Response::Error { .. }
+        ));
+        assert!(matches!(
+            fixture.command(
+                &auth,
+                "wrong-reference",
+                AgentCommand::RetainConversation {
+                    binding: binding.clone(),
+                    reference: reference(b)
+                }
+            ),
+            Response::Error { .. }
+        ));
+        assert!(matches!(
+            fixture.command(
+                &auth,
+                "release",
+                AgentCommand::Release {
+                    expected_binding: Some(binding.clone())
+                }
+            ),
+            Response::AgentOperation(AgentOperationResult::Released)
+        ));
+        assert!(matches!(
+            fixture.command(
+                &auth,
+                "retired-invalidate",
+                AgentCommand::InvalidateConversation
+            ),
+            Response::Error { .. }
+        ));
+        assert!(matches!(
+            fixture.command(
+                &auth,
+                "retired-retain",
+                AgentCommand::RetainConversation {
+                    binding,
+                    reference: reference(b)
+                }
+            ),
+            Response::Error { .. }
+        ));
+        assert_eq!(
+            fixture
+                .state
+                .session_summary(SessionId(900))
+                .unwrap()
+                .recovery
+                .unwrap()
+                .conversation
+                .as_deref(),
+            Some(a)
+        );
+    }
+
     struct Fixture {
         _cwd: tempfile::TempDir,
         session: Arc<Session>,

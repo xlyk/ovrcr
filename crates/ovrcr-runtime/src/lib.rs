@@ -1,6 +1,8 @@
 pub mod agent_runner;
+pub mod claude_recovery;
 pub mod config;
 pub mod git;
+pub mod recovery;
 pub mod retained;
 pub mod server;
 pub mod session;

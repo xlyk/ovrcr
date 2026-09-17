@@ -152,6 +152,271 @@ fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
     result
 }
 
+fn wait_output(live: &Live, id: &str, marker: &str) {
+    let deadline = Instant::now() + live::wait_deadline();
+    loop {
+        let output = cli(live, &["terminal", "read", id]);
+        assert!(output.status.success());
+        if String::from_utf8_lossy(&output.stdout).contains(marker) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "missing output marker {marker}");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn claude_reopen_retains_exact_conversation_before_another_callback() {
+    for initial_resume in [false, true] {
+        assert_claude_recovery(initial_resume);
+    }
+}
+
+fn assert_claude_recovery(initial_resume: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let config_dir = live.root.path().join("claude-config");
+    std::fs::create_dir(&config_dir).unwrap();
+    let environment = [("CLAUDE_CONFIG_DIR", config_dir.as_os_str())];
+    live.start_binary_env(&environment);
+    live.ready("feature/claude-reopen");
+    let native = live.root.path().join("claude");
+    let cwd = ovrcr::config::load_registry(&live.config)
+        .unwrap()
+        .workspace(live::PROJECT, live::WORKSPACE)
+        .unwrap()
+        .path
+        .clone();
+    let helper = std::env::current_exe().unwrap();
+    // The script is an executable fixture only; the production managed launcher,
+    // Reporter, server and PTY all run normally.
+    let quote =
+        |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '2.1.268 (Claude Code)\\n'; exit 0; fi\nexport RETAINED_CLAUDE_ROOT={} RETAINED_CLAUDE_SOURCE=\"$1\" RETAINED_CLAUDE_ID=\"$2\"\nprintf '%s\\n' \"$@\" >> \"$RETAINED_CLAUDE_ROOT/argv\"\nexec {} --ignored --exact retained_claude_native_helper --nocapture\n",
+        quote(live.root.path()), quote(&helper),
+    )).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut launch = vec![
+        live.executable.to_str().unwrap(),
+        "agent",
+        "run",
+        "claude",
+        "--",
+        native.to_str().unwrap(),
+    ];
+    if initial_resume {
+        launch.extend(["--resume", "5ebc5f9b-54b5-4928-9955-dc81c23743dd"]);
+    } else {
+        launch.push("PRIVATE_RETAINED_PROMPT_116");
+    }
+    let created = create_terminal(&live, "claude-retained", &launch);
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    wait_output(&live, &id_arg, "RETAINED_CLAUDE_READY");
+    json(&live, &["terminal", "rename", &id_arg, "Claude continuity"]);
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    database.execute_batch("CREATE TRIGGER reject_retention BEFORE INSERT ON agent_conversations WHEN NEW.invalid = 0 BEGIN SELECT RAISE(FAIL, 'fixture rejects retention'); END;").unwrap();
+    json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
+    wait_output(&live, &id_arg, "RETAINED_CLAUDE_REPORT_UNAVAILABLE");
+    database
+        .execute_batch("DROP TRIGGER reject_retention")
+        .unwrap();
+    json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
+    wait_output(&live, &id_arg, "RETAINED_CLAUDE_ATTACHED");
+    let arguments = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    let conversation = arguments.lines().nth(1).unwrap().to_owned();
+    assert!(arguments.starts_with(if initial_resume {
+        "--resume\n"
+    } else {
+        "--session-id\n"
+    }));
+    for attempt in 1..=2 {
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        if initial_resume && attempt == 1 {
+            restore_legacy_claude_schema(&live);
+        }
+        let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+        assert!(
+            !database
+                .windows(b"PRIVATE_RETAINED_PROMPT_116".len())
+                .any(|bytes| bytes == b"PRIVATE_RETAINED_PROMPT_116")
+        );
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert!(row["recovery"]["unavailable"].is_null(), "{row}");
+        assert_eq!(row["recovery"]["conversation"], conversation);
+        assert_eq!(row["recovery"]["attached"], false);
+        assert_eq!(row["title"], "Claude continuity");
+        live.start_binary_env(&environment);
+        if attempt == 1 {
+            for (path, diagnostic) in [
+                (
+                    live.root.path().join(format!("{conversation}.jsonl")),
+                    "history",
+                ),
+                (native.clone(), "executable"),
+                (config_dir.clone(), "configuration"),
+                (cwd.clone(), "directory"),
+            ] {
+                let displaced = path.with_extension("temporarily-unavailable");
+                std::fs::rename(&path, &displaced).unwrap();
+                let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+                std::fs::rename(&displaced, &path).unwrap();
+                assert!(
+                    !failure.status.success(),
+                    "missing {diagnostic} launched fresh"
+                );
+                assert!(
+                    String::from_utf8_lossy(&failure.stderr).contains(diagnostic),
+                    "{}",
+                    String::from_utf8_lossy(&failure.stderr)
+                );
+                assert_eq!(
+                    std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+                    arguments
+                );
+            }
+        }
+        json(&live, &["terminal", "reopen", &id_arg]);
+        track_groups(&live);
+        wait_output(&live, &id_arg, "RETAINED_CLAUDE_READY");
+        let rows = json(&live, &["terminal", "list"]);
+        let resumed = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(resumed["recovery"]["attached"], false);
+        assert_eq!(resumed["recovery"]["conversation"], conversation);
+        assert!(resumed["agent"].is_null());
+        let actual = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+        assert_eq!(
+            actual,
+            format!(
+                "{arguments}{}",
+                format!("--resume\n{conversation}\n").repeat(attempt)
+            )
+        );
+        // No new callback or prompt: the second restart must still be eligible.
+    }
+    // A clear before the replacement's first callback invalidates the retained
+    // reference too; an absent callback by itself did not invalidate it above.
+    let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    database.execute_batch("CREATE TRIGGER reject_invalidation BEFORE INSERT ON agent_conversations WHEN NEW.invalid = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejects invalidation'); END;").unwrap();
+    json(&live, &["terminal", "send", &id_arg, "--text", "clear"]);
+    wait_output(&live, &id_arg, "RETAINED_CLAUDE_REPORT_UNAVAILABLE");
+    database
+        .execute_batch("DROP TRIGGER reject_invalidation")
+        .unwrap();
+    json(&live, &["terminal", "send", &id_arg, "--text", "clear"]);
+    wait_output(&live, &id_arg, "RETAINED_CLAUDE_CLEARED");
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    if initial_resume {
+        restore_legacy_claude_schema(&live);
+        let offline = json(&live, &["terminal", "list"]);
+        let row = offline
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert!(
+            row["recovery"]["unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("unsupported")
+        );
+    }
+    live.start_binary_env(&environment);
+    let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+    assert!(
+        !failure.status.success(),
+        "clear reopened stale Claude identity"
+    );
+    assert!(String::from_utf8_lossy(&failure.stderr).contains("unsupported"));
+    let actual = std::fs::read_to_string(live.root.path().join("argv")).unwrap();
+    assert_eq!(
+        actual,
+        format!(
+            "{arguments}{}",
+            format!("--resume\n{conversation}\n").repeat(2)
+        )
+    );
+}
+
+// Reproduce the metadata schema written by the previous PR revision. Both
+// offline reads and the next production startup must preserve its exact state.
+fn restore_legacy_claude_schema(live: &Live) {
+    let mut database =
+        rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let transaction = database.transaction().unwrap();
+    let (id, encoded): (i64, String) = transaction
+        .query_row(
+            "SELECT session, reference FROM agent_conversations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let tagged: Value = serde_json::from_str(&encoded).unwrap();
+    assert!(tagged["Claude"].is_object());
+    transaction
+        .execute(
+            "UPDATE agent_conversations SET reference = ?1 WHERE session = ?2",
+            rusqlite::params![serde_json::to_string(&tagged["Claude"]).unwrap(), id],
+        )
+        .unwrap();
+    transaction.execute_batch("ALTER TABLE agent_conversations RENAME TO claude_conversations; ALTER TABLE retained_sessions DROP COLUMN disposition; PRAGMA user_version = 3;").unwrap();
+    transaction.commit().unwrap();
+}
+
+#[test]
+#[ignore = "controlled native executable entered only by the retained-session fixture"]
+fn retained_claude_native_helper() {
+    use std::io::BufRead;
+    let root = std::path::PathBuf::from(std::env::var_os("RETAINED_CLAUDE_ROOT").unwrap());
+    let id = std::env::var("RETAINED_CLAUDE_ID").unwrap();
+    let source = if std::env::var("RETAINED_CLAUDE_SOURCE").unwrap() == "--resume" {
+        "resume"
+    } else {
+        "startup"
+    };
+    let history = root.join(format!("{id}.jsonl"));
+    std::fs::write(&history, "").unwrap();
+    println!("RETAINED_CLAUDE_READY");
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        if line == "attach" || line == "clear" {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "hook_event_name": "SessionStart", "source": if line == "clear" { "clear" } else { source },
+                "session_id": id, "transcript_path": history,
+            })).unwrap();
+            if ovrcr::report::send_claude_hook(&payload, Instant::now() + Duration::from_secs(1))
+                .is_err()
+            {
+                println!("RETAINED_CLAUDE_REPORT_UNAVAILABLE");
+                continue;
+            }
+            println!(
+                "{}",
+                if line == "clear" {
+                    "RETAINED_CLAUDE_CLEARED"
+                } else {
+                    "RETAINED_CLAUDE_ATTACHED"
+                }
+            );
+        }
+    }
+}
+
 #[test]
 fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() {
     use ovrcr::protocol::{Request, Response, SessionId, SessionPhase, SessionRunId};
