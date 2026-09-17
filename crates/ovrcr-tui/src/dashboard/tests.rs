@@ -90,6 +90,7 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
             name: "auth-handoff".into(),
             path: "/tmp/auth-handoff".into(),
             sessions: vec![SessionSummary {
+                archived: false,
                 id: SessionId(12),
                 run: crate::protocol::SessionRunId(1),
                 kind: crate::protocol::SessionKind::Terminal,
@@ -861,6 +862,7 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
     other.run = Some(crate::protocol::SessionRunId(1));
     dashboard.panes.push(other);
     let summary = |id| SessionSummary {
+        archived: false,
         id: SessionId(id),
         run: crate::protocol::SessionRunId(1),
         kind: crate::protocol::SessionKind::Terminal,
@@ -1001,6 +1003,7 @@ fn mouse_release_precedes_the_replacement_view_request() {
     };
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let summary = |id: u64| SessionSummary {
+        archived: false,
         id: SessionId(id),
         run: crate::protocol::SessionRunId(1),
         kind: crate::protocol::SessionKind::Terminal,
@@ -1137,6 +1140,7 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
     };
     use crossterm::event::MouseEventKind;
     let summary = |id: u64| SessionSummary {
+        archived: false,
         id: SessionId(id),
         run: crate::protocol::SessionRunId(1),
         kind: crate::protocol::SessionKind::Terminal,
@@ -1374,6 +1378,7 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
             name: "w".into(),
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
                 kind: crate::protocol::SessionKind::Terminal,
@@ -1528,6 +1533,7 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
             name: "w".into(),
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
+                archived: false,
                 id: SessionId(1),
                 run: crate::protocol::SessionRunId(1),
                 kind: crate::protocol::SessionKind::Terminal,
@@ -2187,6 +2193,7 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
                 sessions: ids
                     .iter()
                     .map(|id| SessionSummary {
+                        archived: false,
                         id: SessionId(*id),
                         run: crate::protocol::SessionRunId(1),
                         kind: crate::protocol::SessionKind::Terminal,
@@ -2384,6 +2391,7 @@ fn keymap_session(
 ) -> crate::protocol::SessionSummary {
     use crate::protocol::{AgentActivity, SessionSummary};
     SessionSummary {
+        archived: false,
         id: SessionId(id),
         run: crate::protocol::SessionRunId(1),
         kind: crate::protocol::SessionKind::Terminal,

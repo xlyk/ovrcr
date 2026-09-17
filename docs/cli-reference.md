@@ -77,6 +77,9 @@ ovrcr terminal close "$terminal_id"
 # Workspace creation also started a terminal named local. Find and close it:
 ovrcr terminal list --project example --workspace cli-demo
 ovrcr terminal close LOCAL_TERMINAL_ID
+# Delete the archived records before removing their workspace:
+ovrcr terminal remove "$terminal_id"
+ovrcr terminal remove LOCAL_TERMINAL_ID
 ovrcr workspace remove --project example --name cli-demo
 ovrcr project remove example
 ```
@@ -126,12 +129,19 @@ exited terminal's retained final screen. `--max-lines N` selects the last N text
 lines and requires a positive number. It does not expose scrollback. CLI reads and
 sends do not select or resize the dashboard terminal.
 
-`terminal close` stops the whole process group, waits for cleanup, and removes the
-record. The close captures the session's current run from inventory first, and a
-close whose run has advanced since that snapshot fails with a conflict, so a stale
-close cannot stop a replacement process started by reopening the same row. Cleanup
-failure leaves the record available. To retain the final screen,
-use `terminal kill ID`, then `terminal remove ID` when finished.
+`terminal close ID` archives an exited or stopped row immediately. For live work,
+this explicit command stops the currently owned processes and archives only after
+stop succeeds; failure keeps an actionable active record. The Dashboard asks for
+confirmation before stopping live work. Close captures the current run, and stale
+requests cannot stop a replacement run.
+
+Use `terminal list --archived` to inspect the archive, including offline.
+`terminal unarchive ID` returns a stopped row without executing anything.
+`terminal remove ID` deletes the record; it never deletes provider history files.
+Archive, unarchive and deletion survive server restart. Archiving a naturally
+exited row does not prove that background jobs stopped: ownership acknowledgement
+may still be required before reopening an unarchived row. Agent suggestions alone
+do not close sessions.
 
 ## Agent reporting commands
 

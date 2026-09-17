@@ -274,6 +274,16 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     for session in fixture.sessions() {
         fixture.ok(&["terminal", "close", &session.id.0.to_string()]);
     }
+    // Close now retains archived metadata; delete these records explicitly
+    // before exercising this test's existing workspace-removal guards.
+    let archive = fixture.json(&["terminal", "list", "--archived"]);
+    for row in archive.as_array().unwrap() {
+        fixture.ok(&[
+            "terminal",
+            "remove",
+            &row["id"].as_u64().unwrap().to_string(),
+        ]);
+    }
     let worktree = fixture.workspace_root.join("demo");
     std::fs::write(worktree.join("dirty"), "preserve me").unwrap();
     let dirty = fixture.run(&[

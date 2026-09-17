@@ -297,6 +297,24 @@ impl ServerState {
         expected_run: SessionRunId,
         grace: Duration,
     ) -> Result<()> {
+        // Exited rows can be filed immediately. This does not acknowledge
+        // ownership uncertainty or signal a remembered process.
+        {
+            let _mutation = self.mutation_lock.lock().unwrap();
+            self.reject_if_stopping()?;
+            let summary = self
+                .session_summary(id)
+                .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            if summary.run != expected_run || summary.archived {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "session changed; refresh inventory",
+                ));
+            }
+            if !summary.phase.is_live() {
+                return self.archive_session_locked(id, expected_run);
+            }
+        }
         let target = self.control_target(id, Some(expected_run))?;
         let termination = match &target.session {
             Some(session) => session.terminate(grace),
@@ -307,7 +325,48 @@ impl ServerState {
         let termination = self.finish_control_stop(id, &target, termination);
         let refresh = self.refresh_session_locked(id);
         combine_control_and_refresh(id, termination, refresh)?;
-        self.remove_session_locked(id)
+        self.archive_session_locked(id, expected_run)
+    }
+
+    fn archive_session_locked(&self, id: SessionId, run: SessionRunId) -> Result<()> {
+        self.retained.lock().set_archived(id, run, true)?;
+        if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
+            session.revoke_hook_capability();
+        }
+        self.dashboard.forget_session(id);
+        Ok(())
+    }
+
+    pub fn delete_archived_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.run != expected || !summary.archived {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session archive state changed; refresh inventory",
+            ));
+        }
+        self.retained.lock().remove(id, expected)?;
+        Ok(())
+    }
+
+    pub fn unarchive_session(&self, id: SessionId, expected: SessionRunId) -> Result<()> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.run != expected || !summary.archived {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session archive state changed; refresh inventory",
+            ));
+        }
+        self.retained.lock().set_archived(id, expected, false)?;
+        Ok(())
     }
 
     /// Capture the owned run before waiting without the mutation lock.
@@ -730,8 +789,20 @@ impl ServerState {
         let summary = self
             .session_summary(id)
             .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        if summary.archived {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session is archived; unarchive before reopening",
+            ));
+        }
         if summary.run != expected_run {
-            if expected_run.0.checked_add(1) == Some(summary.run.0) {
+            if expected_run.0.checked_add(1) == Some(summary.run.0)
+                && self
+                    .retained
+                    .lock()
+                    .get(id)
+                    .is_some_and(|r| r.disposition == crate::retained::Disposition::Active)
+            {
                 if let Some(failure) = summary
                     .recovery
                     .as_ref()
@@ -835,10 +906,11 @@ impl ServerState {
                 "session is still live; kill it before removal",
             ));
         }
-        if summary
-            .recovery
-            .as_ref()
-            .is_some_and(|recovery| recovery.requires_ack)
+        if !summary.archived
+            && summary
+                .recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.requires_ack)
         {
             return Err(lifecycle_error(
                 ErrorCode::OwnershipUncertain,
@@ -1390,6 +1462,7 @@ fn snapshot(state: &Arc<ServerState>) -> HierarchySnapshot {
 fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
     let registry = state.registry.lock().unwrap().clone();
     let mut sessions = state.session_summaries();
+    sessions.retain(|session| !session.archived);
     let mut projects = registry
         .projects
         .into_iter()

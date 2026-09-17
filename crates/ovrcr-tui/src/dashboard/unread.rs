@@ -108,6 +108,7 @@ mod tests {
 
     fn session(id: u64, open: &[(&str, InputKind)]) -> SessionSummary {
         SessionSummary {
+            archived: false,
             id: SessionId(id),
             run: crate::protocol::SessionRunId(1),
             kind: crate::protocol::SessionKind::Terminal,

@@ -331,7 +331,7 @@ also expose their parent workspace and project. `a` registers a project and
 Choose a group, then an action: `Space t x` closes the selected terminal,
 `Space w x` removes its workspace, and `Space p x` unregisters its project.
 Workspace and project removal open a searchable picker with the current target
-highlighted; Enter accepts it and opens confirmation. Terminal close opens
+highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
@@ -608,3 +608,17 @@ dashboard can reattach and refresh the current screen. Output backlog is
 coalesced into a per-session refresh when necessary. Control responses and
 lifecycle events are preserved, and the dashboard disconnects if the queue cannot
 accept one of those messages.
+
+
+### Archived sessions
+
+Closing a live session (`X` or `Space t x`) asks for confirmation, stops its
+currently owned processes, then archives its record. A failed stop leaves the
+active row available. Closing an exited row archives immediately. Hiding a pane
+or detaching never archives a session.
+
+Open the command palette (`:`), choose **Archived sessions**, and search by title,
+project or workspace. **Unarchive** returns the row stopped without launching
+anything. **Delete record** asks for confirmation and removes only OVRCR metadata;
+provider conversation files remain untouched. If old process ownership was
+uncertain before archiving, reopening still requires explicit acknowledgement.

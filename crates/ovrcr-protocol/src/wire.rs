@@ -295,6 +295,14 @@ pub enum Request {
         expected_run: SessionRunId,
         acknowledge_stopped: bool,
     },
+    DeleteArchivedSession {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
+    UnarchiveSession {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
     AcknowledgeSessionStopped {
         session: SessionId,
         expected_run: SessionRunId,
@@ -417,6 +425,7 @@ mod wire_snapshot {
 
     fn summary() -> SessionSummary {
         SessionSummary {
+            archived: false,
             id: SessionId(1),
             run: SessionRunId(4),
             kind: SessionKind::Terminal,
@@ -676,6 +685,20 @@ mod wire_snapshot {
                 },
             ),
             (
+                "UnarchiveSession",
+                Request::UnarchiveSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                },
+            ),
+            (
+                "DeleteArchivedSession",
+                Request::DeleteArchivedSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                },
+            ),
+            (
                 "AcknowledgeSessionStopped",
                 Request::AcknowledgeSessionStopped {
                     session: SessionId(1),
@@ -926,7 +949,9 @@ mod wire_snapshot {
         ("Request::SetSessionTitle", "200101057469746c65"),
         ("Request::ResetSessionTitle", "200100"),
         ("Request::ReopenSession", "21010400"),
-        ("Request::AcknowledgeSessionStopped", "220104"),
+        ("Request::UnarchiveSession", "230104"),
+        ("Request::DeleteArchivedSession", "220104"),
+        ("Request::AcknowledgeSessionStopped", "240104"),
         (
             "Request::MarkReviewed",
             "1e010103696e7604636f6e760101047475726e02",
@@ -935,13 +960,13 @@ mod wire_snapshot {
         ("Response::Hierarchy", "0100"),
         (
             "Response::CreatedSession",
-            "020104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "02010004000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("Response::Screen", "0301040301020107"),
         ("Response::Error", "0401016d"),
         (
             "Response::Inventory",
-            "0500010104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "050001010004000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("Response::TerminalText", "060101020174"),
         ("Response::Task", "070601"),
@@ -955,7 +980,7 @@ mod wire_snapshot {
         ("ServerEvent::ScreenDirty", "02010403"),
         (
             "ServerEvent::SessionChanged",
-            "030104000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
+            "03010004000001700177016e016c010201030000010103696e7604636f6e760101020101047475726e000000020000010c617070726f76616c3a726571050300010103696e7604636f6e760101047475726e0201000000010401050600",
         ),
         ("TaskRequest::ListTasks", "00"),
         ("TaskRequest::GetTask", "0301"),

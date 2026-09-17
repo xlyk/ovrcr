@@ -130,7 +130,11 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::List { project, workspace } => {
+        TerminalCommand::List {
+            project,
+            workspace,
+            archived,
+        } => {
             let (registry, mut sessions) = inspect()?;
             if let Some(project) = project.as_deref() {
                 find_project(&registry, project)?;
@@ -139,9 +143,10 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
                 }
             }
             sessions.retain(|session| {
-                project
-                    .as_deref()
-                    .is_none_or(|name| session.project == name)
+                session.archived == archived
+                    && project
+                        .as_deref()
+                        .is_none_or(|name| session.project == name)
                     && workspace
                         .as_deref()
                         .is_none_or(|name| session.workspace == name)
@@ -191,6 +196,16 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
+        TerminalCommand::Unarchive { id } => {
+            let session = inventory_session(id)?;
+            mutate_started(
+                Request::UnarchiveSession {
+                    session: session.id,
+                    expected_run: session.run,
+                },
+                json_output,
+            )
+        }
         TerminalCommand::Close { id } => {
             let session = inventory_session(id)?;
             mutate_without_start(
@@ -207,12 +222,20 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Remove { id } => mutate_without_start(
-            Request::RemoveSession {
-                session: SessionId(id),
-            },
-            json_output,
-        ),
+        TerminalCommand::Remove { id } => {
+            let session = inventory_session(id)?;
+            let request = if session.archived {
+                Request::DeleteArchivedSession {
+                    session: session.id,
+                    expected_run: session.run,
+                }
+            } else {
+                Request::RemoveSession {
+                    session: session.id,
+                }
+            };
+            mutate_started(request, json_output)
+        }
     }
 }
 

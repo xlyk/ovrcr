@@ -264,6 +264,7 @@ fn doctor_inspects_unbound_and_unavailable_sessions_without_private_values() {
             let request: ClientMessage = read_frame(&mut stream).unwrap();
             assert_eq!(request.request, Request::Inspect);
             let session = SessionSummary {
+                archived: false,
                 run: ovrcr_protocol::SessionRunId(1),
                 kind: ovrcr_protocol::SessionKind::Terminal,
                 recovery: None,
