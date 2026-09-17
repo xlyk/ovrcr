@@ -1344,6 +1344,7 @@ fn created_session_enters_terminal_mode() {
         panic!("wrong request");
     };
     let session = SessionSummary {
+        archived: false,
         id: SessionId(99),
         run: ovrcr::protocol::SessionRunId(1),
         kind: ovrcr::protocol::SessionKind::Terminal,
@@ -2369,6 +2370,7 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         panic!("wrong request");
     };
     let retained = SessionSummary {
+        archived: false,
         id: SessionId(99),
         run: ovrcr::protocol::SessionRunId(3),
         kind: ovrcr::protocol::SessionKind::Terminal,
@@ -2478,6 +2480,7 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
         .expect("create form must target a fixture workspace");
     for id in [98, 99] {
         workspace.sessions.push(SessionSummary {
+            archived: false,
             id: SessionId(id),
             run: ovrcr::protocol::SessionRunId(3),
             kind: ovrcr::protocol::SessionKind::Terminal,
@@ -2563,6 +2566,89 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
             session: SessionId(2),
             expected_run: ovrcr::protocol::SessionRunId(4),
             acknowledge_stopped: false,
+        }
+    );
+}
+
+#[test]
+fn archive_search_unarchives_without_launching() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char(':'));
+    dashboard.event_action(Event::Paste("Archived sessions".into()));
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("archive must load inventory");
+    };
+    assert_eq!(message.request, Request::Inspect);
+    let mut row = fixture_hierarchy().projects[0].workspaces[0].sessions[0].clone();
+    row.archived = true;
+    row.phase = SessionPhase::Stopped;
+    row.title = Some("Archive needle".into());
+    row.workspace = "archive-workspace".into();
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: message.request_id,
+        response: Response::Inventory {
+            registry: Default::default(),
+            sessions: vec![row.clone()],
+        },
+    });
+    assert!(palette_text(&dashboard).contains("Archived sessions"));
+    dashboard.event_action(Event::Paste("archive-workspace".into()));
+    assert!(palette_text(&dashboard).contains("Archive needle"));
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("unarchive must issue a record operation");
+    };
+    assert_eq!(
+        message.request,
+        Request::UnarchiveSession {
+            session: row.id,
+            expected_run: row.run
+        }
+    );
+}
+
+#[test]
+fn close_confirms_live_work_but_archives_exited_work_immediately() {
+    let mut dashboard = dashboard_fixture();
+    let action = dashboard.key(KeyCode::Char('X'));
+    assert!(!matches!(action, ovrcr::tui::DashboardAction::Request(_)));
+    assert!(palette_text(&dashboard).contains("archive its record"));
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("confirm must close");
+    };
+    let Request::CloseTerminal {
+        session,
+        expected_run,
+    } = message.request
+    else {
+        panic!("wrong request");
+    };
+    let mut hierarchy = fixture_hierarchy();
+    for row in hierarchy
+        .projects
+        .iter_mut()
+        .flat_map(|p| &mut p.workspaces)
+        .flat_map(|w| &mut w.sessions)
+    {
+        if row.id == session {
+            row.phase = SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            };
+        }
+    }
+    let mut dashboard = dashboard_fixture();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    // Select the same initial row; the fixture begins on this session.
+    let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Char('X')) else {
+        panic!("exited close must be immediate");
+    };
+    assert_eq!(
+        message.request,
+        Request::CloseTerminal {
+            session,
+            expected_run
         }
     );
 }

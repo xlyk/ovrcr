@@ -43,6 +43,9 @@ enum Command {
     RecoverLaunch,
     RegisterProject,
     CloseTerminal(SessionId),
+    Archives,
+    Unarchive(SessionId, crate::protocol::SessionRunId),
+    DeleteArchived(SessionId, crate::protocol::SessionRunId, String),
     RemoveWorkspace,
     RemoveProject,
     Switch(SessionId),
@@ -91,6 +94,7 @@ enum Page {
 pub(super) struct Palette {
     page: Page,
     pending: Option<u64>,
+    archive: Option<Vec<crate::protocol::SessionSummary>>,
     error: Option<String>,
     workspace_acknowledged: bool,
     launch_preference: Option<(String, super::settings::LaunchChoice)>,
@@ -160,6 +164,7 @@ impl Palette {
                 selected: 0,
             },
             pending: None,
+            archive: None,
             error: None,
             workspace_acknowledged: false,
             launch_preference: None,
@@ -330,6 +335,7 @@ impl Dashboard {
         self.palette = Some(Palette {
             page: self.palette_form(Command::CreateTerminal),
             pending: None,
+            archive: None,
             error: None,
             workspace_acknowledged: false,
             launch_preference: None,
@@ -550,12 +556,27 @@ impl Dashboard {
             begin.cancelled = true;
         }
         self.whichkey = None;
-        self.palette = Some(Palette {
+        let session = find_session(self, id).unwrap();
+        let immediate = !session.phase.is_live();
+        let run = session.run;
+        let mut palette = Palette {
             page: self.command_page(Command::CloseTerminal(id)),
             ..Palette::new()
-        });
+        };
+        let action = if immediate {
+            self.palette_submit(
+                &mut palette,
+                Request::CloseTerminal {
+                    session: id,
+                    expected_run: run,
+                },
+            )
+        } else {
+            DashboardAction::Redraw
+        };
+        self.palette = Some(palette);
         self.mode = InputMode::Browse;
-        DashboardAction::Redraw
+        action
     }
 
     pub(super) fn dismiss_close_confirm_for(&mut self, session: SessionId) {
@@ -670,7 +691,7 @@ impl Dashboard {
                         expected_run: session.run,
                     }),
                     target: format!(
-                        "Close {} / {} / {} (#{}). Stop its processes and remove its record.",
+                        "Close {} / {} / {} (#{}). Stop its currently owned processes and archive its record.",
                         session.project,
                         session.workspace,
                         session.display_name(),
@@ -708,8 +729,50 @@ impl Dashboard {
         DashboardAction::Redraw
     }
 
-    fn palette_entries(&self, query: &str) -> Vec<Entry> {
+    fn palette_entries(
+        &self,
+        query: &str,
+        archive: Option<&[crate::protocol::SessionSummary]>,
+    ) -> Vec<Entry> {
+        if let Some(rows) = archive {
+            let query = query.to_lowercase();
+            return rows
+                .iter()
+                .filter(|row| {
+                    let label = format!("{} {} {}", row.display_name(), row.project, row.workspace)
+                        .to_lowercase();
+                    query.split_whitespace().all(|word| label.contains(word))
+                })
+                .flat_map(|row| {
+                    let label = format!(
+                        "{} / {} / {} (#{} )",
+                        row.display_name(),
+                        row.project,
+                        row.workspace,
+                        row.id.0
+                    );
+                    [
+                        Entry {
+                            label: format!("Unarchive: {label}"),
+                            command: Command::Unarchive(row.id, row.run),
+                        },
+                        Entry {
+                            label: format!("Delete record: {label}"),
+                            command: Command::DeleteArchived(
+                                row.id,
+                                row.run,
+                                row.display_name().to_owned(),
+                            ),
+                        },
+                    ]
+                })
+                .collect();
+        }
         let mut entries = vec![
+            Entry {
+                label: "Archived sessions".into(),
+                command: Command::Archives,
+            },
             Entry {
                 label: "Create terminal (n)".into(),
                 command: Command::CreateTerminal,
@@ -1144,7 +1207,9 @@ impl Dashboard {
                 let backwards = matches!(key.code, KeyCode::Up | KeyCode::BackTab);
                 match &mut palette.page {
                     Page::Search { query, selected } => {
-                        let count = self.palette_entries(query).len();
+                        let count = self
+                            .palette_entries(query, palette.archive.as_deref())
+                            .len();
                         if count > 0 {
                             *selected = if backwards {
                                 selected.saturating_sub(1)
@@ -1203,7 +1268,7 @@ impl Dashboard {
             }
             KeyCode::Enter => match &mut palette.page {
                 Page::Search { query, selected } => {
-                    let entries = self.palette_entries(query);
+                    let entries = self.palette_entries(query, palette.archive.as_deref());
                     *selected = (*selected).min(entries.len().saturating_sub(1));
                     if let Some(entry) = entries.get(*selected) {
                         match entry.command.clone() {
@@ -1224,6 +1289,47 @@ impl Dashboard {
                                     }
                                     return self.run(action);
                                 }
+                            }
+                            Command::Archives => {
+                                palette.archive = Some(Vec::new());
+                                palette.page = Page::Search {
+                                    query: String::new(),
+                                    selected: 0,
+                                };
+                                action = self.palette_submit(&mut palette, Request::Inspect);
+                            }
+                            Command::Unarchive(session, expected_run) => {
+                                action = self.palette_submit(
+                                    &mut palette,
+                                    Request::UnarchiveSession {
+                                        session,
+                                        expected_run,
+                                    },
+                                );
+                            }
+                            Command::DeleteArchived(session, expected_run, title) => {
+                                palette.page = Page::Confirm {
+                                    request: Some(Request::DeleteArchivedSession {
+                                        session,
+                                        expected_run,
+                                    }),
+                                    target: format!(
+                                        "Delete record {}? Provider history files will be kept.",
+                                        title
+                                    ),
+                                };
+                            }
+                            Command::CloseTerminal(id)
+                                if find_session(self, id).is_some_and(|s| !s.phase.is_live()) =>
+                            {
+                                let run = find_session(self, id).unwrap().run;
+                                action = self.palette_submit(
+                                    &mut palette,
+                                    Request::CloseTerminal {
+                                        session: id,
+                                        expected_run: run,
+                                    },
+                                );
                             }
                             command => palette.page = self.command_page(command),
                         }
@@ -1794,6 +1900,18 @@ impl Dashboard {
             }
         );
         match response {
+            Response::Inventory { sessions, .. } if self.palette.as_ref()?.archive.is_some() => {
+                let palette = self.palette.as_mut().unwrap();
+                palette.pending = None;
+                let mut rows: Vec<_> = sessions
+                    .iter()
+                    .filter(|row| row.archived)
+                    .cloned()
+                    .collect();
+                rows.sort_by_key(|row| std::cmp::Reverse(row.id.0));
+                palette.archive = Some(rows);
+                return Some(Vec::new());
+            }
             Response::Error { code, message } => {
                 let code = code.clone();
                 let message = message.clone();
@@ -1988,9 +2106,13 @@ impl Dashboard {
                     .cursor
                     .display(query, body.width.saturating_sub(8) as usize);
                 lines.push(Line::from(format!("Search: {visible}")));
-                let entries = self.palette_entries(query);
+                let entries = self.palette_entries(query, palette.archive.as_deref());
                 if entries.is_empty() {
-                    lines.push(Line::from("No matching actions or terminals"));
+                    lines.push(Line::from(if palette.archive.is_some() {
+                        "No matching archived sessions"
+                    } else {
+                        "No matching actions or terminals"
+                    }));
                 }
                 let selected = (*selected).min(entries.len().saturating_sub(1));
                 let count = usize::from(body.height.saturating_sub(1) / 2).max(1);
@@ -2129,6 +2251,7 @@ impl Dashboard {
         let (area, inner, body, buttons) = palette_geometry(frame.area());
         frame.render_widget(Clear, area);
         let title = match &palette.page {
+            Page::Search { .. } if palette.archive.is_some() => "Archived sessions",
             Page::Search { .. } => "Command palette",
             Page::Form { command, .. } => match command {
                 Command::CreateTerminal => "Create terminal",
@@ -2180,7 +2303,7 @@ impl Dashboard {
             body,
         );
         let detail = if let Page::Search { query, selected } = &palette.page {
-            let entries = self.palette_entries(query);
+            let entries = self.palette_entries(query, palette.archive.as_deref());
             let selected = (*selected).min(entries.len().saturating_sub(1));
             entries
                 .get(selected)
@@ -2811,6 +2934,7 @@ mod launch_tests {
     }
     fn summary(id: u64) -> SessionSummary {
         SessionSummary {
+            archived: false,
             id: SessionId(id),
             run: crate::protocol::SessionRunId(1),
             kind: crate::protocol::SessionKind::Terminal,

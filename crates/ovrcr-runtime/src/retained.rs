@@ -27,10 +27,23 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
             boot_id TEXT,
             stopped INTEGER NOT NULL CHECK (stopped IN (0, 1)),
             failure TEXT,
+            disposition INTEGER NOT NULL DEFAULT 0 CHECK (disposition IN (0, 1, 2)),
             UNIQUE (project, workspace, name)
         );",
     )?;
     Ok(())
+}
+
+pub(crate) fn has_table(connection: &Connection, name: &str) -> Result<bool> {
+    Ok(connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1)",
+        [name],
+        |row| row.get(0),
+    )?)
+}
+
+pub(crate) fn has_disposition(connection: &Connection) -> Result<bool> {
+    Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('retained_sessions') WHERE name = 'disposition')", [], |row| row.get(0))?)
 }
 
 pub(crate) fn create_conversation_schema(connection: &Connection) -> Result<()> {
@@ -83,6 +96,14 @@ pub(crate) struct SessionMetadata {
     pub application_title: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum Disposition {
+    Active = 0,
+    Archived = 1,
+    Returned = 2,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RetainedSession {
     pub id: SessionId,
@@ -91,6 +112,7 @@ pub(crate) struct RetainedSession {
     pub title_revision: u64,
     pub boot_id: Option<String>,
     pub stopped: bool,
+    pub disposition: Disposition,
     pub failure: Option<String>,
     pub conversation: Option<ovrcr_protocol::ConversationReference>,
     pub identity_invalid: bool,
@@ -124,6 +146,7 @@ impl RetainedSession {
     pub fn summary(&self, current_boot: Option<&str>) -> SessionSummary {
         SessionSummary {
             id: self.id,
+            archived: self.disposition == Disposition::Archived,
             run: self.run,
             kind: self.metadata.kind.clone(),
             recovery: Some(self.recovery(current_boot)),
@@ -133,7 +156,7 @@ impl RetainedSession {
             label: self.metadata.label.clone(),
             pid: None,
             started_unix_ms: None,
-            phase: if self.stopped {
+            phase: if self.stopped || self.disposition != Disposition::Active {
                 SessionPhase::Stopped
             } else {
                 SessionPhase::Interrupted
@@ -164,7 +187,7 @@ impl SessionStore {
     }
 
     fn from_connection(connection: Connection) -> Result<Self> {
-        let records = read_records(&connection)?;
+        let records = read_records(&connection, true)?;
         Ok(Self {
             connection,
             records,
@@ -203,6 +226,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            disposition: Disposition::Active,
         };
         let metadata = &record.metadata;
         self.connection.execute(
@@ -310,6 +334,7 @@ impl SessionStore {
             failure: None,
             conversation: None,
             identity_invalid: false,
+            disposition: Disposition::Active,
         };
         self.records.insert(id, record.clone());
         Ok(record)
@@ -318,7 +343,7 @@ impl SessionStore {
     /// Commit launch intent before any process exists. The caller holds admission ownership.
     pub fn begin_run(&mut self, id: SessionId, expected: SessionRunId) -> Result<RetainedSession> {
         let record = self.records.get(&id).context("session not found")?;
-        if record.run != expected {
+        if record.run != expected || record.disposition == Disposition::Archived {
             bail!("session run changed");
         }
         let next = expected
@@ -329,7 +354,7 @@ impl SessionStore {
             .connection
             .execute(
                 "UPDATE retained_sessions SET run = ?1, boot_id = ?2, stopped = 0,
-             failure = NULL, title_revision = 0 WHERE id = ?3 AND run = ?4",
+             failure = NULL, title_revision = 0, disposition = 0 WHERE id = ?3 AND run = ?4",
                 params![
                     sql_integer(next)?,
                     self.boot_id,
@@ -343,6 +368,7 @@ impl SessionStore {
         }
         let record = self.records.get_mut(&id).unwrap();
         record.run = SessionRunId(next);
+        record.disposition = Disposition::Active;
         record.boot_id = self.boot_id.clone();
         record.stopped = false;
         record.failure = None;
@@ -405,7 +431,10 @@ impl SessionStore {
         let Some(record) = self.records.get(&id) else {
             return Ok(false);
         };
-        if record.run != run || revision < record.title_revision {
+        if record.run != run
+            || record.disposition == Disposition::Archived
+            || revision < record.title_revision
+        {
             return Ok(false);
         }
         if record.metadata.pinned_title == pinned
@@ -436,6 +465,38 @@ impl SessionStore {
         record.metadata.application_title = application;
         record.title_revision = revision;
         Ok(true)
+    }
+
+    /// Invalidate the old run on both transitions. Delayed reopen, close and
+    /// process callbacks must not cross a close/unarchive boundary.
+    /// Ownership proof (`stopped`) is independent of filing the record.
+    pub fn set_archived(
+        &mut self,
+        id: SessionId,
+        expected: SessionRunId,
+        archived: bool,
+    ) -> Result<()> {
+        let record = self.records.get(&id).context("session not found")?;
+        if record.run != expected || (record.disposition == Disposition::Archived) == archived {
+            bail!("session archive state changed");
+        }
+        let next = expected
+            .0
+            .checked_add(1)
+            .context("session run identity exhausted")?;
+        let disposition = if archived {
+            Disposition::Archived
+        } else {
+            Disposition::Returned
+        };
+        self.connection.execute(
+            "UPDATE retained_sessions SET disposition = ?1, run = ?2 WHERE id = ?3 AND run = ?4",
+            params![disposition as u8, sql_integer(next)?, sql_integer(id.0)?, sql_integer(expected.0)?],
+        ).context("persist session archive transition")?;
+        let record = self.records.get_mut(&id).unwrap();
+        record.disposition = disposition;
+        record.run = SessionRunId(next);
+        Ok(())
     }
 
     pub fn remove(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
@@ -469,7 +530,7 @@ pub fn load_session_summaries(config: &Path) -> Result<Vec<SessionSummary>> {
         return Ok(Vec::new());
     }
     let boot_id = current_boot_id();
-    Ok(read_records(&transaction)?
+    Ok(read_records(&transaction, has_disposition(&transaction)?)?
         .values()
         .map(|record| record.summary(boot_id.as_deref()))
         .collect())
@@ -486,11 +547,15 @@ fn read_integer(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> 
         .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
 }
 
-fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSession>> {
-    let mut query = connection.prepare(
+fn read_records(
+    connection: &Connection,
+    has_disposition: bool,
+) -> Result<HashMap<SessionId, RetainedSession>> {
+    let disposition = if has_disposition { "disposition" } else { "0" };
+    let mut query = connection.prepare(&format!(
         "SELECT id, run, project, workspace, name, label, cwd, kind, pinned_title,
-         application_title, title_revision, boot_id, stopped, failure FROM retained_sessions",
-    )?;
+         application_title, title_revision, boot_id, stopped, failure, {disposition} FROM retained_sessions",
+    ))?;
     let rows = query.query_map([], |row| {
         let kind: String = row.get(7)?;
         let kind = serde_json::from_str(&kind).map_err(|error| {
@@ -524,6 +589,12 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
             failure: row.get(13)?,
             conversation: None,
             identity_invalid: false,
+            disposition: match row.get::<_, i64>(14)? {
+                0 => Disposition::Active,
+                1 => Disposition::Archived,
+                2 => Disposition::Returned,
+                value => return Err(rusqlite::Error::IntegralValueOutOfRange(14, value)),
+            },
         })
     })?;
     let mut records = HashMap::new();
@@ -536,8 +607,7 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
         ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
         records.insert(record.id, record);
     }
-    let legacy =
-        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 3;
+    let legacy = has_table(connection, "claude_conversations")?;
     let table = if legacy {
         "claude_conversations"
     } else {
@@ -649,5 +719,104 @@ mod tests {
             Some(BOOT_A),
             Some("00000000-0000-0000-0000-000000000000")
         ));
+    }
+
+    #[test]
+    fn archive_schema_three_migrates_without_reviving_archived_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.toml");
+        let mut store = SessionStore::open(&config).unwrap();
+        let record = store
+            .create(SessionMetadata {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "saved".into(),
+                label: "sh".into(),
+                cwd: root.path().to_path_buf(),
+                kind: SessionKind::Terminal,
+                pinned_title: Some("Archived title".into()),
+                application_title: None,
+            })
+            .unwrap();
+        store.set_archived(record.id, record.run, true).unwrap();
+        let expected = store.get(record.id).unwrap().summary(store.boot_id());
+        drop(store);
+        let connection = Connection::open(crate::config::database_path(&config)).unwrap();
+        connection
+            .execute_batch("DROP TABLE agent_conversations; PRAGMA user_version = 3;")
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            load_session_summaries(&config).unwrap(),
+            vec![expected.clone()]
+        );
+        let mut reopened = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            reopened.get(record.id).unwrap().summary(reopened.boot_id()),
+            expected
+        );
+        assert!(reopened.begin_run(record.id, expected.run).is_err());
+    }
+
+    #[test]
+    fn schema_two_migrates_without_losing_rows_and_archive_fences_old_callbacks() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.toml");
+        crate::config::initialize_registry(&config).unwrap();
+        let mut store = SessionStore::open(&config).unwrap();
+        let record = store
+            .create(SessionMetadata {
+                project: "p".into(),
+                workspace: "w".into(),
+                name: "saved".into(),
+                label: "sh".into(),
+                cwd: root.path().to_path_buf(),
+                kind: SessionKind::Terminal,
+                pinned_title: Some("Saved title".into()),
+                application_title: None,
+            })
+            .unwrap();
+        drop(store);
+        let connection = Connection::open(crate::config::database_path(&config)).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE retained_sessions DROP COLUMN disposition; PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        drop(connection);
+        assert!(!load_session_summaries(&config).unwrap()[0].archived);
+        let mut store = SessionStore::open(&config).unwrap();
+        assert_eq!(
+            store
+                .get(record.id)
+                .unwrap()
+                .metadata
+                .pinned_title
+                .as_deref(),
+            Some("Saved title")
+        );
+        store.set_archived(record.id, record.run, true).unwrap();
+        assert!(store.begin_run(record.id, record.run).is_err());
+        assert!(
+            !store
+                .update_titles(record.id, record.run, 999, None, Some("late title".into()))
+                .unwrap()
+        );
+        assert!(!store.mark_stopped(record.id, record.run).unwrap());
+        assert!(
+            !store
+                .record_failure(record.id, record.run, "late failure".into())
+                .unwrap()
+        );
+        let archived_run = store.get(record.id).unwrap().run;
+        assert!(store.begin_run(record.id, archived_run).is_err());
+        store.set_archived(record.id, archived_run, false).unwrap();
+        assert!(store.begin_run(record.id, record.run).is_err());
+        drop(store);
+        let reopened = SessionStore::open(&config).unwrap();
+        let summary = reopened.get(record.id).unwrap().summary(reopened.boot_id());
+        assert_eq!(summary.phase, SessionPhase::Stopped);
+        assert!(!summary.archived);
+        assert_eq!(summary.title.as_deref(), Some("Saved title"));
     }
 }

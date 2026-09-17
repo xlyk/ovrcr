@@ -342,6 +342,27 @@ pub(super) fn handle_request_with_id(
         } => state
             .send_terminal(session, &text, submit)
             .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::DeleteArchivedSession {
+            session,
+            expected_run,
+        } => state
+            .delete_archived_session(session, expected_run)
+            .map_or_else(error_for_lifecycle, |_| Response::Ok),
+        Request::UnarchiveSession {
+            session,
+            expected_run,
+        } => {
+            state
+                .unarchive_session(session, expected_run)
+                .map_or_else(error_for_lifecycle, |_| {
+                    state
+                        .dashboard
+                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                            state.hierarchy(),
+                        )));
+                    Response::Ok
+                })
+        }
         Request::CloseTerminal {
             session,
             expected_run,

@@ -214,6 +214,9 @@ pub(super) enum TerminalCommand {
         id: u64,
     },
     List {
+        /// List archived records instead of active sessions.
+        #[arg(long)]
+        archived: bool,
         #[arg(long)]
         project: Option<String>,
         #[arg(long, requires = "project")]
@@ -231,7 +234,12 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         no_submit: bool,
     },
+    /// Stop currently owned work and archive the session record.
     Close {
+        id: u64,
+    },
+    /// Return an archived record to the active list without launching.
+    Unarchive {
         id: u64,
     },
     Kill {

@@ -1445,6 +1445,21 @@ fn stubborn_session_argv() -> Vec<OsString> {
     ]
 }
 
+fn delete_fixture_archive(fixture: &ControlFixture) {
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("expected inventory");
+    };
+    for row in sessions.into_iter().filter(|row| row.archived) {
+        assert_eq!(
+            fixture.request(Request::DeleteArchivedSession {
+                session: row.id,
+                expected_run: row.run
+            }),
+            Response::Ok
+        );
+    }
+}
+
 #[test]
 fn workspace_remove_succeeds_after_directory_deleted() {
     let _env_lock = env_lock();
@@ -1461,6 +1476,7 @@ fn workspace_remove_succeeds_after_directory_deleted() {
     let workspace_dir = fixture.workspace_root.join("work");
     std::fs::remove_dir_all(&workspace_dir).unwrap();
 
+    delete_fixture_archive(&fixture);
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
@@ -4639,6 +4655,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         }),
         Response::Ok
     );
+    delete_fixture_archive(&fixture);
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
@@ -4865,11 +4882,12 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
             expected_run: ovrcr_protocol::SessionRunId(1)
         }),
         Response::Error {
-            code: ErrorCode::NotFound,
+            code: ErrorCode::Conflict,
             ..
         }
     ));
     drop(dashboard);
+    delete_fixture_archive(&fixture);
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
@@ -10773,8 +10791,8 @@ fn codex_unread_is_discarded_on_terminal_removal_and_server_restart() {
     assert!(
         sessions
             .iter()
-            .all(|s| s.id != first.id && s.unread.is_none()),
-        "removing a terminal removes its unread result"
+            .all(|s| (s.id != first.id || s.archived) && s.unread.is_none()),
+        "archiving a terminal retains metadata without its unread result"
     );
 
     let (second, _) = codex_session_named(&fixture, &fixture.socket, "codex-restart");

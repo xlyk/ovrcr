@@ -67,6 +67,7 @@ mod tests {
         turn: Option<&str>,
     ) -> SessionSummary {
         SessionSummary {
+            archived: false,
             id: SessionId(1),
             run: crate::protocol::SessionRunId(1),
             kind: crate::protocol::SessionKind::Terminal,

@@ -518,7 +518,7 @@ fn ordinary_natural_exit_requires_ack_and_accepts_acknowledgement() {
 }
 
 #[test]
-fn acknowledged_natural_exit_close_removes_row() {
+fn natural_exit_archive_preserves_uncertainty_until_acknowledged() {
     let live = Live::binary();
     live.ready("feature/ack-close");
     let created = create_terminal(&live, "ack-close", &["/bin/sh", "-c", "exit 0"]);
@@ -526,8 +526,18 @@ fn acknowledged_natural_exit_close_removes_row() {
     let old_run = created["run"].as_u64().unwrap();
     wait_phase(&live, id, "exited");
     let id_arg = id.to_string();
-    assert_ownership_uncertain(&json_error(&live, &["terminal", "close", &id_arg]));
-    assert_eq!(row(&live, id)["run"], old_run);
+    json(&live, &["terminal", "close", &id_arg]);
+    let archived = json(&live, &["terminal", "list", "--archived"]);
+    let archived = archived
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_requires_ack(archived, true);
+    assert!(archived["run"].as_u64().unwrap() > old_run);
+    json(&live, &["terminal", "unarchive", &id_arg]);
+    assert_eq!(row(&live, id)["phase"], "stopped");
     assert_requires_ack(&row(&live, id), true);
 
     json(&live, &["terminal", "acknowledge-stopped", &id_arg]);
@@ -543,7 +553,7 @@ fn acknowledged_natural_exit_close_removes_row() {
             .unwrap()
             .iter()
             .all(|session| session["id"] != id),
-        "acknowledged close must remove the row: {remaining}"
+        "acknowledged close must leave the active list: {remaining}"
     );
 }
 
