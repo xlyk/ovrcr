@@ -56,3 +56,8 @@ The earlier GUI-input and hosted-Linux gaps above are superseded by these observ
 - All three disposable GUI launches were closed. Recorded GUI/server/dashboard/shell PIDs were absent afterward; final owned session process groups and fixture root were also absent. See `native-20260917/cleanup-*.json` and corresponding process inventories. No live user server was stopped.
 
 Still required: isolated native Claude continuity and repeat restart before another prompt. No account-backed test, merge, release, or issue closure is claimed.
+
+
+## 2026-09-17 authorized native continuity completion
+
+The previously open native provider gate is now **passed** on source `8347563`: exact same conversation and row survived two controlled server restarts and two explicit native GUI resumes before a second prompt. Claude correctly recalled the first prompt's marker. Only the approved two prompts were sent. See [native evidence and boundaries](native-continuity-20260917/README.md). This supersedes earlier authorization/native-continuity blockers; earlier failed attempts remain recorded. All four hosted checks passed on this source in [run 35235777003](https://github.com/xlyk/ovrcr/actions/runs/35235777003). No native Linux GUI claim, mainline merge, or release is made.
