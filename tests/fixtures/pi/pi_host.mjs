@@ -31,7 +31,16 @@ export async function createHost(extensionPath, { mode = "tui", session = "sessi
   const ctx = {
     get mode() { return state.mode; },
     hasUI: true,
-    sessionManager: { getSessionId: () => state.session, getSessionFile: () => undefined },
+    sessionManager: {
+      getSessionId: () => state.session,
+      getSessionFile: () => {
+        if (state.ephemeral) return undefined;
+        if (!process.env.OVRCR_TEST_HISTORY) return state.history;
+        const file = `${process.env.OVRCR_TEST_HISTORY}/${state.session}.jsonl`;
+        writeFileSync(file, JSON.stringify({ type: "session", version: 3, id: state.session, cwd: process.cwd() }) + "\n");
+        return file;
+      },
+    },
     isIdle: () => state.idle,
     ui: { notify: (message, level) => state.notices.push([message, level]) },
   };
@@ -64,6 +73,7 @@ async function main() {
   const at = args.indexOf("-e");
   const extension = at >= 0 ? args[at + 1] : null;
   let host = extension ? await createHost(extension) : null;
+  let retiredHost = null;
   if (process.env.OVRCR_TEST_PROBE) {
     writeFileSync(
       process.env.OVRCR_TEST_PROBE,
@@ -77,6 +87,11 @@ async function main() {
     if (command === "exit") process.exit(17);
     if (host) {
       if (command === "mode") host.state.mode = a;
+      else if (command === "session_ephemeral") {
+        host.state.session = a;
+        host.state.ephemeral = true;
+        await host.emit({ type: "session_start", reason: "new" });
+      }
       else if (command === "session_start") {
         if (a) host.state.session = a;
         await host.emit({ type: "session_start", reason: b ?? "startup" });
@@ -123,6 +138,7 @@ async function main() {
         // one is shut down and a new instance is created from the same extension path.
         const previous = host.state.session;
         await host.emit({ type: "session_shutdown", reason: b ?? "resume" });
+        retiredHost = host;
         host = await createHost(extension, { idle: host.state.idle });
         if (a) host.state.session = a;
         await host.emit({
@@ -131,6 +147,17 @@ async function main() {
           // (session-manager.js: `${fileTimestamp}_${this.sessionId}.jsonl`).
           previousSessionFile: `/private/x/2026-09-13T00-00-00-000Z_${previous}.jsonl`,
         });
+      } else if (command === "producer_replace") {
+        // Simulate a lost producer close. The first announcement pauses; the
+        // next authoritative boundary recovers the newly admitted producer.
+        retiredHost = host;
+        host = await createHost(extension, { session: a });
+        await host.emit({ type: "session_start", reason: "reload" });
+        await host.emit({ type: "session_start", reason: "reload" });
+      } else if (command === "retired_start") {
+        if (!retiredHost) throw new Error("no retired producer");
+        retiredHost.state.session = a;
+        await retiredHost.emit({ type: "session_start", reason: "resume" });
       } else if (command === "session_tree") await host.emit({ type: "session_tree" });
       else if (command === "session_compact") await host.emit({ type: "session_compact" });
       else if (command === "idle") host.state.idle = a !== "false";

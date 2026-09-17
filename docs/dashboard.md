@@ -453,12 +453,13 @@ the current run and requires another explicit submission.
 If a first launch cannot prove that no process started, the retained row stays.
 The failed create form cannot launch another session. Select the intended row
 yourself, then use its Reopen or Acknowledge action; the Dashboard never guesses
-which uncertain row to acknowledge. Certified retained Claude conversations offer
+which uncertain row to acknowledge. Certified retained Claude, Codex, Pi and Oh My Pi conversations offer
 Resume conversation on the same row, without submitting a new prompt. The status
 shows that the agent launched while conversation attachment is still pending; a
 matching native callback establishes attachment. Start new conversation opens
-the create form for a separate session. Other providers remain unavailable for
-native resume. Workspace removal remains a separate action.
+the create form for a separate session. Codex, Pi and Oh My Pi also have native
+resume adapters, with the limitations below. Other providers remain unavailable.
+Workspace removal remains a separate action.
 
 Claude recovery retains the exact UUID, provider history path, executable and
 non-secret configuration references. Missing history, executable, recorded
@@ -478,6 +479,23 @@ conversation** in the command palette. Fix the prerequisite, then explicitly ret
 redraws and reconnects do not retry failed launches. Hidden panes and sidebar rows
 do not trigger recovery. Native GUI acceptance of this automatic path is tracked
 separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
+
+Codex recovery resumes the exact UUID from its last authenticated root hook.
+Initial Codex resume reporting remains unavailable for that invocation; the status
+says `Codex resume: reporting unavailable; attachment not confirmed`, not Ready.
+The saved reference survives another restart before any new prompt. Silent native
+history switches cannot update it without a supported hook. See
+[Codex recovery limitations](codex-reporting-setup.md#retained-conversation-recovery).
+
+Pi and Oh My Pi retain the exact native session ID and file from their managed
+extension. History must remain unchanged by external processes during reopening,
+from prelaunch validation until native attachment. Concurrent deletion or replacement
+can cause a native fresh session and is outside the recovery guarantee.
+Accepted conversation switches replace the reference, including switches
+back to an earlier conversation. An ephemeral conversation replaces the old
+reference but cannot be resumed. Unsupported launch configuration leaves resume
+unavailable without disabling the provider's existing reporting.
+See [provider recovery support](agent-reporting-support.md#retained-pi-and-oh-my-pi-conversations).
 
 ### Automatic and pinned titles
 

@@ -79,6 +79,25 @@ pub fn receiver(
     lease: Option<InvocationLease>,
     argv: &mut Vec<OsString>,
 ) -> HookHandler {
+    // Capture only non-secret launch references, before adding our temporary extension.
+    let recovery = (|| {
+        let executable = argv.first().map(PathBuf::from)?;
+        let executable = if executable.is_absolute() {
+            executable
+        } else {
+            std::env::split_paths(&std::env::var_os("PATH")?)
+                .map(|directory| directory.join(&executable))
+                .find(|path| path.is_absolute() && path.is_file())?
+        };
+        Some(ovrcr_protocol::ExtensionConversation {
+            conversation: String::new(),
+            executable,
+            history: None,
+            config_dir: ovrcr_runtime::extension_recovery::config_dir(harness.provider).ok()?,
+            options: ovrcr_runtime::extension_recovery::launch_options(harness.provider, argv)
+                .ok()?,
+        })
+    })();
     let mut scratch = None;
     let unavailable = reporter::preflight(
         lease.is_some(),
@@ -102,6 +121,7 @@ pub fn receiver(
     }
     reporter.handler(Events {
         harness,
+        recovery,
         current: None,
         open_requests: Vec::new(),
     })
@@ -111,6 +131,7 @@ pub fn receiver(
 /// leave on screen are this receiver's to remember.
 struct Events {
     harness: &'static Harness,
+    recovery: Option<ovrcr_protocol::ExtensionConversation>,
     /// The open response cycle: the harness run counter and the identity published as `turn`.
     current: Option<(u64, String)>,
     /// The open Input requests, oldest first, bounded by `MAX_INPUT_REQUESTS`. Every
@@ -339,14 +360,34 @@ impl reporter::Frames for Events {
             }
             _ => return reporter::IGNORED.to_vec(),
         };
-        reporter.publish(
+        // Recovery metadata must not suppress the provider's activity when the
+        // durable store fails. The helper still receives no durable acknowledgment.
+        let activity = reporter.publish(
             AgentObservation::Activity(ActivitySample {
                 state,
                 quality,
                 turn,
             }),
             deadline,
-        )
+        );
+        if activity != reporter::ACCEPTED {
+            return activity;
+        }
+        if matches!(event, "session_start" | "agent_start")
+            && let Some(mut reference) = self.recovery.clone()
+        {
+            reference.conversation = session.to_owned();
+            reference.history = payload["session_file"].as_str().map(PathBuf::from);
+            let reference = match self.harness.provider {
+                AgentProvider::Pi => ovrcr_protocol::ConversationReference::Pi(reference),
+                AgentProvider::Omp => ovrcr_protocol::ConversationReference::Omp(reference),
+                _ => unreachable!("only Pi and OMP use the extension receiver"),
+            };
+            if !reporter.retain_conversation(reference, deadline) {
+                return reporter::UNAVAILABLE.to_vec();
+            }
+        }
+        activity
     }
 }
 
@@ -493,6 +534,7 @@ mod tests {
         (
             Events {
                 harness,
+                recovery: None,
                 current: None,
                 open_requests: Vec::new(),
             },

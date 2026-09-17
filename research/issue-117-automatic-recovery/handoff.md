@@ -17,8 +17,9 @@ require explicit acknowledgement that old agents and descendants stopped.
 Prerequisite/capacity failures persist a diagnostic and require explicit Retry.
 Natural Agent exits persist an explicit-action diagnostic without certifying
 process ownership. Old launch receipts do not select panes or install old runs.
-The wire protocol is **18**; restart only task-owned older servers for this test.
-The SQLite schema and provider registration are unchanged.
+The combined wire protocol is **20**; restart only task-owned older servers for this test.
+The SQLite schema is unchanged. Main's installed Claude, Codex, Pi and Oh My Pi
+adapters all participate through the shared eligibility and launch boundary.
 
 ## Reproduce automated coverage
 
@@ -56,7 +57,8 @@ executed as the fixture's native child, not omitted coverage.
 
 Host: Darwin 25.5.0 arm64; Rust 1.98.0; Node 22.23.2.
 The controlled Claude executable reports 2.1.268. Native admission support remains
-exact Claude Code **2.1.267 / 2.1.268**; no other adapter is added.
+exact Claude Code **2.1.267 / 2.1.268**. Merged main also supplies Codex 0.153.0,
+Pi 0.85.1 and Oh My Pi 18.2.2 recovery; their native acceptance remains separate.
 
 - Retained-session suite: 11 passed, one helper ignored by the outer runner.
 - TUI unit suite: 162 passed. Protocol suite: 37 passed.
@@ -73,6 +75,25 @@ exact Claude Code **2.1.267 / 2.1.268**; no other adapter is added.
   during runtime tests. It is **not a passing full-suite result**.
 - Logs, including failed attempts: `/tmp/ovrcr-117-evidence/`. Independent review,
   hosted CI, Linux execution and #127 native acceptance remain outstanding.
+
+### Merge verification with main `31ee5ba`
+
+The conflict resolution retains both automatic eligibility and Codex reporting
+limitations, plus all four installed adapters. Protocol 20 includes main's provider
+tags and `RecoverSession`; neither protocol 18 nor 19 describes the combined wire.
+
+- Check, Clippy with warnings denied, formatting and diff checks passed.
+- Protocol: 37 passed. TUI: 164 passed. Serial retained-session suite: 13 passed,
+  two native child helpers ignored by the outer runner.
+- Node: Pi 18 passed; OMP 25 passed.
+- Full parallel no-fail-fast suite: **975 passed, 2 failed, 20 ignored**. Codex's
+  retained identity was null in its fixture; the Claude ownership-negative fixture
+  fell back to native execution with `agent admission unavailable` and could not
+  attach reporting. Both tests passed in the serial retained suite. No assertions,
+  admission budgets or test concurrency settings were changed to hide these failures.
+- The earlier PTY-backpressure failure did not recur in this full run. Full regression
+  remains non-green because of the two provider-fixture failures. Logs are
+  `/tmp/ovrcr-117-evidence/merge-*.log`. Native acceptance remains outstanding.
 
 ## Native acceptance launch and fixture boundaries
 

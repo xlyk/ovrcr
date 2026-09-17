@@ -27,6 +27,654 @@ fn json(live: &Live, args: &[&str]) -> Value {
 }
 
 #[test]
+fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let home = live.root.path().join("codex-home");
+    std::fs::create_dir(&home).unwrap();
+    let environment = [("CODEX_HOME", home.as_os_str())];
+    live.start_binary_env(&environment);
+    live.ready("feature/codex-recovery");
+    let cwd = ovrcr::config::load_registry(&live.config)
+        .unwrap()
+        .workspace(live::PROJECT, live::WORKSPACE)
+        .unwrap()
+        .path
+        .clone();
+    let native = live.root.path().join("codex");
+    let quote = |p: &std::path::Path| format!("'{}'", p.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit 0; fi\nexport RETAINED_CODEX_ROOT={} RETAINED_CODEX_MODE=\"$1\"\nprintf '%s\\n' \"$@\" >> \"$RETAINED_CODEX_ROOT/argv\"\nif [ -f \"$RETAINED_CODEX_ROOT/fail-resume\" ]; then printf 'NATIVE_CODEX_RESUME_FAILED\\n'; exit 23; fi\nexec {} --ignored --exact retained_codex_native_helper --nocapture\n",
+        quote(live.root.path()), quote(&std::env::current_exe().unwrap())
+    )).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let created = create_terminal(
+        &live,
+        "codex-retained",
+        &[
+            live.executable.to_str().unwrap(),
+            "agent",
+            "run",
+            "codex",
+            "--",
+            native.to_str().unwrap(),
+            "PRIVATE_CODEX_PROMPT_118",
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+    json(&live, &["terminal", "rename", &id_arg, "Codex continuity"]);
+    json(&live, &["terminal", "send", &id_arg, "--text", "startup"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_STARTUP");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(
+        row["recovery"]["conversation"],
+        "01a08e5c-7480-7052-9964-9224aadebef0"
+    );
+    assert_eq!(row["activity"], "unknown", "startup invented activity");
+    json(&live, &["terminal", "send", &id_arg, "--text", "foreign"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_FOREIGN_IGNORED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(
+        row["recovery"]["conversation"],
+        "01a08e5c-7480-7052-9964-9224aadebef0"
+    );
+    json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_ATTACHED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert!(
+        row["unread"].is_object(),
+        "fixture never established old Ready/Unread: {row}"
+    );
+    let conversation = "01a08e5c-7480-7052-9964-9224aadebef0";
+    // A newer neighboring conversation must never be selected instead.
+    let decoy = home.join("sessions/2026/09/10/rollout-2026-09-10T20-00-00-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl");
+    std::fs::write(&decoy, "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION").unwrap();
+    for attempt in 1..=2 {
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], conversation, "{row}");
+        assert!(row["recovery"]["unavailable"].is_null(), "{row}");
+        assert_eq!(row["title"], "Codex continuity");
+        assert!(row["agent"].is_null());
+        live.start_binary_env(&environment);
+        if attempt == 1 {
+            let history = home
+                .join("sessions/2026/09/10")
+                .join(format!("rollout-2026-09-10T19-46-58-{conversation}.jsonl"));
+            for path in [&history, &home, &native, &cwd] {
+                let displaced = path.with_extension("unavailable");
+                std::fs::rename(path, &displaced).unwrap();
+                let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+                std::fs::rename(&displaced, path).unwrap();
+                assert!(
+                    !failed.status.success(),
+                    "missing prerequisite launched fresh"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+                    "PRIVATE_CODEX_PROMPT_118\n"
+                );
+            }
+        }
+        let old_run = row["run"].as_u64().unwrap();
+        let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+        let duplicate = live.request(ovrcr::protocol::Request::ReopenSession {
+            session: ovrcr::protocol::SessionId(id),
+            expected_run: ovrcr::protocol::SessionRunId(old_run),
+            acknowledge_stopped: false,
+        });
+        let ovrcr::protocol::Response::CreatedSession(duplicate) = duplicate else {
+            panic!("{duplicate:?}")
+        };
+        assert_eq!(duplicate.run.0, reopened["run"].as_u64().unwrap());
+        track_groups(&live);
+        wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+        wait_output(
+            &live,
+            &id_arg,
+            &format!("RETAINED_CODEX_CWD:{}", cwd.display()),
+        );
+        wait_output(&live, &id_arg, "Codex reporting unavailable");
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], conversation);
+        assert_eq!(row["recovery"]["attached"], false);
+        assert!(row["agent"].is_null(), "old reporting survived: {row}");
+        assert_eq!(row["reporting_unavailable"], true);
+        assert!(row["unread"].is_null());
+        assert_eq!(
+            std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+            format!(
+                "PRIVATE_CODEX_PROMPT_118\n{}",
+                format!("resume\n{conversation}\n").repeat(attempt)
+            )
+        );
+    }
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+    for private in [
+        "PRIVATE_CODEX_PROMPT_118",
+        "RETAINED_CODEX_READY",
+        "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION",
+    ] {
+        assert!(
+            !database
+                .windows(private.len())
+                .any(|bytes| bytes == private.as_bytes())
+        );
+    }
+    let changed = live.root.path().join("different-codex-home");
+    std::fs::create_dir(&changed).unwrap();
+    live.start_binary_env(&[("CODEX_HOME", changed.as_os_str())]);
+    let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("configuration"));
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let fail = live.root.path().join("fail-resume");
+    std::fs::write(&fail, "").unwrap();
+    live.start_binary_env(&environment);
+    json(&live, &["terminal", "reopen", &id_arg]);
+    track_groups(&live);
+    wait_phase(&live, id, "exited");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(row["exit_code"], 23);
+    assert_eq!(row["recovery"]["conversation"], conversation);
+    assert!(
+        row["recovery"]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("Retry")
+    );
+    std::fs::remove_file(fail).unwrap();
+    json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
+    track_groups(&live);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+    assert_eq!(
+        std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+        format!(
+            "PRIVATE_CODEX_PROMPT_118\n{}",
+            format!("resume\n{conversation}\n").repeat(4)
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(decoy).unwrap(),
+        "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION"
+    );
+}
+
+#[test]
+#[ignore = "controlled native executable entered only by the retained-session fixture"]
+fn retained_codex_native_helper() {
+    use std::io::BufRead;
+    let home = std::path::PathBuf::from(std::env::var_os("CODEX_HOME").unwrap());
+    let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+    let history = home
+        .join("sessions/2026/09/10")
+        .join(format!("rollout-2026-09-10T19-46-58-{id}.jsonl"));
+    std::fs::create_dir_all(history.parent().unwrap()).unwrap();
+    std::fs::write(&history, format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.153.0\",\"source\":\"cli\"}}}}\n")).unwrap();
+    println!(
+        "RETAINED_CODEX_CWD:{}",
+        std::env::current_dir().unwrap().display()
+    );
+    println!("RETAINED_CODEX_READY");
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        if line == "foreign" {
+            // A valid envelope from the provider process itself is not the required
+            // direct-child native hook. It must not bind even with the private token.
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "hook_event_name": "SessionStart", "source": "startup",
+                "session_id": "01a08e94-0deb-76c3-a2b5-540c4874a53f", "transcript_path": history,
+            }))
+            .unwrap();
+            ovrcr::report::send_codex_hook(&payload, Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            println!("RETAINED_CODEX_FOREIGN_IGNORED");
+        }
+        if line == "attach" || line == "startup" {
+            let events: &[&str] = if line == "startup" {
+                &["SessionStart"]
+            } else {
+                &["UserPromptSubmit", "Stop"]
+            };
+            for event in events {
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "hook_event_name": event, "source": "startup", "session_id": id, "turn_id": "turn-1", "transcript_path": history,
+                })).unwrap();
+                use std::io::Write;
+                let mut hook = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+                    .args(["report", "codex", "--stdin"])
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                hook.stdin.take().unwrap().write_all(&payload).unwrap();
+                assert!(hook.wait().unwrap().success());
+            }
+            println!(
+                "{}",
+                if line == "startup" {
+                    "RETAINED_CODEX_STARTUP"
+                } else {
+                    "RETAINED_CODEX_ATTACHED"
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn extension_conversations_switch_and_survive_repeated_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    for provider in ["pi", "omp"] {
+        let live = Live::idle().bounded();
+        let config = live.root.path().join("provider-config");
+        std::fs::create_dir(&config).unwrap();
+        // Runner/user profiles must not change this fixture's recovery capability.
+        // Inherited XDG overrides make OMP recovery intentionally unavailable.
+        let empty = std::ffi::OsStr::new("");
+        let environment = [
+            ("PI_CODING_AGENT_DIR", config.as_os_str()),
+            ("OMP_PROFILE", empty),
+            ("PI_PROFILE", empty),
+            ("PI_CONFIG_DIR", empty),
+            ("XDG_CONFIG_HOME", empty),
+            ("XDG_DATA_HOME", empty),
+            ("XDG_STATE_HOME", empty),
+            ("XDG_CACHE_HOME", empty),
+        ];
+        live.start_binary_env(&environment);
+        live.ready("feature/extension-recovery");
+        let native = live.root.path().join(provider);
+        let host =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+        let quote = |path: &std::path::Path| {
+            format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"))
+        };
+        std::fs::write(&native, format!(
+            "#!/bin/sh\nexport OVRCR_TEST_HISTORY={}\nprintf '%s\\n' \"$@\" >> {}\nexec node {} \"$@\"\n",
+            quote(&config), quote(&config.join("argv")), quote(&host),
+        )).unwrap();
+        std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Capture the initial run's capability before the managed launcher
+        // deliberately removes it from the native provider's environment.
+        let launcher = live.root.path().join("ovrcr");
+        let capability_file = live.root.path().join("initial-capability");
+        std::fs::write(
+            &launcher,
+            format!(
+                "#!/bin/sh\numask 077\nprintf '%s' \"$OVRCR_HOOK_TOKEN\" > {}\nexec {} \"$@\"\n",
+                quote(&capability_file),
+                quote(&live.executable)
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let created = create_terminal(
+            &live,
+            "retained-extension",
+            &[
+                launcher.to_str().unwrap(),
+                "agent",
+                "run",
+                provider,
+                "--",
+                native.to_str().unwrap(),
+                "PRIVATE_PROMPT_119",
+            ],
+        );
+        let id = created["id"].as_u64().unwrap();
+        let id_arg = id.to_string();
+        wait_output(&live, &id_arg, "PI_NATIVE_READY");
+        json(
+            &live,
+            &["terminal", "rename", &id_arg, "Conversation continuity"],
+        );
+        for (index, conversation) in ["session-a", "session-b", "session-a"].iter().enumerate() {
+            let command = if index == 0 {
+                "session_start"
+            } else if provider == "pi" {
+                "session_replace"
+            } else {
+                "session_switch"
+            };
+            json(
+                &live,
+                &[
+                    "terminal",
+                    "send",
+                    &id_arg,
+                    "--text",
+                    &format!("{command}:{conversation}"),
+                ],
+            );
+            wait_output(&live, &id_arg, &format!("PI_CALLBACK={index}"));
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(
+                row["recovery"]["conversation"], *conversation,
+                "{provider}: {row}"
+            );
+            assert!(row["recovery"]["unavailable"].is_null(), "{row}");
+        }
+        // Retire a producer, then deliver its late conversation change through
+        // the same native helper and authenticated receiver.
+        let replace = if provider == "pi" {
+            "session_replace:session-a"
+        } else {
+            "producer_replace:session-a"
+        };
+        for (index, command) in [replace, "retired_start:session-b"].iter().enumerate() {
+            json(&live, &["terminal", "send", &id_arg, "--text", command]);
+            wait_output(&live, &id_arg, &format!("PI_CALLBACK={}", index + 3));
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(
+                row["recovery"]["conversation"], "session-a",
+                "retired producer changed {provider} recovery"
+            );
+        }
+        let database =
+            rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        database.execute_batch("CREATE TRIGGER reject_extension_retention BEFORE INSERT ON agent_conversations BEGIN SELECT RAISE(FAIL, 'fixture rejects retention'); END;").unwrap();
+        json(
+            &live,
+            &["terminal", "send", &id_arg, "--text", "agent_start"],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=5");
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(
+            row["agent"]["activity"]["state"], "Busy",
+            "recovery failure suppressed {provider} activity"
+        );
+        database
+            .execute_batch("DROP TRIGGER reject_extension_retention")
+            .unwrap();
+        drop(database);
+        json(
+            &live,
+            &[
+                "terminal",
+                "send",
+                &id_arg,
+                "--text",
+                "session_shutdown:quit",
+            ],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=6");
+        let deadline = Instant::now() + live::wait_deadline();
+        let epoch = loop {
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            if row["agent"]["health"]["state"] == "Unavailable" {
+                break row["agent_epoch"].as_u64().unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "reporter did not release its lease"
+            );
+            std::thread::yield_now();
+        };
+        // Reserve a real supervisor on run N and bind B without committing its
+        // retention. Deliver that delayed write after run N+1 has launched.
+        use ovrcr::protocol::{
+            AgentCommand, AgentOperationResult, AgentProvider, AgentSecret, ConversationReference,
+            ExtensionConversation, Request, ReserveAgent, Response, SessionId, SupervisorAuth,
+            SupervisorRequest, client, exchange_preamble,
+        };
+        let secret = std::fs::read_to_string(&capability_file).unwrap();
+        let mut capability = [0u8; 32];
+        assert_eq!(secret.len(), 64);
+        for (index, byte) in capability.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&secret[index * 2..index * 2 + 2], 16).unwrap();
+        }
+        let mut old_watch = std::os::unix::net::UnixStream::connect(&live.socket).unwrap();
+        old_watch
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        old_watch
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        exchange_preamble(&mut old_watch).unwrap();
+        let reserved = client::request(
+            &mut old_watch,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                session: SessionId(id),
+                capability: AgentSecret(capability),
+                operation: "old-run-reserve".into(),
+                expected_epoch: epoch,
+                invocation: "delayed-old-run".into(),
+                provider: AgentProvider::from_name(provider).unwrap(),
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = reserved else {
+            panic!("reserve failed: {reserved:?}")
+        };
+        let auth = SupervisorAuth {
+            session: SessionId(id),
+            lease: reservation.lease,
+        };
+        let bound = client::request(
+            &mut old_watch,
+            2,
+            Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "old-run-bind".into(),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: "session-b".into(),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = bound else {
+            panic!("bind failed: {bound:?}")
+        };
+        let reference = ExtensionConversation {
+            conversation: "session-b".into(),
+            executable: native.clone(),
+            history: Some(config.join("session-b.jsonl")),
+            config_dir: config.clone(),
+            options: vec![],
+        };
+        let delayed_retention = Request::Supervisor(SupervisorRequest {
+            auth,
+            operation: "delayed-old-run-retention".into(),
+            command: AgentCommand::RetainConversation {
+                binding,
+                reference: Box::new(if provider == "pi" {
+                    ConversationReference::Pi(reference)
+                } else {
+                    ConversationReference::Omp(reference)
+                }),
+            },
+        });
+        let cwd = ovrcr::config::load_registry(&live.config)
+            .unwrap()
+            .workspace(live::PROJECT, live::WORKSPACE)
+            .unwrap()
+            .path
+            .clone();
+        for attempt in 1..=2 {
+            json(&live, &["shutdown", "--kill"]);
+            live.join();
+            live.start_binary_env(&environment);
+            if attempt == 1 {
+                for (path, diagnostic) in [
+                    (config.join("session-a.jsonl"), "history"),
+                    (native.clone(), "executable"),
+                    (config.clone(), "configuration"),
+                    (cwd.clone(), "directory"),
+                ] {
+                    let before = std::fs::read_to_string(config.join("argv")).unwrap();
+                    let displaced = path.with_extension("unavailable");
+                    std::fs::rename(&path, &displaced).unwrap();
+                    let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                    std::fs::rename(&displaced, &path).unwrap();
+                    assert!(
+                        !result.status.success(),
+                        "missing {diagnostic} launched {provider}"
+                    );
+                    assert!(
+                        String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(config.join("argv")).unwrap(),
+                        before
+                    );
+                }
+                let history = config.join("session-a.jsonl");
+                let original = std::fs::read(&history).unwrap();
+                std::fs::write(&history, "{\"type\":\"session\",\"id\":\"different\"}\n").unwrap();
+                let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                std::fs::write(&history, original).unwrap();
+                assert!(!result.status.success());
+                assert!(String::from_utf8_lossy(&result.stderr).contains("identity"));
+            }
+            json(&live, &["terminal", "reopen", &id_arg]);
+            track_groups(&live);
+            wait_output(&live, &id_arg, "PI_NATIVE_READY");
+            assert!(
+                matches!(
+                    live.request(delayed_retention.clone()),
+                    Response::Error { .. }
+                ),
+                "old run changed retained identity"
+            );
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(row["recovery"]["conversation"], "session-a");
+            assert_eq!(row["recovery"]["attached"], false);
+            assert_eq!(row["title"], "Conversation continuity");
+            let args = std::fs::read_to_string(config.join("argv")).unwrap();
+            assert_eq!(args.matches("PRIVATE_PROMPT_119").count(), 1);
+            let flag = if provider == "pi" {
+                "--session"
+            } else {
+                "--resume"
+            };
+            assert_eq!(
+                args.matches(&format!(
+                    "{flag}\n{}\n",
+                    config.join("session-a.jsonl").display()
+                ))
+                .count(),
+                attempt
+            );
+        }
+        json(
+            &live,
+            &[
+                "terminal",
+                "send",
+                &id_arg,
+                "--text",
+                "session_ephemeral:ephemeral-b",
+            ],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=0");
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], "ephemeral-b");
+        assert!(
+            row["recovery"]["unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("no native history")
+        );
+        let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+        assert!(
+            !database
+                .windows(b"PRIVATE_PROMPT_119".len())
+                .any(|bytes| bytes == b"PRIVATE_PROMPT_119")
+        );
+        live.start_binary_env(&environment);
+        let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+        assert!(
+            !failure.status.success(),
+            "ephemeral conversation reopened old A"
+        );
+    }
+}
+
+#[test]
 fn retained_rows_preserve_identity_and_title_without_restoring_output_or_live_state() {
     let live = Live::binary();
     live.ready("feature/retained");
