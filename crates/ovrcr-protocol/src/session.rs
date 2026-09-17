@@ -84,6 +84,18 @@ pub struct SessionSummary {
 }
 
 impl SessionSummary {
+    /// Display may recover an interrupted agent, never acknowledge process ownership.
+    pub fn can_auto_recover(&self) -> bool {
+        !self.archived
+            && matches!(self.kind, SessionKind::Agent { .. })
+            && self.phase == SessionPhase::Interrupted
+            && self.recovery.as_ref().is_some_and(|recovery| {
+                !recovery.requires_ack
+                    && recovery.unavailable.is_none()
+                    && recovery.failure.is_none()
+            })
+    }
+
     /// A retained identity is not a new-run reporting observation. Codex's initial
     /// resume has no certified reporting adapter, even when native launch succeeds.
     pub fn resume_reporting_limitation(&self) -> Option<&'static str> {

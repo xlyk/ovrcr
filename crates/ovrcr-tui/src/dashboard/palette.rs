@@ -809,7 +809,16 @@ impl Dashboard {
                             .is_some_and(|recovery| recovery.unavailable.is_none());
                         entries.push(if available {
                             Entry {
-                                label: "Resume conversation".into(),
+                                label: if session
+                                    .recovery
+                                    .as_ref()
+                                    .is_some_and(|recovery| recovery.failure.is_some())
+                                {
+                                    "Retry resume conversation"
+                                } else {
+                                    "Resume conversation"
+                                }
+                                .into(),
                                 command: Command::ReopenTerminal(id),
                             }
                         } else {
@@ -3421,6 +3430,42 @@ mod launch_tests {
         assert!(request.is_none());
         assert!(target.contains(reason), "{target}");
         assert_eq!(submit(&mut d), DashboardAction::Redraw);
+    }
+
+    #[test]
+    fn failed_automatic_resume_exposes_explicit_retry_without_acknowledgement() {
+        let mut d = dashboard();
+        let mut row = summary(1);
+        row.kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        row.phase = SessionPhase::Interrupted;
+        row.recovery = Some(SessionRecovery {
+            conversation: Some("retained".into()),
+            attached: false,
+            requires_ack: false,
+            unavailable: None,
+            failure: Some("live capacity exhausted".into()),
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
+        d.select_session(SessionId(1));
+        assert!(
+            d.palette_entries("", None)
+                .iter()
+                .any(|entry| entry.label == "Retry resume conversation")
+        );
+        d.palette = Some(Palette {
+            page: d.command_page(Command::ReopenTerminal(SessionId(1))),
+            ..Palette::new()
+        });
+        assert_eq!(
+            request(&mut d).request,
+            Request::ReopenSession {
+                session: SessionId(1),
+                expected_run: crate::protocol::SessionRunId(1),
+                acknowledge_stopped: false,
+            }
+        );
     }
 
     #[test]

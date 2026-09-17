@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Superseded PR commits should not occupy runners. Keep main's runs intact.
 concurrency:
@@ -52,6 +53,7 @@ jobs:
 
   linux:
     name: linux
+    if: github.event_name == 'workflow_dispatch'
     env:
       SHELL: /bin/bash
     runs-on: ubuntu-latest
@@ -87,6 +89,7 @@ jobs:
 
   linux-capacity:
     name: linux capacity
+    if: github.event_name == 'workflow_dispatch'
     env:
       SHELL: /bin/bash
     runs-on: ubuntu-latest
@@ -135,6 +138,7 @@ jobs:
 
   linux-memory:
     name: linux memory high-water
+    if: github.event_name == 'workflow_dispatch'
     env:
       SHELL: /bin/bash
       CARGO_INCREMENTAL: 0

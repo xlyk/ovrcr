@@ -457,8 +457,9 @@ which uncertain row to acknowledge. Certified retained Claude, Codex, Pi and Oh 
 Resume conversation on the same row, without submitting a new prompt. The status
 shows that the agent launched while conversation attachment is still pending; a
 matching native callback establishes attachment. Start new conversation opens
-the create form for a separate session. Other providers remain unavailable for
-native resume. Workspace removal remains a separate action.
+the create form for a separate session. Codex, Pi and Oh My Pi also have native
+resume adapters, with the limitations below. Other providers remain unavailable.
+Workspace removal remains a separate action.
 
 Claude recovery retains the exact UUID, provider history path, executable and
 non-secret configuration references. Missing history, executable, recorded
@@ -466,6 +467,19 @@ working directory or matching configuration blocks recovery with a diagnostic;
 Retry never starts fresh. An observed unsupported clear/resume/fork transition
 permanently disables recovery for that row, retaining its old UUID as context.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
+Inventory restoration never launches a process. First display in a visible pane
+requests one native resume for an unarchived interrupted Agent with an available
+adapter and no previous failure. A verified different boot permits automatic
+recovery; same-boot or unknown ownership still requires explicit confirmation
+that old agents and descendants stopped. Live runs are reused. Shells, deliberately
+stopped/exited rows and newly unarchived rows do not launch automatically.
+
+Missing prerequisites or full live capacity leave a diagnostic and **Retry resume
+conversation** in the command palette. Fix the prerequisite, then explicitly retry;
+redraws and reconnects do not retry failed launches. Hidden panes and sidebar rows
+do not trigger recovery. Native GUI acceptance of this automatic path is tracked
+separately in #127. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
+
 Codex recovery resumes the exact UUID from its last authenticated root hook.
 Initial Codex resume reporting remains unavailable for that invocation; the status
 says `Codex resume: reporting unavailable; attachment not confirmed`, not Ready.
@@ -481,7 +495,6 @@ Accepted conversation switches replace the reference, including switches
 back to an earlier conversation. An ephemeral conversation replaces the old
 reference but cannot be resumed. Unsupported launch configuration leaves resume
 unavailable without disabling the provider's existing reporting.
-Inventory restoration never launches a process; resume is explicit in this slice.
 See [provider recovery support](agent-reporting-support.md#retained-pi-and-oh-my-pi-conversations).
 
 ### Automatic and pinned titles

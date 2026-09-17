@@ -564,6 +564,7 @@ impl Dashboard {
             panes: vec![super::PaneState::new(size)],
             focused_pane: 0,
             handshake: Default::default(),
+            recovery_requests: Default::default(),
             outer_area: Rect::new(0, 0, size.cols, size.rows),
             collapsed_projects: HashSet::new(),
             collapsed_workspaces: HashSet::new(),
@@ -910,6 +911,33 @@ impl Dashboard {
         }
         self.outer_area = area;
         let desired = self.desired_view();
+        let current_runs: HashSet<_> = self
+            .hierarchy
+            .projects
+            .iter()
+            .flat_map(|project| &project.workspaces)
+            .flat_map(|workspace| &workspace.sessions)
+            .map(|session| (session.id, session.run))
+            .collect();
+        self.recovery_requests
+            .retain(|target, pending| pending.is_some() || current_runs.contains(target));
+        for (session, run, _) in &desired.targets {
+            let target = (*session, *run);
+            if !self.recovery_requests.contains_key(&target)
+                && find_session(self, *session)
+                    .is_some_and(|summary| summary.run == *run && summary.can_auto_recover())
+            {
+                let request_id = self.next_request_id();
+                self.recovery_requests.insert(target, Some(request_id));
+                self.push_request(ClientMessage {
+                    request_id,
+                    request: Request::RecoverSession {
+                        session: *session,
+                        expected_run: *run,
+                    },
+                });
+            }
+        }
         for rect in self.pane_rects(area) {
             if let Some(pane) = self.panes.get_mut(rect.pane_index) {
                 pane.desired_size = TerminalSize {
@@ -2675,6 +2703,29 @@ impl Dashboard {
             && self.ignored_responses.remove(request_id)
         {
             return Vec::new();
+        }
+        if let ServerMessage::Response {
+            request_id,
+            response,
+        } = &message
+            && let Some(&(session, run)) = self
+                .recovery_requests
+                .iter()
+                .find_map(|(target, id)| (*id == Some(*request_id)).then_some(target))
+        {
+            self.recovery_requests.insert((session, run), None);
+            // Hierarchy events, not launch receipts, install replacement runs. A late
+            // receipt cannot select a hidden pane or overwrite a newer run's error.
+            if let Response::Error { message, .. } = response
+                && self
+                    .desired_view()
+                    .targets
+                    .iter()
+                    .any(|(id, current, _)| *id == session && *current == run)
+            {
+                self.set_error(message.clone());
+            }
+            return self.drain_outbox();
         }
         if let ServerMessage::Response {
             request_id,
