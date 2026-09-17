@@ -27,6 +27,283 @@ fn json(live: &Live, args: &[&str]) -> Value {
 }
 
 #[test]
+fn codex_reopen_uses_exact_identity_without_prompt_across_two_restarts() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::idle().bounded();
+    let home = live.root.path().join("codex-home");
+    std::fs::create_dir(&home).unwrap();
+    let environment = [("CODEX_HOME", home.as_os_str())];
+    live.start_binary_env(&environment);
+    live.ready("feature/codex-recovery");
+    let cwd = ovrcr::config::load_registry(&live.config)
+        .unwrap()
+        .workspace(live::PROJECT, live::WORKSPACE)
+        .unwrap()
+        .path
+        .clone();
+    let native = live.root.path().join("codex");
+    let quote = |p: &std::path::Path| format!("'{}'", p.to_str().unwrap().replace('\'', "'\"'\"'"));
+    std::fs::write(&native, format!(
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'codex-cli 0.153.0\\n'; exit 0; fi\nexport RETAINED_CODEX_ROOT={} RETAINED_CODEX_MODE=\"$1\"\nprintf '%s\\n' \"$@\" >> \"$RETAINED_CODEX_ROOT/argv\"\nif [ -f \"$RETAINED_CODEX_ROOT/fail-resume\" ]; then printf 'NATIVE_CODEX_RESUME_FAILED\\n'; exit 23; fi\nexec {} --ignored --exact retained_codex_native_helper --nocapture\n",
+        quote(live.root.path()), quote(&std::env::current_exe().unwrap())
+    )).unwrap();
+    std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let created = create_terminal(
+        &live,
+        "codex-retained",
+        &[
+            live.executable.to_str().unwrap(),
+            "agent",
+            "run",
+            "codex",
+            "--",
+            native.to_str().unwrap(),
+            "PRIVATE_CODEX_PROMPT_118",
+        ],
+    );
+    let id = created["id"].as_u64().unwrap();
+    let id_arg = id.to_string();
+    wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+    json(&live, &["terminal", "rename", &id_arg, "Codex continuity"]);
+    json(&live, &["terminal", "send", &id_arg, "--text", "startup"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_STARTUP");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(
+        row["recovery"]["conversation"],
+        "01a08e5c-7480-7052-9964-9224aadebef0"
+    );
+    assert_eq!(row["activity"], "unknown", "startup invented activity");
+    json(&live, &["terminal", "send", &id_arg, "--text", "foreign"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_FOREIGN_IGNORED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(
+        row["recovery"]["conversation"],
+        "01a08e5c-7480-7052-9964-9224aadebef0"
+    );
+    json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_ATTACHED");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert!(
+        row["unread"].is_object(),
+        "fixture never established old Ready/Unread: {row}"
+    );
+    let conversation = "01a08e5c-7480-7052-9964-9224aadebef0";
+    // A newer neighboring conversation must never be selected instead.
+    let decoy = home.join("sessions/2026/09/10/rollout-2026-09-10T20-00-00-01a08e94-0deb-76c3-a2b5-540c4874a53f.jsonl");
+    std::fs::write(&decoy, "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION").unwrap();
+    for attempt in 1..=2 {
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], conversation, "{row}");
+        assert!(row["recovery"]["unavailable"].is_null(), "{row}");
+        assert_eq!(row["title"], "Codex continuity");
+        assert!(row["agent"].is_null());
+        live.start_binary_env(&environment);
+        if attempt == 1 {
+            let history = home
+                .join("sessions/2026/09/10")
+                .join(format!("rollout-2026-09-10T19-46-58-{conversation}.jsonl"));
+            for path in [&history, &home, &native, &cwd] {
+                let displaced = path.with_extension("unavailable");
+                std::fs::rename(path, &displaced).unwrap();
+                let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+                std::fs::rename(&displaced, path).unwrap();
+                assert!(
+                    !failed.status.success(),
+                    "missing prerequisite launched fresh"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+                    "PRIVATE_CODEX_PROMPT_118\n"
+                );
+            }
+        }
+        let old_run = row["run"].as_u64().unwrap();
+        let reopened = json(&live, &["terminal", "reopen", &id_arg]);
+        let duplicate = live.request(ovrcr::protocol::Request::ReopenSession {
+            session: ovrcr::protocol::SessionId(id),
+            expected_run: ovrcr::protocol::SessionRunId(old_run),
+            acknowledge_stopped: false,
+        });
+        let ovrcr::protocol::Response::CreatedSession(duplicate) = duplicate else {
+            panic!("{duplicate:?}")
+        };
+        assert_eq!(duplicate.run.0, reopened["run"].as_u64().unwrap());
+        track_groups(&live);
+        wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+        wait_output(
+            &live,
+            &id_arg,
+            &format!("RETAINED_CODEX_CWD:{}", cwd.display()),
+        );
+        wait_output(&live, &id_arg, "Codex reporting unavailable");
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], conversation);
+        assert_eq!(row["recovery"]["attached"], false);
+        assert!(row["agent"].is_null(), "old reporting survived: {row}");
+        assert_eq!(row["reporting_unavailable"], true);
+        assert!(row["unread"].is_null());
+        assert_eq!(
+            std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+            format!(
+                "PRIVATE_CODEX_PROMPT_118\n{}",
+                format!("resume\n{conversation}\n").repeat(attempt)
+            )
+        );
+    }
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+    for private in [
+        "PRIVATE_CODEX_PROMPT_118",
+        "RETAINED_CODEX_READY",
+        "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION",
+    ] {
+        assert!(
+            !database
+                .windows(private.len())
+                .any(|bytes| bytes == private.as_bytes())
+        );
+    }
+    let changed = live.root.path().join("different-codex-home");
+    std::fs::create_dir(&changed).unwrap();
+    live.start_binary_env(&[("CODEX_HOME", changed.as_os_str())]);
+    let failed = cli(&live, &["terminal", "reopen", &id_arg]);
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("configuration"));
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    let fail = live.root.path().join("fail-resume");
+    std::fs::write(&fail, "").unwrap();
+    live.start_binary_env(&environment);
+    json(&live, &["terminal", "reopen", &id_arg]);
+    track_groups(&live);
+    wait_phase(&live, id, "exited");
+    let rows = json(&live, &["terminal", "list"]);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(row["exit_code"], 23);
+    assert_eq!(row["recovery"]["conversation"], conversation);
+    assert!(
+        row["recovery"]["failure"]
+            .as_str()
+            .unwrap()
+            .contains("Retry")
+    );
+    std::fs::remove_file(fail).unwrap();
+    json(&live, &["terminal", "reopen", &id_arg, "--ack-stopped"]);
+    track_groups(&live);
+    wait_output(&live, &id_arg, "RETAINED_CODEX_READY");
+    assert_eq!(
+        std::fs::read_to_string(live.root.path().join("argv")).unwrap(),
+        format!(
+            "PRIVATE_CODEX_PROMPT_118\n{}",
+            format!("resume\n{conversation}\n").repeat(4)
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(decoy).unwrap(),
+        "DO_NOT_READ_OR_RESUME_THIS_CONVERSATION"
+    );
+}
+
+#[test]
+#[ignore = "controlled native executable entered only by the retained-session fixture"]
+fn retained_codex_native_helper() {
+    use std::io::BufRead;
+    let home = std::path::PathBuf::from(std::env::var_os("CODEX_HOME").unwrap());
+    let id = "01a08e5c-7480-7052-9964-9224aadebef0";
+    let history = home
+        .join("sessions/2026/09/10")
+        .join(format!("rollout-2026-09-10T19-46-58-{id}.jsonl"));
+    std::fs::create_dir_all(history.parent().unwrap()).unwrap();
+    std::fs::write(&history, format!("{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cli_version\":\"0.153.0\",\"source\":\"cli\"}}}}\n")).unwrap();
+    println!(
+        "RETAINED_CODEX_CWD:{}",
+        std::env::current_dir().unwrap().display()
+    );
+    println!("RETAINED_CODEX_READY");
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap();
+        if line == "foreign" {
+            // A valid envelope from the provider process itself is not the required
+            // direct-child native hook. It must not bind even with the private token.
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "hook_event_name": "SessionStart", "source": "startup",
+                "session_id": "01a08e94-0deb-76c3-a2b5-540c4874a53f", "transcript_path": history,
+            }))
+            .unwrap();
+            ovrcr::report::send_codex_hook(&payload, Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            println!("RETAINED_CODEX_FOREIGN_IGNORED");
+        }
+        if line == "attach" || line == "startup" {
+            let events: &[&str] = if line == "startup" {
+                &["SessionStart"]
+            } else {
+                &["UserPromptSubmit", "Stop"]
+            };
+            for event in events {
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "hook_event_name": event, "source": "startup", "session_id": id, "turn_id": "turn-1", "transcript_path": history,
+                })).unwrap();
+                use std::io::Write;
+                let mut hook = Command::new(env!("CARGO_BIN_EXE_ovrcr"))
+                    .args(["report", "codex", "--stdin"])
+                    .stdin(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                hook.stdin.take().unwrap().write_all(&payload).unwrap();
+                assert!(hook.wait().unwrap().success());
+            }
+            println!(
+                "{}",
+                if line == "startup" {
+                    "RETAINED_CODEX_STARTUP"
+                } else {
+                    "RETAINED_CODEX_ATTACHED"
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn extension_conversations_switch_and_survive_repeated_restart() {
     use std::os::unix::fs::PermissionsExt;
     for provider in ["pi", "omp"] {

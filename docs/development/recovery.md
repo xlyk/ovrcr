@@ -1,6 +1,6 @@
 # Provider conversation recovery
 
-This contract enables #117, #118 and #119 to develop against the shared reopen path. Claude, Pi and Oh My Pi have installed recovery adapters. Other providers remain unavailable; a reference or reporting binding alone never advertises support. Pi/OMP native acceptance is still required independently in #129/#130.
+This contract enables #117, #118 and #119 to develop against the shared reopen path. Claude, Codex, Pi and Oh My Pi have installed recovery adapters. Other providers remain unavailable; a reference or reporting binding alone never advertises support. Codex and Pi/OMP native acceptance is still required independently in #128 and #129/#130.
 
 ## Shared boundary
 
@@ -9,8 +9,26 @@ This contract enables #117, #118 and #119 to develop against the shared reopen p
 - `Reporter::retain_conversation(reference, deadline)` uses the current certified binding. Receivers must first pass their existing producer/sequence and native-identity checks, then bind the accepted identity and retain it. A false return is not a durable acknowledgment. An accepted replacement supersedes pending retention from the prior generation. Retry operation IDs preserve the exact binding and reference.
 - `Reporter::invalidate_conversation(deadline)` permanently closes recovery for an unsupported transition in the current invocation. It cancels pending retention, retries failed persistence, and preserves the existing lost-bind receipt handling. Supported Pi/OMP changes use bind + retain, not invalidation. Their nullable native history path records an ephemeral replacement as unavailable instead of leaving the old conversation eligible.
 - `RetainConversation` and `InvalidateConversation` supervisor commands use the existing lease and current session/run. Retention checks the exact provider, identity and binding generation before the shared durable write. Successful receipts are cached only after persistence. A retired lease cannot change recovery metadata.
-- SQLite schema 5 owns one `agent_conversations` table. Schema 3 from archive mainline and the earlier Claude draft is distinguished by table/column markers; schema 4 from the interface amendment is also accepted. Migration preserves archive disposition, exact references and invalidation flags; offline reads remain read-only. Do not add a provider-specific store. Protocol 18 appends Pi (tag 1) and OMP (tag 2) after Claude (tag 0); subsequent provider registrations must append rather than reorder these tags. No database migration is needed.
+- SQLite schema 5 owns one `agent_conversations` table. Schema 3 from archive mainline and the earlier Claude draft is distinguished by table/column markers; schema 4 from the interface amendment is also accepted. Migration preserves archive disposition, exact references and invalidation flags; offline reads remain read-only. Do not add a provider-specific store. Protocol 19 appends Codex (tag 3) after Claude (tag 0), Pi (tag 1) and OMP (tag 2); subsequent provider registrations must append rather than reorder these tags. No database migration is needed.
 - `ServerState` remains the only process owner. All launches use the existing reopen operation, mutation lock, capacity admission, boot acknowledgment, run fencing and production spawn. Inventory reads never launch work. Current reporting resets on reopen; `recovery.attached` requires a matching provider and identity from the new invocation.
+
+## Codex adapter
+
+Exact Codex CLI 0.153.0 managed fresh launches retain authenticated root startup
+or prompt hook identity and the exact `transcript_path`, checked against the
+bounded `session_meta` header. No history discovery or latest-session fallback is
+used. Resume invokes `codex resume UUID` through the existing managed launcher.
+The known reference remains durably associated with the new run before callbacks.
+Initial resume reporting remains unavailable; `attached` remains false. Dashboard
+status and CLI `reporting_unavailable` expose this limitation. A native exit before
+attachment uses the shared retained failure/Retry path.
+
+Recovery records the last authoritative hook identity, not continuous selected
+history: silent native backtracking is unobservable until another startup/prompt
+hook. A replacement without a verified history file supersedes the old identity
+but is unavailable for recovery. Configuration is a reference, not a snapshot;
+restore the same CODEX_HOME/profile and do not change history/configuration during
+reopen. See [Codex recovery support](../codex-reporting-setup.md#retained-conversation-recovery).
 
 ## Parallel work ownership
 

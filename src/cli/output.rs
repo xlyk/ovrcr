@@ -123,6 +123,9 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
 }
 
 pub(super) fn reporting_unavailable(session: &SessionSummary) -> Option<bool> {
+    if session.resume_reporting_limitation().is_some() {
+        return Some(true);
+    }
     session.agent.as_ref().map(|agent| {
         agent.health.state == ovrcr::protocol::ReporterHealth::Unavailable
             || !session.phase.is_live()

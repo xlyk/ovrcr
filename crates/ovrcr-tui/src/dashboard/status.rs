@@ -155,12 +155,22 @@ fn activity_clause(session: &SessionSummary) -> String {
             && !recovery.attached
             && recovery.unavailable.is_none()
         {
-            parts.push("Agent launched; awaiting conversation attachment".into());
+            parts.push(
+                session
+                    .resume_reporting_limitation()
+                    .unwrap_or("Agent launched; awaiting conversation attachment")
+                    .into(),
+            );
         }
         if recovery.requires_ack {
             parts.push("confirm previous processes stopped".into());
         }
         if !parts.is_empty() {
+            if session.phase.is_live()
+                && let Some(agent) = &session.agent
+            {
+                parts.insert(0, provider_clause(session, agent).trim_start().into());
+            }
             return format!(" {}", parts.join(" · "));
         }
     }
@@ -240,6 +250,48 @@ mod tests {
         ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputRequest,
         ReadyObservation, SessionId,
     };
+
+    #[test]
+    fn codex_resume_exposes_unavailable_reporting_not_ready_or_pending_attachment() {
+        let mut row = session(SessionPhase::Running, None);
+        row.kind = ovrcr_protocol::SessionKind::Agent {
+            name: "codex".into(),
+        };
+        row.recovery = Some(ovrcr_protocol::SessionRecovery {
+            conversation: Some("exact-native-id".into()),
+            attached: false,
+            requires_ack: false,
+            unavailable: None,
+            failure: None,
+        });
+        let clause = activity_clause(&row);
+        assert!(clause.contains("reporting unavailable"), "{clause}");
+        assert!(!clause.contains("awaiting"), "{clause}");
+        assert!(!clause.contains("ready"), "{clause}");
+    }
+
+    #[test]
+    fn recovery_unavailability_does_not_hide_live_response_ready() {
+        let mut row = session(
+            SessionPhase::Running,
+            Some(agent(
+                AgentActivity::ResponseReady,
+                SampleQuality::Observed,
+                ReporterHealth::Connected,
+                vec![],
+            )),
+        );
+        row.recovery = Some(ovrcr_protocol::SessionRecovery {
+            conversation: Some("non-resumable".into()),
+            attached: true,
+            requires_ack: false,
+            unavailable: Some("No native history".into()),
+            failure: None,
+        });
+        let clause = activity_clause(&row);
+        assert!(clause.contains("response ready"), "{clause}");
+        assert!(clause.contains("No native history"), "{clause}");
+    }
 
     #[test]
     fn exited_empty_recovery_does_not_restore_stale_activity() {

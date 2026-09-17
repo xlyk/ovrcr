@@ -101,6 +101,46 @@ Unread tracking requires no notification preference or additional hook setup.
 
 Initial resume, picker/last, fork, exec, remote and unknown versions/options are unsupported for reporting and retain ordinary native behavior. This scope excludes continuous selected-history tracking, subagent readiness, WaitingInput, context/usage/cost metrics, confirmed completion and transcript collection. No Linux native GUI acceptance, metrics support or concurrent provider-launch throughput is claimed. Existing Claude acceptance does not cover Codex.
 
+## Retained conversation recovery
+
+Managed fresh Codex CLI **0.153.0** launches capture the exact conversation UUID
+and hook-supplied history path at an authenticated root startup or prompt. The
+bounded native `session_meta` header must match the UUID and CLI source. Missing
+or mismatched history leaves that identity unavailable; it never selects an older
+saved conversation. OVRCR stores metadata only, not prompts or transcripts.
+
+`ovrcr terminal reopen ID` runs managed `codex resume UUID` with no new prompt,
+preserving the row, title and reference even across another immediate restart.
+The shared ownership acknowledgement, capacity and stale-run rules still apply.
+Missing history, executable, working directory, CODEX_HOME or an explicit profile
+file prevents launching and retains a retryable row. Native resume failure also
+retains the row; Retry never starts fresh. Start new conversation is separate.
+
+Saved options are separate-token `--model/-m`, `--profile/-p`, `--sandbox/-s`,
+`--ask-for-approval/-a`, absolute `--cd/-C`, and `--no-alt-screen`. Task prompts
+are discarded. Other options, including `--full-auto`, inline configuration and
+relative `--cd`, leave recovery unavailable without changing existing reporting.
+CODEX_HOME (default `$HOME/.codex`) must be absolute and match on reopen; explicit
+profiles must still exist at `$CODEX_HOME/<profile>.config.toml`. Configuration
+contents and credentials are not copied or fingerprinted. The operator must keep
+the referenced configuration/account and native history stable during recovery.
+Native hook trust and approval settings are never bypassed.
+
+**Initial resume reporting remains unavailable for the entire resumed invocation.**
+The Dashboard says `Codex resume: reporting unavailable; attachment not confirmed`;
+CLI inventory reports `reporting_unavailable: true` and `recovery.attached: false`.
+Process launch does not prove conversation attachment. Old Busy, Ready, Unread,
+input requests and timing are not restored. A later prompt in this resumed run
+does not enable reporting or update its retained identity.
+
+Recovery names the **last authoritative hook identity**, not continuously selected
+history. Native backtracking can switch conversations without a hook until the
+next prompt; an unobserved switch cannot update recovery. Initial raw resume,
+picker and fork launches do not capture a new recoverable reference. Independent
+native continuity, reporting and platform acceptance remains open in
+[#128](https://github.com/xlyk/ovrcr/issues/128); controlled PTY tests do not certify
+native Codex continuity.
+
 ## Acceptance evidence
 
 The [unread acceptance record](../research/issue-61-unread/README.md) documents
