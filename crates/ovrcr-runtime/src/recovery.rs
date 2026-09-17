@@ -7,7 +7,7 @@ use std::ffi::OsString;
 pub fn supported(provider: AgentProvider) -> bool {
     matches!(
         provider,
-        AgentProvider::Claude | AgentProvider::Pi | AgentProvider::Omp
+        AgentProvider::Claude | AgentProvider::Pi | AgentProvider::Omp | AgentProvider::Codex
     )
 }
 
@@ -31,6 +31,14 @@ pub fn unavailable(
         {
             Some("Conversation has no native history file; resume is unavailable".into())
         }
+        Some(ConversationReference::Codex(reference))
+            if !crate::codex_recovery::is_exact_identity(&reference.conversation) =>
+        {
+            Some("Codex recovery requires an exact canonical UUID".into())
+        }
+        Some(ConversationReference::Codex(reference)) if reference.history.is_none() => Some(
+            "Codex conversation has no verified native history file; resume is unavailable".into(),
+        ),
         Some(reference) if reference.provider() == provider => None,
         Some(_) => Some("Retained conversation provider does not match this session".into()),
         None => Some(format!(
@@ -42,6 +50,7 @@ pub fn unavailable(
 pub fn validate(reference: &ConversationReference) -> Result<()> {
     match reference {
         ConversationReference::Claude(reference) => crate::claude_recovery::validate(reference),
+        ConversationReference::Codex(reference) => crate::codex_recovery::validate(reference),
         ConversationReference::Pi(reference) => {
             crate::extension_recovery::validate(AgentProvider::Pi, reference)
         }
@@ -57,6 +66,7 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
     }
     match reference {
         ConversationReference::Claude(reference) => crate::claude_recovery::resume_argv(reference),
+        ConversationReference::Codex(reference) => crate::codex_recovery::resume_argv(reference),
         ConversationReference::Pi(reference) => {
             crate::extension_recovery::resume_argv(AgentProvider::Pi, reference)
         }
@@ -90,11 +100,7 @@ mod tests {
                 .unwrap()
                 .contains("unsupported")
         );
-        for provider in [
-            AgentProvider::Codex,
-            AgentProvider::Grok,
-            AgentProvider::Hermes,
-        ] {
+        for provider in [AgentProvider::Grok, AgentProvider::Hermes] {
             assert!(!supported(provider));
             assert!(
                 unavailable(provider.name(), Some(&reference), false)

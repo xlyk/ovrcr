@@ -331,6 +331,7 @@ pub enum ConversationReference {
     Claude(ClaudeConversation),
     Pi(ExtensionConversation),
     Omp(ExtensionConversation),
+    Codex(CodexConversation),
 }
 
 impl ConversationReference {
@@ -339,6 +340,7 @@ impl ConversationReference {
             Self::Claude(_) => AgentProvider::Claude,
             Self::Pi(_) => AgentProvider::Pi,
             Self::Omp(_) => AgentProvider::Omp,
+            Self::Codex(_) => AgentProvider::Codex,
         }
     }
 
@@ -346,6 +348,7 @@ impl ConversationReference {
         match self {
             Self::Claude(reference) => &reference.conversation,
             Self::Pi(reference) | Self::Omp(reference) => &reference.conversation,
+            Self::Codex(reference) => &reference.conversation,
         }
     }
 
@@ -359,6 +362,17 @@ pub struct ClaudeConversation {
     pub conversation: String,
     pub executable: std::path::PathBuf,
     pub history: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
+    pub options: Vec<String>,
+}
+
+/// Exact Codex hook identity. Missing history keeps a new identity unavailable
+/// rather than leaving a previously observed conversation eligible.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub history: Option<std::path::PathBuf>,
     pub config_dir: std::path::PathBuf,
     pub options: Vec<String>,
 }

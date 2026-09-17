@@ -1767,13 +1767,18 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
         },
     )
     .unwrap();
-    dashboard
-        .set_read_timeout(Some(Duration::from_millis(300)))
-        .unwrap();
-    assert!(
-        read_frame::<ServerMessage>(&mut dashboard).is_err(),
-        "input response unexpectedly completed while PTY stdin was backpressured"
-    );
+    let input_deadline = Instant::now() + Duration::from_millis(300);
+    while let Some(remaining) = input_deadline.checked_duration_since(Instant::now()) {
+        dashboard.set_read_timeout(Some(remaining)).unwrap();
+        match read_frame::<ServerMessage>(&mut dashboard) {
+            // Other sessions can still publish events while this input is blocked.
+            Ok(ServerMessage::Event(_)) => {}
+            Err(_) => break,
+            response => panic!(
+                "input response unexpectedly completed while PTY stdin was backpressured: {response:?}"
+            ),
+        }
+    }
 
     let mut blocked_send = connect_server(&fixture.socket).unwrap();
     blocked_send

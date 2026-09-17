@@ -86,6 +86,22 @@ pub struct SessionSummary {
 }
 
 impl SessionSummary {
+    /// A retained identity is not a new-run reporting observation. Codex's initial
+    /// resume has no certified reporting adapter, even when native launch succeeds.
+    pub fn resume_reporting_limitation(&self) -> Option<&'static str> {
+        if self.phase.is_live()
+            && matches!(&self.kind, SessionKind::Agent { name } if crate::AgentProvider::from_name(name) == Some(crate::AgentProvider::Codex))
+            && self
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.conversation.is_some() && !r.attached && r.unavailable.is_none())
+        {
+            Some("Codex resume: reporting unavailable; attachment not confirmed")
+        } else {
+            None
+        }
+    }
+
     pub fn display_name(&self) -> &str {
         self.title.as_deref().unwrap_or(&self.name)
     }

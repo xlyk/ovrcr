@@ -1472,6 +1472,9 @@ impl ServerState {
                     ovrcr_protocol::ConversationReference::Pi(reference)
                     | ovrcr_protocol::ConversationReference::Omp(reference),
                 ) => reference.history.as_ref(),
+                Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
+                    reference.history.as_ref()
+                }
                 None => None,
             };
             history.is_some_and(|path| {

@@ -552,11 +552,21 @@ UUID. Unsupported clear/resume/fork observations invalidate recovery through SQL
 retaining the prior UUID only for context. Reporting failures and missing
 callbacks alone preserve a valid reference. Start new conversation creates a
 separate session; other provider rows remain retained with resume unavailable.
-SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 19 (session summaries include the retained working directory). The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119.
+SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 20 (Codex references retain tag 3; session summaries include the retained working directory). The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119.
 
 Acceptance remains open. The [issue #116 verification record](../research/issue-116-claude-recovery/README.md) records the passing automated suite and controlled executable/real PTY tests, including exact arguments, repeated restart before another callback, unsupported clear before attachment, missing resources, database failures and prompt non-persistence. Native Claude continuity, Dashboard input and Linux acceptance remain unverified.
 
 Durable acknowledgments follow successful SQLite writes. Temporary write failures retain pending work for retry and block recovery in the current owner after invalidation. If storage remains unwritable until that owner dies, the last committed reference may survive; no durability guarantee is made across an uncommitted invalidation.
+
+## Retained Codex conversations
+
+Issue #118 installs the Codex adapter on the shared recovery path. Exact managed
+0.153.0 root startup/prompt hooks capture the UUID and matching native history
+header. Reopen executes `codex resume UUID` without a prompt and preserves the
+known reference before a new provider event. Initial resume reporting stays
+unavailable; the Dashboard and CLI expose that limitation and never restore old
+Ready/Unread. Native acceptance belongs to #128 and remains unverified here.
+See [configuration, failure behavior and identity limits](codex-reporting-setup.md#retained-conversation-recovery).
 
 ## Retained Pi and Oh My Pi conversations
 

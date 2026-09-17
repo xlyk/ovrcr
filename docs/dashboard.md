@@ -456,7 +456,7 @@ the current run and requires another explicit submission.
 If a first launch cannot prove that no process started, the retained row stays.
 The failed create form cannot launch another session. Select the intended row
 yourself, then use its Reopen or Acknowledge action; the Dashboard never guesses
-which uncertain row to acknowledge. Certified retained Claude, Pi and Oh My Pi conversations offer
+which uncertain row to acknowledge. Certified retained Claude, Codex, Pi and Oh My Pi conversations offer
 Resume conversation on the same row, without submitting a new prompt. The status
 shows that the agent launched while conversation attachment is still pending; a
 matching native callback establishes attachment. Start new conversation opens
@@ -469,6 +469,13 @@ working directory or matching configuration blocks recovery with a diagnostic;
 Retry never starts fresh. An observed unsupported clear/resume/fork transition
 permanently disables recovery for that row, retaining its old UUID as context.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
+Codex recovery resumes the exact UUID from its last authenticated root hook.
+Initial Codex resume reporting remains unavailable for that invocation; the status
+says `Codex resume: reporting unavailable; attachment not confirmed`, not Ready.
+The saved reference survives another restart before any new prompt. Silent native
+history switches cannot update it without a supported hook. See
+[Codex recovery limitations](codex-reporting-setup.md#retained-conversation-recovery).
+
 Pi and Oh My Pi retain the exact native session ID and file from their managed
 extension. History must remain unchanged by external processes during reopening,
 from prelaunch validation until native attachment. Concurrent deletion or replacement

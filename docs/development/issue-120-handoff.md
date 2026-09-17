@@ -21,10 +21,27 @@ Use the commit containing this handoff on `implement-task-120`; record its full
 - Project removal still requires removing workspaces first; it does not cascade
   into session records. Unarchived rows remain selectable after either removal.
   Reopening a missing directory fails without choosing another directory.
-- Protocol 19 adds `SessionSummary.cwd`; all clients must use the same revision.
+- Protocol 20 adds `SessionSummary.cwd` on top of main's protocol 19 Codex
+  references; all clients must use the same revision.
   SQLite remains schema 5. No dependencies or provider adapters were added.
 
-## Automated verification
+## Merge verification (2026-09-17)
+
+Merged main `31ee5ba127f23c5ea5f7c18e807e788a028f6ec3` into PR #135.
+Both branches had independently used protocol 19; the combined wire format is
+protocol 20. The recorded-history removal guard now includes Codex, with the
+ignored-history regression exercising both Pi and Codex references.
+
+- `SHELL=/bin/sh cargo test --workspace --all-targets --all-features --no-fail-fast`:
+  **973 passed, 0 failed, 20 ignored**.
+- All-target/all-feature typecheck, Clippy with warnings denied, formatting and
+  diff checks passed. Node reporting extension tests: **18 passed**.
+- Main fixed the backpressure test's handling of unrelated events; the failure
+  recorded below no longer blocks this revision.
+- Logs: `/tmp/ovrcr-120-evidence/merge/`. Native acceptance and independent review
+  remain open; ignored cases are not counted as passed.
+
+## Original implementation verification
 
 Tested on macOS 26.5.2, Rust 1.98.0, Git 2.50.1, Node 22.23.2.
 Logs, including failed attempts, are at `/tmp/ovrcr-120-evidence/` on the
@@ -100,6 +117,7 @@ case; no remaining implementation findings. These reviews were sequential in
 the implementation session because no sub-agent tool was available; they are
 not independent review.
 
-The full regression gate is blocked as described above. The 19 ignored cases,
-independent review, native acceptance #131 and Linux acceptance are not certified.
-This branch has not been pushed, opened as a PR, merged, or marked fully accepted.
+The merged revision passes the local full regression gate as recorded above.
+The 20 ignored cases, independent review, native acceptance #131 and Linux
+acceptance are not certified. Draft PR #135 is open; it has not been merged or
+marked fully accepted.
