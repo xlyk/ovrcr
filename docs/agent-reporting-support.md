@@ -580,6 +580,12 @@ It never searches by prefix, chooses the newest file, or supplies a task prompt.
 Missing history, executable, original working directory or matching configuration
 fails visibly. A new run retains the reference before its first callback.
 
+History must remain unchanged by external processes between prelaunch validation
+and native attachment. Concurrent deletion, emptying or replacement during that
+interval is outside the recovery contract (accepted for #119 on 2026-09-17).
+The native provider may otherwise start fresh, and OVRCR may accept the new
+identity. No strict attachment guard is provided.
+
 Recovery retains the absolute executable and agent configuration directory
 (`PI_CODING_AGENT_DIR`, otherwise `~/.pi/agent` or `~/.omp/agent`). Supported
 options are model/provider/thinking/tools/models, absolute session-dir, and

@@ -2,12 +2,21 @@
 
 Issue #119. Base: `65939b2feeea33185b6b94e4de129507a40180f0` (merged #116).
 The delivered commit is the commit containing this handoff; pin its full SHA
-with `git rev-parse HEAD` before acceptance. This is a development checkpoint,
-not a review-ready feature or native acceptance. Independent spec review found
-an unresolved contract conflict: concurrent deletion between validation and native
-loading can trigger a native fresh-session fallback. Decide whether to require
-an additional native attachment guard/upstream strict-open support or explicitly
-exclude concurrent external history mutation before continuing this work.
+with `git rev-parse HEAD` before acceptance. Native acceptance and hosted checks
+remain outstanding.
+
+### Accepted startup boundary — 2026-09-17
+
+Kyle chose to exclude concurrent external history mutation from #119's recovery
+contract rather than invest in attachment guards or provider changes. History
+must remain unchanged by external processes between OVRCR's prelaunch validation
+and native attachment. Missing or invalid history detected during validation
+still fails visibly; those checks and tests are unchanged.
+
+If history is deleted, emptied or replaced after validation, the provider may
+start fresh and OVRCR may accept its new identity. This remains a known limitation,
+not a fixed race. The explicit scope decision resolves the prior review blocker;
+it does not satisfy #129/#130 native acceptance or authorize a merge.
 
 ## Independent native contracts
 
@@ -74,7 +83,9 @@ activity-suppression finding has a failing regression in
 stale-run fixture attempted to acquire an already-active lease and failed in
 `/tmp/ovrcr-119-stale-run.log`; the corrected fixture first releases that lease,
 then proves a valid old-run binding cannot commit after restart. The no-fallback
-race remains a blocking spec finding, not a waived check.
+race was identified as a blocking spec finding. Kyle subsequently accepted the
+startup boundary above; no race-prevention behavior or regression assertions
+were changed.
 
 `extension_conversations_switch_and_survive_repeated_restart` creates a private
 config/socket/workspace for each provider. Its executable loads the real managed
@@ -115,8 +126,10 @@ live provider data. Obtain authorization before credential copies or paid turns.
    history and identity are present. Then ask a continuity question.
 6. Independently verify Busy, Ready quality (Pi Confirmed; OMP Observed), Unread,
    supported input requests and `/ovrcr-reattach` after recovery.
-7. Make only fixture history/configuration/directory unavailable and verify a
-   visible failure without a fresh conversation or most-recent fallback. Restore
+7. Before requesting reopen, make only fixture history/configuration/directory
+   unavailable and verify a visible failure without a fresh conversation or
+   most-recent fallback. Concurrent external history mutation during startup is
+   outside the accepted contract. Restore
    resources and Retry. Record screenshots, accessibility evidence and cleanup.
 
 Profiles, extra configuration/extension flags and unlisted launch options are

@@ -467,7 +467,10 @@ Retry never starts fresh. An observed unsupported clear/resume/fork transition
 permanently disables recovery for that row, retaining its old UUID as context.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
 Pi and Oh My Pi retain the exact native session ID and file from their managed
-extension. Accepted conversation switches replace the reference, including switches
+extension. History must remain unchanged by external processes during reopening,
+from prelaunch validation until native attachment. Concurrent deletion or replacement
+can cause a native fresh session and is outside the recovery guarantee.
+Accepted conversation switches replace the reference, including switches
 back to an earlier conversation. An ephemeral conversation replaces the old
 reference but cannot be resumed. Unsupported launch configuration leaves resume
 unavailable without disabling the provider's existing reporting.
