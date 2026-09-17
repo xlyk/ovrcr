@@ -105,6 +105,31 @@ adapter/receiver change. Temporary local check logs are `/tmp/ovrcr-119-*.log`.
 All test resources use the existing Live fixture cleanup; no user's sessions
 were stopped and no native GUI/provider acceptance was run.
 
+## CI follow-up — PR #132
+
+Run `35260994807` failed on two tests: Linux's new extension recovery fixture
+and macOS's existing Claude collector-loss unit test. Capacity and memory jobs
+passed. The Linux failure was reproduced locally by exporting
+`XDG_CONFIG_HOME`: OMP correctly refuses that unsupported configuration, but the
+fixture inherited it instead of isolating its supported configuration. The
+fixture now clears profile/XDG overrides in its child server environment only.
+No production capability checks or assertions were weakened.
+
+- RED: `/tmp/ovrcr-119-ci-xdg-red.log` (the public recovery test failed for OMP).
+- GREEN: `/tmp/ovrcr-119-ci-xdg-green.log` (1 test, both providers, passed with
+  the same injected XDG override).
+- The unchanged collector-loss test passed ten focused runs; each executed one
+  test (`/tmp/ovrcr-119-ci-collector-exact-{1..10}.log`). Its hosted failure is
+  not explained or fixed by this fixture change.
+- The local full-suite attempt with injected XDG stopped at the unchanged
+  `claude_statusline_preserves_decimal_and_renders_after_reporting_timeout`
+  test: empty stdout instead of `ctx 20%`. Evidence:
+  `/tmp/ovrcr-119-ci-workspace.log`. The exact test then passed alone with the
+  same environment (`/tmp/ovrcr-119-ci-statusline-focused.log`). This is not a
+  full-suite pass. No timing budgets or assertions were changed.
+- Clippy and formatting passed after the fixture correction. Hosted checks
+  must pass on the updated PR revision before delivery.
+
 ## Separate native acceptance: #129 and #130
 
 Each agent must pin the development SHA, build the actual GUI from that checkout,

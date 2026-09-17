@@ -33,7 +33,19 @@ fn extension_conversations_switch_and_survive_repeated_restart() {
         let live = Live::idle().bounded();
         let config = live.root.path().join("provider-config");
         std::fs::create_dir(&config).unwrap();
-        let environment = [("PI_CODING_AGENT_DIR", config.as_os_str())];
+        // Runner/user profiles must not change this fixture's recovery capability.
+        // Inherited XDG overrides make OMP recovery intentionally unavailable.
+        let empty = std::ffi::OsStr::new("");
+        let environment = [
+            ("PI_CODING_AGENT_DIR", config.as_os_str()),
+            ("OMP_PROFILE", empty),
+            ("PI_PROFILE", empty),
+            ("PI_CONFIG_DIR", empty),
+            ("XDG_CONFIG_HOME", empty),
+            ("XDG_DATA_HOME", empty),
+            ("XDG_STATE_HOME", empty),
+            ("XDG_CACHE_HOME", empty),
+        ];
         live.start_binary_env(&environment);
         live.ready("feature/extension-recovery");
         let native = live.root.path().join(provider);
