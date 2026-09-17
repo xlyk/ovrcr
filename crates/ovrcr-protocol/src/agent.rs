@@ -300,6 +300,11 @@ pub enum AgentCommand {
         expected_binding: Option<AgentBinding>,
     },
     Health(ProviderReport),
+    RetainClaude {
+        binding: AgentBinding,
+        reference: Box<ClaudeConversation>,
+    },
+    InvalidateClaude,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupervisorRequest {
@@ -313,6 +318,19 @@ pub enum AgentOperationResult {
     Bound(AgentBinding),
     Released,
     HealthUpdated,
+    ConversationRetained,
+    ConversationInvalidated,
+}
+
+/// Exact provider-owned history and non-secret launch configuration references.
+/// Prompts, environments and transcript contents are never part of this record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaudeConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub history: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
+    pub options: Vec<String>,
 }
 
 pub fn validate_agent_id(value: &str) -> Result<()> {
@@ -759,6 +777,17 @@ pub(crate) mod tests {
                 expected_binding: Some(binding.clone()),
             },
             AgentCommand::Health(health.clone()),
+            AgentCommand::RetainClaude {
+                binding: binding.clone(),
+                reference: Box::new(ClaudeConversation {
+                    conversation: "conv".into(),
+                    executable: "/bin/claude".into(),
+                    history: "/history/conv.jsonl".into(),
+                    config_dir: "/config/claude".into(),
+                    options: vec![],
+                }),
+            },
+            AgentCommand::InvalidateClaude,
         ] {
             requests.push(Request::Supervisor(SupervisorRequest {
                 auth: auth.clone(),
@@ -812,6 +841,8 @@ pub(crate) mod tests {
             AgentOperationResult::Bound(binding),
             AgentOperationResult::Released,
             AgentOperationResult::HealthUpdated,
+            AgentOperationResult::ConversationRetained,
+            AgentOperationResult::ConversationInvalidated,
         ]
         .into_iter()
         .map(Response::AgentOperation)

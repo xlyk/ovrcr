@@ -33,7 +33,8 @@ sessions.
 - PTYs and child process groups survive dashboard detach; reattaching rebuilds
   the current screen from the running session.
 - Session rows survive a server restart as metadata. Reopen starts a fresh shell
-  in the same row; it does not restore output, and agent resume is unavailable.
+  in the same row; certified Claude conversations can resume by exact UUID without
+  a new prompt. Terminal output is not restored.
 - 512 rows of retained scrollback per session, with keyboard selection and
   clipboard copy over OSC52.
 - Pause and resume a session's process group with SIGSTOP and SIGCONT.
@@ -492,7 +493,7 @@ session rows that reopen in a fresh shell after a server restart.
 
 Not shipped, with priorities and dates undecided:
 
-- [ ] Native provider / agent conversation resume.
+- [ ] Native provider resume acceptance across all supported providers and platforms.
 - [ ] Multiple dashboards connected to one server. **Deferred.**
 
 Know the current limits before relying on it: one server and one attached
@@ -500,7 +501,9 @@ dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
 history. Detaching reconnects to a surviving PTY. A server crash loses those
 PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
 and workspace stay in the store so you can reopen a fresh shell in the same row.
-Agent resume is unavailable. Tests simulate boot-identity changes while reading
+Claude recovery uses explicit same-row resume through managed launch; other
+providers show resume unavailable. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
+Tests simulate boot-identity changes while reading
 native boot IDs; they do not reboot the machine.
 
 ## License

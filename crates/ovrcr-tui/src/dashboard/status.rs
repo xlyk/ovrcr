@@ -143,6 +143,13 @@ fn activity_clause(session: &SessionSummary) -> String {
         if let Some(failure) = &recovery.failure {
             parts.push(failure.clone());
         }
+        if session.phase.is_live()
+            && recovery.conversation.is_some()
+            && !recovery.attached
+            && recovery.unavailable.is_none()
+        {
+            parts.push("Claude launched; awaiting conversation attachment".into());
+        }
         if recovery.requires_ack {
             parts.push("confirm previous processes stopped".into());
         }

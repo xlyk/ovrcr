@@ -37,6 +37,7 @@ enum Command {
     CreateWorkspace,
     RenameTerminal(SessionId),
     ReopenTerminal(SessionId),
+    StartNewConversation(SessionId),
     AcknowledgeStopped(SessionId),
     AgentResumeUnavailable,
     RecoverLaunch,
@@ -594,13 +595,45 @@ impl Dashboard {
 
     fn command_page(&self, command: Command) -> Page {
         match command {
+            Command::StartNewConversation(id) => {
+                let session = find_session(self, id).expect("new conversation target exists");
+                let mut page = self.palette_form(Command::CreateTerminal);
+                if let Page::Form { fields, .. } = &mut page {
+                    for field in fields.iter_mut() {
+                        match field.label {
+                            "Start" => field.value = "Agent".into(),
+                            "Workspace" => {
+                                field.value = format!("{} / {}", session.project, session.workspace)
+                            }
+                            "Agent" => {
+                                if let SessionKind::Agent { name } = &session.kind {
+                                    field.value = name.clone();
+                                }
+                            }
+                            _ => {}
+                        }
+                        if let FieldKind::Pick(list) = &mut field.kind {
+                            list.query.clear();
+                            list.select_value(&field.value);
+                        }
+                    }
+                    self.refresh_terminal_form(fields, false);
+                }
+                page
+            }
             Command::ReopenTerminal(id) => {
                 let session = find_session(self, id).expect("reopen target exists");
                 let acknowledge_stopped = session
                     .recovery
                     .as_ref()
                     .is_some_and(|recovery| recovery.requires_ack);
-                let target = if acknowledge_stopped {
+                let target = if matches!(session.kind, SessionKind::Agent { .. }) {
+                    if acknowledge_stopped {
+                        "Confirm the previous agent and background processes have stopped, then resume this exact conversation without a new prompt?"
+                    } else {
+                        "Resume this exact conversation without a new prompt?"
+                    }
+                } else if acknowledge_stopped {
                     "Previous agent or background processes may still be running. Confirm they have stopped, then reopen this session in a fresh shell?"
                 } else {
                     "Reopen this session in a fresh shell?"
@@ -702,9 +735,24 @@ impl Dashboard {
             {
                 match &session.kind {
                     SessionKind::Agent { .. } => {
+                        let available = session
+                            .recovery
+                            .as_ref()
+                            .is_some_and(|recovery| recovery.unavailable.is_none());
+                        entries.push(if available {
+                            Entry {
+                                label: "Resume conversation".into(),
+                                command: Command::ReopenTerminal(id),
+                            }
+                        } else {
+                            Entry {
+                                label: "Agent resume is unavailable".into(),
+                                command: Command::AgentResumeUnavailable,
+                            }
+                        });
                         entries.push(Entry {
-                            label: "Agent resume is unavailable".into(),
-                            command: Command::AgentResumeUnavailable,
+                            label: "Start new conversation in a separate session".into(),
+                            command: Command::StartNewConversation(id),
                         });
                         if session
                             .recovery
@@ -2693,6 +2741,49 @@ mod launch_tests {
         });
         d
     }
+
+    #[test]
+    fn new_conversation_uses_selected_provider_despite_conflicting_launch_preference() {
+        for preference in [
+            None,
+            Some(LaunchChoice::Terminal),
+            Some(LaunchChoice::Agent("fixture-agent".into())),
+        ] {
+            let mut d = dashboard();
+            d.settings.agents.push(AgentOverride {
+                name: "claude".into(),
+                argv: vec!["claude".into()],
+            });
+            if let Some(preference) = preference {
+                d.settings.launch_choices.insert("demo".into(), preference);
+            }
+            let mut retained = summary(1);
+            retained.kind = SessionKind::Agent {
+                name: "claude".into(),
+            };
+            retained.phase = SessionPhase::Stopped;
+            d.hierarchy.projects[0].workspaces[0]
+                .sessions
+                .push(retained);
+            d.palette = Some(Palette {
+                page: d.command_page(Command::StartNewConversation(SessionId(1))),
+                ..Palette::new()
+            });
+            let message = request(&mut d);
+            let Request::CreateSession(created) = message.request else {
+                panic!("new conversation must create a separate session");
+            };
+            assert_eq!(created.project, "demo");
+            assert_eq!(created.workspace, "root");
+            assert_eq!(
+                created.kind,
+                SessionKind::Agent {
+                    name: "claude".into()
+                }
+            );
+            assert!(!created.argv.iter().any(|arg| arg == "--resume"));
+        }
+    }
     fn set(d: &mut Dashboard, label: &str, value: &str) {
         let Page::Form { fields, .. } = &mut d.palette.as_mut().unwrap().page else {
             panic!()
@@ -3117,6 +3208,8 @@ mod launch_tests {
         let mut stopped = summary(1);
         stopped.phase = SessionPhase::Stopped;
         stopped.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: None,
@@ -3196,6 +3289,8 @@ mod launch_tests {
         failed.run = crate::protocol::SessionRunId(2);
         failed.phase = SessionPhase::Stopped;
         failed.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: false,
             unavailable: None,
             failure: Some("cwd missing".into()),
@@ -3254,6 +3349,8 @@ mod launch_tests {
         let mut retained = summary(7);
         retained.phase = SessionPhase::Stopped;
         retained.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -3336,6 +3433,8 @@ mod launch_tests {
         let mut first = summary(1);
         first.phase = SessionPhase::Stopped;
         first.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -3343,6 +3442,8 @@ mod launch_tests {
         let mut second = summary(2);
         second.phase = SessionPhase::Stopped;
         second.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -3376,6 +3477,8 @@ mod launch_tests {
         let mut first = summary(7);
         first.phase = SessionPhase::Stopped;
         first.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -3383,6 +3486,8 @@ mod launch_tests {
         let mut bait = summary(42);
         bait.phase = SessionPhase::Stopped;
         bait.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),

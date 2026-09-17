@@ -138,6 +138,11 @@ impl Live {
 
     /// Start or restart the compiled server against this fixture's retained storage.
     pub fn start_binary(&self) {
+        self.start_binary_env(&[]);
+    }
+
+    /// Explicit child-only environment for provider configuration restart cases.
+    pub fn start_binary_env(&self, environment: &[(&str, &std::ffi::OsStr)]) {
         assert!(!self.hosted(), "fixture already owns a running server");
         let child = Command::new(&self.executable)
             .arg("server")
@@ -146,6 +151,7 @@ impl Live {
             // The sessions a workspace opens run this shell. The developer's
             // own login shell and its rc files are not the test's subject.
             .env("SHELL", "/bin/sh")
+            .envs(environment.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

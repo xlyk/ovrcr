@@ -103,10 +103,17 @@ pub enum Fence {
     LostClose,
 }
 
+enum ClaudeInvalidation {
+    Pending(String),
+    Committed,
+}
+
 pub struct Reporter {
     provider: AgentProvider,
     lease: Option<InvocationLease>,
     closed: bool,
+    claude_invalidation: Option<ClaudeInvalidation>,
+    claude_retention: Option<(String, ovrcr_protocol::ClaudeConversation)>,
     /// One revision set for every observation this reporter publishes. The server keeps
     /// a watermark per observation kind, so one monotonic counter satisfies all of them
     /// and no two kinds can disagree about which sample is newer.
@@ -137,6 +144,8 @@ impl Reporter {
             provider,
             lease,
             closed: false,
+            claude_invalidation: None,
+            claude_retention: None,
             revision: 0,
             pending: None,
             paused: None,
@@ -158,10 +167,32 @@ impl Reporter {
                 deadline,
             } => frames.frame(&mut self, input, native_root, deadline),
             HookEvent::Poll { deadline } => {
+                if matches!(
+                    self.claude_invalidation,
+                    Some(ClaudeInvalidation::Pending(_))
+                ) {
+                    self.invalidate_claude(deadline);
+                }
+                if !self.closed
+                    && let Some((_, reference)) = self.claude_retention.clone()
+                {
+                    self.retain_claude(reference, deadline);
+                }
                 frames.poll(&mut self, deadline);
                 Vec::new()
             }
             HookEvent::NativeCompleted { deadline } => {
+                if matches!(
+                    self.claude_invalidation,
+                    Some(ClaudeInvalidation::Pending(_))
+                ) {
+                    self.invalidate_claude(deadline);
+                }
+                if !self.closed
+                    && let Some((_, reference)) = self.claude_retention.clone()
+                {
+                    self.retain_claude(reference, deadline);
+                }
                 frames.finish(&mut self, deadline);
                 Vec::new()
             }
@@ -222,6 +253,123 @@ impl Reporter {
     /// of a generation and survive it.
     pub fn bind(&mut self, conversation: &str, deadline: Instant, force: bool) -> bool {
         self.bind_within(conversation, deadline, force, false)
+    }
+
+    /// Persist provider-owned identity only after the certified binding is accepted.
+    pub fn retain_claude(
+        &mut self,
+        reference: ovrcr_protocol::ClaudeConversation,
+        deadline: Instant,
+    ) -> bool {
+        if self.closed {
+            return false;
+        }
+        if self.claude_retention.is_none() {
+            let Ok(operation) = private_identifier() else {
+                return false;
+            };
+            self.claude_retention = Some((operation, reference));
+        }
+        let (operation, reference) = self.claude_retention.as_ref().unwrap();
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
+        let Some(binding) = lease.binding.clone() else {
+            return false;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = lease.command(
+            operation.clone(),
+            AgentCommand::RetainClaude {
+                binding,
+                reference: Box::new(reference.clone()),
+            },
+            Instant::now() + remaining / 2,
+        );
+        let response = match response {
+            Err(_) if Instant::now() < deadline => {
+                lease.operation_status(operation.clone(), deadline)
+            }
+            response => response,
+        };
+        if matches!(
+            response,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::ConversationRetained
+            ))
+        ) {
+            self.claude_retention = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn invalidate_claude(&mut self, deadline: Instant) -> bool {
+        self.closed = true;
+        self.claude_retention = None;
+        if matches!(
+            self.claude_invalidation,
+            Some(ClaudeInvalidation::Committed)
+        ) {
+            return true;
+        }
+        if self.claude_invalidation.is_none() {
+            let Ok(operation) = private_identifier() else {
+                return false;
+            };
+            self.claude_invalidation = Some(ClaudeInvalidation::Pending(operation));
+        }
+        // The server retains one operation receipt. Recover a lost Bind before
+        // invalidation replaces that receipt, preserving its observed generation.
+        // Invalidation still proceeds if that old receipt cannot be recovered.
+        let unresolved_binding = if let Some(operation) = self.pending.clone() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if self.settle(Instant::now() + remaining / 2) {
+                false
+            } else {
+                self.pending = Some(operation);
+                true
+            }
+        } else {
+            false
+        };
+        let Some(ClaudeInvalidation::Pending(operation)) = &self.claude_invalidation else {
+            unreachable!()
+        };
+        let Some(lease) = self.lease.as_mut() else {
+            return false;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = lease.command(
+            operation.clone(),
+            AgentCommand::InvalidateClaude,
+            Instant::now() + remaining / 2,
+        );
+        let response = match response {
+            Err(_) if Instant::now() < deadline => {
+                lease.operation_status(operation.clone(), deadline)
+            }
+            response => response,
+        };
+        if matches!(
+            response,
+            Ok(Response::AgentOperation(
+                AgentOperationResult::ConversationInvalidated
+            ))
+        ) {
+            self.claude_invalidation = Some(ClaudeInvalidation::Committed);
+            if unresolved_binding {
+                self.disable();
+            } else {
+                self.health(Some("identity_transition_unavailable"), deadline);
+            }
+            true
+        } else {
+            // Retain the obligation and lease. The handler retries on poll and
+            // native completion, while closed prevents any further admission.
+            false
+        }
     }
 
     /// `reserve_receipt` keeps half the budget back so a lost reply can still be re-read

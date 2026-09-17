@@ -35,6 +35,24 @@ pub fn receiver(
     } else {
         None
     };
+    let recovery = launch.as_ref().and_then(|(conversation, _)| {
+        let executable = if Path::new(&argv[0]).is_absolute() {
+            Some(std::path::PathBuf::from(&argv[0]))
+        } else {
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join(&argv[0]))
+                    .find(|path| path.is_file())
+            })
+        }?;
+        Some(ovrcr_protocol::ClaudeConversation {
+            conversation: conversation.clone(),
+            executable,
+            history: std::path::PathBuf::new(),
+            config_dir: ovrcr_runtime::claude_recovery::config_dir().ok()?,
+            options: ovrcr_runtime::claude_recovery::launch_options(argv).ok()?,
+        })
+    });
     if let Some((expected, InitialSource::Startup)) = &launch {
         argv.splice(
             1..1,
@@ -49,11 +67,13 @@ pub fn receiver(
         eprintln!("agent reporting unavailable; running native command");
     }
     Reporter::new(AgentProvider::Claude, lease, None).handler(Hooks {
+        recovery,
         expected: launch
             .as_ref()
             .map(|(conversation, _)| conversation.clone()),
         initial_source: launch.map(|(_, source)| source),
         announced: false,
+        initial_accepted: false,
         prompt: None,
         metrics: None,
         transcript_path: None,
@@ -367,10 +387,12 @@ impl InitialSource {
 /// identity its prompts establish, and the transcript reader are this receiver's; the
 /// binding, the revisions and the teardown are the reporter's.
 struct Hooks {
+    recovery: Option<ovrcr_protocol::ClaudeConversation>,
     expected: Option<String>,
     initial_source: Option<InitialSource>,
     /// Whether the certified announcement this invocation waits for has already arrived.
     announced: bool,
+    initial_accepted: bool,
     prompt: Option<String>,
     metrics: Option<ovrcr_protocol::MetricsSample>,
     transcript_path: Option<String>,
@@ -437,7 +459,8 @@ impl Hooks {
             return reporter::IGNORED.to_vec();
         };
         // The initial announcement is admitted only while nothing is bound yet.
-        let awaiting = !reporter.closed() && reporter.binding().is_none();
+        let awaiting =
+            !reporter.closed() && (reporter.binding().is_none() || !self.initial_accepted);
         let initial_start = matches!(
             &event.kind,
             ClaudeEventKind::SessionStart { source }
@@ -463,8 +486,11 @@ impl Hooks {
         }
         let clear = matches!(&event.kind, ClaudeEventKind::SessionEnd { reason } if reason.as_deref() == Some("clear"));
         if transition || clear {
-            self.freeze(reporter, deadline);
-            return reporter::IGNORED.to_vec();
+            return if self.freeze(reporter, deadline) {
+                reporter::IGNORED.to_vec()
+            } else {
+                reporter::UNAVAILABLE.to_vec()
+            };
         }
         if let Some(state) = event.kind.activity() {
             if !self.bound(reporter) {
@@ -505,6 +531,15 @@ impl Hooks {
             return reporter::UNAVAILABLE.to_vec();
         }
         self.start_collector(reporter, deadline);
+        if let Some(reference) = self.recovery.as_mut()
+            && let Some(history) = self.transcript_path.as_ref()
+        {
+            reference.history = history.into();
+            if !reporter.retain_claude(reference.clone(), deadline) {
+                return reporter::UNAVAILABLE.to_vec();
+            }
+        }
+        self.initial_accepted = true;
         reporter::ACCEPTED.to_vec()
     }
     fn empty_metrics() -> ovrcr_protocol::MetricsSample {
@@ -676,13 +711,9 @@ impl Hooks {
     }
     /// A conversation transition or a clear ends this invocation's reporting: the binding
     /// it certified is no longer what is on screen, and nothing replaces it here.
-    fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) {
-        if reporter.closed() {
-            return;
-        }
+    fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> bool {
         self.stop_collector(deadline);
-        reporter.health(Some("identity_transition_unavailable"), deadline);
-        reporter.close();
+        reporter.invalidate_claude(deadline)
     }
 }
 
@@ -697,9 +728,11 @@ mod tests {
 
     fn hooks(initial_source: InitialSource) -> Hooks {
         Hooks {
+            recovery: None,
             expected: Some(EXPECTED.to_owned()),
             initial_source: Some(initial_source),
             announced: false,
+            initial_accepted: false,
             prompt: None,
             metrics: None,
             transcript_path: None,

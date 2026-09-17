@@ -33,6 +33,11 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn create_conversation_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE claude_conversations (session INTEGER PRIMARY KEY REFERENCES retained_sessions(id) ON DELETE CASCADE, reference TEXT, invalid INTEGER NOT NULL CHECK(invalid IN (0, 1)));")?;
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionMetadata {
     pub project: String,
@@ -54,6 +59,8 @@ pub(crate) struct RetainedSession {
     pub boot_id: Option<String>,
     pub stopped: bool,
     pub failure: Option<String>,
+    pub conversation: Option<ovrcr_protocol::ClaudeConversation>,
+    pub identity_invalid: bool,
 }
 
 impl RetainedSession {
@@ -63,9 +70,23 @@ impl RetainedSession {
 
     pub fn recovery(&self, current_boot: Option<&str>) -> SessionRecovery {
         SessionRecovery {
+            conversation: self
+                .conversation
+                .as_ref()
+                .map(|reference| reference.conversation.clone()),
+            attached: false,
             requires_ack: self.requires_ack(current_boot),
             unavailable: match &self.metadata.kind {
                 SessionKind::Terminal => None,
+                SessionKind::Agent { name } if name == "claude" => {
+                    if self.identity_invalid {
+                        Some("Claude changed conversations through an unsupported clear/resume/fork transition; start a new conversation in a separate session".into())
+                    } else if self.conversation.is_none() {
+                        Some("No certified Claude conversation and recoverable configuration; use managed launch and configured reporting".into())
+                    } else {
+                        None
+                    }
+                }
                 SessionKind::Agent { name } => {
                     Some(format!("Native resume is not available for {name}"))
                 }
@@ -129,6 +150,7 @@ impl SessionStore {
     pub(crate) fn in_memory() -> Self {
         let connection = Connection::open_in_memory().unwrap();
         create_schema(&connection).unwrap();
+        create_conversation_schema(&connection).unwrap();
         Self::from_connection(connection).unwrap()
     }
 
@@ -153,6 +175,8 @@ impl SessionStore {
             boot_id: self.boot_id.clone(),
             stopped: !session.is_live(),
             failure: None,
+            conversation: None,
+            identity_invalid: false,
         };
         let metadata = &record.metadata;
         self.connection.execute(
@@ -188,6 +212,38 @@ impl SessionStore {
 
     pub fn boot_id(&self) -> Option<&str> {
         self.boot_id.as_deref()
+    }
+
+    pub fn retain_conversation(
+        &mut self,
+        id: SessionId,
+        run: SessionRunId,
+        reference: Option<&ovrcr_protocol::ClaudeConversation>,
+    ) -> Result<()> {
+        let record = self.records.get(&id).context("session not found")?;
+        if record.run != run {
+            bail!("session run changed");
+        }
+        if record.identity_invalid && reference.is_some() {
+            bail!("Claude recovery identity was invalidated");
+        }
+        if reference.is_none() {
+            // Fail closed in the running owner even if the durable write fails.
+            // The caller receives failure and must retry until it is committed.
+            self.records.get_mut(&id).unwrap().identity_invalid = true;
+        }
+        let encoded = reference.map(serde_json::to_string).transpose()?;
+        self.connection.execute(
+            "INSERT INTO claude_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)
+             ON CONFLICT(session) DO UPDATE SET reference = COALESCE(excluded.reference, reference), invalid = excluded.invalid",
+            params![sql_integer(id.0)?, encoded, reference.is_none()],
+        )?;
+        let record = self.records.get_mut(&id).unwrap();
+        if let Some(reference) = reference {
+            record.conversation = Some(reference.clone());
+        }
+        record.identity_invalid = reference.is_none();
+        Ok(())
     }
 
     pub fn get(&self, id: SessionId) -> Option<&RetainedSession> {
@@ -226,6 +282,8 @@ impl SessionStore {
             boot_id: None,
             stopped: true,
             failure: None,
+            conversation: None,
+            identity_invalid: false,
         };
         self.records.insert(id, record.clone());
         Ok(record)
@@ -438,6 +496,8 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
             boot_id: row.get(11)?,
             stopped,
             failure: row.get(13)?,
+            conversation: None,
+            identity_invalid: false,
         })
     })?;
     let mut records = HashMap::new();
@@ -449,6 +509,31 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
         ovrcr_protocol::validate_name(&record.metadata.project, "project")?;
         ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
         records.insert(record.id, record);
+    }
+    let table_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'claude_conversations')",
+        [],
+        |row| row.get(0),
+    )?;
+    if table_exists {
+        let mut query =
+            connection.prepare("SELECT session, reference, invalid FROM claude_conversations")?;
+        let rows = query.query_map([], |row| {
+            Ok((
+                read_integer(row, 0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (id, reference, invalid) = row?;
+            if let Some(record) = records.get_mut(&SessionId(id)) {
+                record.conversation = reference
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?;
+                record.identity_invalid = invalid;
+            }
+        }
     }
     Ok(records)
 }

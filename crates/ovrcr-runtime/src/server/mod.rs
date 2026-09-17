@@ -205,8 +205,17 @@ impl ServerState {
     ) -> SessionSummary {
         if let Some(session) = session.filter(|session| session.run() == record.run) {
             let mut summary = session.summary();
-            if !summary.phase.is_live() {
-                summary.recovery = Some(record.recovery(boot_id));
+            if !summary.phase.is_live() || record.conversation.is_some() || record.identity_invalid
+            {
+                let mut recovery = record.recovery(boot_id);
+                if summary.phase.is_live() {
+                    recovery.requires_ack = false;
+                    recovery.attached = !record.identity_invalid
+                        && summary.agent.as_ref().is_some_and(|agent| {
+                            Some(&agent.binding.conversation) == recovery.conversation.as_ref()
+                        });
+                }
+                summary.recovery = Some(recovery);
             }
             return summary;
         }
@@ -248,7 +257,18 @@ impl ServerState {
     }
 
     pub(crate) fn persist_session_exit(&self, session: &Session) -> Result<()> {
-        self.persist_session_titles(session)
+        self.persist_session_titles(session)?;
+        let summary = session.summary();
+        let mut retained = self.retained.lock();
+        if matches!(summary.phase, SessionPhase::Exited { .. })
+            && summary.agent.is_none()
+            && retained
+                .get(session.id())
+                .is_some_and(|record| record.conversation.is_some() && !record.identity_invalid)
+        {
+            retained.record_failure(session.id(), session.run(), "Claude exited before conversation attachment was confirmed; check native reporting and history, then Retry".into())?;
+        }
+        Ok(())
     }
 
     pub fn inventory(&self) -> (Registry, Vec<SessionSummary>) {
@@ -785,14 +805,32 @@ impl ServerState {
                 .record_failure(id, expected_run, message.clone())?;
             return Err(lifecycle_error(ErrorCode::NotFound, message));
         }
-        let shell = std::env::var_os("SHELL")
-            .filter(|shell| !shell.is_empty())
-            .ok_or_else(|| {
-                lifecycle_error(
-                    ErrorCode::InvalidRequest,
-                    "SHELL is unset; configure a fresh shell before reopening",
-                )
-            })?;
+        let argv = if let Some(reference) = record
+            .conversation
+            .as_ref()
+            .filter(|_| matches!(record.metadata.kind, SessionKind::Agent { .. }))
+        {
+            match crate::claude_recovery::resume_argv(reference) {
+                Ok(argv) => argv,
+                Err(error) => {
+                    let message = error.to_string();
+                    self.retained
+                        .lock()
+                        .record_failure(id, expected_run, message.clone())?;
+                    return Err(lifecycle_error(ErrorCode::InvalidRequest, message));
+                }
+            }
+        } else {
+            let shell = std::env::var_os("SHELL")
+                .filter(|shell| !shell.is_empty())
+                .ok_or_else(|| {
+                    lifecycle_error(
+                        ErrorCode::InvalidRequest,
+                        "SHELL is unset; configure a fresh shell before reopening",
+                    )
+                })?;
+            vec![shell]
+        };
         let old = self.sessions.lock().unwrap().get(&id).cloned();
         if let Some(old) = old {
             match old.terminate(Duration::from_secs(2)) {
@@ -803,7 +841,7 @@ impl ServerState {
 
             self.persist_session_exit(&old)?;
         }
-        self.spawn_record_locked(id, expected_run, vec![shell], None)
+        self.spawn_record_locked(id, expected_run, argv, None)
     }
 
     pub fn kill_session(&self, id: SessionId, grace: Duration) -> Result<()> {

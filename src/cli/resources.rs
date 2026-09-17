@@ -278,12 +278,6 @@ fn managed_wrapper_kind(argv: &[std::ffi::OsString]) -> Option<SessionKind> {
 
 fn reopen_terminal(id: u64, acknowledge_stopped: bool, json_output: bool) -> AppResult<()> {
     let session = inventory_session(id)?;
-    if matches!(session.kind, SessionKind::Agent { .. }) {
-        return Err(RuntimeError::new(
-            ErrorCode::InvalidRequest,
-            "agent resume is unavailable",
-        ));
-    }
     print_created_terminal(
         request_started(Request::ReopenSession {
             session: SessionId(id),

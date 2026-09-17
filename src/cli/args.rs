@@ -203,7 +203,7 @@ pub(super) enum TerminalCommand {
         #[arg(long)]
         automatic: bool,
     },
-    /// Reopen in a fresh shell. Natural exit does not prove background jobs stopped; confirm with --ack-stopped.
+    /// Reopen a fresh shell or resume a certified Claude conversation without a new prompt. Confirm uncertain previous processes stopped with --ack-stopped.
     Reopen {
         id: u64,
         #[arg(long)]

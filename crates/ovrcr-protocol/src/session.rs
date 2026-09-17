@@ -24,6 +24,8 @@ pub enum SessionKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRecovery {
+    pub conversation: Option<String>,
+    pub attached: bool,
     pub requires_ack: bool,
     pub unavailable: Option<String>,
     pub failure: Option<String>,

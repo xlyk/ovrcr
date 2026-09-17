@@ -2274,6 +2274,8 @@ fn reopen_confirm_names_stopped_processes_and_does_not_treat_retry_as_ack() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces[0].sessions[0].recovery =
         Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: None,
@@ -2323,6 +2325,8 @@ fn failed_reopen_retries_the_current_run_from_the_confirm() {
     hierarchy.projects[1].workspaces[0].sessions[0].run = ovrcr::protocol::SessionRunId(4);
     hierarchy.projects[1].workspaces[0].sessions[0].recovery =
         Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: false,
             unavailable: None,
             failure: Some("cwd missing".into()),
@@ -2369,6 +2373,8 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         run: ovrcr::protocol::SessionRunId(3),
         kind: ovrcr::protocol::SessionKind::Terminal,
         recovery: Some(ovrcr::protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
             requires_ack: true,
             unavailable: None,
             failure: Some("spawn uncertain".into()),
@@ -2476,6 +2482,8 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
             run: ovrcr::protocol::SessionRunId(3),
             kind: ovrcr::protocol::SessionKind::Terminal,
             recovery: Some(ovrcr::protocol::SessionRecovery {
+                conversation: None,
+                attached: false,
                 requires_ack: true,
                 unavailable: None,
                 failure: Some("spawn uncertain".into()),

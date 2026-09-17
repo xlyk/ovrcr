@@ -347,6 +347,12 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
+                AgentCommand::RetainClaude { .. } => {
+                    Response::AgentOperation(AgentOperationResult::ConversationRetained)
+                }
+                AgentCommand::InvalidateClaude => {
+                    Response::AgentOperation(AgentOperationResult::ConversationInvalidated)
+                }
                 AgentCommand::Bind {
                     expected_binding,
                     conversation,

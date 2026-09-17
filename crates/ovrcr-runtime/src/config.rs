@@ -14,7 +14,7 @@ pub use ovrcr_protocol::{ProjectRecord, Registry, WorkspaceRecord};
 pub struct RegistryPath(pub PathBuf);
 
 const APPLICATION_ID: i64 = 0x4f565243;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 impl RegistryPath {
     pub fn resolve() -> Result<Self> {
@@ -149,6 +149,10 @@ pub(crate) fn open_writable_registry(path: &Path) -> Result<Connection> {
     }
     if schema_identity(&transaction)?.1 == 1 {
         crate::retained::create_schema(&transaction)?;
+        transaction.pragma_update(None, "user_version", 2)?;
+    }
+    if schema_identity(&transaction)?.1 == 2 {
+        crate::retained::create_conversation_schema(&transaction)?;
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     transaction.commit().context("commit registry migration")?;
@@ -176,7 +180,7 @@ fn is_uninitialized(connection: &Connection) -> Result<bool> {
 
 pub(crate) fn check_schema(connection: &Connection) -> Result<()> {
     let (application, version) = schema_identity(connection)?;
-    if application != APPLICATION_ID || !matches!(version, 1 | SCHEMA_VERSION) {
+    if application != APPLICATION_ID || !matches!(version, 1 | 2 | SCHEMA_VERSION) {
         bail!(
             "incompatible registry database (application {application}, schema {version}); \
              expected OVRCR schema {SCHEMA_VERSION}; original storage was not replaced"

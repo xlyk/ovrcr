@@ -112,14 +112,29 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                 let session = state.sessions.lock().unwrap().get(&id).cloned();
                 let response = match session {
                     Some(session) => {
-                        let before = session.summary();
-                        match session.agent_command(&request, owner.as_ref()) {
-                            Ok(response) => {
-                                if session.summary() != before {
-                                    publish_session_changed(&state, id);
+                        let before = state.session_summary(id);
+                        let result = {
+                            // Keep the established retained -> Session lock order. The
+                            // authenticated operation persists before publishing its receipt.
+                            let mut retained = state.retained.lock();
+                            session.agent_command(&request, owner.as_ref(), |command| match command
+                            {
+                                ovrcr_protocol::AgentCommand::RetainClaude {
+                                    reference, ..
+                                } => {
+                                    retained.retain_conversation(id, session.run(), Some(reference))
                                 }
-                                response
-                            }
+                                ovrcr_protocol::AgentCommand::InvalidateClaude => {
+                                    retained.retain_conversation(id, session.run(), None)
+                                }
+                                _ => Ok(()),
+                            })
+                        };
+                        if state.session_summary(id) != before {
+                            publish_session_changed(&state, id);
+                        }
+                        match result {
+                            Ok(response) => response,
                             Err(error) => error_for_lifecycle(error),
                         }
                     }
