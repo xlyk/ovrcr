@@ -43,8 +43,8 @@ enum Command {
     RegisterProject,
     CloseTerminal(SessionId),
     Archives,
-    Unarchive(crate::protocol::SessionSummary),
-    DeleteArchived(crate::protocol::SessionSummary),
+    Unarchive(SessionId, crate::protocol::SessionRunId),
+    DeleteArchived(SessionId, crate::protocol::SessionRunId, String),
     RemoveWorkspace,
     RemoveProject,
     Switch(SessionId),
@@ -721,11 +721,15 @@ impl Dashboard {
                     [
                         Entry {
                             label: format!("Unarchive: {label}"),
-                            command: Command::Unarchive(row.clone()),
+                            command: Command::Unarchive(row.id, row.run),
                         },
                         Entry {
                             label: format!("Delete record: {label}"),
-                            command: Command::DeleteArchived(row.clone()),
+                            command: Command::DeleteArchived(
+                                row.id,
+                                row.run,
+                                row.display_name().to_owned(),
+                            ),
                         },
                     ]
                 })
@@ -1246,24 +1250,24 @@ impl Dashboard {
                                 };
                                 action = self.palette_submit(&mut palette, Request::Inspect);
                             }
-                            Command::Unarchive(row) => {
+                            Command::Unarchive(session, expected_run) => {
                                 action = self.palette_submit(
                                     &mut palette,
                                     Request::UnarchiveSession {
-                                        session: row.id,
-                                        expected_run: row.run,
+                                        session,
+                                        expected_run,
                                     },
                                 );
                             }
-                            Command::DeleteArchived(row) => {
+                            Command::DeleteArchived(session, expected_run, title) => {
                                 palette.page = Page::Confirm {
                                     request: Some(Request::DeleteArchivedSession {
-                                        session: row.id,
-                                        expected_run: row.run,
+                                        session,
+                                        expected_run,
                                     }),
                                     target: format!(
                                         "Delete record {}? Provider history files will be kept.",
-                                        row.display_name()
+                                        title
                                     ),
                                 };
                             }

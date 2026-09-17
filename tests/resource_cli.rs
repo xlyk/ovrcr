@@ -698,7 +698,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             agent.clone()
         };
         let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
-            "id":7,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
+            "id":7,"archived":false,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
