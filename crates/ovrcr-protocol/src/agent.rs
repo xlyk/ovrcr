@@ -329,18 +329,23 @@ pub enum AgentOperationResult {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversationReference {
     Claude(ClaudeConversation),
+    Pi(ExtensionConversation),
+    Omp(ExtensionConversation),
 }
 
 impl ConversationReference {
     pub fn provider(&self) -> AgentProvider {
         match self {
             Self::Claude(_) => AgentProvider::Claude,
+            Self::Pi(_) => AgentProvider::Pi,
+            Self::Omp(_) => AgentProvider::Omp,
         }
     }
 
     pub fn identity(&self) -> &str {
         match self {
             Self::Claude(reference) => &reference.conversation,
+            Self::Pi(reference) | Self::Omp(reference) => &reference.conversation,
         }
     }
 
@@ -354,6 +359,17 @@ pub struct ClaudeConversation {
     pub conversation: String,
     pub executable: std::path::PathBuf,
     pub history: std::path::PathBuf,
+    pub config_dir: std::path::PathBuf,
+    pub options: Vec<String>,
+}
+
+/// Native extension identity. A missing file describes an ephemeral conversation,
+/// not permission to reopen the previously recorded conversation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionConversation {
+    pub conversation: String,
+    pub executable: std::path::PathBuf,
+    pub history: Option<std::path::PathBuf>,
     pub config_dir: std::path::PathBuf,
     pub options: Vec<String>,
 }

@@ -552,8 +552,50 @@ UUID. Unsupported clear/resume/fork observations invalidate recovery through SQL
 retaining the prior UUID only for context. Reporting failures and missing
 callbacks alone preserve a valid reference. Start new conversation creates a
 separate session; other provider rows remain retained with resume unavailable.
-SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 17. The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119; only Claude is enabled.
+SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 18. The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119.
 
 Acceptance remains open. The [issue #116 verification record](../research/issue-116-claude-recovery/README.md) records the passing automated suite and controlled executable/real PTY tests, including exact arguments, repeated restart before another callback, unsupported clear before attachment, missing resources, database failures and prompt non-persistence. Native Claude continuity, Dashboard input and Linux acceptance remain unverified.
 
 Durable acknowledgments follow successful SQLite writes. Temporary write failures retain pending work for retry and block recovery in the current owner after invalidation. If storage remains unwritable until that owner dies, the last committed reference may survive; no durability guarantee is made across an uncommitted invalidation.
+
+## Retained Pi and Oh My Pi conversations
+
+Issue #119 adds adapters to the same explicit `ovrcr terminal reopen ID` path.
+The shared extension captures `sessionManager.getSessionId()` and
+`getSessionFile()` synchronously. The shared receiver retains accepted identities
+after producer fencing and binding. Pi replacement factories and OMP in-place
+switches both support A-to-B-to-A changes. Retired producers cannot replace the
+reference. An ephemeral session replaces the old identity but is unavailable for
+resume. Reporting remains Confirmed Ready for Pi and Observed Ready for OMP.
+
+| Provider | Source-reviewed version | Exact native reopen form |
+| --- | --- | --- |
+| Pi | 0.85.1 | `pi --session /absolute/native.jsonl` |
+| Oh My Pi | 18.2.2 (`60c9a115`) | `omp --resume /absolute/native.jsonl` |
+
+These are independent source/CLI checks, not native GUI acceptance. Prior OMP
+reporting acceptance used 18.1.19; it does not establish recovery on 18.2.2.
+The adapter checks a bounded session header for the recorded ID before launching.
+It never searches by prefix, chooses the newest file, or supplies a task prompt.
+Missing history, executable, original working directory or matching configuration
+fails visibly. A new run retains the reference before its first callback.
+
+Recovery retains the absolute executable and agent configuration directory
+(`PI_CODING_AGENT_DIR`, otherwise `~/.pi/agent` or `~/.omp/agent`). Supported
+options are model/provider/thinking/tools/models, absolute session-dir, and
+no-extensions/no-skills/no-tools. Pi also preserves approve/no-approve,
+no-context-files/no-prompt-templates/no-themes. OMP also preserves approval-mode,
+no-lsp/no-pty/no-rules/no-title/auto-approve. Existing trust and approval controls
+are not bypassed. Initial prompts and session selectors are discarded.
+
+Custom extensions, inline prompts/credentials, extra configuration files and
+unlisted flags leave recovery unavailable rather than being silently omitted.
+OMP profiles (`OMP_PROFILE` or `PI_PROFILE`), `PI_CONFIG_DIR` and XDG overrides
+are not supported by this adapter. Restore the original configuration before
+Retry; recovery never copies credentials or environments. Configurations changed
+inside provider code are outside this conservative launch contract.
+
+[Development handoff](../research/issue-119-recovery/handoff.md) gives automated
+fixture commands and separate native acceptance instructions for #129 (Pi) and
+#130 (OMP). Neither native acceptance nor Linux native continuity is signed off
+by this implementation.

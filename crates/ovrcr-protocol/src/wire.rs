@@ -903,6 +903,21 @@ mod wire_snapshot {
             .iter()
             .map(|provider| (format!("AgentProvider::{provider:?}"), encode(provider))),
         );
+        let extension = crate::ExtensionConversation {
+            conversation: "native".into(),
+            executable: "/bin/provider".into(),
+            history: Some("/history.jsonl".into()),
+            config_dir: "/config".into(),
+            options: vec![],
+        };
+        all.push((
+            "ConversationReference::Pi".into(),
+            encode(&crate::ConversationReference::Pi(extension.clone())),
+        ));
+        all.push((
+            "ConversationReference::Omp".into(),
+            encode(&crate::ConversationReference::Omp(extension)),
+        ));
         all
     }
 
@@ -1063,6 +1078,14 @@ mod wire_snapshot {
         ("AgentProvider::Pi", "03"),
         ("AgentProvider::Hermes", "04"),
         ("AgentProvider::Omp", "05"),
+        (
+            "ConversationReference::Pi",
+            "01066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "ConversationReference::Omp",
+            "02066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
     ];
 
     #[test]

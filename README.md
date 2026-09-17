@@ -501,8 +501,10 @@ dashboard, a workload tested at 50 live sessions, and live PTYs plus in-memory
 history. Detaching reconnects to a surviving PTY. A server crash loses those
 PTYs and that history; reattaching is not crash recovery. Identity, title, kind,
 and workspace stay in the store so you can reopen a fresh shell in the same row.
-Claude recovery uses explicit same-row resume through managed launch; other
-providers show resume unavailable. See the [capability and acceptance record](docs/agent-reporting-support.md#retained-claude-conversations).
+Claude, Pi and Oh My Pi recovery use explicit same-row resume through managed launch;
+other providers show resume unavailable. Pi and Oh My Pi native recovery acceptance
+remains tracked separately in #129 and #130. See the
+[capability and acceptance record](docs/agent-reporting-support.md#retained-pi-and-oh-my-pi-conversations).
 Tests simulate boot-identity changes while reading
 native boot IDs; they do not reboot the machine.
 
