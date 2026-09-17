@@ -882,6 +882,268 @@ fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() 
 }
 
 #[test]
+fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_failures() {
+    use ovrcr::protocol::{ErrorCode, Request, Response};
+    let live = Live::binary();
+    live.ready("feature/removal-failures");
+    track_groups(&live);
+    let remove = Request::RemoveWorkspace {
+        project: live::PROJECT.into(),
+        name: live::WORKSPACE.into(),
+    };
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "kill", &row["id"].to_string()]);
+    }
+    let exited = create_terminal(&live, "uncertain", &["/bin/sh", "-c", "exit 0"]);
+    let id = exited["id"].as_u64().unwrap();
+    wait_phase(&live, id, "exited");
+    json(&live, &["terminal", "close", &id.to_string()]);
+    assert!(
+        matches!(
+            live.request(remove.clone()),
+            Response::Error {
+                code: ErrorCode::SessionsRemain,
+                ..
+            }
+        ),
+        "archived uncertainty must block removal too"
+    );
+    json(&live, &["terminal", "unarchive", &id.to_string()]);
+    json(&live, &["terminal", "acknowledge-stopped", &id.to_string()]);
+    // Drop transient exit/timing information before comparing durable snapshots.
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    live.start_binary();
+    let workspace = json(
+        &live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            live::PROJECT,
+            "--name",
+            live::WORKSPACE,
+        ],
+    );
+    let path = std::path::Path::new(workspace["path"].as_str().unwrap());
+    let saved = json(&live, &["terminal", "list"]);
+    let dirty = path.join("dirty");
+    std::fs::write(&dirty, "keep me").unwrap();
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error {
+            code: ErrorCode::DirtyWorktree,
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "keep me");
+    std::fs::remove_file(dirty).unwrap();
+    live::git(&live.repo, &["worktree", "lock", path.to_str().unwrap()]);
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error { .. }
+    ));
+    assert!(path.exists());
+    assert_eq!(json(&live, &["terminal", "list"]), saved);
+    live::git(&live.repo, &["worktree", "unlock", path.to_str().unwrap()]);
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_archive BEFORE UPDATE OF disposition ON retained_sessions BEGIN SELECT RAISE(FAIL, 'fixture archive failure'); END;").unwrap();
+    assert!(matches!(
+        live.request(remove.clone()),
+        Response::Error { .. }
+    ));
+    assert!(
+        path.exists(),
+        "storage preflight must precede destructive Git work"
+    );
+    assert_eq!(json(&live, &["terminal", "list"]), saved);
+    db.execute_batch("DROP TRIGGER reject_archive;
+        CREATE TABLE commit_guard (id INTEGER REFERENCES retained_sessions(id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER reject_commit AFTER UPDATE OF disposition ON retained_sessions BEGIN INSERT INTO commit_guard VALUES (-1); END;").unwrap();
+    let response = live.request(remove);
+    assert!(
+        matches!(&response, Response::Error { code: ErrorCode::PartialFailure, message } if message.contains("metadata was not committed")),
+        "{response:?}"
+    );
+    assert!(!path.exists(), "commit failure occurs after Git removal");
+    assert_eq!(json(&live, &["terminal", "list"]), saved);
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        json(
+            &live,
+            &[
+                "workspace",
+                "get",
+                "--project",
+                live::PROJECT,
+                "--name",
+                live::WORKSPACE
+            ]
+        ),
+        workspace
+    );
+    db.execute_batch("DROP TRIGGER reject_commit; DROP TABLE commit_guard;")
+        .unwrap();
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    assert_eq!(json(&live, &["terminal", "list"]), saved);
+}
+
+#[test]
+fn workspace_removal_protects_provider_history_inside_an_ignored_directory() {
+    use ovrcr::protocol::{
+        ConversationReference, ErrorCode, ExtensionConversation, Request, Response,
+    };
+    let live = Live::binary();
+    live.ready("feature/embedded-history");
+    track_groups(&live);
+    let created = create_terminal(&live, "history-owner", &["/bin/sh"]);
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "kill", &row["id"].to_string()]);
+    }
+    let cwd = std::path::Path::new(created["cwd"].as_str().unwrap());
+    let history = cwd.join("ignored-history.jsonl");
+    std::fs::write(&history, "provider-owned history\n").unwrap();
+    let exclude = live.repo.join(".git/info/exclude");
+    std::fs::write(exclude, "ignored-history.jsonl\n").unwrap();
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    // Seed the exact persisted provider reference. Capture itself is covered by
+    // extension_conversations_switch_and_survive_repeated_restart; removal must
+    // protect history restored from storage, including archives and ignored files.
+    let reference = ConversationReference::Pi(ExtensionConversation {
+        conversation: "history-owner".into(),
+        executable: "/bin/pi".into(),
+        history: Some(history.clone()),
+        config_dir: live.root.path().to_path_buf(),
+        options: vec![],
+    });
+    let db = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    db.execute(
+        "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, 0)",
+        rusqlite::params![
+            created["id"].as_i64().unwrap(),
+            serde_json::to_string(&reference).unwrap()
+        ],
+    )
+    .unwrap();
+    drop(db);
+    live.start_binary();
+    json(&live, &["terminal", "close", &created["id"].to_string()]);
+    let response = live.request(Request::RemoveWorkspace {
+        project: live::PROJECT.into(),
+        name: live::WORKSPACE.into(),
+    });
+    assert!(
+        matches!(&response, Response::Error { code: ErrorCode::Conflict, message } if message.contains("provider history")),
+        "{response:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(history).unwrap(),
+        "provider-owned history\n"
+    );
+    assert!(cwd.is_dir());
+}
+
+#[test]
+fn workspace_removal_retains_archive_context_through_project_removal_and_restart() {
+    let live = Live::binary();
+    live.ready("feature/remove-retained");
+    track_groups(&live);
+    let created = create_terminal(&live, "retained-work", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let arg = id.to_string();
+    let history = live.root.path().join("provider-history.jsonl");
+    std::fs::write(&history, "provider-owned history\n").unwrap();
+    json(&live, &["terminal", "rename", &arg, "Original context"]);
+    // Controlled stops leave active retained records, rather than deleting them.
+    for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
+        json(&live, &["terminal", "kill", &row["id"].to_string()]);
+    }
+    let workspace = json(
+        &live,
+        &[
+            "workspace",
+            "get",
+            "--project",
+            live::PROJECT,
+            "--name",
+            live::WORKSPACE,
+        ],
+    );
+    let path = workspace["path"].as_str().unwrap();
+    json(
+        &live,
+        &[
+            "workspace",
+            "remove",
+            "--project",
+            live::PROJECT,
+            "--name",
+            live::WORKSPACE,
+        ],
+    );
+    assert!(!std::path::Path::new(path).exists());
+    json(&live, &["project", "remove", live::PROJECT]);
+    let archived = json(&live, &["terminal", "list", "--archived"]);
+    let saved = archived
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap();
+    assert_eq!(saved["title"], "Original context");
+    assert_eq!(saved["project"], live::PROJECT);
+    assert_eq!(saved["workspace"], live::WORKSPACE);
+    assert_eq!(saved["cwd"], path);
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    assert_eq!(json(&live, &["terminal", "list", "--archived"]), archived);
+    live.start_binary();
+    json(&live, &["terminal", "unarchive", &arg]);
+    assert!(live.session_groups().is_empty());
+    let output = cli(&live, &["terminal", "reopen", &arg]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Recorded working directory is unavailable")
+    );
+    let row = wait_phase(&live, id, "stopped");
+    assert_eq!(row["cwd"], path);
+    let ovrcr::protocol::Response::Hierarchy(hierarchy) =
+        live.request(ovrcr::protocol::Request::List)
+    else {
+        panic!("expected hierarchy")
+    };
+    assert!(
+        hierarchy
+            .projects
+            .iter()
+            .flat_map(|p| &p.workspaces)
+            .flat_map(|w| &w.sessions)
+            .any(|row| row.id.0 == id),
+        "unarchived orphan must remain visible in Dashboard"
+    );
+    assert!(row["recovery"]["failure"].as_str().unwrap().contains(path));
+    assert_eq!(
+        std::fs::read_to_string(history).unwrap(),
+        "provider-owned history\n"
+    );
+}
+
+#[test]
 fn close_exited_row_moves_it_to_the_archive_without_process_acknowledgement() {
     let live = Live::binary();
     live.ready("feature/archive-exited");

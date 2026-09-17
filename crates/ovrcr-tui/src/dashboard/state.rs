@@ -3426,6 +3426,7 @@ mod tests {
                     path: "/tmp/unused".into(),
                     sessions: vec![SessionSummary {
                         archived: false,
+                        cwd: "/work".into(),
                         id: crate::session::SessionId(id),
                         run: SessionRunId(run),
                         kind: SessionKind::Terminal,

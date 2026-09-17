@@ -60,7 +60,32 @@ ovrcr terminal list --project consigint --workspace cleanup
 `project list` shows projects only; `ovrcr list` prints the complete hierarchy as
 `project`, `  workspace`, and `    session <id> <display-name> <phase>` lines. Terminal
 lists include running sessions and retained exited records. A `--workspace` filter
-requires `--project`.
+requires `--project`. Terminal JSON includes `cwd`, the original working directory;
+the text table includes it as the last column, including for archived records.
+
+## Workspace removal
+
+`workspace remove` is explicit confirmation to remove the clean worktree and
+archive its stopped session records. Running, paused, and ownership-uncertain
+sessions block removal, including uncertain archived records. Dirty-worktree,
+root-repository and Git ownership protections still apply. Branches are kept.
+A recorded provider-history path inside the worktree also blocks removal, even
+if Git ignores that file. Preserve it outside the worktree and have the provider
+report its new reference before retrying.
+
+Registry removal and archive transitions commit together. A storage error before
+Git removal or a Git refusal leaves the records unarchived. If Git removes the
+worktree but the database commit fails, the command reports partial failure and
+keeps the original workspace and session records visible for recovery; it does
+not claim Git was rolled back. Inspect the reported path and Git worktree list
+before restoring the worktree or repairing registration. Reopening refuses a
+missing directory and never substitutes another repository.
+
+`project remove` still requires removing its workspaces first through this same
+lifecycle. It never cascades into retained session records. Unarchiving a row
+whose workspace or project was removed keeps it visible under its original
+context without registering a workspace or launching a process. Provider history
+files are never deleted by record management.
 
 ## Launch, send, read, and close
 
@@ -77,9 +102,7 @@ ovrcr terminal close "$terminal_id"
 # Workspace creation also started a terminal named local. Find and close it:
 ovrcr terminal list --project example --workspace cli-demo
 ovrcr terminal close LOCAL_TERMINAL_ID
-# Delete the archived records before removing their workspace:
-ovrcr terminal remove "$terminal_id"
-ovrcr terminal remove LOCAL_TERMINAL_ID
+# Removal keeps stopped sessions in the archive with their original paths:
 ovrcr workspace remove --project example --name cli-demo
 ovrcr project remove example
 ```

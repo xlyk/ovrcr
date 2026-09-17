@@ -448,7 +448,7 @@ impl Session {
         command.args(spec.argv.iter().skip(1));
         #[cfg(test)]
         let initial_cwd = spec.cwd.clone();
-        command.cwd(spec.cwd);
+        command.cwd(&spec.cwd);
         let shell_startup =
             shell_prompt::configure(&mut command, &spec.argv).context(NoProcessStarted)?;
         command.env_remove("OVRCR_AGENT_SOCKET");
@@ -508,6 +508,7 @@ impl Session {
             #[cfg(test)]
             initial_cwd,
             summary: SessionSummary {
+                cwd: spec.cwd.clone(),
                 archived: false,
                 title: None,
                 id,

@@ -1344,6 +1344,7 @@ fn created_session_enters_terminal_mode() {
         panic!("wrong request");
     };
     let session = SessionSummary {
+        cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
         run: ovrcr::protocol::SessionRunId(1),
@@ -1698,6 +1699,10 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             let text = palette_text(&dashboard);
             assert!(text.contains("Confirm action"), "{group}: {text}");
             assert!(text.contains("consigint"));
+            if group == 'w' {
+                assert!(text.contains("Archive stopped sessions"), "{text}");
+                assert!(text.contains("original paths"), "{text}");
+            }
             if confirm {
                 let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
                     panic!("confirmation must emit removal request");
@@ -2370,6 +2375,7 @@ fn ownership_uncertain_create_does_not_create_another_row_on_enter() {
         panic!("wrong request");
     };
     let retained = SessionSummary {
+        cwd: "/work".into(),
         archived: false,
         id: SessionId(99),
         run: ovrcr::protocol::SessionRunId(3),
@@ -2480,6 +2486,7 @@ fn ownership_uncertain_create_does_not_guess_among_two_rows() {
         .expect("create form must target a fixture workspace");
     for id in [98, 99] {
         workspace.sessions.push(SessionSummary {
+            cwd: "/work".into(),
             archived: false,
             id: SessionId(id),
             run: ovrcr::protocol::SessionRunId(3),
@@ -2571,6 +2578,47 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
 }
 
 #[test]
+fn workspace_removal_errors_keep_confirmation_and_session_context_visible() {
+    for (code, message) in [
+        (
+            ovrcr::protocol::ErrorCode::SessionsRemain,
+            "live or ownership-uncertain sessions remain",
+        ),
+        (
+            ovrcr::protocol::ErrorCode::DirtyWorktree,
+            "worktree has changes",
+        ),
+        (
+            ovrcr::protocol::ErrorCode::PartialFailure,
+            "worktree is unavailable; session records retained for recovery",
+        ),
+    ] {
+        let mut dashboard = dashboard_fixture();
+        palette_search(&mut dashboard, "remove workspace");
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Enter);
+        let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+            panic!("expected confirmed removal")
+        };
+        assert!(matches!(request.request, Request::RemoveWorkspace { .. }));
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Error {
+                code,
+                message: message.into(),
+            },
+        });
+        let text = palette_text(&dashboard);
+        assert!(text.contains(message), "{text}");
+        assert_eq!(dashboard.focused_session(), Some(SessionId(1)));
+        assert!(!matches!(
+            dashboard.key(KeyCode::Esc),
+            ovrcr::tui::DashboardAction::Request(_)
+        ));
+    }
+}
+
+#[test]
 fn archive_search_unarchives_without_launching() {
     let mut dashboard = dashboard_fixture();
     dashboard.key(KeyCode::Char(':'));
@@ -2584,6 +2632,7 @@ fn archive_search_unarchives_without_launching() {
     row.phase = SessionPhase::Stopped;
     row.title = Some("Archive needle".into());
     row.workspace = "archive-workspace".into();
+    row.cwd = "/original/removed-worktree".into();
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,
         response: Response::Inventory {
@@ -2592,8 +2641,9 @@ fn archive_search_unarchives_without_launching() {
         },
     });
     assert!(palette_text(&dashboard).contains("Archived sessions"));
-    dashboard.event_action(Event::Paste("archive-workspace".into()));
+    dashboard.event_action(Event::Paste("archive-workspace removed-worktree".into()));
     assert!(palette_text(&dashboard).contains("Archive needle"));
+    assert!(palette_text(&dashboard).contains("/original/removed-worktree"));
     let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("unarchive must issue a record operation");
     };

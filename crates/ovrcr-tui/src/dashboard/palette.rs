@@ -744,8 +744,14 @@ impl Dashboard {
             return rows
                 .iter()
                 .filter(|row| {
-                    let label = format!("{} {} {}", row.display_name(), row.project, row.workspace)
-                        .to_lowercase();
+                    let label = format!(
+                        "{} {} {} {}",
+                        row.display_name(),
+                        row.project,
+                        row.workspace,
+                        row.cwd.display()
+                    )
+                    .to_lowercase();
                     query.split_whitespace().all(|word| label.contains(word))
                 })
                 .flat_map(|row| {
@@ -2149,7 +2155,18 @@ impl Dashboard {
                             Style::default().fg(TEXT)
                         },
                     ));
-                    if let Some(hint) = self.command_hint(&entry.command) {
+                    if let Command::Unarchive(id, _) | Command::DeleteArchived(id, _, _) =
+                        &entry.command
+                        && let Some(row) = palette
+                            .archive
+                            .as_ref()
+                            .and_then(|rows| rows.iter().find(|row| row.id == *id))
+                    {
+                        lines.push(Line::styled(
+                            format!("  {}", row.cwd.display()),
+                            Style::default().fg(MUTED),
+                        ));
+                    } else if let Some(hint) = self.command_hint(&entry.command) {
                         lines.push(Line::styled(
                             format!("  {} — {}", hint.key, hint.description),
                             Style::default().fg(MUTED),
@@ -2442,10 +2459,12 @@ fn split_workspace(value: &str) -> (String, String) {
 fn removal_confirmation(request: Request) -> Page {
     let target = match &request {
         Request::RemoveWorkspace { project, name } => format!(
-            "Remove workspace {project} / {name}. Remove its clean worktree; keep the branch."
+            "Remove workspace {project} / {name}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths. Live or ownership-uncertain sessions block removal."
         ),
         Request::RemoveProject { name } => {
-            format!("Unregister project {name}. Keep the repository.")
+            format!(
+                "Unregister project {name}. Remove workspaces first. Keep the repository and archived session context."
+            )
         }
         _ => unreachable!("only workspace/project removal uses this confirmation"),
     };
@@ -2940,6 +2959,7 @@ mod launch_tests {
     fn summary(id: u64) -> SessionSummary {
         SessionSummary {
             archived: false,
+            cwd: "/work".into(),
             id: SessionId(id),
             run: crate::protocol::SessionRunId(1),
             kind: crate::protocol::SessionKind::Terminal,
