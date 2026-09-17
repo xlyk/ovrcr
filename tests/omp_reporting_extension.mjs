@@ -40,6 +40,21 @@ function managed() {
   process.env.OVRCR_AGENT_TOKEN = "f".repeat(64);
 }
 
+test("session switches capture OMP's exact native file and ephemeral identity", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  host.state.session = "native-a";
+  host.state.history = "/private/omp/arbitrary-file.jsonl";
+  await host.emit({ type: "session_start" });
+  host.state.session = "native-b";
+  host.state.history = undefined;
+  await host.emit({ type: "session_switch", reason: "new" });
+  assert.deepEqual(frames(record).map(f => [f.session_id, f.session_file]), [
+    ["native-a", "/private/omp/arbitrary-file.jsonl"], ["native-b", null],
+  ]);
+});
+
 test("inert outside a managed invocation and outside the terminal UI", async () => {
   delete process.env.OVRCR_AGENT_SOCKET;
   delete process.env.OVRCR_AGENT_TOKEN;

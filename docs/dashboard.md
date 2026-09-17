@@ -453,7 +453,7 @@ the current run and requires another explicit submission.
 If a first launch cannot prove that no process started, the retained row stays.
 The failed create form cannot launch another session. Select the intended row
 yourself, then use its Reopen or Acknowledge action; the Dashboard never guesses
-which uncertain row to acknowledge. Certified retained Claude conversations offer
+which uncertain row to acknowledge. Certified retained Claude, Pi and Oh My Pi conversations offer
 Resume conversation on the same row, without submitting a new prompt. The status
 shows that the agent launched while conversation attachment is still pending; a
 matching native callback establishes attachment. Start new conversation opens
@@ -466,8 +466,16 @@ working directory or matching configuration blocks recovery with a diagnostic;
 Retry never starts fresh. An observed unsupported clear/resume/fork transition
 permanently disables recovery for that row, retaining its old UUID as context.
 Absent callbacks or temporary reporting failures alone do not erase that UUID.
-Inventory restoration never launches a process; Claude resume is explicit in
-this slice. See [Claude recovery support](agent-reporting-support.md#retained-claude-conversations).
+Pi and Oh My Pi retain the exact native session ID and file from their managed
+extension. History must remain unchanged by external processes during reopening,
+from prelaunch validation until native attachment. Concurrent deletion or replacement
+can cause a native fresh session and is outside the recovery guarantee.
+Accepted conversation switches replace the reference, including switches
+back to an earlier conversation. An ephemeral conversation replaces the old
+reference but cannot be resumed. Unsupported launch configuration leaves resume
+unavailable without disabling the provider's existing reporting.
+Inventory restoration never launches a process; resume is explicit in this slice.
+See [provider recovery support](agent-reporting-support.md#retained-pi-and-oh-my-pi-conversations).
 
 ### Automatic and pinned titles
 

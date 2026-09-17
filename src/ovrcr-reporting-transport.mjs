@@ -62,6 +62,7 @@ export function createReporter({
       instance: producer.instance,
       sequence: producer.sequence,
       session_id: ctx.sessionManager.getSessionId(),
+      session_file: ctx.sessionManager.getSessionFile() ?? null,
       run: producer.run > 0 ? producer.run : null,
       outcome: producer.outcome,
       ...extra,

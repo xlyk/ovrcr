@@ -27,6 +27,377 @@ fn json(live: &Live, args: &[&str]) -> Value {
 }
 
 #[test]
+fn extension_conversations_switch_and_survive_repeated_restart() {
+    use std::os::unix::fs::PermissionsExt;
+    for provider in ["pi", "omp"] {
+        let live = Live::idle().bounded();
+        let config = live.root.path().join("provider-config");
+        std::fs::create_dir(&config).unwrap();
+        // Runner/user profiles must not change this fixture's recovery capability.
+        // Inherited XDG overrides make OMP recovery intentionally unavailable.
+        let empty = std::ffi::OsStr::new("");
+        let environment = [
+            ("PI_CODING_AGENT_DIR", config.as_os_str()),
+            ("OMP_PROFILE", empty),
+            ("PI_PROFILE", empty),
+            ("PI_CONFIG_DIR", empty),
+            ("XDG_CONFIG_HOME", empty),
+            ("XDG_DATA_HOME", empty),
+            ("XDG_STATE_HOME", empty),
+            ("XDG_CACHE_HOME", empty),
+        ];
+        live.start_binary_env(&environment);
+        live.ready("feature/extension-recovery");
+        let native = live.root.path().join(provider);
+        let host =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pi/pi_host.mjs");
+        let quote = |path: &std::path::Path| {
+            format!("'{}'", path.to_str().unwrap().replace('\'', "'\"'\"'"))
+        };
+        std::fs::write(&native, format!(
+            "#!/bin/sh\nexport OVRCR_TEST_HISTORY={}\nprintf '%s\\n' \"$@\" >> {}\nexec node {} \"$@\"\n",
+            quote(&config), quote(&config.join("argv")), quote(&host),
+        )).unwrap();
+        std::fs::set_permissions(&native, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Capture the initial run's capability before the managed launcher
+        // deliberately removes it from the native provider's environment.
+        let launcher = live.root.path().join("ovrcr");
+        let capability_file = live.root.path().join("initial-capability");
+        std::fs::write(
+            &launcher,
+            format!(
+                "#!/bin/sh\numask 077\nprintf '%s' \"$OVRCR_HOOK_TOKEN\" > {}\nexec {} \"$@\"\n",
+                quote(&capability_file),
+                quote(&live.executable)
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let created = create_terminal(
+            &live,
+            "retained-extension",
+            &[
+                launcher.to_str().unwrap(),
+                "agent",
+                "run",
+                provider,
+                "--",
+                native.to_str().unwrap(),
+                "PRIVATE_PROMPT_119",
+            ],
+        );
+        let id = created["id"].as_u64().unwrap();
+        let id_arg = id.to_string();
+        wait_output(&live, &id_arg, "PI_NATIVE_READY");
+        json(
+            &live,
+            &["terminal", "rename", &id_arg, "Conversation continuity"],
+        );
+        for (index, conversation) in ["session-a", "session-b", "session-a"].iter().enumerate() {
+            let command = if index == 0 {
+                "session_start"
+            } else if provider == "pi" {
+                "session_replace"
+            } else {
+                "session_switch"
+            };
+            json(
+                &live,
+                &[
+                    "terminal",
+                    "send",
+                    &id_arg,
+                    "--text",
+                    &format!("{command}:{conversation}"),
+                ],
+            );
+            wait_output(&live, &id_arg, &format!("PI_CALLBACK={index}"));
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(
+                row["recovery"]["conversation"], *conversation,
+                "{provider}: {row}"
+            );
+            assert!(row["recovery"]["unavailable"].is_null(), "{row}");
+        }
+        // Retire a producer, then deliver its late conversation change through
+        // the same native helper and authenticated receiver.
+        let replace = if provider == "pi" {
+            "session_replace:session-a"
+        } else {
+            "producer_replace:session-a"
+        };
+        for (index, command) in [replace, "retired_start:session-b"].iter().enumerate() {
+            json(&live, &["terminal", "send", &id_arg, "--text", command]);
+            wait_output(&live, &id_arg, &format!("PI_CALLBACK={}", index + 3));
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(
+                row["recovery"]["conversation"], "session-a",
+                "retired producer changed {provider} recovery"
+            );
+        }
+        let database =
+            rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+        database.execute_batch("CREATE TRIGGER reject_extension_retention BEFORE INSERT ON agent_conversations BEGIN SELECT RAISE(FAIL, 'fixture rejects retention'); END;").unwrap();
+        json(
+            &live,
+            &["terminal", "send", &id_arg, "--text", "agent_start"],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=5");
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(
+            row["agent"]["activity"]["state"], "Busy",
+            "recovery failure suppressed {provider} activity"
+        );
+        database
+            .execute_batch("DROP TRIGGER reject_extension_retention")
+            .unwrap();
+        drop(database);
+        json(
+            &live,
+            &[
+                "terminal",
+                "send",
+                &id_arg,
+                "--text",
+                "session_shutdown:quit",
+            ],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=6");
+        let deadline = Instant::now() + live::wait_deadline();
+        let epoch = loop {
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            if row["agent"]["health"]["state"] == "Unavailable" {
+                break row["agent_epoch"].as_u64().unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "reporter did not release its lease"
+            );
+            std::thread::yield_now();
+        };
+        // Reserve a real supervisor on run N and bind B without committing its
+        // retention. Deliver that delayed write after run N+1 has launched.
+        use ovrcr::protocol::{
+            AgentCommand, AgentOperationResult, AgentProvider, AgentSecret, ConversationReference,
+            ExtensionConversation, Request, ReserveAgent, Response, SessionId, SupervisorAuth,
+            SupervisorRequest, client, exchange_preamble,
+        };
+        let secret = std::fs::read_to_string(&capability_file).unwrap();
+        let mut capability = [0u8; 32];
+        assert_eq!(secret.len(), 64);
+        for (index, byte) in capability.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&secret[index * 2..index * 2 + 2], 16).unwrap();
+        }
+        let mut old_watch = std::os::unix::net::UnixStream::connect(&live.socket).unwrap();
+        old_watch
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        old_watch
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        exchange_preamble(&mut old_watch).unwrap();
+        let reserved = client::request(
+            &mut old_watch,
+            1,
+            Request::ReserveAgent(ReserveAgent {
+                session: SessionId(id),
+                capability: AgentSecret(capability),
+                operation: "old-run-reserve".into(),
+                expected_epoch: epoch,
+                invocation: "delayed-old-run".into(),
+                provider: AgentProvider::from_name(provider).unwrap(),
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Reserved(reservation)) = reserved else {
+            panic!("reserve failed: {reserved:?}")
+        };
+        let auth = SupervisorAuth {
+            session: SessionId(id),
+            lease: reservation.lease,
+        };
+        let bound = client::request(
+            &mut old_watch,
+            2,
+            Request::Supervisor(SupervisorRequest {
+                auth: auth.clone(),
+                operation: "old-run-bind".into(),
+                command: AgentCommand::Bind {
+                    expected_binding: None,
+                    conversation: "session-b".into(),
+                },
+            }),
+        )
+        .unwrap();
+        let Response::AgentOperation(AgentOperationResult::Bound(binding)) = bound else {
+            panic!("bind failed: {bound:?}")
+        };
+        let reference = ExtensionConversation {
+            conversation: "session-b".into(),
+            executable: native.clone(),
+            history: Some(config.join("session-b.jsonl")),
+            config_dir: config.clone(),
+            options: vec![],
+        };
+        let delayed_retention = Request::Supervisor(SupervisorRequest {
+            auth,
+            operation: "delayed-old-run-retention".into(),
+            command: AgentCommand::RetainConversation {
+                binding,
+                reference: Box::new(if provider == "pi" {
+                    ConversationReference::Pi(reference)
+                } else {
+                    ConversationReference::Omp(reference)
+                }),
+            },
+        });
+        let cwd = ovrcr::config::load_registry(&live.config)
+            .unwrap()
+            .workspace(live::PROJECT, live::WORKSPACE)
+            .unwrap()
+            .path
+            .clone();
+        for attempt in 1..=2 {
+            json(&live, &["shutdown", "--kill"]);
+            live.join();
+            live.start_binary_env(&environment);
+            if attempt == 1 {
+                for (path, diagnostic) in [
+                    (config.join("session-a.jsonl"), "history"),
+                    (native.clone(), "executable"),
+                    (config.clone(), "configuration"),
+                    (cwd.clone(), "directory"),
+                ] {
+                    let before = std::fs::read_to_string(config.join("argv")).unwrap();
+                    let displaced = path.with_extension("unavailable");
+                    std::fs::rename(&path, &displaced).unwrap();
+                    let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                    std::fs::rename(&displaced, &path).unwrap();
+                    assert!(
+                        !result.status.success(),
+                        "missing {diagnostic} launched {provider}"
+                    );
+                    assert!(
+                        String::from_utf8_lossy(&result.stderr).contains(diagnostic),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    assert_eq!(
+                        std::fs::read_to_string(config.join("argv")).unwrap(),
+                        before
+                    );
+                }
+                let history = config.join("session-a.jsonl");
+                let original = std::fs::read(&history).unwrap();
+                std::fs::write(&history, "{\"type\":\"session\",\"id\":\"different\"}\n").unwrap();
+                let result = cli(&live, &["terminal", "reopen", &id_arg]);
+                std::fs::write(&history, original).unwrap();
+                assert!(!result.status.success());
+                assert!(String::from_utf8_lossy(&result.stderr).contains("identity"));
+            }
+            json(&live, &["terminal", "reopen", &id_arg]);
+            track_groups(&live);
+            wait_output(&live, &id_arg, "PI_NATIVE_READY");
+            assert!(
+                matches!(
+                    live.request(delayed_retention.clone()),
+                    Response::Error { .. }
+                ),
+                "old run changed retained identity"
+            );
+            let rows = json(&live, &["terminal", "list"]);
+            let row = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == id)
+                .unwrap();
+            assert_eq!(row["recovery"]["conversation"], "session-a");
+            assert_eq!(row["recovery"]["attached"], false);
+            assert_eq!(row["title"], "Conversation continuity");
+            let args = std::fs::read_to_string(config.join("argv")).unwrap();
+            assert_eq!(args.matches("PRIVATE_PROMPT_119").count(), 1);
+            let flag = if provider == "pi" {
+                "--session"
+            } else {
+                "--resume"
+            };
+            assert_eq!(
+                args.matches(&format!(
+                    "{flag}\n{}\n",
+                    config.join("session-a.jsonl").display()
+                ))
+                .count(),
+                attempt
+            );
+        }
+        json(
+            &live,
+            &[
+                "terminal",
+                "send",
+                &id_arg,
+                "--text",
+                "session_ephemeral:ephemeral-b",
+            ],
+        );
+        wait_output(&live, &id_arg, "PI_CALLBACK=0");
+        json(&live, &["shutdown", "--kill"]);
+        live.join();
+        let rows = json(&live, &["terminal", "list"]);
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert_eq!(row["recovery"]["conversation"], "ephemeral-b");
+        assert!(
+            row["recovery"]["unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("no native history")
+        );
+        let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
+        assert!(
+            !database
+                .windows(b"PRIVATE_PROMPT_119".len())
+                .any(|bytes| bytes == b"PRIVATE_PROMPT_119")
+        );
+        live.start_binary_env(&environment);
+        let failure = cli(&live, &["terminal", "reopen", &id_arg]);
+        assert!(
+            !failure.status.success(),
+            "ephemeral conversation reopened old A"
+        );
+    }
+}
+
+#[test]
 fn retained_rows_preserve_identity_and_title_without_restoring_output_or_live_state() {
     let live = Live::binary();
     live.ready("feature/retained");

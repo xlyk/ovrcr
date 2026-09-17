@@ -5,7 +5,10 @@ use ovrcr_protocol::{AgentProvider, ConversationReference};
 use std::ffi::OsString;
 
 pub fn supported(provider: AgentProvider) -> bool {
-    matches!(provider, AgentProvider::Claude)
+    matches!(
+        provider,
+        AgentProvider::Claude | AgentProvider::Pi | AgentProvider::Omp
+    )
 }
 
 pub fn unavailable(
@@ -23,6 +26,11 @@ pub fn unavailable(
         ));
     }
     match reference {
+        Some(ConversationReference::Pi(reference) | ConversationReference::Omp(reference))
+            if reference.history.is_none() =>
+        {
+            Some("Conversation has no native history file; resume is unavailable".into())
+        }
         Some(reference) if reference.provider() == provider => None,
         Some(_) => Some("Retained conversation provider does not match this session".into()),
         None => Some(format!(
@@ -34,6 +42,12 @@ pub fn unavailable(
 pub fn validate(reference: &ConversationReference) -> Result<()> {
     match reference {
         ConversationReference::Claude(reference) => crate::claude_recovery::validate(reference),
+        ConversationReference::Pi(reference) => {
+            crate::extension_recovery::validate(AgentProvider::Pi, reference)
+        }
+        ConversationReference::Omp(reference) => {
+            crate::extension_recovery::validate(AgentProvider::Omp, reference)
+        }
     }
 }
 
@@ -43,6 +57,12 @@ pub fn resume_argv(name: &str, reference: &ConversationReference) -> Result<Vec<
     }
     match reference {
         ConversationReference::Claude(reference) => crate::claude_recovery::resume_argv(reference),
+        ConversationReference::Pi(reference) => {
+            crate::extension_recovery::resume_argv(AgentProvider::Pi, reference)
+        }
+        ConversationReference::Omp(reference) => {
+            crate::extension_recovery::resume_argv(AgentProvider::Omp, reference)
+        }
     }
 }
 
@@ -72,8 +92,6 @@ mod tests {
         );
         for provider in [
             AgentProvider::Codex,
-            AgentProvider::Pi,
-            AgentProvider::Omp,
             AgentProvider::Grok,
             AgentProvider::Hermes,
         ] {

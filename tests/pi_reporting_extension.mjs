@@ -45,6 +45,22 @@ function managed() {
   process.env.OVRCR_AGENT_TOKEN = "f".repeat(64);
 }
 
+test("captures exact native history at each conversation boundary", async () => {
+  managed();
+  const { extension, record } = materialize();
+  const host = await createHost(extension);
+  host.state.session = "native-a";
+  host.state.history = "/private/history/not-derived-from-id.jsonl";
+  await host.emit({ type: "session_start", reason: "startup" });
+  host.state.session = "native-b";
+  host.state.history = "/private/history/second.jsonl";
+  await host.emit({ type: "session_start", reason: "resume" });
+  assert.deepEqual(frames(record).map(f => [f.session_id, f.session_file]), [
+    ["native-a", "/private/history/not-derived-from-id.jsonl"],
+    ["native-b", "/private/history/second.jsonl"],
+  ]);
+});
+
 test("inert outside a managed invocation: registers nothing", async () => {
   delete process.env.OVRCR_AGENT_SOCKET;
   delete process.env.OVRCR_AGENT_TOKEN;
