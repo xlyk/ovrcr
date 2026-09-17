@@ -119,12 +119,13 @@ pub fn run_dispatcher(state: Arc<ServerState>, commands: ReportingReceiver<Dispa
                             let mut retained = state.retained.lock();
                             session.agent_command(&request, owner.as_ref(), |command| match command
                             {
-                                ovrcr_protocol::AgentCommand::RetainClaude {
-                                    reference, ..
+                                ovrcr_protocol::AgentCommand::RetainConversation {
+                                    reference,
+                                    ..
                                 } => {
                                     retained.retain_conversation(id, session.run(), Some(reference))
                                 }
-                                ovrcr_protocol::AgentCommand::InvalidateClaude => {
+                                ovrcr_protocol::AgentCommand::InvalidateConversation => {
                                     retained.retain_conversation(id, session.run(), None)
                                 }
                                 _ => Ok(()),

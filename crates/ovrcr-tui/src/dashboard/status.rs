@@ -148,7 +148,7 @@ fn activity_clause(session: &SessionSummary) -> String {
             && !recovery.attached
             && recovery.unavailable.is_none()
         {
-            parts.push("Claude launched; awaiting conversation attachment".into());
+            parts.push("Agent launched; awaiting conversation attachment".into());
         }
         if recovery.requires_ack {
             parts.push("confirm previous processes stopped".into());

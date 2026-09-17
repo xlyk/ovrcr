@@ -535,7 +535,10 @@ impl Hooks {
             && let Some(history) = self.transcript_path.as_ref()
         {
             reference.history = history.into();
-            if !reporter.retain_claude(reference.clone(), deadline) {
+            if !reporter.retain_conversation(
+                ovrcr_protocol::ConversationReference::Claude(reference.clone()),
+                deadline,
+            ) {
                 return reporter::UNAVAILABLE.to_vec();
             }
         }
@@ -713,7 +716,7 @@ impl Hooks {
     /// it certified is no longer what is on screen, and nothing replaces it here.
     fn freeze(&mut self, reporter: &mut Reporter, deadline: Instant) -> bool {
         self.stop_collector(deadline);
-        reporter.invalidate_claude(deadline)
+        reporter.invalidate_conversation(deadline)
     }
 }
 

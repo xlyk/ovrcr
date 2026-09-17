@@ -212,7 +212,10 @@ impl ServerState {
                     recovery.requires_ack = false;
                     recovery.attached = !record.identity_invalid
                         && summary.agent.as_ref().is_some_and(|agent| {
-                            Some(&agent.binding.conversation) == recovery.conversation.as_ref()
+                            record
+                                .conversation
+                                .as_ref()
+                                .is_some_and(|reference| reference.matches_binding(&agent.binding))
                         });
                 }
                 summary.recovery = Some(recovery);
@@ -266,7 +269,7 @@ impl ServerState {
                 .get(session.id())
                 .is_some_and(|record| record.conversation.is_some() && !record.identity_invalid)
         {
-            retained.record_failure(session.id(), session.run(), "Claude exited before conversation attachment was confirmed; check native reporting and history, then Retry".into())?;
+            retained.record_failure(session.id(), session.run(), "Agent exited before conversation attachment was confirmed; check native reporting and history, then Retry".into())?;
         }
         Ok(())
     }
@@ -810,7 +813,13 @@ impl ServerState {
             .as_ref()
             .filter(|_| matches!(record.metadata.kind, SessionKind::Agent { .. }))
         {
-            match crate::claude_recovery::resume_argv(reference) {
+            match crate::recovery::resume_argv(
+                match &record.metadata.kind {
+                    SessionKind::Agent { name } => name,
+                    _ => unreachable!(),
+                },
+                reference,
+            ) {
                 Ok(argv) => argv,
                 Err(error) => {
                     let message = error.to_string();

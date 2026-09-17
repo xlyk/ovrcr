@@ -62,6 +62,10 @@ pub(crate) enum Observed {
     Health(ProviderReport),
     Finalize(ProviderReport),
     Release,
+    Retain {
+        binding: AgentBinding,
+        reference: ovrcr_protocol::ConversationReference,
+    },
 }
 
 pub(crate) struct Supervisor {
@@ -347,10 +351,23 @@ fn respond(request: Request, answer: Answer, state: &mut State) -> Response {
         }
         Request::Supervisor(supervisor) => {
             let receipt = match supervisor.command {
-                AgentCommand::RetainClaude { .. } => {
-                    Response::AgentOperation(AgentOperationResult::ConversationRetained)
+                AgentCommand::RetainConversation { binding, reference } => {
+                    state.observed.push(Observed::Retain {
+                        binding: binding.clone(),
+                        reference: *reference.clone(),
+                    });
+                    if answer == Answer::Refuse {
+                        refusal()
+                    } else if state.released
+                        || state.binding.as_ref() != Some(&binding)
+                        || !reference.matches_binding(&binding)
+                    {
+                        reject("agent binding changed")
+                    } else {
+                        Response::AgentOperation(AgentOperationResult::ConversationRetained)
+                    }
                 }
-                AgentCommand::InvalidateClaude => {
+                AgentCommand::InvalidateConversation => {
                     Response::AgentOperation(AgentOperationResult::ConversationInvalidated)
                 }
                 AgentCommand::Bind {

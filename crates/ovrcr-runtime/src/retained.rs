@@ -34,7 +34,40 @@ pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn create_conversation_schema(connection: &Connection) -> Result<()> {
-    connection.execute_batch("CREATE TABLE claude_conversations (session INTEGER PRIMARY KEY REFERENCES retained_sessions(id) ON DELETE CASCADE, reference TEXT, invalid INTEGER NOT NULL CHECK(invalid IN (0, 1)));")?;
+    connection.execute_batch("CREATE TABLE agent_conversations (session INTEGER PRIMARY KEY REFERENCES retained_sessions(id) ON DELETE CASCADE, reference TEXT, invalid INTEGER NOT NULL CHECK(invalid IN (0, 1)));")?;
+    Ok(())
+}
+
+/// Called inside the registry migration transaction. Retain the exact old
+/// reference and invalidation marker; never infer a replacement identity.
+pub(crate) fn migrate_claude_conversations(connection: &Connection) -> Result<()> {
+    create_conversation_schema(connection)?;
+    let mut query =
+        connection.prepare("SELECT session, reference, invalid FROM claude_conversations")?;
+    let rows = query.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, bool>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, reference, invalid) = row?;
+        let reference = reference
+            .map(|value| -> Result<String> {
+                let reference: ovrcr_protocol::ClaudeConversation = serde_json::from_str(&value)?;
+                Ok(serde_json::to_string(
+                    &ovrcr_protocol::ConversationReference::Claude(reference),
+                )?)
+            })
+            .transpose()?;
+        connection.execute(
+            "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)",
+            params![id, reference, invalid],
+        )?;
+    }
+    drop(query);
+    connection.execute_batch("DROP TABLE claude_conversations")?;
     Ok(())
 }
 
@@ -59,7 +92,7 @@ pub(crate) struct RetainedSession {
     pub boot_id: Option<String>,
     pub stopped: bool,
     pub failure: Option<String>,
-    pub conversation: Option<ovrcr_protocol::ClaudeConversation>,
+    pub conversation: Option<ovrcr_protocol::ConversationReference>,
     pub identity_invalid: bool,
 }
 
@@ -73,23 +106,16 @@ impl RetainedSession {
             conversation: self
                 .conversation
                 .as_ref()
-                .map(|reference| reference.conversation.clone()),
+                .map(|reference| reference.identity().to_owned()),
             attached: false,
             requires_ack: self.requires_ack(current_boot),
             unavailable: match &self.metadata.kind {
                 SessionKind::Terminal => None,
-                SessionKind::Agent { name } if name == "claude" => {
-                    if self.identity_invalid {
-                        Some("Claude changed conversations through an unsupported clear/resume/fork transition; start a new conversation in a separate session".into())
-                    } else if self.conversation.is_none() {
-                        Some("No certified Claude conversation and recoverable configuration; use managed launch and configured reporting".into())
-                    } else {
-                        None
-                    }
-                }
-                SessionKind::Agent { name } => {
-                    Some(format!("Native resume is not available for {name}"))
-                }
+                SessionKind::Agent { name } => crate::recovery::unavailable(
+                    name,
+                    self.conversation.as_ref(),
+                    self.identity_invalid,
+                ),
             },
             failure: self.failure.clone(),
         }
@@ -218,14 +244,14 @@ impl SessionStore {
         &mut self,
         id: SessionId,
         run: SessionRunId,
-        reference: Option<&ovrcr_protocol::ClaudeConversation>,
+        reference: Option<&ovrcr_protocol::ConversationReference>,
     ) -> Result<()> {
         let record = self.records.get(&id).context("session not found")?;
         if record.run != run {
             bail!("session run changed");
         }
         if record.identity_invalid && reference.is_some() {
-            bail!("Claude recovery identity was invalidated");
+            bail!("Recovery identity was invalidated");
         }
         if reference.is_none() {
             // Fail closed in the running owner even if the durable write fails.
@@ -234,7 +260,7 @@ impl SessionStore {
         }
         let encoded = reference.map(serde_json::to_string).transpose()?;
         self.connection.execute(
-            "INSERT INTO claude_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)
+            "INSERT INTO agent_conversations (session, reference, invalid) VALUES (?1, ?2, ?3)
              ON CONFLICT(session) DO UPDATE SET reference = COALESCE(excluded.reference, reference), invalid = excluded.invalid",
             params![sql_integer(id.0)?, encoded, reference.is_none()],
         )?;
@@ -510,14 +536,21 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
         ovrcr_protocol::validate_name(&record.metadata.workspace, "workspace")?;
         records.insert(record.id, record);
     }
+    let legacy =
+        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))? == 3;
+    let table = if legacy {
+        "claude_conversations"
+    } else {
+        "agent_conversations"
+    };
     let table_exists: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = 'claude_conversations')",
-        [],
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1)",
+        [table],
         |row| row.get(0),
     )?;
     if table_exists {
         let mut query =
-            connection.prepare("SELECT session, reference, invalid FROM claude_conversations")?;
+            connection.prepare(&format!("SELECT session, reference, invalid FROM {table}"))?;
         let rows = query.query_map([], |row| {
             Ok((
                 read_integer(row, 0)?,
@@ -529,7 +562,14 @@ fn read_records(connection: &Connection) -> Result<HashMap<SessionId, RetainedSe
             let (id, reference, invalid) = row?;
             if let Some(record) = records.get_mut(&SessionId(id)) {
                 record.conversation = reference
-                    .map(|value| serde_json::from_str(&value))
+                    .map(|value| {
+                        if legacy {
+                            serde_json::from_str(&value)
+                                .map(ovrcr_protocol::ConversationReference::Claude)
+                        } else {
+                            serde_json::from_str(&value)
+                        }
+                    })
                     .transpose()?;
                 record.identity_invalid = invalid;
             }

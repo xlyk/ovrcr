@@ -33,5 +33,5 @@ Current process runs remain `Arc<Session>` values; inactive rows allocate no PTY
 or terminal parser. The existing mutation lock reserves one of fifty live slots
 from admission through spawn publication. Reopening retires the prior run's
 capability, view and history; run-tagged events and snapshots cannot affect its
-replacement. No argv, environments, output, prompts, live activity or timing are
-stored. Native provider resume and archive behavior remain later work.
+replacement. No raw argv, environments, output, prompts, live activity or timing are
+stored. Recovery stores only validated nonsecret references and options. Provider recovery uses the [shared recovery contract](recovery.md); adapters never own processes or a separate persistence path.

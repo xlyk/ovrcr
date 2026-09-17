@@ -320,25 +320,25 @@ impl Session {
             bail!("operation receipt is unavailable or stale");
         };
         let result = match &r.command {
-            AgentCommand::InvalidateClaude => {
+            AgentCommand::InvalidateConversation => {
                 // Invalidation concerns the entire authenticated invocation, even
                 // when a successful Bind receipt was lost before this callback.
-                if reporting.reservation.as_ref().is_none_or(|(reserve, _)| {
-                    reserve.provider != ovrcr_protocol::AgentProvider::Claude
-                }) {
-                    bail!("only a managed Claude invocation can invalidate Claude recovery");
+                if reporting
+                    .reservation
+                    .as_ref()
+                    .is_none_or(|(reserve, _)| !crate::recovery::supported(reserve.provider))
+                {
+                    bail!("managed invocation does not support conversation recovery");
                 }
                 persist(&r.command)?;
                 AgentOperationResult::ConversationInvalidated
             }
-            AgentCommand::RetainClaude { binding, reference } => {
+            AgentCommand::RetainConversation { binding, reference } => {
                 reporting.expected(Some(binding))?;
-                if binding.provider != ovrcr_protocol::AgentProvider::Claude
-                    || reference.conversation != binding.conversation
-                {
-                    bail!("Claude recovery must match the certified binding");
+                if !reference.matches_binding(binding) {
+                    bail!("Recovery must match the certified provider binding");
                 }
-                crate::claude_recovery::validate(reference)?;
+                crate::recovery::validate(reference)?;
                 persist(&r.command)?;
                 AgentOperationResult::ConversationRetained
             }

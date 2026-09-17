@@ -454,7 +454,7 @@ The failed create form cannot launch another session. Select the intended row
 yourself, then use its Reopen or Acknowledge action; the Dashboard never guesses
 which uncertain row to acknowledge. Certified retained Claude conversations offer
 Resume conversation on the same row, without submitting a new prompt. The status
-shows that Claude launched while conversation attachment is still pending; a
+shows that the agent launched while conversation attachment is still pending; a
 matching native callback establishes attachment. Start new conversation opens
 the create form for a separate session. Other providers remain unavailable for
 native resume. Workspace removal remains a separate action.

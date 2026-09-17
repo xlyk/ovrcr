@@ -103,7 +103,7 @@ pub enum Fence {
     LostClose,
 }
 
-enum ClaudeInvalidation {
+enum ConversationInvalidation {
     Pending(String),
     Committed,
 }
@@ -112,8 +112,12 @@ pub struct Reporter {
     provider: AgentProvider,
     lease: Option<InvocationLease>,
     closed: bool,
-    claude_invalidation: Option<ClaudeInvalidation>,
-    claude_retention: Option<(String, ovrcr_protocol::ClaudeConversation)>,
+    conversation_invalidation: Option<ConversationInvalidation>,
+    conversation_retention: Option<(
+        String,
+        ovrcr_protocol::AgentBinding,
+        ovrcr_protocol::ConversationReference,
+    )>,
     /// One revision set for every observation this reporter publishes. The server keeps
     /// a watermark per observation kind, so one monotonic counter satisfies all of them
     /// and no two kinds can disagree about which sample is newer.
@@ -144,8 +148,8 @@ impl Reporter {
             provider,
             lease,
             closed: false,
-            claude_invalidation: None,
-            claude_retention: None,
+            conversation_invalidation: None,
+            conversation_retention: None,
             revision: 0,
             pending: None,
             paused: None,
@@ -168,30 +172,30 @@ impl Reporter {
             } => frames.frame(&mut self, input, native_root, deadline),
             HookEvent::Poll { deadline } => {
                 if matches!(
-                    self.claude_invalidation,
-                    Some(ClaudeInvalidation::Pending(_))
+                    self.conversation_invalidation,
+                    Some(ConversationInvalidation::Pending(_))
                 ) {
-                    self.invalidate_claude(deadline);
+                    self.invalidate_conversation(deadline);
                 }
                 if !self.closed
-                    && let Some((_, reference)) = self.claude_retention.clone()
+                    && let Some((_, _, reference)) = self.conversation_retention.clone()
                 {
-                    self.retain_claude(reference, deadline);
+                    self.retain_conversation(reference, deadline);
                 }
                 frames.poll(&mut self, deadline);
                 Vec::new()
             }
             HookEvent::NativeCompleted { deadline } => {
                 if matches!(
-                    self.claude_invalidation,
-                    Some(ClaudeInvalidation::Pending(_))
+                    self.conversation_invalidation,
+                    Some(ConversationInvalidation::Pending(_))
                 ) {
-                    self.invalidate_claude(deadline);
+                    self.invalidate_conversation(deadline);
                 }
                 if !self.closed
-                    && let Some((_, reference)) = self.claude_retention.clone()
+                    && let Some((_, _, reference)) = self.conversation_retention.clone()
                 {
-                    self.retain_claude(reference, deadline);
+                    self.retain_conversation(reference, deadline);
                 }
                 frames.finish(&mut self, deadline);
                 Vec::new()
@@ -256,32 +260,41 @@ impl Reporter {
     }
 
     /// Persist provider-owned identity only after the certified binding is accepted.
-    pub fn retain_claude(
+    pub fn retain_conversation(
         &mut self,
-        reference: ovrcr_protocol::ClaudeConversation,
+        reference: ovrcr_protocol::ConversationReference,
         deadline: Instant,
     ) -> bool {
         if self.closed {
             return false;
         }
-        if self.claude_retention.is_none() {
-            let Ok(operation) = private_identifier() else {
-                return false;
-            };
-            self.claude_retention = Some((operation, reference));
-        }
-        let (operation, reference) = self.claude_retention.as_ref().unwrap();
         let Some(lease) = self.lease.as_mut() else {
             return false;
         };
         let Some(binding) = lease.binding.clone() else {
             return false;
         };
+        if !reference.matches_binding(&binding) {
+            return false;
+        }
+        // Every retry belongs to its original certified generation. A newly
+        // accepted identity supersedes an old pending write with a new operation.
+        if self.conversation_retention.as_ref().is_none_or(
+            |(_, pending_binding, pending_reference)| {
+                pending_binding != &binding || pending_reference != &reference
+            },
+        ) {
+            let Ok(operation) = private_identifier() else {
+                return false;
+            };
+            self.conversation_retention = Some((operation, binding, reference));
+        }
+        let (operation, binding, reference) = self.conversation_retention.as_ref().unwrap();
         let remaining = deadline.saturating_duration_since(Instant::now());
         let response = lease.command(
             operation.clone(),
-            AgentCommand::RetainClaude {
-                binding,
+            AgentCommand::RetainConversation {
+                binding: binding.clone(),
                 reference: Box::new(reference.clone()),
             },
             Instant::now() + remaining / 2,
@@ -298,27 +311,27 @@ impl Reporter {
                 AgentOperationResult::ConversationRetained
             ))
         ) {
-            self.claude_retention = None;
+            self.conversation_retention = None;
             true
         } else {
             false
         }
     }
 
-    pub fn invalidate_claude(&mut self, deadline: Instant) -> bool {
+    pub fn invalidate_conversation(&mut self, deadline: Instant) -> bool {
         self.closed = true;
-        self.claude_retention = None;
+        self.conversation_retention = None;
         if matches!(
-            self.claude_invalidation,
-            Some(ClaudeInvalidation::Committed)
+            self.conversation_invalidation,
+            Some(ConversationInvalidation::Committed)
         ) {
             return true;
         }
-        if self.claude_invalidation.is_none() {
+        if self.conversation_invalidation.is_none() {
             let Ok(operation) = private_identifier() else {
                 return false;
             };
-            self.claude_invalidation = Some(ClaudeInvalidation::Pending(operation));
+            self.conversation_invalidation = Some(ConversationInvalidation::Pending(operation));
         }
         // The server retains one operation receipt. Recover a lost Bind before
         // invalidation replaces that receipt, preserving its observed generation.
@@ -334,7 +347,8 @@ impl Reporter {
         } else {
             false
         };
-        let Some(ClaudeInvalidation::Pending(operation)) = &self.claude_invalidation else {
+        let Some(ConversationInvalidation::Pending(operation)) = &self.conversation_invalidation
+        else {
             unreachable!()
         };
         let Some(lease) = self.lease.as_mut() else {
@@ -343,7 +357,7 @@ impl Reporter {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let response = lease.command(
             operation.clone(),
-            AgentCommand::InvalidateClaude,
+            AgentCommand::InvalidateConversation,
             Instant::now() + remaining / 2,
         );
         let response = match response {
@@ -358,7 +372,7 @@ impl Reporter {
                 AgentOperationResult::ConversationInvalidated
             ))
         ) {
-            self.claude_invalidation = Some(ClaudeInvalidation::Committed);
+            self.conversation_invalidation = Some(ConversationInvalidation::Committed);
             if unresolved_binding {
                 self.disable();
             } else {
@@ -717,6 +731,13 @@ impl Reporter {
     /// a forced one starts its response-cycle identities over too, because the server
     /// reads the same turn under a new generation as a new response.
     fn bound(&mut self, binding: AgentBinding, force: bool) {
+        if self
+            .conversation_retention
+            .as_ref()
+            .is_some_and(|(_, pending_binding, _)| pending_binding != &binding)
+        {
+            self.conversation_retention = None;
+        }
         if let Some(lease) = self.lease.as_mut() {
             lease.binding = Some(binding);
         }

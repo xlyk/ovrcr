@@ -486,3 +486,95 @@ fn metrics() -> ovrcr_protocol::MetricsSample {
         }),
     }
 }
+
+#[test]
+fn retention_retry_cannot_retarget_a_new_binding() {
+    use ovrcr_protocol::{ClaudeConversation, ConversationReference};
+    let reference = |id: &str| {
+        ConversationReference::Claude(ClaudeConversation {
+            conversation: id.into(),
+            executable: "/bin/claude".into(),
+            history: "/history".into(),
+            config_dir: "/config".into(),
+            options: vec![],
+        })
+    };
+    let (mut reporter, supervisor) = Supervisor::scripted(
+        AgentProvider::Claude,
+        vec![
+            Answer::Auto,
+            Answer::Refuse,
+            Answer::Auto,
+            Answer::Auto,
+            Answer::Auto,
+            Answer::Auto,
+        ],
+    );
+    assert!(reporter.bind("a", deadline(), false));
+    assert!(!reporter.retain_conversation(reference("a"), deadline()));
+    assert!(reporter.bind("b", deadline(), false));
+    assert!(reporter.retain_conversation(reference("b"), deadline()));
+    assert!(!reporter.retain_conversation(reference("a"), deadline()));
+    assert!(reporter.bind("a", deadline(), false));
+    assert!(reporter.retain_conversation(reference("a"), deadline()));
+    let retained: Vec<_> = supervisor
+        .observed()
+        .into_iter()
+        .filter_map(|event| match event {
+            Observed::Retain { binding, reference } => {
+                Some((binding.generation, reference.identity().to_owned()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        retained,
+        vec![(1, "a".into()), (2, "b".into()), (3, "a".into())]
+    );
+}
+
+#[test]
+fn polling_never_promotes_pending_retention_to_a_replacement_generation() {
+    use ovrcr_protocol::{ClaudeConversation, ConversationReference};
+    struct NoFrames;
+    impl Frames for NoFrames {
+        fn frame(&mut self, _: &mut Reporter, _: &[u8], _: bool, _: Instant) -> Vec<u8> {
+            unreachable!()
+        }
+    }
+    for force in [false, true] {
+        let (mut reporter, supervisor) =
+            Supervisor::scripted(AgentProvider::Claude, vec![Answer::Auto, Answer::Refuse]);
+        assert!(reporter.bind("a", deadline(), false));
+        assert!(!reporter.retain_conversation(
+            ConversationReference::Claude(ClaudeConversation {
+                conversation: "a".into(),
+                executable: "/old/executable".into(),
+                history: "/old/history".into(),
+                config_dir: "/old/config".into(),
+                options: vec![],
+            }),
+            deadline()
+        ));
+        if !force {
+            assert!(reporter.bind("b", deadline(), false));
+        }
+        assert!(reporter.bind("a", deadline(), force));
+        let mut handler = reporter.handler(NoFrames);
+        handler(HookEvent::Poll {
+            deadline: deadline(),
+        });
+        handler(HookEvent::NativeCompleted {
+            deadline: deadline(),
+        });
+        let retained = supervisor
+            .observed()
+            .into_iter()
+            .filter(|event| matches!(event, Observed::Retain { .. }))
+            .count();
+        assert_eq!(
+            retained, 1,
+            "old pending metadata was resubmitted without explicit retention"
+        );
+    }
+}

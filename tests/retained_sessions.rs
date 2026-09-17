@@ -216,7 +216,7 @@ fn assert_claude_recovery(initial_resume: bool) {
     wait_output(&live, &id_arg, "RETAINED_CLAUDE_READY");
     json(&live, &["terminal", "rename", &id_arg, "Claude continuity"]);
     let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
-    database.execute_batch("CREATE TRIGGER reject_retention BEFORE INSERT ON claude_conversations WHEN NEW.invalid = 0 BEGIN SELECT RAISE(FAIL, 'fixture rejects retention'); END;").unwrap();
+    database.execute_batch("CREATE TRIGGER reject_retention BEFORE INSERT ON agent_conversations WHEN NEW.invalid = 0 BEGIN SELECT RAISE(FAIL, 'fixture rejects retention'); END;").unwrap();
     json(&live, &["terminal", "send", &id_arg, "--text", "attach"]);
     wait_output(&live, &id_arg, "RETAINED_CLAUDE_REPORT_UNAVAILABLE");
     database
@@ -234,6 +234,9 @@ fn assert_claude_recovery(initial_resume: bool) {
     for attempt in 1..=2 {
         json(&live, &["shutdown", "--kill"]);
         live.join();
+        if initial_resume && attempt == 1 {
+            restore_legacy_claude_schema(&live);
+        }
         let database = std::fs::read(ovrcr::config::database_path(&live.config)).unwrap();
         assert!(
             !database
@@ -307,7 +310,7 @@ fn assert_claude_recovery(initial_resume: bool) {
     // A clear before the replacement's first callback invalidates the retained
     // reference too; an absent callback by itself did not invalidate it above.
     let database = rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
-    database.execute_batch("CREATE TRIGGER reject_invalidation BEFORE INSERT ON claude_conversations WHEN NEW.invalid = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejects invalidation'); END;").unwrap();
+    database.execute_batch("CREATE TRIGGER reject_invalidation BEFORE INSERT ON agent_conversations WHEN NEW.invalid = 1 BEGIN SELECT RAISE(FAIL, 'fixture rejects invalidation'); END;").unwrap();
     json(&live, &["terminal", "send", &id_arg, "--text", "clear"]);
     wait_output(&live, &id_arg, "RETAINED_CLAUDE_REPORT_UNAVAILABLE");
     database
@@ -317,6 +320,22 @@ fn assert_claude_recovery(initial_resume: bool) {
     wait_output(&live, &id_arg, "RETAINED_CLAUDE_CLEARED");
     json(&live, &["shutdown", "--kill"]);
     live.join();
+    if initial_resume {
+        restore_legacy_claude_schema(&live);
+        let offline = json(&live, &["terminal", "list"]);
+        let row = offline
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == id)
+            .unwrap();
+        assert!(
+            row["recovery"]["unavailable"]
+                .as_str()
+                .unwrap()
+                .contains("unsupported")
+        );
+    }
     live.start_binary_env(&environment);
     let failure = cli(&live, &["terminal", "reopen", &id_arg]);
     assert!(
@@ -332,6 +351,31 @@ fn assert_claude_recovery(initial_resume: bool) {
             format!("--resume\n{conversation}\n").repeat(2)
         )
     );
+}
+
+// Reproduce the metadata schema written by the previous PR revision. Both
+// offline reads and the next production startup must preserve its exact state.
+fn restore_legacy_claude_schema(live: &Live) {
+    let mut database =
+        rusqlite::Connection::open(ovrcr::config::database_path(&live.config)).unwrap();
+    let transaction = database.transaction().unwrap();
+    let (id, encoded): (i64, String) = transaction
+        .query_row(
+            "SELECT session, reference FROM agent_conversations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let tagged: Value = serde_json::from_str(&encoded).unwrap();
+    assert!(tagged["Claude"].is_object());
+    transaction
+        .execute(
+            "UPDATE agent_conversations SET reference = ?1 WHERE session = ?2",
+            rusqlite::params![serde_json::to_string(&tagged["Claude"]).unwrap(), id],
+        )
+        .unwrap();
+    transaction.execute_batch("ALTER TABLE agent_conversations RENAME TO claude_conversations; PRAGMA user_version = 3;").unwrap();
+    transaction.commit().unwrap();
 }
 
 #[test]
