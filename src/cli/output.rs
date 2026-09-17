@@ -88,6 +88,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "kind": kind,
         "project": session.project,
         "workspace": session.workspace,
+        "cwd": session.cwd,
         "name": session.name,
         "title": session.title,
         "display_name": session.display_name(),
@@ -225,7 +226,7 @@ pub(super) fn print_workspace(value: &Value) {
 
 pub(super) fn print_terminal_row(value: &Value) {
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         value["id"],
         value["run"],
         json_scalar(&value["kind"]),
@@ -245,6 +246,7 @@ pub(super) fn print_terminal_row(value: &Value) {
             ""
         },
         json_scalar(&value["recovery"]),
+        value["cwd"].as_str().unwrap_or_default(),
     );
 }
 

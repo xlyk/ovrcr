@@ -146,6 +146,7 @@ impl RetainedSession {
     pub fn summary(&self, current_boot: Option<&str>) -> SessionSummary {
         SessionSummary {
             id: self.id,
+            cwd: self.metadata.cwd.clone(),
             archived: self.disposition == Disposition::Archived,
             run: self.run,
             kind: self.metadata.kind.clone(),
@@ -499,6 +500,57 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Prepare metadata changes before touching Git. Git failure rolls them back;
+    /// commit failure after Git removal leaves the original rows available for recovery.
+    pub fn archive_workspace(
+        &mut self,
+        registry: &ovrcr_protocol::Registry,
+        project: &str,
+        workspace: &str,
+        remove: impl FnOnce() -> Result<()>,
+    ) -> Result<Vec<SessionId>> {
+        registry.validate()?;
+        let changes = self
+            .records
+            .values()
+            .filter(|record| {
+                record.metadata.project == project
+                    && record.metadata.workspace == workspace
+                    && record.disposition != Disposition::Archived
+            })
+            .map(|record| {
+                let next = record
+                    .run
+                    .0
+                    .checked_add(1)
+                    .context("session run identity exhausted")?;
+                Ok((record.id, sql_integer(next)?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        crate::config::write_registry(&transaction, registry)?;
+        for (id, next) in &changes {
+            transaction
+                .execute(
+                    "UPDATE retained_sessions SET disposition = 1, run = ?1 WHERE id = ?2",
+                    params![next, sql_integer(id.0)?],
+                )
+                .context("archive workspace sessions")?;
+        }
+        remove()?;
+        transaction
+            .commit()
+            .context("commit workspace removal and session archive")?;
+        for (id, next) in &changes {
+            let record = self.records.get_mut(id).unwrap();
+            record.disposition = Disposition::Archived;
+            record.run = SessionRunId(*next as u64);
+        }
+        Ok(changes.into_iter().map(|(id, _)| id).collect())
+    }
+
     pub fn remove(&mut self, id: SessionId, run: SessionRunId) -> Result<bool> {
         if self.records.get(&id).is_none_or(|record| record.run != run) {
             return Ok(false);
@@ -719,6 +771,82 @@ mod tests {
             Some(BOOT_A),
             Some("00000000-0000-0000-0000-000000000000")
         ));
+    }
+
+    #[test]
+    fn workspace_archive_rolls_back_on_external_failure_and_fences_every_changed_row() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.toml");
+        let mut store = SessionStore::open(&config).unwrap();
+        let mut records = Vec::new();
+        for (workspace, name) in [
+            ("w", "first"),
+            ("w", "second"),
+            ("w", "archived"),
+            ("other", "unrelated"),
+        ] {
+            records.push(
+                store
+                    .create(SessionMetadata {
+                        project: "p".into(),
+                        workspace: workspace.into(),
+                        name: name.into(),
+                        label: "sh".into(),
+                        cwd: root.path().join(workspace),
+                        kind: SessionKind::Terminal,
+                        pinned_title: Some(name.into()),
+                        application_title: None,
+                    })
+                    .unwrap(),
+            );
+        }
+        store
+            .set_archived(records[2].id, records[2].run, true)
+            .unwrap();
+        let prior_archive_run = store.get(records[2].id).unwrap().run;
+        let registry = crate::config::load_registry(&config).unwrap();
+        assert!(
+            store
+                .archive_workspace(&registry, "p", "w", || bail!("Git refused removal"))
+                .is_err()
+        );
+        for record in &records[..2] {
+            assert_eq!(store.get(record.id).unwrap().run, record.run);
+            assert_eq!(
+                store.get(record.id).unwrap().disposition,
+                Disposition::Active
+            );
+        }
+        let changed = store
+            .archive_workspace(&registry, "p", "w", || Ok(()))
+            .unwrap();
+        assert_eq!(changed.len(), 2);
+        for record in &records[..2] {
+            assert!(changed.contains(&record.id));
+            assert_eq!(
+                store.get(record.id).unwrap().disposition,
+                Disposition::Archived
+            );
+            assert_eq!(
+                store.get(record.id).unwrap().metadata.cwd,
+                record.metadata.cwd
+            );
+            assert!(
+                !store
+                    .update_titles(record.id, record.run, 999, None, Some("late".into()))
+                    .unwrap()
+            );
+            assert!(store.begin_run(record.id, record.run).is_err());
+        }
+        assert_eq!(store.get(records[2].id).unwrap().run, prior_archive_run);
+        assert_eq!(
+            store.get(records[3].id).unwrap().disposition,
+            Disposition::Active
+        );
+        drop(store);
+        let rows = load_session_summaries(&config).unwrap();
+        assert_eq!(rows.iter().filter(|row| row.archived).count(), 3);
+        assert_eq!(rows.len(), 4);
     }
 
     #[test]

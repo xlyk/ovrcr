@@ -43,6 +43,7 @@ fn session_summary(
 ) -> SessionSummary {
     SessionSummary {
         archived: false,
+        cwd: "/work".into(),
         id: SessionId(id),
         run: ovrcr::protocol::SessionRunId(1),
         kind: ovrcr::protocol::SessionKind::Terminal,

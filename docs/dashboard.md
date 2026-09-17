@@ -333,7 +333,10 @@ Choose a group, then an action: `Space t x` closes the selected terminal,
 Workspace and project removal open a searchable picker with the current target
 highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
-still apply; repositories and workspace branches are retained. `Space w n`
+still apply; repositories and workspace branches are retained. Confirmed workspace
+removal archives stopped records with their original paths. Live or ownership-uncertain
+sessions block removal, even when archived. Projects must have their workspaces
+removed first; unregistering a project keeps archived context. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
@@ -660,7 +663,10 @@ active row available. Closing an exited row archives immediately. Hiding a pane
 or detaching never archives a session.
 
 Open the command palette (`:`), choose **Archived sessions**, and search by title,
-project or workspace. **Unarchive** returns the row stopped without launching
-anything. **Delete record** asks for confirmation and removes only OVRCR metadata;
+project, workspace or original working-directory path. Each result shows the
+retained path, even after workspace removal. **Unarchive** returns the row stopped
+without launching anything. Rows whose workspace or project was removed remain
+selectable under their original context. Reopen reports a missing directory
+rather than choosing another working directory. **Delete record** asks for confirmation and removes only OVRCR metadata;
 provider conversation files remain untouched. If old process ownership was
 uncertain before archiving, reopening still requires explicit acknowledgement.

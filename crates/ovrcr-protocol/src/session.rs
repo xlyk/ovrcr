@@ -64,6 +64,8 @@ pub enum AgentActivity {
 pub struct SessionSummary {
     pub id: SessionId,
     pub archived: bool,
+    /// Original working directory, retained even after workspace removal.
+    pub cwd: std::path::PathBuf,
     pub run: SessionRunId,
     pub kind: SessionKind,
     pub recovery: Option<SessionRecovery>,

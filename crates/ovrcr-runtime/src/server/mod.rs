@@ -1487,14 +1487,21 @@ impl ServerState {
                 format!("task run remains for workspace {project}/{name}"),
             ));
         }
-        let occupied =
-            self.retained.lock().records().any(|record| {
-                record.metadata.project == project && record.metadata.workspace == name
-            });
+        let occupied = self.session_summaries().iter().any(|session| {
+            session.project == project
+                && session.workspace == name
+                && (session.phase.is_live()
+                    || session
+                        .recovery
+                        .as_ref()
+                        .is_some_and(|recovery| recovery.requires_ack))
+        });
         if occupied {
             return Err(lifecycle_error(
                 ErrorCode::SessionsRemain,
-                format!("sessions remain for workspace {project}/{name}"),
+                format!(
+                    "live or ownership-uncertain sessions remain for workspace {project}/{name}; stop live sessions or acknowledge stopped processes before removal"
+                ),
             ));
         }
         let (project_record, workspace) = {
@@ -1510,6 +1517,35 @@ impl ServerState {
                     .clone(),
             )
         };
+        // Git also deletes ignored files. A clean worktree is not permission to
+        // delete a provider's recorded history, even for an archived session.
+        let contains_history = self.retained.lock().records().any(|record| {
+            let history = match record.conversation.as_ref() {
+                Some(ovrcr_protocol::ConversationReference::Claude(reference)) => {
+                    Some(&reference.history)
+                }
+                Some(
+                    ovrcr_protocol::ConversationReference::Pi(reference)
+                    | ovrcr_protocol::ConversationReference::Omp(reference),
+                ) => reference.history.as_ref(),
+                Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
+                    reference.history.as_ref()
+                }
+                None => None,
+            };
+            history.is_some_and(|path| {
+                path.starts_with(&workspace.path)
+                    || path
+                        .canonicalize()
+                        .is_ok_and(|path| path.starts_with(&workspace.path))
+            })
+        });
+        if contains_history {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "workspace contains recorded provider history; preserve it outside the worktree and update its provider reference before removal",
+            ));
+        }
         // A directory deleted outside OVRCR has nothing left to protect;
         // removal then prunes Git's stale registration (see git.rs).
         let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
@@ -1540,32 +1576,39 @@ impl ServerState {
             // Ordinary workspace removal also consumes any historical run's ownership.
             tasks.release_workspace_ownership(project, &workspace)?;
         }
-        git::remove_worktree(&project_record, &workspace).with_context(|| {
-            if cleanup.is_some() {
-                format!(
-                    "cleanup ownership released; inspect retained worktree {} before manual cleanup",
-                    workspace.path.display()
-                )
-            } else {
-                format!("remove workspace {project}/{name}")
-            }
-        })?;
         let mut registry = self.registry.lock().unwrap();
         let mut next = registry.clone();
         next.remove_workspace(project, name)?;
-        if let Err(error) = save_registry_atomic(&next, &self.registry_path) {
-            *registry = next;
-            return Err(lifecycle_error_with_hierarchy(
-                ErrorCode::PartialFailure,
-                format!(
-                    "worktree was removed at {} but registry update failed; live state reflects removal: {}",
-                    workspace.path.display(),
-                    error_chain_string(&error)
-                ),
-                true,
-            ));
-        }
+        let mut removed = false;
+        let archived = self.retained.lock().archive_workspace(&next, project, name, || {
+            git::remove_worktree(&project_record, &workspace).with_context(|| {
+                if cleanup.is_some() {
+                    format!("cleanup ownership released; inspect retained worktree {} before manual cleanup", workspace.path.display())
+                } else {
+                    format!("remove workspace {project}/{name}")
+                }
+            })?;
+            removed = true;
+            Ok(())
+        }).map_err(|error| {
+            if removed || !workspace.path.exists() {
+                lifecycle_error_with_hierarchy(
+                    ErrorCode::PartialFailure,
+                    format!("worktree is unavailable at {} but removal metadata was not committed; workspace and session records are retained for recovery: {}", workspace.path.display(), error_chain_string(&error)),
+                    true,
+                )
+            } else {
+                error
+            }
+        })?;
         *registry = next;
+        drop(registry);
+        for id in archived {
+            if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
+                session.revoke_hook_capability();
+            }
+            self.dashboard.forget_session(id);
+        }
         Ok(())
     }
 }
@@ -1581,7 +1624,7 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
         .projects
         .into_iter()
         .map(|project| {
-            let mut workspaces = project
+            let workspaces = project
                 .workspaces
                 .into_iter()
                 .map(|workspace| WorkspaceSummary {
@@ -1591,23 +1634,49 @@ fn snapshot_from_state(state: &ServerState) -> HierarchySnapshot {
                     sessions: Vec::new(),
                 })
                 .collect::<Vec<_>>();
-            for workspace in &mut workspaces {
-                workspace.sessions = sessions
-                    .extract_if(.., |summary| {
-                        summary.project == project.name && summary.workspace == workspace.name
-                    })
-                    .collect();
-                workspace.sessions.sort_by(|left, right| {
-                    (left.name != "local", left.id.0).cmp(&(right.name != "local", right.id.0))
-                });
-            }
-            workspaces.sort_by(|left, right| left.name.cmp(&right.name));
             ProjectSummary {
                 name: project.name,
                 workspaces,
             }
         })
         .collect::<Vec<_>>();
+    // Returned records outlive registry entries. Keep them selectable without
+    // registering a new workspace or substituting a different working directory.
+    for session in sessions {
+        let project_index = projects
+            .iter()
+            .position(|p| p.name == session.project)
+            .unwrap_or_else(|| {
+                projects.push(ProjectSummary {
+                    name: session.project.clone(),
+                    workspaces: Vec::new(),
+                });
+                projects.len() - 1
+            });
+        let project = &mut projects[project_index];
+        if let Some(workspace) = project
+            .workspaces
+            .iter_mut()
+            .find(|w| w.name == session.workspace)
+        {
+            workspace.sessions.push(session);
+        } else {
+            project.workspaces.push(WorkspaceSummary {
+                project: session.project.clone(),
+                name: session.workspace.clone(),
+                path: session.cwd.clone(),
+                sessions: vec![session],
+            });
+        }
+    }
+    for project in &mut projects {
+        project.workspaces.sort_by(|a, b| a.name.cmp(&b.name));
+        for workspace in &mut project.workspaces {
+            workspace
+                .sessions
+                .sort_by_key(|row| (row.name != "local", row.id.0));
+        }
+    }
     projects.sort_by(|left, right| left.name.cmp(&right.name));
     HierarchySnapshot { projects }
 }

@@ -1021,7 +1021,10 @@ fn terminate_listing_failure_does_not_certify_stop() {
             argv: vec![
                 "sh".into(),
                 "-c".into(),
-                "trap '' HUP; sleep 30 & printf 'OVRCR_DESC:%s\\n' \"$!\"; exit".into(),
+                // Keep both processes alive through SIGCONT. A naturally exiting
+                // group can return macOS EPERM and mask the injected listing error.
+                // Inherited ignores force owned SIGKILL cleanup after the grace period.
+                "trap '' HUP TERM; sleep 30 & printf 'OVRCR_DESC:%s\\n' \"$!\"; wait".into(),
             ],
             hook_env: None,
         },

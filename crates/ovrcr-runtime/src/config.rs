@@ -228,7 +228,7 @@ fn read_registry(connection: &Connection) -> Result<Registry> {
     Ok(registry)
 }
 
-fn write_registry(transaction: &Transaction<'_>, registry: &Registry) -> Result<()> {
+pub(crate) fn write_registry(transaction: &Transaction<'_>, registry: &Registry) -> Result<()> {
     transaction.execute_batch("DELETE FROM workspaces; DELETE FROM projects;")?;
     let mut projects = transaction.prepare(
         "INSERT INTO projects (name, repo, workspace_root, position) VALUES (?1, ?2, ?3, ?4)",

@@ -156,6 +156,7 @@ pub(super) enum ProjectCommand {
     Get {
         name: String,
     },
+    /// Unregister an empty project; keep its repository and retained session context.
     #[command(visible_alias = "delete")]
     Remove {
         name: String,
@@ -175,6 +176,7 @@ pub(super) enum WorkspaceCommand {
         #[arg(long)]
         name: String,
     },
+    /// Confirm removal of a clean worktree and archive stopped sessions. Live or uncertain processes block removal.
     #[command(visible_alias = "delete")]
     Remove {
         #[arg(long)]

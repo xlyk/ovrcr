@@ -316,6 +316,7 @@ mod tests {
     fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
         SessionSummary {
             archived: false,
+            cwd: "/work".into(),
             id: SessionId(1),
             run: crate::protocol::SessionRunId(1),
             kind: crate::protocol::SessionKind::Terminal,
