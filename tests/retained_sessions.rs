@@ -291,6 +291,15 @@ fn archive_round_trip_survives_restart_and_rejects_old_recovery_without_deleting
         "close left the owned group running"
     );
     let saved = json(&live, &["terminal", "list", "--archived"])[0].clone();
+    assert!(
+        matches!(
+            live.request(Request::RemoveSession {
+                session: SessionId(id)
+            }),
+            Response::Error { .. }
+        ),
+        "unfenced legacy removal deleted an archive"
+    );
     assert_eq!(saved["title"], "Remember archive");
     let stale = Request::ReopenSession {
         session: SessionId(id),
@@ -329,6 +338,29 @@ fn archive_round_trip_survives_restart_and_rejects_old_recovery_without_deleting
     assert_eq!(restored["phase"], "stopped");
     assert_eq!(restored["title"], "Remember archive");
     assert_eq!(restored["archived"], false);
+    json(&live, &["terminal", "rename", &arg, "--automatic"]);
+    let rows = json(&live, &["terminal", "list"]);
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()["title"]
+            .is_null()
+    );
+    json(
+        &live,
+        &["terminal", "rename", &arg, "Renamed while stopped"],
+    );
+    let rows = json(&live, &["terminal", "list"]);
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()["title"],
+        "Renamed while stopped"
+    );
     assert!(
         matches!(live.request(stale), Response::Error { .. }),
         "pre-archive recovery crossed unarchive"

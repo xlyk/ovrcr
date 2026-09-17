@@ -34,7 +34,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `n` | Create a terminal (form) |
 | `w` | Create a workspace (form) |
 | `a` | Register a project (form) |
-| `X` | Close the selected terminal; asks for confirmation |
+| `X` | Archive the selected terminal; confirms before stopping live work |
 | `p` / `r` | Pause or resume the selected session; no confirmation |
 | `R` | Mark the selected terminal's displayed unread Ready observation reviewed |
 | `[` | Freeze the current screen for copying |
@@ -395,7 +395,8 @@ Up/Down to choose, and Tab or Enter to accept. Workspace choices show
 `project / workspace`; removal excludes the protected `root` workspace.
 New names remain text fields, and project registration retains its path pickers.
 
-Close and remove actions show their target and require confirmation. Server
+Closing live work and deleting records show their target and require confirmation.
+Closing an exited row archives it immediately. Server
 safeguards still apply: a workspace must have no terminal records and a clean
 worktree before removal. Errors stay in the palette with the form values
 retained.

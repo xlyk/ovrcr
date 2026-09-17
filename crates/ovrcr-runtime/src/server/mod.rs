@@ -722,6 +722,12 @@ impl ServerState {
                 .get(id)
                 .cloned()
                 .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+            if record.disposition == crate::retained::Disposition::Archived {
+                return Err(lifecycle_error(
+                    ErrorCode::Conflict,
+                    "session is archived; unarchive before renaming",
+                ));
+            }
             let title = title
                 .map(|title| {
                     crate::session::sanitize_title(&title).ok_or_else(|| {
@@ -906,11 +912,16 @@ impl ServerState {
                 "session is still live; kill it before removal",
             ));
         }
-        if !summary.archived
-            && summary
-                .recovery
-                .as_ref()
-                .is_some_and(|recovery| recovery.requires_ack)
+        if summary.archived {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "archived record deletion requires its observed run; use terminal remove",
+            ));
+        }
+        if summary
+            .recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.requires_ack)
         {
             return Err(lifecycle_error(
                 ErrorCode::OwnershipUncertain,

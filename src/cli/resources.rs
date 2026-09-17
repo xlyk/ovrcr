@@ -197,8 +197,8 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             json_output,
         ),
         TerminalCommand::Unarchive { id } => {
-            let session = inventory_session(id)?;
-            mutate_started(
+            let session = online_session(id)?;
+            mutate_without_start(
                 Request::UnarchiveSession {
                     session: session.id,
                     expected_run: session.run,
@@ -222,21 +222,36 @@ pub(super) fn run_terminal(command: TerminalCommand, json_output: bool) -> AppRe
             },
             json_output,
         ),
-        TerminalCommand::Remove { id } => {
-            let session = inventory_session(id)?;
-            let request = if session.archived {
-                Request::DeleteArchivedSession {
-                    session: session.id,
-                    expected_run: session.run,
-                }
-            } else {
-                Request::RemoveSession {
-                    session: session.id,
-                }
-            };
-            mutate_started(request, json_output)
-        }
+        TerminalCommand::Remove { id } => remove_terminal(id, json_output),
     }
+}
+
+pub(super) fn remove_terminal(id: u64, json_output: bool) -> AppResult<()> {
+    let session = online_session(id)?;
+    let request = if session.archived {
+        Request::DeleteArchivedSession {
+            session: session.id,
+            expected_run: session.run,
+        }
+    } else {
+        Request::RemoveSession {
+            session: session.id,
+        }
+    };
+    mutate_without_start(request, json_output)
+}
+
+fn online_session(id: u64) -> AppResult<SessionSummary> {
+    let Response::Inventory { sessions, .. } = request_without_start(Request::Inspect)? else {
+        return Err(RuntimeError::new(
+            ErrorCode::Internal,
+            "expected session inventory",
+        ));
+    };
+    sessions
+        .into_iter()
+        .find(|session| session.id == SessionId(id))
+        .ok_or_else(|| RuntimeError::new(ErrorCode::NotFound, format!("session not found: {id}")))
 }
 
 pub(super) fn create_terminal(args: NewArgs, json_output: bool) -> AppResult<()> {

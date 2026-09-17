@@ -336,7 +336,7 @@ impl SessionStore {
             return Ok(false);
         };
         if record.run != run
-            || record.disposition != Disposition::Active
+            || record.disposition == Disposition::Archived
             || revision < record.title_revision
         {
             return Ok(false);
