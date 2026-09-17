@@ -103,6 +103,7 @@ fn mutations_do_not_start_a_server() {
         &["session", "remove", "99"],
         &["terminal", "kill", "99"],
         &["terminal", "remove", "99"],
+        &["terminal", "unarchive", "99"],
         &["project", "remove", "missing"],
         &[
             "workspace",

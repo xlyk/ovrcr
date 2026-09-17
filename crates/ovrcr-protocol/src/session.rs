@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub u64);
 
-/// Identity of one process run of a retained session row. Distinct from scheduled-task [`crate::RunId`].
+/// Generation of a retained session row. Launch, archive and unarchive invalidate
+/// prior process ownership and requests. Distinct from scheduled-task [`crate::RunId`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionRunId(pub u64);
 
@@ -60,6 +61,7 @@ pub enum AgentActivity {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: SessionId,
+    pub archived: bool,
     pub run: SessionRunId,
     pub kind: SessionKind,
     pub recovery: Option<SessionRecovery>,

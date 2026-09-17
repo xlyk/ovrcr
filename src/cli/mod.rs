@@ -157,12 +157,7 @@ fn run(cli: Cli) -> AppResult<()> {
         } => inspect_session_usage(id),
         Command::Session {
             command: SessionCommand::Remove { id },
-        } => mutate_without_start(
-            Request::RemoveSession {
-                session: SessionId(id),
-            },
-            json_output,
-        ),
+        } => resources::remove_terminal(id, json_output),
         Command::Report { command } => run_report(command),
     }
 }

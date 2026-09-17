@@ -34,7 +34,7 @@ or Menu to open the action menu. Press `Ctrl-g` first to use dashboard shortcuts
 | `n` | Create a terminal (form) |
 | `w` | Create a workspace (form) |
 | `a` | Register a project (form) |
-| `X` | Close the selected terminal; asks for confirmation |
+| `X` | Archive the selected terminal; confirms before stopping live work |
 | `p` / `r` | Pause or resume the selected session; no confirmation |
 | `R` | Mark the selected terminal's displayed unread Ready observation reviewed |
 | `[` | Freeze the current screen for copying |
@@ -331,7 +331,7 @@ also expose their parent workspace and project. `a` registers a project and
 Choose a group, then an action: `Space t x` closes the selected terminal,
 `Space w x` removes its workspace, and `Space p x` unregisters its project.
 Workspace and project removal open a searchable picker with the current target
-highlighted; Enter accepts it and opens confirmation. Terminal close opens
+highlighted; Enter accepts it and opens confirmation. Closing a live terminal opens
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
@@ -395,7 +395,8 @@ Up/Down to choose, and Tab or Enter to accept. Workspace choices show
 `project / workspace`; removal excludes the protected `root` workspace.
 New names remain text fields, and project registration retains its path pickers.
 
-Close and remove actions show their target and require confirmation. Server
+Closing live work and deleting records show their target and require confirmation.
+Closing an exited row archives it immediately. Server
 safeguards still apply: a workspace must have no terminal records and a clean
 worktree before removal. Errors stay in the palette with the form values
 retained.
@@ -608,3 +609,17 @@ dashboard can reattach and refresh the current screen. Output backlog is
 coalesced into a per-session refresh when necessary. Control responses and
 lifecycle events are preserved, and the dashboard disconnects if the queue cannot
 accept one of those messages.
+
+
+### Archived sessions
+
+Closing a live session (`X` or `Space t x`) asks for confirmation, stops its
+currently owned processes, then archives its record. A failed stop leaves the
+active row available. Closing an exited row archives immediately. Hiding a pane
+or detaching never archives a session.
+
+Open the command palette (`:`), choose **Archived sessions**, and search by title,
+project or workspace. **Unarchive** returns the row stopped without launching
+anything. **Delete record** asks for confirmation and removes only OVRCR metadata;
+provider conversation files remain untouched. If old process ownership was
+uncertain before archiving, reopening still requires explicit acknowledgement.

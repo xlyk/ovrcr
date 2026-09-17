@@ -52,7 +52,9 @@ pub(super) fn workspace_value(
 ) -> Value {
     let terminal_count = sessions
         .iter()
-        .filter(|session| session.project == project && session.workspace == workspace.name)
+        .filter(|session| {
+            !session.archived && session.project == project && session.workspace == workspace.name
+        })
         .count();
     json!({
         "project": project,
@@ -81,6 +83,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
     };
     json!({
         "id": session.id.0,
+        "archived": session.archived,
         "run": session.run.0,
         "kind": kind,
         "project": session.project,

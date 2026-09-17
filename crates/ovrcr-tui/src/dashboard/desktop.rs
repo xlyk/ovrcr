@@ -538,6 +538,7 @@ mod tests {
                     name: "workspace".into(),
                     path: "/private/path-must-not-leak".into(),
                     sessions: vec![SessionSummary {
+                        archived: false,
                         id: SessionId(1),
                         run: crate::protocol::SessionRunId(1),
                         kind: crate::protocol::SessionKind::Terminal,

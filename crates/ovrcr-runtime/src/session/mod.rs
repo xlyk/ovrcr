@@ -508,6 +508,7 @@ impl Session {
             #[cfg(test)]
             initial_cwd,
             summary: SessionSummary {
+                archived: false,
                 title: None,
                 id,
                 run: spec.run,

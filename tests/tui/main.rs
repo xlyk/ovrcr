@@ -42,6 +42,7 @@ fn session_summary(
     started_unix_ms: u64,
 ) -> SessionSummary {
     SessionSummary {
+        archived: false,
         id: SessionId(id),
         run: ovrcr::protocol::SessionRunId(1),
         kind: ovrcr::protocol::SessionKind::Terminal,

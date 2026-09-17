@@ -244,3 +244,213 @@ fn reopen_keeps_the_row_starts_a_fresh_shell_and_coalesces_delayed_duplicates() 
     assert_eq!(explicit_next["run"], old_run + 2);
     assert_eq!(std::fs::read_to_string(marker).unwrap(), "once\n");
 }
+
+#[test]
+fn close_exited_row_moves_it_to_the_archive_without_process_acknowledgement() {
+    let live = Live::binary();
+    live.ready("feature/archive-exited");
+    let created = create_terminal(&live, "finished", &["/bin/sh", "-c", "exit 0"]);
+    let id = created["id"].as_u64().unwrap();
+    let arg = id.to_string();
+    wait_phase(&live, id, "exited");
+    json(&live, &["terminal", "close", &arg]);
+    let active = json(&live, &["terminal", "list"]);
+    assert!(active.as_array().unwrap().iter().all(|row| row["id"] != id));
+    let archive = json(&live, &["terminal", "list", "--archived"]);
+    assert_eq!(archive.as_array().unwrap().len(), 1);
+    assert_eq!(archive[0]["id"], id);
+    assert_eq!(archive[0]["name"], "finished");
+    assert_eq!(archive[0]["archived"], true);
+    assert!(archive[0]["pid"].is_null());
+    assert_eq!(
+        archive[0]["recovery"]["requires_ack"], true,
+        "filing a row must not certify background processes stopped"
+    );
+}
+
+#[test]
+fn archive_round_trip_survives_restart_and_rejects_old_recovery_without_deleting_history() {
+    use ovrcr::protocol::{Request, Response, SessionId, SessionRunId};
+    let live = Live::binary();
+    live.ready("feature/archive-round-trip");
+    track_groups(&live);
+    let history = live.root.path().join("provider-history.jsonl");
+    std::fs::write(&history, "provider-owned conversation\n").unwrap();
+    let created = create_terminal(&live, "round-trip", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    let arg = id.to_string();
+    let old_run = SessionRunId(created["run"].as_u64().unwrap());
+    let pid = created["pid"].as_u64().unwrap() as i32;
+    let pgid = unsafe { libc::getpgid(pid) };
+    assert!(pgid > 1);
+    live.own_group(pgid);
+    json(&live, &["terminal", "rename", &arg, "Remember archive"]);
+    json(&live, &["terminal", "close", &arg]);
+    assert!(
+        !live::group_exists(pgid),
+        "close left the owned group running"
+    );
+    let saved = json(&live, &["terminal", "list", "--archived"])[0].clone();
+    assert!(
+        matches!(
+            live.request(Request::RemoveSession {
+                session: SessionId(id)
+            }),
+            Response::Error { .. }
+        ),
+        "unfenced legacy removal deleted an archive"
+    );
+    assert_eq!(saved["title"], "Remember archive");
+    let stale = Request::ReopenSession {
+        session: SessionId(id),
+        expected_run: old_run,
+        acknowledge_stopped: true,
+    };
+    assert!(matches!(
+        live.request(stale.clone()),
+        Response::Error { .. }
+    ));
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    assert_eq!(json(&live, &["terminal", "list", "--archived"])[0], saved);
+    assert!(
+        !live.socket.exists(),
+        "offline archive inspection launched server"
+    );
+    live.start_binary();
+    assert_eq!(json(&live, &["terminal", "list", "--archived"])[0], saved);
+    assert!(matches!(
+        live.request(stale.clone()),
+        Response::Error { .. }
+    ));
+    json(&live, &["terminal", "unarchive", &arg]);
+    assert!(
+        live.session_groups().is_empty(),
+        "unarchive launched a process"
+    );
+    let restored = json(&live, &["terminal", "list"])
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap()
+        .clone();
+    assert_eq!(restored["phase"], "stopped");
+    assert_eq!(restored["title"], "Remember archive");
+    assert_eq!(restored["archived"], false);
+    json(&live, &["terminal", "rename", &arg, "--automatic"]);
+    let rows = json(&live, &["terminal", "list"]);
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()["title"]
+            .is_null()
+    );
+    json(
+        &live,
+        &["terminal", "rename", &arg, "Renamed while stopped"],
+    );
+    let rows = json(&live, &["terminal", "list"]);
+    assert_eq!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap()["title"],
+        "Renamed while stopped"
+    );
+    assert!(
+        matches!(live.request(stale), Response::Error { .. }),
+        "pre-archive recovery crossed unarchive"
+    );
+    assert!(matches!(
+        live.request(Request::CloseTerminal {
+            session: SessionId(id),
+            expected_run: old_run
+        }),
+        Response::Error { .. }
+    ));
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    live.start_binary();
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    json(&live, &["terminal", "close", &arg]);
+    json(&live, &["terminal", "remove", &arg]);
+    json(&live, &["shutdown", "--kill"]);
+    live.join();
+    live.start_binary();
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        json(&live, &["terminal", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["id"] != id)
+    );
+    assert_eq!(
+        std::fs::read_to_string(history).unwrap(),
+        "provider-owned conversation\n"
+    );
+}
+
+#[test]
+fn real_process_discovery_failure_does_not_archive_the_record() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut live = Live::idle();
+    let bin = live.root.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let fail = live.root.path().join("fail-discovery");
+    let ps = bin.join("ps");
+    std::fs::write(
+        &ps,
+        format!(
+            "#!/bin/sh\nif [ -e '{}' ]; then exit 1; fi\nexec /bin/ps \"$@\"\n",
+            fail.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let wrapper = live.root.path().join("server-wrapper");
+    std::fs::write(&wrapper, format!("#!/bin/sh\nif [ \"$1\" = server ]; then export PATH='{}':$PATH; fi\nexec '{}' \"$@\"\n", bin.display(), live.executable.display())).unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    live.executable = wrapper;
+    live.start_binary();
+    let live = live.bounded();
+    live.ready("feature/archive-stop-failure");
+    track_groups(&live);
+    let created = create_terminal(&live, "failed-close", &["/bin/sh"]);
+    let id = created["id"].as_u64().unwrap();
+    std::fs::write(&fail, "fail").unwrap();
+    let output = cli(&live, &["terminal", "close", &id.to_string()]);
+    std::fs::remove_file(&fail).unwrap();
+    assert!(
+        !output.status.success(),
+        "real process discovery failure reported success"
+    );
+    assert!(
+        json(&live, &["terminal", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        json(&live, &["terminal", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == id),
+        "failed close lost the actionable row"
+    );
+}

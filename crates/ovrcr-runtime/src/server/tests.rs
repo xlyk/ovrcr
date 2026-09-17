@@ -4818,12 +4818,12 @@ fn close_failure_retains_record_until_cleanup_can_finish() {
     for event in pending {
         session.apply_event(event);
     }
-    let error = state
+    state
         .close_terminal(id, session.run(), Duration::from_millis(20))
-        .unwrap_err();
+        .unwrap();
     assert!(
-        state.sessions.lock().unwrap().contains_key(&id),
-        "close after natural exit must retain the row: {error:#}"
+        state.session_summary(id).unwrap().archived,
+        "close after exit must archive the row"
     );
     assert!(
         !state.retained.lock().get(id).unwrap().stopped,
@@ -4856,8 +4856,8 @@ fn close_after_natural_exit_does_not_certify_stopped_or_remove_row() {
 
     let _ = state.close_terminal(id, session.run(), Duration::from_millis(200));
     assert!(
-        state.sessions.lock().unwrap().contains_key(&id),
-        "close of an already-exited run must not remove the row"
+        state.session_summary(id).unwrap().archived,
+        "close of an already-exited run must archive the retained row"
     );
     let retained = state.retained.lock();
     let record = retained.get(id).expect("retained row missing");
@@ -4877,7 +4877,7 @@ fn close_after_natural_exit_does_not_certify_stopped_or_remove_row() {
 }
 
 #[test]
-fn close_after_ack_removes_already_exited_in_memory_row() {
+fn close_after_ack_archives_already_exited_in_memory_row() {
     let id = SessionId(20);
     let (_cwd, session, receiver) = spawn_exiting_test_session(id);
     let (state, _dispatch_receiver) = test_state_with_dispatch(None, None);
@@ -4931,8 +4931,8 @@ fn close_after_ack_removes_already_exited_in_memory_row() {
         "acknowledged close must drop the in-memory row"
     );
     assert!(
-        state.retained.lock().get(id).is_none(),
-        "acknowledged close must remove the retained record"
+        state.session_summary(id).unwrap().archived,
+        "acknowledged close must archive the retained record"
     );
 }
 
@@ -5022,8 +5022,8 @@ fn close_and_kill_without_live_arc_do_not_mark_stopped() {
                 )
                 .expect("boot-resolved close with no Arc must remove the row");
             assert!(
-                state.retained.lock().get(id).is_none(),
-                "close must remove the boot-resolved row without a controlled-stop certificate"
+                state.session_summary(id).unwrap().archived,
+                "close must archive the boot-resolved row without a controlled-stop certificate"
             );
         } else {
             state.kill_session(id, Duration::from_millis(50)).expect(

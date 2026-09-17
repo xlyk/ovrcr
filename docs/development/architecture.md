@@ -19,7 +19,8 @@ Root `src/` and control-role tests speak to the server through `ovrcr_protocol::
 Project, workspace, and retained interactive-session metadata use SQLite as the
 sole writable store. The database path is the full `config.toml` path with
 `.sqlite3` appended. Initial migration imports legacy projects/workspaces;
-schema version 2 adds session metadata without changing settings or task storage.
+schema version 2 adds session metadata; version 3 adds archive disposition.
+Neither migration changes settings or task storage.
 After each migration transaction commits,
 later starts and every save use SQLite only. Offline readers open the database
 read-only. They read preserved TOML only if the database is absent, or both its
@@ -34,4 +35,8 @@ or terminal parser. The existing mutation lock reserves one of fifty live slots
 from admission through spawn publication. Reopening retires the prior run's
 capability, view and history; run-tagged events and snapshots cannot affect its
 replacement. No argv, environments, output, prompts, live activity or timing are
-stored. Native provider resume and archive behavior remain later work.
+stored. Native provider resume remains later work. Archive disposition is separate from
+process-stop proof. Archive and unarchive invalidate the previous run identity,
+so delayed recovery requests and process callbacks cannot cross these transitions.
+Returned rows are stopped without launching; unresolved ownership still requires
+acknowledgement before reopening.

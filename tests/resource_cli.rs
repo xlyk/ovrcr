@@ -274,6 +274,16 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
     for session in fixture.sessions() {
         fixture.ok(&["terminal", "close", &session.id.0.to_string()]);
     }
+    // Close now retains archived metadata; delete these records explicitly
+    // before exercising this test's existing workspace-removal guards.
+    let archive = fixture.json(&["terminal", "list", "--archived"]);
+    for row in archive.as_array().unwrap() {
+        fixture.ok(&[
+            "terminal",
+            "remove",
+            &row["id"].as_u64().unwrap().to_string(),
+        ]);
+    }
     let worktree = fixture.workspace_root.join("demo");
     std::fs::write(worktree.join("dirty"), "preserve me").unwrap();
     let dirty = fixture.run(&[
@@ -688,7 +698,7 @@ fn managed_usage_inspection_preserves_scope_unknowns_and_component_ages() {
             agent.clone()
         };
         let snapshot: HierarchySnapshot = serde_json::from_value(json!({"projects":[{"name":"fixture","workspaces":[{"project":"fixture","name":"demo","path":"/fixture","sessions":[{
-            "id":7,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
+            "id":7,"archived":false,"run":1,"kind":{"Agent":{"name":"claude"}},"project":"fixture","workspace":"demo","name":"native","label":"claude","pid":null,"started_unix_ms":1,"phase":{"Exited":{"code":0,"signal":null}},"activity":"Idle","agent":expected,"agent_epoch":1,"context_usage":null
         }]}]}]})).unwrap();
         let listener = UnixListener::bind(&socket).unwrap();
         listener.set_nonblocking(true).unwrap();
