@@ -678,6 +678,20 @@ pub(super) fn handle_request_with_id(
                 Response::CreatedSession(Box::new(summary))
             })
         }
+        Request::RecoverSession {
+            session,
+            expected_run,
+        } => {
+            let result = state.recover_session(session, expected_run);
+            state
+                .dashboard
+                .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                    state.hierarchy(),
+                )));
+            result.map_or_else(error_for_lifecycle, |summary| {
+                Response::CreatedSession(Box::new(summary))
+            })
+        }
         Request::AcknowledgeSessionStopped {
             session,
             expected_run,

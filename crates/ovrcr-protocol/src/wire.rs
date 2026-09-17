@@ -307,6 +307,11 @@ pub enum Request {
         session: SessionId,
         expected_run: SessionRunId,
     },
+    /// First display of an interrupted agent; never substitutes for explicit Retry or acknowledgement.
+    RecoverSession {
+        session: SessionId,
+        expected_run: SessionRunId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -700,6 +705,13 @@ mod wire_snapshot {
                 },
             ),
             (
+                "RecoverSession",
+                Request::RecoverSession {
+                    session: SessionId(1),
+                    expected_run: SessionRunId(4),
+                },
+            ),
+            (
                 "AcknowledgeSessionStopped",
                 Request::AcknowledgeSessionStopped {
                     session: SessionId(1),
@@ -979,6 +991,7 @@ mod wire_snapshot {
         ("Request::ReopenSession", "21010400"),
         ("Request::UnarchiveSession", "230104"),
         ("Request::DeleteArchivedSession", "220104"),
+        ("Request::RecoverSession", "250104"),
         ("Request::AcknowledgeSessionStopped", "240104"),
         (
             "Request::MarkReviewed",

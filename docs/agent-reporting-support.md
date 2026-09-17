@@ -552,7 +552,7 @@ UUID. Unsupported clear/resume/fork observations invalidate recovery through SQL
 retaining the prior UUID only for context. Reporting failures and missing
 callbacks alone preserve a valid reference. Start new conversation creates a
 separate session; other provider rows remain retained with resume unavailable.
-SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 20 (Codex references retain tag 3; session summaries include the retained working directory). The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119.
+SQLite schema 5 stores provider-tagged metadata references in one shared table; schema 3 Claude records migrate transactionally. Wire protocol is 21 (Codex references retain tag 3; session summaries include the retained working directory). Issue #117 adds display-triggered recovery through the shared launch path for eligible installed adapters; native automatic-recovery acceptance remains separate in #127. The [provider recovery contract](development/recovery.md) defines the adapter boundary for #117–#119.
 
 Acceptance remains open. The [issue #116 verification record](../research/issue-116-claude-recovery/README.md) records the passing automated suite and controlled executable/real PTY tests, including exact arguments, repeated restart before another callback, unsupported clear before attachment, missing resources, database failures and prompt non-persistence. Native Claude continuity, Dashboard input and Linux acceptance remain unverified.
 

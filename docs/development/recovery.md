@@ -9,8 +9,30 @@ This contract enables #117, #118 and #119 to develop against the shared reopen p
 - `Reporter::retain_conversation(reference, deadline)` uses the current certified binding. Receivers must first pass their existing producer/sequence and native-identity checks, then bind the accepted identity and retain it. A false return is not a durable acknowledgment. An accepted replacement supersedes pending retention from the prior generation. Retry operation IDs preserve the exact binding and reference.
 - `Reporter::invalidate_conversation(deadline)` permanently closes recovery for an unsupported transition in the current invocation. It cancels pending retention, retries failed persistence, and preserves the existing lost-bind receipt handling. Supported Pi/OMP changes use bind + retain, not invalidation. Their nullable native history path records an ephemeral replacement as unavailable instead of leaving the old conversation eligible.
 - `RetainConversation` and `InvalidateConversation` supervisor commands use the existing lease and current session/run. Retention checks the exact provider, identity and binding generation before the shared durable write. Successful receipts are cached only after persistence. A retired lease cannot change recovery metadata.
-- SQLite schema 5 owns one `agent_conversations` table. Schema 3 from archive mainline and the earlier Claude draft is distinguished by table/column markers; schema 4 from the interface amendment is also accepted. Migration preserves archive disposition, exact references and invalidation flags; offline reads remain read-only. Do not add a provider-specific store. Protocol 19 appends Codex (tag 3) after Claude (tag 0), Pi (tag 1) and OMP (tag 2); subsequent provider registrations must append rather than reorder these tags. No database migration is needed. Protocol 20 adds retained working directories to session summaries while preserving these provider tags.
+- SQLite schema 5 owns one `agent_conversations` table. Schema 3 from archive mainline and the earlier Claude draft is distinguished by table/column markers; schema 4 from the interface amendment is also accepted. Migration preserves archive disposition, exact references and invalidation flags; offline reads remain read-only. Do not add a provider-specific store. Protocol 19 appends Codex (tag 3) after Claude (tag 0), Pi (tag 1) and OMP (tag 2); subsequent provider registrations must append rather than reorder these tags. No database migration is needed. Protocol 21 combines display-triggered recovery from protocol 20 with retained working directories in session summaries, preserving these provider tags.
 - `ServerState` remains the only process owner. All launches use the existing reopen operation, mutation lock, capacity admission, boot acknowledgment, run fencing and production spawn. Inventory reads never launch work. Current reporting resets on reopen; `recovery.attached` requires a matching provider and identity from the new invocation.
+
+## Display-triggered recovery (protocol 20)
+
+`Request::RecoverSession { session, expected_run }` is the automatic counterpart
+to explicit `ReopenSession`. The Dashboard emits it once per displayed eligible
+run using the same nonzero pane geometry as `SetView`. Sidebar inventory and hidden
+pane assignments are not displays. `SessionSummary::can_auto_recover` shares the
+eligibility predicate: interrupted Agent, unarchived, supported reference, no
+ownership acknowledgement required and no recorded failure.
+
+The server rechecks eligibility under the existing mutation lock and calls the
+same locked reopen implementation. It records pre-spawn failures, including full
+capacity, so reconnects cannot retry them. Explicit reopen remains Retry; automatic
+requests cannot acknowledge stopped processes. Natural Agent exits also retain an
+explicit-action diagnostic in the existing recovery failure field; they never mark
+process ownership as stopped. This prevents a later reboot from making a completed
+conversation look like interrupted work. Duplicate old-run requests reuse the
+successor, while archive/unarchive and stale-run fences still apply. Hierarchy events
+install replacement runs; late automatic receipts cannot retarget panes or clear a
+new pane's error. No persistence schema or provider registration changes are needed.
+
+Native automatic-recovery acceptance belongs to #127, separate from development.
 
 ## Codex adapter
 
@@ -34,7 +56,7 @@ reopen. See [Codex recovery support](../codex-reporting-setup.md#retained-conver
 
 | Ticket | Owns | Uses without duplicating |
 | --- | --- | --- |
-| #117 | Dashboard display trigger, request coalescing, race handling and GUI acceptance | Existing recovery availability and reopen request; no provider detection in the Dashboard |
+| #117 | Dashboard display trigger, request coalescing, race handling and automated tests (#127 owns native acceptance) | Existing recovery availability and reopen request; no provider detection in the Dashboard |
 | #118 | Codex authoritative capture and resume adapter; Codex-specific tests | Reporter retention, generic reference store and shared reopen |
 | #119 | Pi/OMP accepted identity changes in the shared extension receiver, separate native adapters and acceptance | Reporter producer fences, retention and shared reopen |
 

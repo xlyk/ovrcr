@@ -21,11 +21,35 @@ Use the commit containing this handoff on `implement-task-120`; record its full
 - Project removal still requires removing workspaces first; it does not cascade
   into session records. Unarchived rows remain selectable after either removal.
   Reopening a missing directory fails without choosing another directory.
-- Protocol 20 adds `SessionSummary.cwd` on top of main's protocol 19 Codex
-  references; all clients must use the same revision.
+- Protocol 21 adds `SessionSummary.cwd` on top of main's protocol 20 automatic
+  recovery and Codex references; all clients must use the same revision.
   SQLite remains schema 5. No dependencies or provider adapters were added.
 
-## Merge verification (2026-09-17)
+## CI correction and second merge (2026-09-17)
+
+Integrated main's display-triggered recovery (#117), preserving its wire request
+and workspace removal's retained paths in protocol 21. Main's CI scheduling
+change (Linux jobs manual-only) is inherited unchanged, not a check workaround.
+
+The hosted macOS failure was
+`session::tests::terminate_listing_failure_does_not_certify_stop`: its naturally
+exiting group could produce SIGCONT `EPERM`, masking the injected listing error.
+The fixture now ignores TERM/HUP and waits, keeping both owned processes alive
+until SIGKILL cleanup. Assertions and production signaling remain unchanged.
+The test passed 30 repetitions; all 10 termination tests passed.
+
+- `SHELL=/bin/sh cargo test --workspace --all-targets --all-features --no-fail-fast -- --test-threads=2`:
+  **982 passed, 0 failed, 20 ignored**.
+- Typecheck, Clippy, formatting/diff checks and doc-test command passed; doc tests
+  contained zero runnable cases. Pi/OMP Node suites: **43 passed**.
+- The preceding default-parallel local run had three Claude admission failures
+  in newly inherited tests. A focused rerun passed, as did the complete bounded
+  run above. No admission timeout, assertion or CI parallelism was changed.
+- Evidence: `/tmp/ovrcr-120-evidence/ci-fix/`; hosted failure log:
+  `/tmp/ovrcr-120-evidence/ci-failed.log`. Hosted results on the new SHA must be
+  checked separately from these local results.
+
+## First merge verification (2026-09-17)
 
 Merged main `31ee5ba127f23c5ea5f7c18e807e788a028f6ec3` into PR #135.
 Both branches had independently used protocol 19; the combined wire format is

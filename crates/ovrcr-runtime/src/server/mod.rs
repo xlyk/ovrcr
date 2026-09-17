@@ -264,12 +264,21 @@ impl ServerState {
         let summary = session.summary();
         let mut retained = self.retained.lock();
         if matches!(summary.phase, SessionPhase::Exited { .. })
-            && summary.agent.is_none()
-            && retained
-                .get(session.id())
-                .is_some_and(|record| record.conversation.is_some() && !record.identity_invalid)
+            && retained.get(session.id()).is_some_and(|record| {
+                record.conversation.is_some()
+                    && !record.identity_invalid
+                    && !record.stopped
+                    && record.failure.is_none()
+            })
         {
-            retained.record_failure(session.id(), session.run(), "Agent exited before conversation attachment was confirmed; check native reporting and history, then Retry".into())?;
+            // Exit is not interruption or proof that descendants stopped. Persist
+            // the explicit-action diagnostic without changing the ownership evidence.
+            let message = if summary.agent.is_none() {
+                "Agent exited before conversation attachment was confirmed; check native reporting and history, then Retry"
+            } else {
+                "Agent exited; resume the conversation explicitly"
+            };
+            retained.record_failure(session.id(), session.run(), message.into())?;
         }
         Ok(())
     }
@@ -814,6 +823,53 @@ impl ServerState {
         acknowledge_stopped: bool,
     ) -> Result<SessionSummary> {
         let _mutation = self.mutation_lock.lock().unwrap();
+        self.reopen_session_locked(id, expected_run, acknowledge_stopped)
+    }
+
+    pub fn recover_session(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+    ) -> Result<SessionSummary> {
+        let _mutation = self.mutation_lock.lock().unwrap();
+        self.reject_if_stopping()?;
+        let summary = self
+            .session_summary(id)
+            .ok_or_else(|| lifecycle_error(ErrorCode::NotFound, "session not found"))?;
+        // A duplicate may observe its successor, but must never launch that successor again.
+        if summary.run != expected_run || summary.phase.is_live() {
+            return self.reopen_session_locked(id, expected_run, false);
+        }
+        if !summary.can_auto_recover() {
+            return Err(lifecycle_error(
+                ErrorCode::Conflict,
+                "session requires an explicit recovery action",
+            ));
+        }
+        let result = self.reopen_session_locked(id, expected_run, false);
+        if let Err(error) = &result {
+            // Failures before begin_run (including capacity) must also suppress retries
+            // across Dashboard reconnects. Spawn failures already record the new run.
+            if self
+                .retained
+                .lock()
+                .get(id)
+                .is_some_and(|row| row.run == expected_run)
+            {
+                self.retained
+                    .lock()
+                    .record_failure(id, expected_run, error.to_string())?;
+            }
+        }
+        result
+    }
+
+    fn reopen_session_locked(
+        &self,
+        id: SessionId,
+        expected_run: SessionRunId,
+        acknowledge_stopped: bool,
+    ) -> Result<SessionSummary> {
         self.reject_if_stopping()?;
         let summary = self
             .session_summary(id)

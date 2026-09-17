@@ -32,6 +32,14 @@ talking to a server it did not start. `Live::idle` hands back the paths without
 a server, for tests whose subject is start-up itself. Session, CLI and terminal
 helpers stay in the suite that needs them, wrapped around a `Live`.
 
+## Hosted CI schedule
+
+Pull requests and pushes to `main` run the macOS `checks` job automatically.
+The `linux`, `linux capacity` and `linux memory high-water` jobs run only on
+manual dispatch: GitHub **Actions → CI → Run workflow**, then select the branch.
+Manual dispatch also runs the macOS checks. Linux jobs and their assertions remain
+intact; a skipped job is not evidence of passing Linux acceptance.
+
 ## Commands and isolated acceptance
 
 For Rust changes, choose the owning package and add a focused test filter as appropriate:
