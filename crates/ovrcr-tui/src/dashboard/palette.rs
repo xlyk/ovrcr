@@ -39,7 +39,7 @@ enum Command {
     ReopenTerminal(SessionId),
     StartNewConversation(SessionId),
     AcknowledgeStopped(SessionId),
-    AgentResumeUnavailable,
+    AgentResumeUnavailable(SessionId),
     RecoverLaunch,
     RegisterProject,
     CloseTerminal(SessionId),
@@ -678,10 +678,15 @@ impl Dashboard {
                     target: "Acknowledge that previous agent or background processes have stopped, without launching a replacement?".into(),
                 }
             }
-            Command::AgentResumeUnavailable => Page::Confirm {
+            Command::AgentResumeUnavailable(id) => Page::Confirm {
                 request: None,
-                target: "Agent resume is unavailable. Native provider resume is not supported."
-                    .into(),
+                target: find_session(self, id)
+                    .and_then(|session| session.recovery.as_ref())
+                    .and_then(|recovery| recovery.unavailable.clone())
+                    .unwrap_or_else(|| {
+                        "Agent resume is unavailable. No certified recovery reference is available."
+                            .into()
+                    }),
             },
             Command::CloseTerminal(id) => {
                 let session = find_session(self, id).expect("close target exists");
@@ -810,7 +815,7 @@ impl Dashboard {
                         } else {
                             Entry {
                                 label: "Agent resume is unavailable".into(),
-                                command: Command::AgentResumeUnavailable,
+                                command: Command::AgentResumeUnavailable(id),
                             }
                         });
                         entries.push(Entry {
@@ -3377,13 +3382,44 @@ mod launch_tests {
             name: "codex".into(),
         };
         d.palette = Some(Palette {
-            page: d.command_page(Command::AgentResumeUnavailable),
+            page: d.command_page(Command::AgentResumeUnavailable(SessionId(1))),
             ..Palette::new()
         });
         assert!(matches!(
             d.palette.as_ref().unwrap().page,
             Page::Confirm { request: None, .. }
         ));
+        assert_eq!(submit(&mut d), DashboardAction::Redraw);
+    }
+
+    #[test]
+    fn unavailable_resume_shows_the_retained_reason_without_launching() {
+        let mut d = dashboard();
+        let mut row = summary(1);
+        row.kind = SessionKind::Agent {
+            name: "claude".into(),
+        };
+        row.phase = SessionPhase::Stopped;
+        let reason =
+            "No certified claude conversation; use managed launch and configured reporting";
+        row.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: true,
+            unavailable: Some(reason.into()),
+            failure: None,
+        });
+        d.hierarchy.projects[0].workspaces[0].sessions = vec![row];
+        d.select_session(SessionId(1));
+        d.palette = Some(Palette {
+            page: d.command_page(Command::AgentResumeUnavailable(SessionId(1))),
+            ..Palette::new()
+        });
+        let Page::Confirm { request, target } = &d.palette.as_ref().unwrap().page else {
+            panic!("expected explanation");
+        };
+        assert!(request.is_none());
+        assert!(target.contains(reason), "{target}");
         assert_eq!(submit(&mut d), DashboardAction::Redraw);
     }
 

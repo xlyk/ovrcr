@@ -57,6 +57,8 @@ pub(super) struct SessionStatus {
     /// The activity clause the headers append, leading space included: ` busy observed`,
     /// ` input needed · confirm`, ` unavailable`, or ` idle` without an agent.
     pub activity: String,
+    /// Recovery explanations remain actionable after the managed process exits.
+    pub recovery_diagnostic: bool,
     /// The Unread clause, which replaces a header line outright when present.
     pub unread: Option<String>,
 }
@@ -92,6 +94,11 @@ impl SessionStatus {
                 .map(|started| format_elapsed_at(started, now_unix_ms))
                 .unwrap_or_default(),
             activity: activity_clause(session),
+            recovery_diagnostic: session.recovery.as_ref().is_some_and(|recovery| {
+                recovery.unavailable.is_some()
+                    || recovery.failure.is_some()
+                    || recovery.requires_ack
+            }),
             unread: session.unread.as_ref().map(|_| unread_clause(session)),
         }
     }
@@ -233,6 +240,26 @@ mod tests {
         ActivitySample, AgentBinding, AgentProvider, AgentSnapshot, HealthSample, InputRequest,
         ReadyObservation, SessionId,
     };
+
+    #[test]
+    fn exited_empty_recovery_does_not_restore_stale_activity() {
+        let mut row = session(
+            SessionPhase::Exited {
+                code: Some(0),
+                signal: None,
+            },
+            None,
+        );
+        row.activity = AgentActivity::Busy;
+        row.recovery = Some(ovrcr_protocol::SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: false,
+            unavailable: None,
+            failure: None,
+        });
+        assert!(!SessionStatus::of(&row, 0).recovery_diagnostic);
+    }
 
     fn session(phase: SessionPhase, agent: Option<AgentSnapshot>) -> SessionSummary {
         SessionSummary {

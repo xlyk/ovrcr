@@ -2652,3 +2652,59 @@ fn close_confirms_live_work_but_archives_exited_work_immediately() {
         }
     );
 }
+
+#[test]
+fn exited_agent_keeps_actionable_recovery_reason_in_the_header() {
+    let mut hierarchy = fixture_hierarchy();
+    let row = &mut hierarchy.projects[1].workspaces[0].sessions[0];
+    row.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    row.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    row.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: true,
+        unavailable: Some("No certified conversation; use managed launch".into()),
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let text = rendered_rows(&dashboard, 180, 24).join("\n");
+    assert!(
+        text.contains("No certified conversation; use managed launch"),
+        "{text}"
+    );
+}
+
+#[test]
+fn exited_agent_with_empty_recovery_keeps_stale_activity_out_of_header() {
+    let mut hierarchy = fixture_hierarchy();
+    let row = &mut hierarchy.projects[1].workspaces[0].sessions[0];
+    row.kind = ovrcr::protocol::SessionKind::Agent {
+        name: "claude".into(),
+    };
+    row.phase = SessionPhase::Exited {
+        code: Some(0),
+        signal: None,
+    };
+    row.activity = ovrcr::protocol::AgentActivity::Busy;
+    row.agent = None;
+    row.recovery = Some(ovrcr::protocol::SessionRecovery {
+        conversation: None,
+        attached: false,
+        requires_ack: false,
+        unavailable: None,
+        failure: None,
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(2));
+    let text = rendered_rows(&dashboard, 180, 24).join("\n");
+    assert!(text.contains("pid: closed"), "{text}");
+    assert!(!text.contains("busy"), "{text}");
+}

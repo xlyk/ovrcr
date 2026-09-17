@@ -558,9 +558,7 @@ pub fn draw_dashboard_at(frame: &mut Frame<'_>, dashboard: &Dashboard, now_unix_
                     );
                     return Line::from(Span::styled(text, Style::default().fg(TEAL)));
                 }
-                // An exited session keeps its process and elapsed fields but drops the
-                // live activity label.
-                let activity = if status.exited {
+                let activity = if status.exited && !status.recovery_diagnostic {
                     Span::raw("")
                 } else if !status.live {
                     Span::styled(format!(" {}", status.activity), Style::default().fg(TEAL))
