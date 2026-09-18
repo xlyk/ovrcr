@@ -1762,7 +1762,6 @@ impl ServerState {
         let captured = self.registry.lock().unwrap().clone();
         let mut computed = HashMap::new();
         for project in &captured.projects {
-            let warning = git::root_warning(project);
             for workspace in &project.workspaces {
                 let root = is_root_workspace(project, workspace);
                 let name = git::checkout_name(&workspace.path)
@@ -1774,7 +1773,7 @@ impl ServerState {
                         git_identity: workspace.git_identity.clone(),
                         name,
                         root,
-                        warning: root.then(|| warning.clone()).flatten(),
+                        warning: root.then(|| git::root_warning(project)).flatten(),
                     },
                 );
             }
