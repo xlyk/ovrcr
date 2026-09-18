@@ -1642,40 +1642,82 @@ impl ServerState {
             })
             .partition(|session| session.phase.is_live());
         if !live.is_empty() || (!uncertain.is_empty() && !force) {
+            // Archived rows are hidden from the default listing, so the refusal
+            // must name every blocker and the command that clears it.
+            let describe = |session: &SessionSummary| {
+                format!(
+                    "#{}{}",
+                    session.id.0,
+                    if session.archived { " (archived)" } else { "" }
+                )
+            };
+            let mut hints = Vec::new();
+            if !live.is_empty() {
+                hints.push(format!(
+                    "live: {}; kill or close them",
+                    live.iter().map(describe).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            if !uncertain.is_empty() && !force {
+                hints.push(format!(
+                    "unacknowledged stopped: {}; run `ovrcr terminal acknowledge-stopped <id>` or `ovrcr terminal remove <id>`, or remove with --force",
+                    uncertain.iter().map(describe).collect::<Vec<_>>().join(", ")
+                ));
+            }
             return Err(lifecycle_error(
                 ErrorCode::SessionsRemain,
                 format!(
-                    "live or ownership-uncertain sessions remain for workspace {project}/{name}; stop live sessions or acknowledge stopped processes, including archived records, before removal"
+                    "sessions block removal of workspace {project}/{name}: {}",
+                    hints.join("; ")
                 ),
             ));
         }
         // Git also deletes ignored files. A clean worktree is not permission to
         // delete a provider's recorded history, even for an archived session.
-        let contains_history = self.retained.lock().records().any(|record| {
-            let history = match record.conversation.as_ref() {
-                Some(ovrcr_protocol::ConversationReference::Claude(reference)) => {
-                    Some(&reference.history)
-                }
-                Some(
-                    ovrcr_protocol::ConversationReference::Pi(reference)
-                    | ovrcr_protocol::ConversationReference::Omp(reference),
-                ) => reference.history.as_ref(),
-                Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
-                    reference.history.as_ref()
-                }
-                None => None,
-            };
-            history.is_some_and(|path| {
-                path.starts_with(&workspace.path)
-                    || path
-                        .canonicalize()
-                        .is_ok_and(|path| path.starts_with(&workspace.path))
+        let history_holders = self
+            .retained
+            .lock()
+            .records()
+            .filter(|record| {
+                let history = match record.conversation.as_ref() {
+                    Some(ovrcr_protocol::ConversationReference::Claude(reference)) => {
+                        Some(&reference.history)
+                    }
+                    Some(
+                        ovrcr_protocol::ConversationReference::Pi(reference)
+                        | ovrcr_protocol::ConversationReference::Omp(reference),
+                    ) => reference.history.as_ref(),
+                    Some(ovrcr_protocol::ConversationReference::Codex(reference)) => {
+                        reference.history.as_ref()
+                    }
+                    None => None,
+                };
+                history.is_some_and(|path| {
+                    path.starts_with(&workspace.path)
+                        || path
+                            .canonicalize()
+                            .is_ok_and(|path| path.starts_with(&workspace.path))
+                })
             })
-        });
-        if contains_history {
+            .map(|record| {
+                format!(
+                    "#{}{}",
+                    record.id.0,
+                    if record.disposition == crate::retained::Disposition::Archived {
+                        " (archived)"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        if !history_holders.is_empty() {
             return Err(lifecycle_error(
                 ErrorCode::Conflict,
-                "workspace contains recorded provider history; preserve it outside the worktree and update its provider reference before removal",
+                format!(
+                    "sessions {} record provider history inside this worktree; preserve it outside the worktree and update the provider reference, or `ovrcr terminal remove <id>` to drop the record before removal",
+                    history_holders.join(", ")
+                ),
             ));
         }
         // A directory deleted outside OVRCR has nothing left to protect;

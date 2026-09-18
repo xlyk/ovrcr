@@ -86,6 +86,13 @@ A recorded provider-history path inside the worktree also blocks removal, even
 if Git ignores that file. Preserve it outside the worktree and have the provider
 report its new reference before retrying.
 
+Each refusal names the blocking session ids, marking archived rows, which
+`terminal list` hides by default. Clear an unacknowledged stopped row with
+`terminal acknowledge-stopped ID` or `terminal remove ID`, or pass `--force`.
+A history holder has no `--force` path: move the history and update its
+reference, or `terminal remove ID` to drop the record; the worktree removal
+then deletes the files with the worktree.
+
 Registry removal and archive transitions commit together. A storage error before
 Git removal or a Git refusal leaves the records unarchived. If Git removes the
 worktree but the database commit fails, the command reports partial failure and
