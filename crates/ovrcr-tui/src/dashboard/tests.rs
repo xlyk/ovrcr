@@ -3374,3 +3374,39 @@ fn inactive_to_live_clears_prior_view_state_and_keeps_the_row() {
     );
     assert!(!dashboard.pane_ready(&dashboard.panes[0]));
 }
+
+#[test]
+fn root_workspace_sorts_first_regardless_of_name() {
+    use super::TreeRow;
+    use crate::protocol::{ProjectSummary, WorkspaceSummary};
+    let workspace = |name: &str, root: bool| WorkspaceSummary {
+        project: "p".into(),
+        name: name.into(),
+        id: name.into(),
+        root,
+        warning: None,
+        path: format!("/tmp/{name}").into(),
+        sessions: Vec::new(),
+    };
+    let mut dashboard = Dashboard::new(TerminalSize {
+        rows: 40,
+        cols: 120,
+    });
+    dashboard.hierarchy.projects.push(ProjectSummary {
+        name: "p".into(),
+        workspaces: vec![
+            workspace("aaa", false),
+            workspace("main", true),
+            workspace("feature/x", false),
+        ],
+    });
+    let ids = dashboard
+        .visible_rows()
+        .into_iter()
+        .filter_map(|row| match row {
+            TreeRow::Workspace { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["main", "aaa", "feature/x"]);
+}

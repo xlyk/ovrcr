@@ -1054,7 +1054,8 @@ impl Dashboard {
                 continue;
             }
             let mut workspaces = project.workspaces.iter().collect::<Vec<_>>();
-            workspaces.sort_by(|left, right| left.name.cmp(&right.name));
+            workspaces
+                .sort_by(|left, right| (!left.root, &left.name).cmp(&(!right.root, &right.name)));
             for workspace in workspaces {
                 rows.push(TreeRow::Workspace {
                     project: project.name.clone(),
