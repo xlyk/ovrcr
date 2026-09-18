@@ -711,19 +711,21 @@ pub(super) fn handle_request_with_id(
             }
             result.map_or_else(error_for_lifecycle, |_| Response::Ok)
         }
-        Request::RemoveWorkspace { project, name } => {
-            state.remove_workspace(&project, &name).map_or_else(
-                |error| lifecycle_response_with_partial_hierarchy(state, error),
-                |_| {
-                    state
-                        .dashboard
-                        .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
-                            state.hierarchy(),
-                        )));
-                    Response::Ok
-                },
-            )
-        }
+        Request::RemoveWorkspace {
+            project,
+            name,
+            force,
+        } => state.remove_workspace(&project, &name, force).map_or_else(
+            |error| lifecycle_response_with_partial_hierarchy(state, error),
+            |_| {
+                state
+                    .dashboard
+                    .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
+                        state.hierarchy(),
+                    )));
+                Response::Ok
+            },
+        ),
         Request::CreateSession(request) => state.create_session(request).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
             |summary| {

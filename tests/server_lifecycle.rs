@@ -1481,6 +1481,7 @@ fn workspace_remove_succeeds_after_directory_deleted() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: "work".into(),
+            force: false,
         }),
         Response::Ok
     );
@@ -1868,6 +1869,80 @@ fn backpressured_input_and_send_do_not_block_inspect_or_kill() {
 }
 
 #[test]
+fn forced_workspace_removal_acknowledges_uncertain_rows_but_never_live_ones() {
+    let _env_lock = env_lock();
+    let fixture = ControlFixture::new();
+    fixture.ready("feature/force");
+    let local = fixture.only_session_id();
+    let review = fixture.create_session("review", vec!["sh".into(), "-c".into(), "exit 0".into()]);
+    fixture.wait_exited(review);
+    // Filing the exited row hides it from the sidebar but keeps its ownership
+    // uncertainty: the exact state that blocked removal in the field.
+    assert_eq!(
+        fixture.request(Request::CloseTerminal {
+            session: review,
+            expected_run: fixture.session_summary(review).run,
+        }),
+        Response::Ok
+    );
+    let worktree = fixture.workspace_root.join("work");
+    std::fs::write(worktree.join("dirty"), "discard me").unwrap();
+    let remove = |force: bool| Request::RemoveWorkspace {
+        project: "fixture".into(),
+        name: "work".into(),
+        force,
+    };
+    // A live shell blocks even a forced removal.
+    for force in [false, true] {
+        assert!(
+            matches!(
+                fixture.request(remove(force)),
+                Response::Error {
+                    code: ErrorCode::SessionsRemain,
+                    ..
+                }
+            ),
+            "live session must block removal with force={force}"
+        );
+    }
+    assert_eq!(
+        fixture.request(Request::KillSession { session: local }),
+        Response::Ok
+    );
+    fixture.wait_exited(local);
+    assert!(matches!(
+        fixture.request(remove(false)),
+        Response::Error {
+            code: ErrorCode::SessionsRemain,
+            ..
+        }
+    ));
+    assert_eq!(fixture.request(remove(true)), Response::Ok);
+    assert!(
+        !worktree.exists(),
+        "forced removal discards the dirty worktree"
+    );
+    assert!(
+        fixture
+            .git_output(&["show-ref", "--verify", "refs/heads/feature/force"])
+            .status
+            .success(),
+        "the branch survives a forced removal"
+    );
+    let Response::Inventory { sessions, .. } = fixture.request(Request::Inspect) else {
+        panic!("inspect")
+    };
+    let filed = sessions.iter().find(|row| row.id == review).unwrap();
+    assert!(filed.archived, "{filed:?}");
+    assert!(
+        filed.recovery.as_ref().is_none_or(|r| !r.requires_ack),
+        "force acknowledges the filed row: {filed:?}"
+    );
+    fixture.request(Request::Shutdown { kill: true });
+    fixture.join();
+}
+
+#[test]
 fn control_lifecycle_enforces_every_removal_gate() {
     let _env_lock = env_lock();
     let fixture = ControlFixture::new();
@@ -1900,7 +1975,8 @@ fn control_lifecycle_enforces_every_removal_gate() {
     assert!(matches!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
-            name: "work".into()
+            name: "work".into(),
+            force: false
         }),
         Response::Error {
             code: ErrorCode::SessionsRemain,
@@ -1916,7 +1992,8 @@ fn control_lifecycle_enforces_every_removal_gate() {
     assert!(matches!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
-            name: "work".into()
+            name: "work".into(),
+            force: false
         }),
         Response::Error {
             code: ErrorCode::SessionsRemain,
@@ -1948,7 +2025,8 @@ fn control_lifecycle_enforces_every_removal_gate() {
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
-            name: "work".into()
+            name: "work".into(),
+            force: false
         }),
         Response::Ok
     );
@@ -2006,7 +2084,8 @@ fn workspace_shell_failure_retains_worktree_and_registry() {
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
-            name: "failed".into()
+            name: "failed".into(),
+            force: false
         }),
         Response::Ok
     );
@@ -2057,7 +2136,8 @@ fn fast_exit_session_is_retained_as_exited() {
     assert_eq!(
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
-            name: "work".into()
+            name: "work".into(),
+            force: false
         }),
         Response::Ok
     );
@@ -2224,6 +2304,7 @@ fn pause_resume_server_refuses_removal_and_late_mutation() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: "work".into(),
+            force: false,
         }),
         Response::Ok
     );
@@ -4557,6 +4638,7 @@ fn slow_dashboard_recovers_after_output_burst() {
     fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "work".into(),
+        force: false,
     });
     fixture.request(Request::RemoveProject {
         name: "fixture".into(),
@@ -4665,6 +4747,7 @@ fn concurrent_terminal_sends_are_serialized_as_complete_pastes() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: "work".into(),
+            force: false,
         }),
         Response::Ok
     );
@@ -4897,6 +4980,7 @@ fn resource_terminal_requests_preserve_background_state_and_close_cleanly() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: "work".into(),
+            force: false,
         }),
         Response::Ok
     );
@@ -5032,6 +5116,7 @@ fn fifty_sessions_survive_detach_and_leave_no_process_groups() {
     fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "work".into(),
+        force: false,
     });
     fixture.request(Request::RemoveProject {
         name: "fixture".into(),

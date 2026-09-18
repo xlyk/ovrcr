@@ -335,7 +335,11 @@ highlighted; Enter accepts it and opens confirmation. Closing a live terminal op
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. Confirmed workspace
 removal archives stopped records with their original paths. Live or ownership-uncertain
-sessions block removal, even when archived. Projects must have their workspaces
+sessions block removal, even when archived; the Archived sessions page offers
+"Acknowledge stopped" for such rows. A removal refused for uncertain sessions or a
+dirty worktree reopens as a forced removal: confirming it acknowledges the stopped
+processes and discards uncommitted changes, while live sessions and active task
+runs still block. Projects must have their workspaces
 removed first; unregistering a project keeps archived context. `Space w n`
 creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for

@@ -1681,6 +1681,7 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
     let remove = Request::RemoveWorkspace {
         project: live::PROJECT.into(),
         name: live::WORKSPACE.into(),
+        force: false,
     };
     assert!(matches!(
         live.request(remove.clone()),
@@ -1848,6 +1849,7 @@ fn workspace_removal_protects_provider_history_inside_an_ignored_directory() {
         let response = live.request(Request::RemoveWorkspace {
             project: live::PROJECT.into(),
             name: live::WORKSPACE.into(),
+            force: false,
         });
         assert!(
             matches!(&response, Response::Error { code: ErrorCode::Conflict, message } if message.contains("provider history")),
