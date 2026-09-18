@@ -8767,7 +8767,7 @@ exit 19
         ("--unknown-mode", "2.1.267", "normal"),
         ("doctor", "2.1.267", "normal"),
         ("--model=sonnet", "2.1.266", "normal"),
-        ("--model=sonnet", "2.2.0", "normal"),
+        ("--model=sonnet", "2.0.9", "normal"),
         ("--model=sonnet", "fail", "normal"),
         ("--model=sonnet", "timeout", "normal"),
         ("--model=sonnet", "2.1.267", "blocked"),

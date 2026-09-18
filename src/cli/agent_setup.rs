@@ -148,7 +148,7 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
             }
         }
         eprintln!(
-            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with stable Claude Code >=2.1.267 and <2.2.0; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher throughout the range: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support the exact separate-token form claude -r UUID",
+            "Review the printed JSON and merge it into the intended Claude settings file. No file was written. Use synchronous command hooks with stable Claude Code >=2.1.267; supplied settings do not prove effective enterprise/plugin configuration. Fresh launcher inside an OVRCR session: {} agent run --provider claude -- claude. Initial resume launcher throughout the range: {} agent run --provider claude -- claude --resume UUID. Claude Code 2.1.268 and later compatible patches also support the exact separate-token form claude -r UUID",
             quote(&executable),
             quote(&executable)
         );
@@ -165,6 +165,85 @@ pub(super) fn setup(path: Option<&Path>) -> AppResult<()> {
     Ok(())
 }
 
+/// Hook events and status line a supplied Claude settings object fails to report through.
+fn configuration_issues(value: &Value, executable: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    for event in HOOKS {
+        let mut present = false;
+        if let Some(groups) = value
+            .get("hooks")
+            .and_then(|hooks| hooks.get(*event))
+            .and_then(Value::as_array)
+        {
+            for group in groups {
+                let all_events = group
+                    .get("matcher")
+                    .is_none_or(|matcher| matches!(matcher.as_str(), Some("" | "*")));
+                if let Some(handlers) = group.get("hooks").and_then(Value::as_array) {
+                    for handler in handlers {
+                        let command = handler.get("command").and_then(Value::as_str).unwrap_or("");
+                        if command.contains("report claude") {
+                            if handler.get("async").and_then(Value::as_bool) == Some(true) {
+                                issues.push(format!("{event}:asynchronous_reporting_unsupported"));
+                            }
+                            if (command
+                                == format!(
+                                    "{MARKER}{} report claude --stdin-json",
+                                    quote(executable)
+                                )
+                                || exact(command, executable, "claude"))
+                                && all_events
+                                && handler.get("type").and_then(Value::as_str) == Some("command")
+                                && handler.get("async").is_none_or(|value| value == false)
+                            {
+                                present = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !present {
+            issues.push(format!("{event}:synchronous_reporter_missing"));
+        }
+    }
+    let status = value
+        .get("statusLine")
+        .and_then(|line| line.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if value
+        .get("statusLine")
+        .and_then(|line| line.get("type"))
+        .and_then(Value::as_str)
+        != Some("command")
+        || !supported_statusline(status, executable)
+    {
+        issues.push("statusline_reporting_unverified".into());
+    }
+    issues
+}
+
+/// Dashboard boot check: Claude on PATH whose settings carry no synchronous OVRCR reporter.
+pub(super) fn boot_hook_warning() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find(|dir| dir.join("claude").is_file())?;
+    let settings_path = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(".claude")))?
+        .join("settings.json");
+    let issues = match settings(Some(&settings_path)) {
+        Ok(value) => configuration_issues(&value, &binary().ok()?),
+        Err(_) => vec!["settings_unreadable_or_invalid".into()],
+    };
+    (!issues.is_empty()).then(|| {
+        let shown = settings_path.display();
+        format!(
+            "Claude reporting hooks missing in {shown}: run `ovrcr agent setup claude --print --settings {shown}` and merge the result"
+        )
+    })
+}
+
 pub(super) fn doctor(
     path: Option<&Path>,
     session: Option<u64>,
@@ -176,9 +255,9 @@ pub(super) fn doctor(
     if supported.is_none() {
         remediation.push(match probe.observed() {
             Some(version) => format!(
-                "Detected Claude Code {version}; install/select stable Claude Code >=2.1.267 and <2.2.0 and rerun doctor."
+                "Detected Claude Code {version}; install/select stable Claude Code >=2.1.267 and rerun doctor."
             ),
-            None => "The bounded executable version probe was unavailable; install/select stable Claude Code >=2.1.267 and <2.2.0 and rerun doctor.".into(),
+            None => "The bounded executable version probe was unavailable; install/select stable Claude Code >=2.1.267 and rerun doctor.".into(),
         });
     }
     let mut issues = Vec::<String>::new();
@@ -190,63 +269,7 @@ pub(super) fn doctor(
         }
         (Some(_), Ok(value)) => {
             let executable = binary().map_err(RuntimeError::internal)?;
-            for event in HOOKS {
-                let mut present = false;
-                if let Some(groups) = value
-                    .get("hooks")
-                    .and_then(|hooks| hooks.get(*event))
-                    .and_then(Value::as_array)
-                {
-                    for group in groups {
-                        let all_events = group
-                            .get("matcher")
-                            .is_none_or(|matcher| matches!(matcher.as_str(), Some("" | "*")));
-                        if let Some(handlers) = group.get("hooks").and_then(Value::as_array) {
-                            for handler in handlers {
-                                let command =
-                                    handler.get("command").and_then(Value::as_str).unwrap_or("");
-                                if command.contains("report claude") {
-                                    if handler.get("async").and_then(Value::as_bool) == Some(true) {
-                                        issues.push(format!(
-                                            "{event}:asynchronous_reporting_unsupported"
-                                        ));
-                                    }
-                                    if (command
-                                        == format!(
-                                            "{MARKER}{} report claude --stdin-json",
-                                            quote(&executable)
-                                        )
-                                        || exact(command, &executable, "claude"))
-                                        && all_events
-                                        && handler.get("type").and_then(Value::as_str)
-                                            == Some("command")
-                                        && handler.get("async").is_none_or(|value| value == false)
-                                    {
-                                        present = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if !present {
-                    issues.push(format!("{event}:synchronous_reporter_missing"));
-                }
-            }
-            let status = value
-                .get("statusLine")
-                .and_then(|line| line.get("command"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if value
-                .get("statusLine")
-                .and_then(|line| line.get("type"))
-                .and_then(Value::as_str)
-                != Some("command")
-                || !supported_statusline(status, &executable)
-            {
-                issues.push("statusline_reporting_unverified".into());
-            }
+            issues.extend(configuration_issues(&value, &executable));
             if issues.is_empty() {
                 "supplied_file_supported"
             } else {
@@ -341,4 +364,32 @@ pub(super) fn with_version_probe<T>(probe: impl FnOnce() -> T) -> AppResult<T> {
         )));
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn configuration_issues_flag_missing_hooks_and_accept_setup_output() {
+        let executable = "/opt/ovrcr";
+        let empty = configuration_issues(&json!({}), executable);
+        assert_eq!(empty.len(), HOOKS.len() + 1);
+        assert!(empty.contains(&"Stop:synchronous_reporter_missing".to_owned()));
+        assert!(empty.contains(&"statusline_reporting_unverified".to_owned()));
+        let command = format!("{MARKER}{} report claude --stdin-json", quote(executable));
+        let mut composed = json!({"statusLine":{"type":"command","command":format!("{MARKER}{} report claude-statusline --stdin-json", quote(executable))}});
+        for event in HOOKS {
+            composed["hooks"][*event] =
+                json!([{"hooks":[{"type":"command","command":command,"timeout":2,"async":false}]}]);
+        }
+        assert!(configuration_issues(&composed, executable).is_empty());
+        composed["hooks"]["Stop"][0]["hooks"][0]["async"] = json!(true);
+        assert_eq!(
+            configuration_issues(&composed, executable),
+            [
+                "Stop:asynchronous_reporting_unsupported",
+                "Stop:synchronous_reporter_missing"
+            ]
+        );
+    }
 }

@@ -41,14 +41,11 @@ pub fn parse(version: &str) -> Option<[u32; 3]> {
 
 impl Policy {
     pub fn accepts(self, version: &str) -> bool {
-        parse(version).is_some_and(|v| v[..2] == self.minimum[..2] && v[2] >= self.minimum[2])
+        parse(version).is_some_and(|v| v >= self.minimum)
     }
     pub fn range(self) -> String {
         let [major, minor, patch] = self.minimum;
-        format!(
-            ">={major}.{minor}.{patch}, <{major}.{}.0 (stable only)",
-            minor + 1
-        )
+        format!(">={major}.{minor}.{patch} (stable only)")
     }
     pub fn tested(self, version: Option<&str>) -> bool {
         version.is_some_and(|v| self.tested.contains(&v))
@@ -59,7 +56,7 @@ impl Policy {
 mod tests {
     use super::*;
     #[test]
-    fn compatibility_requires_stable_same_minor_at_or_above_floor() {
+    fn compatibility_requires_stable_release_at_or_above_floor() {
         for (policy, good, bad) in [
             (CLAUDE, "2.1.274", "2.1.266"),
             (CODEX, "0.153.9", "0.152.9"),
@@ -70,9 +67,9 @@ mod tests {
             assert!(!policy.accepts(bad));
             let [a, b, c] = policy.minimum;
             assert!(policy.accepts(&format!("{a}.{b}.{c}")));
+            assert!(policy.accepts(&format!("{a}.{}.0", b + 1)));
+            assert!(policy.accepts(&format!("{}.0.0", a + 1)));
             for version in [
-                format!("{a}.{}.0", b + 1),
-                format!("{}.{b}.{c}", a + 1),
                 format!("{good}-beta"),
                 format!("{good}+local"),
                 format!("0{good}"),

@@ -203,7 +203,7 @@ do not close sessions.
 
 | Command | Contract |
 | --- | --- |
-| `agent run --provider claude -- claude [ARGS...]` | Supervise a stable Claude Code >=2.1.267 and <2.2.0 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. 2.1.268 and later compatible patches also accept separate-token `-r UUID`. Does not start a server. |
+| `agent run --provider claude -- claude [ARGS...]` | Supervise a stable Claude Code >=2.1.267 fresh interactive invocation, or a separate-token `--resume UUID` invocation, inside an OVRCR PTY. 2.1.268 and later compatible patches also accept separate-token `-r UUID`. Does not start a server. |
 | `agent run pi -- pi [ARGS...]` | Supervise an interactive Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (confirmed at Pi's settled boundary), Error and Idle; creates Unread and Ready alerts. Help, version, print, RPC, JSON, export and package commands run native with reporting unavailable. |
 | `agent run omp -- omp [ARGS...]` | Supervise an interactive Oh My Pi launch inside an OVRCR PTY; the owned reporting extension is loaded beside the user's own. Reports Busy, Ready (observed at an end without continuation), Error and Idle; creates Unread and Ready alerts. Headless modes run native with reporting unavailable. |
 | `agent setup pi\|omp --print` | Print the managed-launch contract; nothing to write. |

@@ -1948,7 +1948,7 @@ fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     .unwrap();
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    assert!(help.contains("Claude Code >=2.1.267 and <2.2.0"));
+    assert!(help.contains("Claude Code >=2.1.267"));
     assert!(help.contains("2.1.268 and later compatible patches also accept -r UUID"));
 }
 

@@ -65,6 +65,7 @@ fn run(cli: Cli) -> AppResult<()> {
         return run_dashboard(
             connect_or_start(&paths).map_err(RuntimeError::internal)?,
             dashboard_settings_path().map_err(RuntimeError::internal)?,
+            agent_setup::boot_hook_warning(),
         )
         .map_err(RuntimeError::internal);
     };

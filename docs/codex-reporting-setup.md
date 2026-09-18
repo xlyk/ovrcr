@@ -1,6 +1,6 @@
 # Codex response readiness setup
 
-**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using stable Codex CLI **>=0.153.0, <0.154.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
+**Exact Codex CLI 0.153.0 hooks-only support passed acceptance at reviewed revision `56b84f9`.** The implemented milestone reports the terminal's **last observed root turn** using stable Codex CLI **>=0.153.0** synchronous hooks. It does not track the continuously selected history entry or collect metrics. The broader source investigation remains blocked; see the history below.
 
 That acceptance used a disposable fixture. It does not establish that your installed OVRCR binary, running server, Codex configuration or native hook trust is ready. Follow [How to install Codex readiness reporting](codex-ready-installation.md) to prepare an exact-revision build, review the configuration change, protect existing sessions during a server transition, and verify the installed result.
 

@@ -577,7 +577,7 @@ fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets
         assert_eq!(value["probe_status"], "supported");
     }
     let executable = root.path().join("codex version with spaces");
-    for response in ["codex-cli 0.152.0", "codex-cli 0.154.0", "NEVER_PRINT_ME"] {
+    for response in ["codex-cli 0.152.0", "codex-cli 0.152.9", "NEVER_PRINT_ME"] {
         std::fs::write(
             &executable,
             format!("#!/bin/sh\nprintf '%s\\n' '{response}'\n"),
@@ -679,20 +679,20 @@ fn doctor_distinguishes_compatible_patches_from_tested_releases() {
         ("claude", "2.1.267 (Claude Code)", true, true),
         ("claude", "2.1.274 (Claude Code)", true, false),
         ("claude", "2.1.266 (Claude Code)", false, false),
-        ("claude", "2.2.0 (Claude Code)", false, false),
+        ("claude", "2.2.0 (Claude Code)", true, false),
         ("claude", "2.1.274-beta (Claude Code)", false, false),
         ("codex", "codex-cli 0.153.0", true, true),
         ("codex", "codex-cli 0.153.1", true, false),
-        ("codex", "codex-cli 0.154.0", false, false),
+        ("codex", "codex-cli 0.154.0", true, false),
         ("codex", "codex-cli 0.153.1+local", false, false),
         ("pi", "0.85.1", true, true),
         ("pi", "0.85.2", true, false),
         ("pi", "0.85.0", false, false),
-        ("pi", "0.86.0", false, false),
+        ("pi", "0.86.0", true, false),
         ("omp", "omp/18.2.2", true, false),
         ("omp", "omp/18.2.3", true, false),
         ("omp", "omp/18.2.1", false, false),
-        ("omp", "omp/18.3.0", false, false),
+        ("omp", "omp/18.3.0", true, false),
         ("omp", "omp/18.2.3-beta", false, false),
     ] {
         let executable = root.path().join(provider);
