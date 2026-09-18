@@ -1,0 +1,5 @@
+There has been no change in the accessibility tree for Window: "OVRCR GUI".
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 43656  elapsed: 0m  agent unknown  local (#2)                                                                            
+  󰘬 auth-handoff                       │local (#2)                                                                                                                    
+▌    $ lo

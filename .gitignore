@@ -1,2 +1,5 @@
 /target/
 /.worktrees/
+.DS_Store
+.claude/
+.scratch

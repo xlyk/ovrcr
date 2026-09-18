@@ -1,0 +1,12 @@
+   Compiling ovrcr-runtime v0.1.0 (/private/tmp/ovrcr-acceptance-127-131/crates/ovrcr-runtime)
+   Compiling ovrcr v0.1.0 (/private/tmp/ovrcr-acceptance-127-131)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.28s
+     Running tests/retained_sessions.rs (target/debug/deps/retained_sessions-31fa517f113e0015)
+
+running 3 tests
+test workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_failures ... ok
+test workspace_removal_protects_provider_history_inside_an_ignored_directory ... ok
+test workspace_removal_retains_archive_context_through_project_removal_and_restart ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 6.50s
+

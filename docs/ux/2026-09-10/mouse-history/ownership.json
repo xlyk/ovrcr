@@ -1,0 +1,80 @@
+[
+  {
+    "pid": 72495,
+    "ppid": 71484,
+    "pgid": 71425,
+    "command": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr-gui"
+  },
+  {
+    "pid": 72752,
+    "ppid": 72495,
+    "pgid": 71425,
+    "command": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr server"
+  },
+  {
+    "pid": 73220,
+    "ppid": 72752,
+    "pgid": 73220,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 73345,
+    "ppid": 72752,
+    "pgid": 73345,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 73422,
+    "ppid": 72752,
+    "pgid": 73422,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 73568,
+    "ppid": 72752,
+    "pgid": 73568,
+    "command": "/bin/zsh"
+  },
+  {
+    "pid": 73578,
+    "ppid": 72752,
+    "pgid": 73578,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73589,
+    "ppid": 72752,
+    "pgid": 73589,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73597,
+    "ppid": 72752,
+    "pgid": 73597,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73602,
+    "ppid": 72752,
+    "pgid": 73602,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73610,
+    "ppid": 72752,
+    "pgid": 73610,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73616,
+    "ppid": 72752,
+    "pgid": 73616,
+    "command": "/bin/sh -i"
+  },
+  {
+    "pid": 73617,
+    "ppid": 72495,
+    "pgid": 73617,
+    "command": "/Users/xlyk/Code/ovrcr/target/OVRCR GUI.app/Contents/MacOS/ovrcr"
+  }
+]

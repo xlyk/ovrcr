@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 73345  elapsed: 0m  agent unknown                                                                                        
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable) ▼ 󰉋 consigint                          │pid: 73345  elapsed: 0m  agent unknown                                                                                        
+		5 text (settable)   ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+		6 text (settable)   - local                              │auth-handoff › printf 'UX_PASS_%s\n' INPUT_OK; printf 'ASCII 界🙂 tail\n'                                                     
+		7 text (settable)      ├ terminal                        │UX_PASS_INPUT_OK                                                                                                              
+		8 text (settable)      └ run 0m  ctx —                   │ASCII 界🙂 tail                                                                                                               
+		9 text (settable)   - review auth handoff                │auth-handoff ›                                                                                                                
+		10 text (settable)      ├ grok / grok-4.6                 │                                                                                                                              
+		11 text (settable)      └ run 0m  ctx —                   │                                                                                                                              
+		12 text (settable)                                        │                                                                                                                              
+		13 text (settable)   ▼ worktree-lifecycle                 │                                                                                                                              
+		14 text (settable)   - local                              │                                                                                                                              
+		15 text (settable)      ├ terminal                        │                                                                                                                              
+		16 text (settable)      └ run 0m  ctx —                   │                                                                                                                              
+		17 text (settable)   - implement lifecycle cleanup        │                                                                                                                              
+		18 text (settable)      ├ claude / sonnet-4               │                                                                                                                              
+		19 text (settable)      └ run 0m  ctx —                   │                                                                                                                              
+		20 text (settable)   - review websocket shutdown          │                                                                                                                              
+		21 text (settable)      ├ codex / gpt-5.4                 │                                                                                                                              
+		22 text (settable)      └ run 0m  ctx —                   │                                                                                                                              
+		23 text (settable)   - plan snapshot restore              │                                                                                                                              
+		24 text (settable)      ├ pi / grok-4.6                   │  ┌ Command palette ───────────────────────────────────────────────────────────────┐                                          
+		25 text (settable)      └ run 0m  ctx —                   │  │Search: history▏                                                                │                                          
+		26 text (settable)                                        │  │› History                                                                       │                                          
+		27 text (settable) ▼ 󰉋 spacelift-agent                    │  │  PageUp — Read frozen output from local (#2) in consigint / auth-handoff; sessi│                                          
+		28 text (settable)   ▼ pipeline-progress-v2               │  │                                                                                │                                          
+		29 text (settable)   - local                              │  │                                                                                │                                          
+		30 text (settable)      ├ terminal                        │  │                                                                                │                                          
+		31 text (settable)      └ run 0m  ctx —                   │  │                                                                                │                                          
+		32 text (settable)   - build pipeline progress            │  │                                                                                │                                          
+		33 text (settable)      ├ claude / opus-4                 │  │                                                                                │                                          
+		34 text (settable)      └ run 0m  ctx —                   │  │                                                                                │                                          
+		35 text (settable)                                        │  │                                                                                │                                          
+		36 text (settable)   ▼ scope-quality                      │  │                                                                                │                                          
+		37 text (settable)   - local                              │  │PageUp — Read frozen output from local (#2) in consigint / auth-handoff;        │                                          
+		38 text (settable)      ├ terminal                        │  │sessions keep running                                                           │                                          
+		39 text (settable)      └ run 0m  ctx —                   │  │↑/↓ select · Enter continue · Esc cancel                                        │                                          
+		40 text (settable)   - review scope quality               │  │                                                                                │                                          
+		41 text (settable)      ├ codex / gpt-5.4                 │  │[Open] [Cancel]                                                                 │                                          
+		42 text (settable)      └ run 0m  ctx —                   │  └────────────────────────────────────────────────────────────────────────────────┘                                          
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │                                                                                                                              
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │                                                                                                                              
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │                                                                                                                              
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │                                                                                                                              
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │                                                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │                                                                                                                              
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │                                                                                                                              
+		63 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader                   
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+▼ 󰉋 consigint                          │pid: 73345  elapsed: 0m  agent unknown                                                                                        
+  ▼ auth-handoff                       │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - local

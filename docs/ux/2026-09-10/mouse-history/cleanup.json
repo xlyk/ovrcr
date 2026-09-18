@@ -1,0 +1,36 @@
+{
+  "root": "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-u0oiCE",
+  "socket": "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-u0oiCE/server.sock",
+  "root_absent": true,
+  "socket_absent": true,
+  "launcher_exit": 0,
+  "pids": {
+    "72495": "ProcessLookupError",
+    "72752": "ProcessLookupError",
+    "73220": "ProcessLookupError",
+    "73345": "ProcessLookupError",
+    "73422": "ProcessLookupError",
+    "73568": "ProcessLookupError",
+    "73578": "ProcessLookupError",
+    "73589": "ProcessLookupError",
+    "73597": "ProcessLookupError",
+    "73602": "ProcessLookupError",
+    "73610": "ProcessLookupError",
+    "73616": "ProcessLookupError",
+    "73617": "ProcessLookupError"
+  },
+  "pgids": {
+    "71425": "ProcessLookupError",
+    "73220": "ProcessLookupError",
+    "73345": "ProcessLookupError",
+    "73422": "ProcessLookupError",
+    "73568": "ProcessLookupError",
+    "73578": "ProcessLookupError",
+    "73589": "ProcessLookupError",
+    "73597": "ProcessLookupError",
+    "73602": "ProcessLookupError",
+    "73610": "ProcessLookupError",
+    "73616": "ProcessLookupError",
+    "73617": "ProcessLookupError"
+  }
+}

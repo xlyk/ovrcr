@@ -1,0 +1,72 @@
+{
+  "root_exists": false,
+  "socket_exists": false,
+  "groups": [
+    {
+      "id": 1,
+      "pid": 43634,
+      "pgid": 43634,
+      "state": "absent"
+    },
+    {
+      "id": 2,
+      "pid": 43656,
+      "pgid": 43656,
+      "state": "absent"
+    },
+    {
+      "id": 3,
+      "pid": 43676,
+      "pgid": 43676,
+      "state": "absent"
+    },
+    {
+      "id": 4,
+      "pid": 43697,
+      "pgid": 43697,
+      "state": "absent"
+    },
+    {
+      "id": 5,
+      "pid": 43699,
+      "pgid": 43699,
+      "state": "absent"
+    },
+    {
+      "id": 6,
+      "pid": 43701,
+      "pgid": 43701,
+      "state": "absent"
+    },
+    {
+      "id": 7,
+      "pid": 43703,
+      "pgid": 43703,
+      "state": "absent"
+    },
+    {
+      "id": 8,
+      "pid": 43705,
+      "pgid": 43705,
+      "state": "absent"
+    },
+    {
+      "id": 9,
+      "pid": 43707,
+      "pgid": 43707,
+      "state": "absent"
+    },
+    {
+      "id": 10,
+      "pid": 43709,
+      "pgid": 43709,
+      "state": "absent"
+    },
+    {
+      "id": 12,
+      "pid": 88954,
+      "pgid": 88954,
+      "state": "absent"
+    }
+  ]
+}

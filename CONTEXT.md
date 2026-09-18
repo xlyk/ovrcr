@@ -4,6 +4,22 @@ Synchronous terminal multiplexer. One server owner, one active dashboard, fifty 
 
 ## Language
 
+**Retained session**:
+A session whose identity and workspace placement remain available after its process ends or the server restarts. Agent sessions retain a reference to their provider-owned conversation; both Agent and Terminal launches have retained sessions.
+_Avoid_: live process, running terminal as interchangeable terms
+
+**Archived session**:
+A retained session the user has closed and removed from the active list without deleting its record or the agent's own conversation history. Process exit and an agent's suggestion to close do not themselves archive a session.
+_Avoid_: deleted session, exited process, closed pane
+
+**Conversation resume**:
+An explicit user action to continue an agent's previous conversation where the provider supports it.
+_Avoid_: restoring history, reattaching to a live process, automatic execution
+
+**Conversation reference**:
+The provider identity and unique conversation identifier needed to reopen an agent's saved conversation.
+_Avoid_: transcript, terminal output, most recent conversation
+
 **Session title**:
 The name shown for a terminal session. It can follow the running application's title or remain pinned to a name chosen by the user; changing it does not change which session it identifies.
 _Avoid_: session identity, agent label, workspace name as interchangeable terms

@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: closed  elapsed: 1m  local (#2)                                                                                          
+  󰘬 auth-handoff                       │local (#2)                                                                                                                    
+▌    · lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│pid: closed  elapsed: 1m  local (#2)                                                                                          
+		5 text (settable)   󰘬 auth-handoff                       │local (#2)                                                                                                                    
+		6 text (settable) ▌    · local                           │sh-3.2$ printf 'ACCEPT_%s\n' CANCEL_OK; printenv OVRCR_CONFIG; printenv OVRCR_SOCKET                                          
+		7 text (settable)      · review auth handoff        grok │ACCEPT_CANCEL_OK                                                                                                              
+		8 text (settable)   󰘬 worktree-lifecycle                 │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JqJCtn/config.toml                                                 
+		9 text (settable)      $ local                           │/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr-gui-JqJCtn/server.sock                                                 
+		10 text (settable)      - implement lifecycle cl…  claude │sh-3.2$                                                                                                                       
+		11 text (settable)      - review websocket shutdo…  codex │                                                                                                                              
+		12 text (settable)      - plan snapshot restore        pi │                                                                                                                              
+		13 text (settable)                                        │                                                                                                                              
+		14 text (settable)  SPACELIFT-AGENT ──────────────────────│                                                                                                                              
+		15 text (settable)   󰘬 pipeline-progress-v2               │                                                                                                                              
+		16 text (settable)      $ local                           │                                                                                                                              
+		17 text (settable)      - build pipeline progress  claude │                                                                                                                              
+		18 text (settable)   󰘬 scope-quality                      │                                                                                                                              
+		19 text (settable)      $ local                           │                                                                                                                              
+		20 text (settable)      - review scope quality      codex │                                                                                                                              
+		21 text (settable)                                        │                                                                                                                              
+		22 text (settable)                                        │                                                                                                                              
+		23 text (settable)                                        │                                                                                                                              
+		24 text (settable)                                        │  ┌ Confirm action ────────────────────────────────────────────────────────────────┐                                          
+		25 text (settable)                                        │  │Remove workspace consigint / auth-handoff. Remove its clean worktree; keep the  │                                          
+		26 text (settable)                                        │  │branch. Archive stopped sessions with their original paths. Live or             │                                          
+		27 text (settable)                                        │  │ownership-uncertain sessions block removal.                                     │                                          
+		28 text (settable)                                        │  │                                                                                │                                          
+		29 text (settable)                                        │  │                                                                                │                                          
+		30 text (settable)                                        │  │                                                                                │                                          
+		31 text (settable)                                        │  │                                                                                │                                          
+		32 text (settable)                                        │  │                                                                                │                                          
+		33 text (settable)                                        │  │                                                                                │                                          
+		34 text (settable)                                        │  │                                                                                │                                          
+		35 text (settable)                                        │  │                                                                                │                                          
+		36 text (settable)                                        │  │                                                                                │                                          
+		37 text (settable)                                        │  │SessionsRemain: live or ownership-uncertain sessions remain for workspace       │                                          
+		38 text (settable)                                        │  │consigint/auth-handoff; stop live sessions or acknowledge stopped processes     │                                          
+		39 text (settable)                                        │  │before removal                                                                  │                                          
+		40 text (settable)                                        │  │Esc cancel                                                                      │                                          
+		41 text (settable)                                        │  │[Confirm] [Cancel]                                                              │                                          
+		42 text (settable)                                        │  └────────────────────────────────────────────────────────────────────────────────┘                                          
+		43 text (settable)                                        │                                                                                                                              
+		44 text (settable)                                        │                                                                                                                              
+		45 text (settable)                                        │                                                                                                                              
+		46 text (settable)                                        │                                                                                                                              
+		47 text (settable)                                        │                                                                                                                              
+		48 text (settable)                                        │                                                                                                                              
+		49 text (settable)                                        │                                                                                                                              
+		50 text (settable)                                        │                                                                                                                              
+		51 text (settable)                                        │                                                                                                                              
+		52 text (settable)                                        │                                                                                                                              
+		53 text (settable)                                        │                                                                                                                              
+		54 text (settable)                                        │                                                                                                                              
+		55 text (settable)                                        │                                                                                                                              
+		56 text (settable)                                        │                                                                                                                              
+		57 text (settable)                                        │                                                                                                                              
+		58 text (settable)                                        │                                                                                                                              
+		59 text (settable)                                        │                                                                                                                              
+		60 text (settable)                                        │                                                                                                                              
+		61 text (settable)                                        │                                                                                                                              
+		62 text (settable)                                        │                                                                                                                              
+		63 text (settable) BROWSE  ? Help  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  Space Leader                                         
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: closed  elapsed: 1m  local (#2)                                                                                          
+  󰘬 auth-handoff                       │local (#2)                                                                                                                    
+▌    · lo
