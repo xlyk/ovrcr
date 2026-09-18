@@ -1,6 +1,6 @@
 # How to install Codex readiness reporting
 
-Use the existing hooks-only adapter from PR #56 with exact Codex CLI **0.153.0**. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
+Use the existing hooks-only adapter from PR #56 with stable Codex CLI **>=0.153.0, <0.154.0**. This procedure installs the [last observed root turn contract](codex-reporting-setup.md#what-the-indicator-means). It requires no additional reporter, transcript collector, metrics or notification configuration.
 
 The retained acceptance at `56b84f9` used a disposable macOS fixture. A built artifact, printed configuration and passing doctor are preparation evidence. Mark a host installation ready only after its installed binary, server, effective configuration and native hook delivery pass the check below. Keep preparation, installation and native acceptance results separate.
 
@@ -8,7 +8,7 @@ The retained acceptance at `56b84f9` used a disposable macOS fixture. A built ar
 
 Record the full reviewed OVRCR commit, clean tracked worktree state, build command, artifact path and SHA-256. PR #56 merged as `cadb7a3174701e1666fa0562ebb714593f9d84f3`; use the actual reviewed commit for the artifact being installed and record any source-tree equivalence separately. Package version alone cannot identify the revision.
 
-Set these task-specific variables to inspected absolute paths. `OVRCR_PREP` must be a private task-owned directory. `OVRCR_INSTALL` is the proposed permanent executable, for example `$HOME/.local/bin/ovrcr` when that is the user's chosen installation. Inspect an existing file or symlink before choosing how to replace it. `CODEX_BIN` must have basename `codex` and print exactly `codex-cli 0.153.0`; select the same executable for doctor and the managed launch. A newer version is outside the accepted contract.
+Set these task-specific variables to inspected absolute paths. `OVRCR_PREP` must be a private task-owned directory. `OVRCR_INSTALL` is the proposed permanent executable, for example `$HOME/.local/bin/ovrcr` when that is the user's chosen installation. Inspect an existing file or symlink before choosing how to replace it. `CODEX_BIN` must have basename `codex` and print a stable `codex-cli 0.153.x` version; select the same executable for doctor and the managed launch. Later patches are compatible by policy; native acceptance evidence remains specific to tested versions.
 
 ```sh
 OVRCR_CHECKOUT='/absolute/path/to/reviewed/ovrcr'

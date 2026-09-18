@@ -42,7 +42,7 @@ enum Command {
     RenameTerminal(SessionId),
     ReopenTerminal(SessionId),
     StartNewConversation(SessionId),
-    AcknowledgeStopped(SessionId),
+    AcknowledgeStopped(SessionId, crate::protocol::SessionRunId),
     AgentResumeUnavailable(SessionId),
     RecoverLaunch,
     RegisterProject,
@@ -645,14 +645,19 @@ impl Dashboard {
             Some(Palette {
                 page:
                     Page::Confirm {
-                        request: Some(Request::RemoveWorkspace { project, name }),
+                        request:
+                            Some(Request::RemoveWorkspace {
+                                project,
+                                name,
+                                force,
+                            }),
                         target,
                     },
                 ..
-            }) => Some((project.clone(), name.clone(), target.clone())),
+            }) => Some((project.clone(), name.clone(), *force, target.clone())),
             _ => None,
         };
-        if let Some((project, name, target)) = removal {
+        if let Some((project, name, force, target)) = removal {
             let stale = match find_workspace(self, &project, &name) {
                 None => true,
                 Some(workspace) => {
@@ -661,6 +666,7 @@ impl Dashboard {
                         Request::RemoveWorkspace {
                             project: project.clone(),
                             name: name.clone(),
+                            force,
                         },
                         &heading,
                     );
@@ -830,16 +836,14 @@ impl Dashboard {
                     target: target.into(),
                 }
             }
-            Command::AcknowledgeStopped(id) => {
-                let session = find_session(self, id).expect("acknowledge target exists");
-                Page::Confirm {
-                    request: Some(Request::AcknowledgeSessionStopped {
-                        session: id,
-                        expected_run: session.run,
-                    }),
-                    target: "Acknowledge that previous agent or background processes have stopped, without launching a replacement?".into(),
-                }
-            }
+            // Carries the run so archived rows, absent from the hierarchy, can be acknowledged too.
+            Command::AcknowledgeStopped(id, run) => Page::Confirm {
+                request: Some(Request::AcknowledgeSessionStopped {
+                    session: id,
+                    expected_run: run,
+                }),
+                target: "Acknowledge that previous agent or background processes have stopped, without launching a replacement?".into(),
+            },
             Command::AgentResumeUnavailable(id) => Page::Confirm {
                 request: None,
                 target: find_session(self, id)
@@ -924,7 +928,7 @@ impl Dashboard {
                         row.display_name(),
                         row.id.0
                     );
-                    [
+                    let mut entries = vec![
                         Entry {
                             label: format!("Unarchive: {label}"),
                             command: Command::Unarchive(row.id, row.run),
@@ -937,7 +941,20 @@ impl Dashboard {
                                 row.display_name().to_owned(),
                             ),
                         },
-                    ]
+                    ];
+                    // Filing a row keeps its ownership uncertainty, which blocks
+                    // workspace removal; the archive must offer the acknowledgement.
+                    if row
+                        .recovery
+                        .as_ref()
+                        .is_some_and(|recovery| recovery.requires_ack)
+                    {
+                        entries.push(Entry {
+                            label: format!("Acknowledge stopped: {label}"),
+                            command: Command::AcknowledgeStopped(row.id, row.run),
+                        });
+                    }
+                    entries
                 })
                 .collect();
         }
@@ -1006,7 +1023,7 @@ impl Dashboard {
                         {
                             entries.push(Entry {
                                 label: "Acknowledge stopped processes".into(),
-                                command: Command::AcknowledgeStopped(id),
+                                command: Command::AcknowledgeStopped(id, session.run),
                             });
                         }
                     }
@@ -1022,7 +1039,7 @@ impl Dashboard {
                         {
                             entries.push(Entry {
                                 label: "Acknowledge stopped without reopening".into(),
-                                command: Command::AcknowledgeStopped(id),
+                                command: Command::AcknowledgeStopped(id, session.run),
                             });
                         }
                     }
@@ -1755,6 +1772,7 @@ impl Dashboard {
                                 Request::RemoveWorkspace {
                                     project: workspace.project.clone(),
                                     name: workspace.id.clone(),
+                                    force: false,
                                 }
                             }
                             Command::RemoveProject => Request::RemoveProject {
@@ -1764,7 +1782,7 @@ impl Dashboard {
                         };
                         if matches!(command, Command::RemoveWorkspace | Command::RemoveProject) {
                             let display = match &request {
-                                Request::RemoveWorkspace { project, name } => {
+                                Request::RemoveWorkspace { project, name, .. } => {
                                     find_workspace(self, project, name)
                                         .map(|workspace| workspace_heading(self, workspace))
                                         .unwrap_or_default()
@@ -2182,24 +2200,63 @@ impl Dashboard {
                 let mut palette = self.palette.take().unwrap();
                 palette.pending = None;
                 palette.error = Some(format!("{code:?}: {message}"));
-                let reopen = match &palette.page {
+                // A refused removal reopens as a forced one; only another
+                // explicit Confirm sends it.
+                let forced = match &palette.page {
+                    Page::Confirm {
+                        request:
+                            Some(Request::RemoveWorkspace {
+                                project,
+                                name,
+                                force: false,
+                            }),
+                        ..
+                    } if matches!(
+                        code,
+                        crate::protocol::ErrorCode::SessionsRemain
+                            | crate::protocol::ErrorCode::DirtyWorktree
+                    ) =>
+                    {
+                        Some(Request::RemoveWorkspace {
+                            project: project.clone(),
+                            name: name.clone(),
+                            force: true,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(request) = forced {
+                    let display = match &request {
+                        Request::RemoveWorkspace { project, name, .. } => {
+                            find_workspace(self, project, name)
+                                .map(|workspace| workspace_heading(self, workspace))
+                                .unwrap_or_default()
+                        }
+                        _ => String::new(),
+                    };
+                    palette.page = removal_confirmation(request, &display);
+                }
+                let retry = match &palette.page {
                     Page::Confirm {
                         request: Some(Request::ReopenSession { session, .. }),
                         ..
-                    } => Some((*session, true)),
+                    } => Some((*session, Command::ReopenTerminal(*session))),
                     Page::Confirm {
-                        request: Some(Request::AcknowledgeSessionStopped { session, .. }),
+                        request:
+                            Some(Request::AcknowledgeSessionStopped {
+                                session,
+                                expected_run,
+                            }),
                         ..
-                    } => Some((*session, false)),
+                    } => Some((
+                        *session,
+                        Command::AcknowledgeStopped(*session, *expected_run),
+                    )),
                     _ => None,
                 };
-                if let Some((id, reopen)) = reopen {
+                if let Some((id, retry)) = retry {
                     if find_session(self, id).is_some() {
-                        palette.page = if reopen {
-                            self.command_page(Command::ReopenTerminal(id))
-                        } else {
-                            self.command_page(Command::AcknowledgeStopped(id))
-                        };
+                        palette.page = self.command_page(retry);
                         palette.error = Some(format!("{code:?}: {message}"));
                     }
                 } else if code == crate::protocol::ErrorCode::OwnershipUncertain {
@@ -2409,8 +2466,9 @@ impl Dashboard {
                             Style::default().fg(TEXT)
                         },
                     ));
-                    if let Command::Unarchive(id, _) | Command::DeleteArchived(id, _, _) =
-                        &entry.command
+                    if let Command::Unarchive(id, _)
+                    | Command::DeleteArchived(id, _, _)
+                    | Command::AcknowledgeStopped(id, _) = &entry.command
                         && let Some(row) = palette
                             .archive
                             .as_ref()
@@ -2721,8 +2779,11 @@ fn mark_form_edit(
 }
 fn removal_confirmation(request: Request, display: &str) -> Page {
     let target = match &request {
-        Request::RemoveWorkspace { .. } => format!(
+        Request::RemoveWorkspace { force: false, .. } => format!(
             "Remove workspace {display}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths. Live or ownership-uncertain sessions block removal."
+        ),
+        Request::RemoveWorkspace { force: true, .. } => format!(
+            "Force remove workspace {display}. Discard uncommitted changes in its worktree and acknowledge that its stopped sessions' processes are gone; keep the branch. Live sessions and active task runs still block."
         ),
         Request::RemoveProject { name } => {
             format!(
@@ -4054,7 +4115,10 @@ mod launch_tests {
             })
         );
         d.palette = Some(Palette {
-            page: d.command_page(Command::AcknowledgeStopped(SessionId(1))),
+            page: d.command_page(Command::AcknowledgeStopped(
+                SessionId(1),
+                crate::protocol::SessionRunId(1),
+            )),
             ..Palette::new()
         });
         let Page::Confirm { request, target } = &d.palette.as_ref().unwrap().page else {
@@ -4260,7 +4324,10 @@ mod launch_tests {
         }
         d.select_session(SessionId(7));
         d.palette = Some(Palette {
-            page: d.command_page(Command::AcknowledgeStopped(SessionId(7))),
+            page: d.command_page(Command::AcknowledgeStopped(
+                SessionId(7),
+                crate::protocol::SessionRunId(1),
+            )),
             ..Palette::new()
         });
         assert_eq!(
@@ -4503,6 +4570,54 @@ mod launch_tests {
                 })
             ),
             "must not send CloseTerminal for the old confirmation without a new explicit confirm"
+        );
+    }
+
+    #[test]
+    fn archived_row_with_uncertain_ownership_offers_acknowledge_with_its_own_run() {
+        let d = dashboard();
+        let mut filed = summary(9);
+        filed.archived = true;
+        filed.phase = SessionPhase::Stopped;
+        filed.run = crate::protocol::SessionRunId(4);
+        filed.recovery = Some(SessionRecovery {
+            conversation: None,
+            attached: false,
+            requires_ack: true,
+            unavailable: None,
+            failure: None,
+        });
+        let mut certain = summary(10);
+        certain.archived = true;
+        certain.phase = SessionPhase::Stopped;
+        let entries = d.palette_entries("", Some(&[filed, certain]));
+        let acknowledge: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.label.starts_with("Acknowledge stopped: "))
+            .collect();
+        assert_eq!(
+            acknowledge.len(),
+            1,
+            "only the uncertain row offers acknowledgement"
+        );
+        let Command::AcknowledgeStopped(id, run) = acknowledge[0].command.clone() else {
+            panic!("acknowledge entry must carry the archived row's run");
+        };
+        assert_eq!((id, run), (SessionId(9), crate::protocol::SessionRunId(4)));
+        assert!(
+            find_session(&d, SessionId(9)).is_none(),
+            "archived rows are not in the hierarchy; the page must not depend on it"
+        );
+        let Page::Confirm { request, .. } = d.command_page(Command::AcknowledgeStopped(id, run))
+        else {
+            panic!("acknowledge must confirm");
+        };
+        assert_eq!(
+            request,
+            Some(Request::AcknowledgeSessionStopped {
+                session: SessionId(9),
+                expected_run: crate::protocol::SessionRunId(4),
+            })
         );
     }
 }

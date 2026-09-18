@@ -326,7 +326,7 @@ fn refuses_to_remove_worktree_with_tracked_changes() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("worktree has changes"));
@@ -352,7 +352,7 @@ fn refuses_to_remove_worktree_with_untracked_files() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("worktree has changes"));
@@ -385,7 +385,7 @@ fn refuses_to_remove_worktree_outside_registered_root() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("outside workspace root"));
@@ -432,7 +432,7 @@ fn refuses_replacement_worktree_with_different_identity() {
         error.contains("replacement") || error.contains("unrelated"),
         "{error}"
     );
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(
@@ -463,7 +463,7 @@ fn refuses_registry_and_git_path_disagreement() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("registry/Git path disagreement"));
@@ -488,7 +488,7 @@ fn removes_clean_registered_worktree_and_preserves_branch() {
         workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
-    remove_worktree(&project, &workspace).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
     assert!(!workspace.path.exists());
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
@@ -519,7 +519,7 @@ fn removes_workspace_whose_directory_is_gone() {
     std::fs::remove_dir_all(&workspace.path).unwrap();
     assert!(fixture.worktree_paths().contains(&workspace.path));
 
-    remove_worktree(&project, &workspace).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
 
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
@@ -544,7 +544,9 @@ fn removes_workspace_whose_directory_is_gone() {
         workspaces: vec![unknown.clone()],
         ..fixture.project.clone()
     };
-    let error = remove_worktree(&project, &unknown).unwrap_err().to_string();
+    let error = remove_worktree(&project, &unknown, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("registry/Git path disagreement"), "{error}");
 }
 
@@ -584,7 +586,7 @@ fn missing_replacement_worktree_cannot_be_pruned_by_the_old_registration() {
     let replacement_admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
     std::fs::remove_dir_all(&workspace.path).unwrap();
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(
@@ -631,7 +633,7 @@ fn missing_replacement_without_held_inode_cannot_be_pruned() {
     let replacement_admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
     std::fs::remove_dir_all(&workspace.path).unwrap();
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(
@@ -670,7 +672,7 @@ fn missing_worktree_prune_leaves_unrelated_prunable_admin() {
     std::fs::remove_dir_all(&owned.path).unwrap();
     std::fs::remove_dir_all(&other.path).unwrap();
 
-    remove_worktree(&project, &owned).unwrap();
+    remove_worktree(&project, &owned, false).unwrap();
 
     assert!(!fixture.worktree_paths().contains(&owned.path));
     assert!(
@@ -701,7 +703,7 @@ fn refuses_to_prune_missing_worktree_without_git_identity() {
     };
     std::fs::remove_dir_all(&workspace.path).unwrap();
 
-    let error = remove_worktree(&project, &missing_identity)
+    let error = remove_worktree(&project, &missing_identity, false)
         .unwrap_err()
         .to_string();
     assert!(
@@ -725,7 +727,7 @@ fn refuses_to_remove_unregistered_matching_worktree() {
     )
     .unwrap();
 
-    let error = remove_worktree(&fixture.project, &workspace)
+    let error = remove_worktree(&fixture.project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("workspace is not registered"));
@@ -766,7 +768,9 @@ fn refuses_symlink_substitution_without_touching_either_worktree() {
     std::fs::rename(&first.path, &moved_first).unwrap();
     symlink(&second.path, &first.path).unwrap();
 
-    let error = remove_worktree(&project, &first).unwrap_err().to_string();
+    let error = remove_worktree(&project, &first, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unexpected canonical path"));
     assert!(first.path.exists());
     assert!(second.path.exists());
@@ -806,8 +810,97 @@ fn inspect_and_remove_survive_branch_switch_and_detach() {
         workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
-    remove_worktree(&project, &workspace).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
     assert!(!workspace.path.exists());
+}
+
+#[test]
+fn forced_dirty_removal_keeps_generation_and_root_guards() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "force-dirty",
+        BranchSpec::New {
+            branch: "feature/force-dirty".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let identity = workspace.git_identity.clone().unwrap();
+    live::git(
+        &workspace.path,
+        &["checkout", "-b", "feature/force-renamed"],
+    );
+    std::fs::write(workspace.path.join("README"), "dirty\n").unwrap();
+    assert_eq!(worktree_identity(&workspace.path).unwrap(), identity);
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+
+    let error = remove_worktree(&project, &workspace, false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("worktree has changes"), "{error}");
+    assert!(workspace.path.exists());
+
+    remove_worktree(&project, &workspace, true).unwrap();
+    assert!(!workspace.path.exists());
+    assert!(!fixture.worktree_paths().contains(&workspace.path));
+
+    let root = WorkspaceRecord {
+        id: "root".into(),
+        path: fixture.project.repo.clone(),
+        branch: "main".into(),
+        git_identity: worktree_identity(&fixture.project.repo).ok(),
+        setup_pending: false,
+    };
+    let project = ProjectRecord {
+        workspaces: vec![root.clone()],
+        ..fixture.project.clone()
+    };
+    let error = remove_worktree(&project, &root, true)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("repository checkout"), "{error}");
+    assert!(fixture.project.repo.join("README").exists());
+
+    let claimed = create_worktree(
+        &fixture.project,
+        "force-claim",
+        BranchSpec::New {
+            branch: "feature/force-claim".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let project = ProjectRecord {
+        workspaces: vec![claimed.clone()],
+        ..fixture.project.clone()
+    };
+    live::git(
+        &fixture.project.repo,
+        &["worktree", "remove", claimed.path.to_str().unwrap()],
+    );
+    live::git(
+        &fixture.project.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/force-replacement",
+            claimed.path.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let error = remove_worktree(&project, &claimed, true)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("replacement") || error.contains("unrelated"),
+        "{error}"
+    );
+    assert!(claimed.path.exists());
 }
 
 #[test]
@@ -824,7 +917,7 @@ fn refuses_to_remove_or_inspect_repository_checkout() {
         workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("repository checkout"), "{error}");
@@ -981,7 +1074,7 @@ fn refuses_existing_worktree_without_git_identity() {
         error.contains("identity") || error.contains("replacement"),
         "{error}"
     );
-    let error = remove_worktree(&project, &missing_identity)
+    let error = remove_worktree(&project, &missing_identity, false)
         .unwrap_err()
         .to_string();
     assert!(
@@ -1011,7 +1104,9 @@ fn refuses_same_id_with_different_registered_path() {
         workspaces: vec![actual.clone()],
         ..fixture.project.clone()
     };
-    let error = remove_worktree(&project, &forged).unwrap_err().to_string();
+    let error = remove_worktree(&project, &forged, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("workspace is not registered"), "{error}");
     assert!(actual.path.exists());
 }

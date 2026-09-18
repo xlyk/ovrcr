@@ -28,9 +28,11 @@ arguments or results, titles or credentials.
 `ovrcr agent doctor pi --json [--session ID] [--executable PATH]` reports:
 
 - `version` and `version_status`: `tested` when the release is one this repository
-  has exercised (`tested_versions`), `unverified_compatible_until_proven_otherwise`
-  for any other release, `unknown` when the bounded `--version` probe fails.
-  Ordinary upgrades stay enabled; there is no allowlist.
+  has exercised (`tested_versions`), `compatible_untested`
+  for later stable patches within the approved minor line, `outside_compatible_range`
+  for releases requiring review, `unknown` when the bounded `--version` probe fails.
+  `compatible_versions`, `version_compatible` and `version_tested` separate policy from evidence.
+  Managed launches remain capability-checked without a version probe or gate; see [version policy](agent-versions.md).
 - `session_status`: `not_requested` without `--session` (or an inherited
   `OVRCR_SESSION_ID`); `inspection_unavailable` when the server cannot be reached;
   `session_not_found` for a stale id; `unbound` until the extension delivered

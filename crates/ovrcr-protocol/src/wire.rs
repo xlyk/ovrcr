@@ -205,6 +205,9 @@ pub enum Request {
     RemoveWorkspace {
         project: String,
         name: String,
+        /// Acknowledge ownership-uncertain stopped sessions and discard uncommitted
+        /// changes. Live sessions and active task runs still block removal.
+        force: bool,
     },
     CreateSession(CreateSessionRequest),
     RemoveSession {
@@ -518,6 +521,7 @@ mod wire_snapshot {
                 Request::RemoveWorkspace {
                     project: "a".into(),
                     name: "b".into(),
+                    force: false,
                 },
             ),
             (
@@ -980,7 +984,7 @@ mod wire_snapshot {
         ("Request::AddProject", "030161022f72022f77"),
         ("Request::RemoveProject", "040161"),
         ("Request::CreateWorkspace", "0501610162010163"),
-        ("Request::RemoveWorkspace", "0601610162"),
+        ("Request::RemoveWorkspace", "060161016200"),
         ("Request::CreateSession", "0701610162016300010002736800"),
         ("Request::RemoveSession", "0801"),
         ("Request::KillSession", "0901"),

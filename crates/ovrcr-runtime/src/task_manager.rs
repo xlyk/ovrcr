@@ -1019,7 +1019,9 @@ mod tests {
                 })
                 .unwrap();
             assert!(
-                server.remove_workspace("fixture", "task-1-run-1").is_err(),
+                server
+                    .remove_workspace("fixture", "task-1-run-1", false)
+                    .is_err(),
                 "removed an admitted task's intended worktree"
             );
             assert!(workspaces.join("task-1-run-1").is_dir());
@@ -1038,7 +1040,9 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        server.remove_workspace("fixture", "task-1-run-1").unwrap();
+        server
+            .remove_workspace("fixture", "task-1-run-1", false)
+            .unwrap();
         assert!(!workspaces.join("task-1-run-1").exists());
     }
 }

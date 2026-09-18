@@ -90,13 +90,16 @@ fn codex_native_argv_stdout_and_exit_survive_missing_reporting() {
 }
 
 #[test]
-fn codex_version_probe_accepts_only_exact_successful_pinned_output() {
+fn codex_version_probe_accepts_stable_compatible_patches_only() {
     use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
     let executable = root.path().join("codex");
     for (output, code, accepted) in [
         ("codex-cli 0.153.0", 0, true),
-        ("codex-cli 0.153.1", 0, false),
+        ("codex-cli 0.153.1", 0, true),
+        ("codex-cli 0.154.0", 0, false),
+        ("codex-cli 0.153.1-beta", 0, false),
+        ("codex-cli 0.153.01", 0, false),
         ("codex-cli 0.153.0", 1, false),
         ("unrecognized", 0, false),
     ] {

@@ -315,7 +315,6 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         std::fs::read_to_string(worktree.join("dirty")).unwrap(),
         "preserve me"
     );
-    std::fs::remove_file(worktree.join("dirty")).unwrap();
     fixture.ok(&[
         "workspace",
         "delete",
@@ -323,8 +322,9 @@ fn terminal_cli_drives_real_session_and_preserves_workspace_removal_guards() {
         "fixture",
         "--branch",
         "feature/demo",
+        "--force",
     ]);
-    assert!(!worktree.exists());
+    assert!(!worktree.exists(), "--force discards the dirty worktree");
     live::git(
         &fixture.repo,
         &["show-ref", "--verify", "refs/heads/feature/demo"],

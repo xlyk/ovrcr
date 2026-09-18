@@ -432,7 +432,12 @@ pub fn inspect_worktree(
     })
 }
 
-pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> Result<()> {
+/// `force` discards uncommitted changes; every ownership and path check still applies.
+pub fn remove_worktree(
+    project: &ProjectRecord,
+    workspace: &WorkspaceRecord,
+    force: bool,
+) -> Result<()> {
     let (repo, workspace_root) = validate_project(&project.repo, &project.workspace_root)?;
     if !project.workspaces.iter().any(|record| {
         record.id == workspace.id
@@ -459,25 +464,25 @@ pub fn remove_worktree(project: &ProjectRecord, workspace: &WorkspaceRecord) -> 
     }
     listed_path(&worktree_entries(&repo)?, &canonical_path)?;
     verify_git_identity(workspace, &canonical_path)?;
-    let status = run_git(
-        &canonical_path,
-        &[
-            OsString::from("status"),
-            OsString::from("--porcelain=v1"),
-            OsString::from("--untracked-files=all"),
-        ],
-    )?;
-    if !status.stdout.is_empty() {
-        bail!("worktree has changes");
+    if !force {
+        let status = run_git(
+            &canonical_path,
+            &[
+                OsString::from("status"),
+                OsString::from("--porcelain=v1"),
+                OsString::from("--untracked-files=all"),
+            ],
+        )?;
+        if !status.stdout.is_empty() {
+            bail!("worktree has changes");
+        }
     }
-    run_git(
-        &repo,
-        &[
-            OsString::from("worktree"),
-            OsString::from("remove"),
-            canonical_path.as_os_str().to_owned(),
-        ],
-    )?;
+    let mut args = vec![OsString::from("worktree"), OsString::from("remove")];
+    if force {
+        args.push(OsString::from("--force"));
+    }
+    args.push(canonical_path.as_os_str().to_owned());
+    run_git(&repo, &args)?;
     Ok(())
 }
 

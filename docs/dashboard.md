@@ -339,11 +339,14 @@ highlighted; Enter accepts it and opens confirmation. Closing a live terminal op
 confirmation directly. Existing server removal safeguards
 still apply; repositories and workspace branches are retained. Confirmed workspace
 removal archives stopped records with their original paths. Live or ownership-uncertain
-sessions block removal, even when archived. The repository-root workspace cannot
-be removed. Remove every other workspace first, stop or acknowledge remaining
-sessions, then unregister the project; repository files stay on disk. Archived
-context is kept. `Space w n` creates a terminal, `Space p n` creates a workspace,
-and `Space v t` opens tasks.
+sessions block removal, even when archived; the Archived sessions page offers
+"Acknowledge stopped" for such rows. A removal refused for uncertain sessions or a
+dirty worktree reopens as a forced removal: confirming it acknowledges the stopped
+processes and discards uncommitted changes, while live sessions and active task
+runs still block. The repository-root workspace cannot be removed. Remove every
+other workspace first, stop or acknowledge remaining sessions, then unregister
+the project; repository files stay on disk. Archived context is kept. `Space w n`
+creates a terminal, `Space p n` creates a workspace, and `Space v t` opens tasks.
 Terminal actions include Enter to focus, `p` to pause or `r` to resume, `c` for
 Copy, and `h` for History. Pause/Resume follow the session's current state.
 The Terminal group is hidden while a project or workspace is selected; bare
@@ -406,10 +409,11 @@ Removal excludes the protected repository-root workspace. Session names and
 project names remain text fields, and project registration retains its path pickers.
 
 Closing live work and deleting records show their current branch target and require confirmation.
-Closing an exited row archives it immediately. Server
-safeguards still apply: a workspace must have no terminal records and a clean
-worktree before removal. Errors stay in the palette with the form values
-retained.
+Closing an exited row archives it immediately. A workspace with live sessions or
+active task runs cannot be removed. A refusal for ownership-uncertain stopped
+sessions or a dirty worktree reopens as a forced confirmation that discards
+uncommitted changes and acknowledges those stopped processes. Errors stay in the
+palette with the form values retained.
 
 ### Create terminal (`n`)
 

@@ -872,7 +872,7 @@ mod tests {
         let workspace = &project.workspaces[0];
         let inspection = crate::git::inspect_worktree(project, workspace).unwrap();
         assert_eq!(inspection.branch, "feature/work");
-        crate::git::remove_worktree(project, workspace).unwrap();
+        crate::git::remove_worktree(project, workspace, false).unwrap();
         assert!(
             !worktree.exists(),
             "restored original checkout must remain removable"

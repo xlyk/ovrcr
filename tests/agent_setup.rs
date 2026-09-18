@@ -173,7 +173,7 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
         ("2.1.267 (Claude Code)", "supported", "2.1.267"),
         ("2.1.268 (Claude Code)", "supported", "2.1.268"),
         ("2.1.266 (Claude Code)", "unsupported", "2.1.266"),
-        ("2.1.269 (Claude Code)", "unsupported", "2.1.269"),
+        ("2.1.269 (Claude Code)", "supported", "2.1.269"),
     ] {
         std::fs::write(
             &executable,
@@ -209,10 +209,10 @@ fn doctor_reports_partial_config_proof_missing_and_unsupported_versions_without_
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["probe_status"], expected_status);
         assert_eq!(value["version"], expected_version);
-        assert_eq!(value["supported_versions"], json!(["2.1.267", "2.1.268"]));
+        assert_eq!(value["tested_versions"], json!(["2.1.267", "2.1.268"]));
         assert_eq!(
             value["capabilities"]["initial_invocation"]["resume_forms"],
-            if expected_version == "2.1.268" {
+            if matches!(expected_version, "2.1.268" | "2.1.269") {
                 json!(["--resume", "-r"])
             } else if expected_version == "2.1.267" {
                 json!(["--resume"])
@@ -577,7 +577,7 @@ fn codex_doctor_defaults_dispatch_and_rejects_versions_without_server_or_secrets
         assert_eq!(value["probe_status"], "supported");
     }
     let executable = root.path().join("codex version with spaces");
-    for response in ["codex-cli 0.152.0", "codex-cli 0.153.1", "NEVER_PRINT_ME"] {
+    for response in ["codex-cli 0.152.0", "codex-cli 0.154.0", "NEVER_PRINT_ME"] {
         std::fs::write(
             &executable,
             format!("#!/bin/sh\nprintf '%s\\n' '{response}'\n"),
@@ -655,10 +655,7 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
                 "supplied_file_unsupported_or_unverified"
             }
         );
-        assert_eq!(
-            result["release_status"],
-            "accepted_exact_0.153.0_hooks_only"
-        );
+        assert_eq!(result["release_status"], "patch_compatible_hooks_only");
         assert_eq!(result["configuration"]["hook_trust"], "unverified");
         assert_eq!(result["configuration"]["delivery"], "unverified");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), bytes);
@@ -672,4 +669,55 @@ fn codex_doctor_checks_supplied_hooks_without_certifying_trust() {
             assert!(!String::from_utf8_lossy(&output.stderr).contains("NEVER_PRINT_ME"));
         }
     }
+}
+
+#[test]
+fn doctor_distinguishes_compatible_patches_from_tested_releases() {
+    let _env_lock = env_lock();
+    let root = tempfile::tempdir().unwrap();
+    for (provider, output, compatible, tested) in [
+        ("claude", "2.1.267 (Claude Code)", true, true),
+        ("claude", "2.1.274 (Claude Code)", true, false),
+        ("claude", "2.1.266 (Claude Code)", false, false),
+        ("claude", "2.2.0 (Claude Code)", false, false),
+        ("claude", "2.1.274-beta (Claude Code)", false, false),
+        ("codex", "codex-cli 0.153.0", true, true),
+        ("codex", "codex-cli 0.153.1", true, false),
+        ("codex", "codex-cli 0.154.0", false, false),
+        ("codex", "codex-cli 0.153.1+local", false, false),
+        ("pi", "0.85.1", true, true),
+        ("pi", "0.85.2", true, false),
+        ("pi", "0.85.0", false, false),
+        ("pi", "0.86.0", false, false),
+        ("omp", "omp/18.2.2", true, false),
+        ("omp", "omp/18.2.3", true, false),
+        ("omp", "omp/18.2.1", false, false),
+        ("omp", "omp/18.3.0", false, false),
+        ("omp", "omp/18.2.3-beta", false, false),
+    ] {
+        let executable = root.path().join(provider);
+        std::fs::write(
+            &executable,
+            format!("#!/bin/sh\nprintf '%s\\n' '{output}'\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let result = command(&root)
+            .args(["agent", "doctor", provider, "--json", "--executable"])
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{provider}: {:?}", result.stderr);
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["version_compatible"], compatible, "{output}");
+        assert_eq!(value["version_tested"], tested, "{output}");
+        assert!(value["compatible_versions"].as_str().is_some());
+        if provider == "claude" || provider == "codex" {
+            assert_eq!(
+                value["capabilities"]["initial_invocation"]["fresh"], compatible,
+                "{output}"
+            );
+        }
+    }
+    assert!(!root.path().join("socket").exists());
 }

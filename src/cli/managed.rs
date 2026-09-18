@@ -10,8 +10,8 @@ use std::ffi::OsStr;
 pub(super) struct Managed {
     pub name: &'static str,
     pub display: &'static str,
-    /// Releases exercised by this repository's recorded evidence. Not an allowlist.
-    pub tested_versions: &'static [&'static str],
+    /// Approved patch range and recorded evidence; diagnostic only at launch.
+    pub versions: ovrcr::report::versions::Policy,
     pub reporting: &'static str,
     /// Native tool-approval prompts as Input requests.
     pub approvals: &'static str,
@@ -25,7 +25,7 @@ pub(super) struct Managed {
 pub(super) const PI: Managed = Managed {
     name: "pi",
     display: "Pi",
-    tested_versions: &["0.85.1"],
+    versions: ovrcr::report::versions::PI,
     reporting: "available",
     approvals: "available",
     questions: "unavailable_no_provider_surface",
@@ -35,7 +35,7 @@ pub(super) const PI: Managed = Managed {
 pub(super) const OMP: Managed = Managed {
     name: "omp",
     display: "Oh My Pi",
-    tested_versions: &["18.1.19"],
+    versions: ovrcr::report::versions::OMP,
     reporting: "available",
     approvals: "available",
     questions: "available_tool_lifetime",
@@ -107,8 +107,9 @@ pub(super) fn doctor(
     };
     let version_status = match &version {
         None => "unknown",
-        Some(found) if provider.tested_versions.contains(&found.as_str()) => "tested",
-        Some(_) => "unverified_compatible_until_proven_otherwise",
+        Some(found) if provider.versions.tested.contains(&found.as_str()) => "tested",
+        Some(found) if provider.versions.accepts(found) => "compatible_untested",
+        Some(_) => "outside_compatible_range",
     };
     let mut remediation = Vec::<String>::new();
     if raw.is_some() && version.is_none() {
@@ -122,6 +123,12 @@ pub(super) fn doctor(
             "The bounded --version probe of {} failed; check the executable path, then rerun doctor.",
             executable.to_string_lossy()
         ));
+    }
+    if version
+        .as_deref()
+        .is_some_and(|v| !provider.versions.accepts(v))
+    {
+        remediation.push(format!("Version is outside the compatible range {} and requires compatibility review. Managed launch remains capability-checked, not version-gated.", provider.versions.range()));
     }
     let requested = session.or_else(|| std::env::var("OVRCR_SESSION_ID").ok()?.parse().ok());
     let mut binding = Value::Null;
@@ -202,8 +209,11 @@ pub(super) fn doctor(
         "probe_status": probe_status,
         "version": version,
         "version_status": version_status,
-        "tested_versions": provider.tested_versions,
-        "supported_versions": "any compatible release; tested versions are evidence, not an allowlist",
+        "tested_versions": provider.versions.tested,
+        "compatible_versions": provider.versions.range(),
+        "version_compatible": version.as_deref().is_some_and(|v| provider.versions.accepts(v)),
+        "version_tested": provider.versions.tested(version.as_deref()),
+        "version_gate": "diagnostic_only",
         "known_incompatibilities": [],
         "capabilities": {
             "managed_launch": true,

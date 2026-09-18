@@ -1919,7 +1919,7 @@ fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     );
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
-        value["supported_versions"],
+        value["tested_versions"],
         serde_json::json!(["2.1.267", "2.1.268"])
     );
     assert_eq!(value["version"], "2.1.268");
@@ -1948,8 +1948,8 @@ fn claude_doctor_reports_exact_version_and_version_specific_resume_forms() {
     .unwrap();
     assert!(help.status.success());
     let help = String::from_utf8(help.stdout).unwrap();
-    assert!(help.contains("Claude Code 2.1.267 and 2.1.268"));
-    assert!(help.contains("2.1.268 also accepts -r UUID"));
+    assert!(help.contains("Claude Code >=2.1.267 and <2.2.0"));
+    assert!(help.contains("2.1.268 and later compatible patches also accept -r UUID"));
 }
 
 #[test]

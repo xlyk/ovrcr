@@ -193,8 +193,12 @@ fn root_setup_launches_shell_in_repository_and_never_restarts_it_implicitly() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: root.id.clone(),
+            force: true,
         }),
-        Response::Error { .. }
+        Response::Error {
+            code: ovrcr::protocol::ErrorCode::Conflict,
+            ..
+        }
     ));
     assert!(fixture.repo.join(".git").is_dir());
     assert_eq!(
@@ -268,6 +272,7 @@ fn root_drift_blocks_new_processes_but_preserves_the_existing_shell() {
         fixture.request(Request::RemoveWorkspace {
             project: "fixture".into(),
             name: root.id.clone(),
+            force: false,
         }),
         Response::Error { .. }
     ));
@@ -507,6 +512,7 @@ fn missing_replacement_worktree_cannot_be_pruned_by_the_old_registration() {
     let response = fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "owned".into(),
+        force: true,
     });
     assert!(matches!(response, Response::Error { .. }), "{response:?}");
     assert!(std::path::Path::new(replacement_admin.trim()).is_dir());
@@ -804,6 +810,7 @@ fn a_repository_root_cannot_be_removed_through_another_projects_workspace() {
     let result = fixture.request(Request::RemoveWorkspace {
         project: "fixture".into(),
         name: "nested".into(),
+        force: true,
     });
     assert!(matches!(result, Response::Error { .. }), "{result:?}");
     assert!(

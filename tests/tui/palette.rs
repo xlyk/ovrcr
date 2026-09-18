@@ -806,6 +806,7 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
             Request::RemoveWorkspace {
                 project: "consigint".into(),
                 name: "auth".into(),
+                force: false,
             },
         ),
         (
@@ -1745,6 +1746,7 @@ fn nested_whichkey_removal_confirms_the_selected_target_and_can_cancel() {
             Request::RemoveWorkspace {
                 project: "consigint".into(),
                 name: "auth".into(),
+                force: false,
             },
         ),
         (
@@ -1854,6 +1856,7 @@ fn nested_whichkey_container_selection_limits_groups_and_removal_target() {
             Request::RemoveWorkspace {
                 project: "spacelift-agent".into(),
                 name: "progress".into(),
+                force: false,
             },
         ),
     ] {
@@ -2072,6 +2075,7 @@ fn removal_pickers_filter_and_confirm_a_different_target() {
             Request::RemoveWorkspace {
                 project: "spacelift-agent".into(),
                 name: "progress".into(),
+                force: false,
             },
         ),
         (
@@ -2657,6 +2661,146 @@ fn reopen_confirm_keeps_captured_run_when_hierarchy_advances() {
             acknowledge_stopped: false,
         }
     );
+}
+
+#[test]
+fn refused_workspace_removal_offers_force_and_sends_it_only_on_explicit_confirm() {
+    for code in [
+        ovrcr::protocol::ErrorCode::SessionsRemain,
+        ovrcr::protocol::ErrorCode::DirtyWorktree,
+    ] {
+        let mut dashboard = dashboard_fixture();
+        palette_search(&mut dashboard, "remove workspace");
+        dashboard.key(KeyCode::Enter);
+        dashboard.key(KeyCode::Enter);
+        let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+            panic!("expected confirmed removal")
+        };
+        let Request::RemoveWorkspace {
+            project,
+            name,
+            force: false,
+        } = request.request.clone()
+        else {
+            panic!("first removal must not force: {:?}", request.request)
+        };
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: request.request_id,
+            response: Response::Error {
+                code: code.clone(),
+                message: "refused".into(),
+            },
+        });
+        let text = palette_text(&dashboard);
+        assert!(text.contains("Force remove workspace"), "{code:?}: {text}");
+        assert!(text.contains("refused"), "{code:?}: {text}");
+        let ovrcr::tui::DashboardAction::Request(forced) = dashboard.key(KeyCode::Enter) else {
+            panic!("{code:?}: forced removal needs another explicit Confirm")
+        };
+        assert_eq!(
+            forced.request,
+            Request::RemoveWorkspace {
+                project: project.clone(),
+                name: name.clone(),
+                force: true,
+            }
+        );
+        // A forced refusal (live sessions) must not loop into anything stronger.
+        dashboard.handle_server_message(ServerMessage::Response {
+            request_id: forced.request_id,
+            response: Response::Error {
+                code: ovrcr::protocol::ErrorCode::SessionsRemain,
+                message: "live sessions remain".into(),
+            },
+        });
+        assert!(palette_text(&dashboard).contains("live sessions remain"));
+        assert!(!matches!(
+            dashboard.key(KeyCode::Esc),
+            ovrcr::tui::DashboardAction::Request(_)
+        ));
+    }
+}
+
+#[test]
+fn force_removal_prompt_survives_unchanged_hierarchy_then_needs_consent_after_relabel() {
+    let mut dashboard = dashboard_fixture();
+    let mut original = fixture_hierarchy();
+    original.projects[1].workspaces[1].name = "feature/auth.previous".into();
+    dashboard.install_hierarchy(original.clone());
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let ovrcr::tui::DashboardAction::Request(request) = dashboard.key(KeyCode::Enter) else {
+        panic!("expected confirmed removal")
+    };
+    let Request::RemoveWorkspace {
+        project,
+        name,
+        force: false,
+    } = request.request.clone()
+    else {
+        panic!("first removal must not force: {:?}", request.request)
+    };
+    assert_eq!((project.as_str(), name.as_str()), ("consigint", "auth"));
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: request.request_id,
+        response: Response::Error {
+            code: ovrcr::protocol::ErrorCode::SessionsRemain,
+            message: "refused".into(),
+        },
+    });
+    let force_text = palette_text(&dashboard);
+    assert!(
+        force_text.contains("Force remove workspace"),
+        "{force_text}"
+    );
+    assert!(
+        force_text.contains("consigint / feature/auth.previous"),
+        "{force_text}"
+    );
+    assert!(
+        !force_text.contains("Force remove workspace consigint / auth."),
+        "force caption must use the branch heading, not the internal id: {force_text}"
+    );
+
+    let mut refreshed = original.clone();
+    refreshed.projects[0].workspaces[0].sessions[0].pid = Some(999);
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        refreshed,
+    )));
+    let still = palette_text(&dashboard);
+    assert!(
+        still.contains("Confirm action") && still.contains("Force remove workspace"),
+        "ordinary hierarchy refresh must keep the force prompt: {still}"
+    );
+    assert!(
+        still.contains("consigint / feature/auth.previous"),
+        "{still}"
+    );
+
+    let mut relabelled = fixture_hierarchy();
+    relabelled.projects[1].workspaces[1].name = "feature/auth".into();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        relabelled,
+    )));
+    let text = palette_text(&dashboard);
+    assert!(
+        !text.contains("Confirm action"),
+        "relabelled force prompt must require fresh consent: {text}"
+    );
+    assert!(
+        text.contains("consigint / feature/auth"),
+        "picker must show the current branch: {text}"
+    );
+    if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        panic!(
+            "relabelled force confirmation must not submit: {:?}",
+            message.request
+        );
+    }
 }
 
 #[test]

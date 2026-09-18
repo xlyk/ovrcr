@@ -107,13 +107,14 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
                 print_workspace,
             )
         }
-        WorkspaceCommand::Remove { target } => {
+        WorkspaceCommand::Remove { target, force } => {
             let (registry, _) = inspect()?;
             let workspace = select_workspace(&registry, &target)?;
             mutate_without_start(
                 Request::RemoveWorkspace {
                     project: target.project,
                     name: workspace.id.clone(),
+                    force,
                 },
                 json_output,
             )
