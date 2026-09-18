@@ -5404,7 +5404,7 @@ impl ControlFixture {
                     .into_iter()
                     .filter(|project| project.name == PROJECT)
                     .flat_map(|project| project.workspaces)
-                    .filter(|workspace| workspace.name == WORKSPACE)
+                    .filter(|workspace| workspace.id == WORKSPACE)
                     .flat_map(|workspace| workspace.sessions)
                     .find(|session| session.name == "local")
                     .expect("fixture workspace must have its local session")
