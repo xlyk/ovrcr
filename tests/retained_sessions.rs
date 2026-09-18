@@ -1699,15 +1699,12 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
     let id = exited["id"].as_u64().unwrap();
     wait_phase(&live, id, "exited");
     json(&live, &["terminal", "close", &id.to_string()]);
+    // The archived row is hidden from `terminal list`; the refusal must name it.
+    let response = live.request(remove.clone());
     assert!(
-        matches!(
-            live.request(remove.clone()),
-            Response::Error {
-                code: ErrorCode::SessionsRemain,
-                ..
-            }
-        ),
-        "archived uncertainty must block removal too"
+        matches!(&response, Response::Error { code: ErrorCode::SessionsRemain, message }
+            if message.contains(&format!("#{id} (archived)")) && message.contains("terminal remove")),
+        "archived uncertainty must block removal and be named: {response:?}"
     );
     json(&live, &["terminal", "unarchive", &id.to_string()]);
     json(&live, &["terminal", "acknowledge-stopped", &id.to_string()]);
@@ -1862,8 +1859,10 @@ fn workspace_removal_protects_provider_history_inside_an_ignored_directory() {
             name: live::WORKSPACE.into(),
             force: false,
         });
+        let holder = format!("#{} (archived)", created["id"]);
         assert!(
-            matches!(&response, Response::Error { code: ErrorCode::Conflict, message } if message.contains("provider history")),
+            matches!(&response, Response::Error { code: ErrorCode::Conflict, message }
+                if message.contains("provider history") && message.contains(&holder) && message.contains("terminal remove")),
             "{response:?}"
         );
         assert_eq!(
