@@ -183,6 +183,9 @@ pub(super) enum WorkspaceCommand {
         project: String,
         #[arg(long)]
         name: String,
+        /// Acknowledge uncertain stopped sessions and discard uncommitted changes. Live sessions still block.
+        #[arg(long)]
+        force: bool,
     },
 }
 

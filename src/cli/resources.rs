@@ -99,9 +99,18 @@ pub(super) fn run_workspace(command: WorkspaceCommand, json_output: bool) -> App
                 print_workspace,
             )
         }
-        WorkspaceCommand::Remove { project, name } => {
-            mutate_without_start(Request::RemoveWorkspace { project, name }, json_output)
-        }
+        WorkspaceCommand::Remove {
+            project,
+            name,
+            force,
+        } => mutate_without_start(
+            Request::RemoveWorkspace {
+                project,
+                name,
+                force,
+            },
+            json_output,
+        ),
     }
 }
 

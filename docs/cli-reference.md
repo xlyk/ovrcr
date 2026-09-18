@@ -41,6 +41,8 @@ Removal and kill commands (`project remove`, `workspace remove`,
 `terminal kill`, `terminal close`, `terminal remove`, `kill`, `session remove`)
 never start a server. With none running they fail with `OVRCR server is not
 running`: only the server mutates retained records or controls processes.
+`workspace remove --force` acknowledges ownership-uncertain stopped sessions and
+discards uncommitted changes; live sessions and active task runs still block it.
 
 ## Request timeouts
 

@@ -314,7 +314,7 @@ fn refuses_to_remove_worktree_with_tracked_changes() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("worktree has changes"));
@@ -340,7 +340,7 @@ fn refuses_to_remove_worktree_with_untracked_files() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("worktree has changes"));
@@ -371,7 +371,7 @@ fn refuses_to_remove_worktree_outside_registered_root() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("outside workspace root"));
@@ -409,7 +409,9 @@ fn refuses_to_remove_branch_checked_out_elsewhere() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &claimed).unwrap_err().to_string();
+    let error = remove_worktree(&project, &claimed, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("branch checked out elsewhere"));
     assert!(claimed.path.exists());
     assert!(fixture.worktree_paths().contains(&claimed.path));
@@ -437,7 +439,7 @@ fn refuses_registry_and_git_path_disagreement() {
         ..fixture.project.clone()
     };
 
-    let error = remove_worktree(&project, &workspace)
+    let error = remove_worktree(&project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("registry/Git path disagreement"));
@@ -462,7 +464,7 @@ fn removes_clean_registered_worktree_and_preserves_branch() {
         workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
-    remove_worktree(&project, &workspace).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
     assert!(!workspace.path.exists());
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
@@ -493,7 +495,7 @@ fn removes_workspace_whose_directory_is_gone() {
     std::fs::remove_dir_all(&workspace.path).unwrap();
     assert!(fixture.worktree_paths().contains(&workspace.path));
 
-    remove_worktree(&project, &workspace).unwrap();
+    remove_worktree(&project, &workspace, false).unwrap();
 
     assert!(!fixture.worktree_paths().contains(&workspace.path));
     assert!(
@@ -516,7 +518,9 @@ fn removes_workspace_whose_directory_is_gone() {
         workspaces: vec![unknown.clone()],
         ..fixture.project.clone()
     };
-    let error = remove_worktree(&project, &unknown).unwrap_err().to_string();
+    let error = remove_worktree(&project, &unknown, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("registry/Git path disagreement"), "{error}");
 }
 
@@ -533,7 +537,7 @@ fn refuses_to_remove_unregistered_matching_worktree() {
     )
     .unwrap();
 
-    let error = remove_worktree(&fixture.project, &workspace)
+    let error = remove_worktree(&fixture.project, &workspace, false)
         .unwrap_err()
         .to_string();
     assert!(error.contains("workspace is not registered"));
@@ -574,7 +578,9 @@ fn refuses_symlink_substitution_without_touching_either_worktree() {
     std::fs::rename(&first.path, &moved_first).unwrap();
     symlink(&second.path, &first.path).unwrap();
 
-    let error = remove_worktree(&project, &first).unwrap_err().to_string();
+    let error = remove_worktree(&project, &first, false)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unexpected canonical path"));
     assert!(first.path.exists());
     assert!(second.path.exists());

@@ -1425,10 +1425,10 @@ impl ServerState {
         })
     }
 
-    pub fn remove_workspace(&self, project: &str, name: &str) -> Result<()> {
+    pub fn remove_workspace(&self, project: &str, name: &str, force: bool) -> Result<()> {
         let _mutation = self.mutation_lock.lock().unwrap();
         self.reject_if_stopping()?;
-        self.remove_workspace_locked(project, name, None)
+        self.remove_workspace_locked(project, name, None, force)
     }
 
     pub(crate) fn remove_task_workspace(
@@ -1470,7 +1470,7 @@ impl ServerState {
             .unwrap()
             .workspace(project, name)
             .context("retained worktree is not registered; inspect it before cleanup")?;
-        self.remove_workspace_locked(project, name, Some((&run, run_dir)))
+        self.remove_workspace_locked(project, name, Some((&run, run_dir)), false)
     }
 
     fn remove_workspace_locked(
@@ -1478,6 +1478,7 @@ impl ServerState {
         project: &str,
         name: &str,
         cleanup: Option<(&crate::tasks::Run, &Path)>,
+        force: bool,
     ) -> Result<()> {
         if let Some(tasks) = &self.tasks
             && tasks.occupies_workspace(project, name)?
@@ -1487,20 +1488,25 @@ impl ServerState {
                 format!("task run remains for workspace {project}/{name}"),
             ));
         }
-        let occupied = self.session_summaries().iter().any(|session| {
-            session.project == project
-                && session.workspace == name
-                && (session.phase.is_live()
-                    || session
-                        .recovery
-                        .as_ref()
-                        .is_some_and(|recovery| recovery.requires_ack))
-        });
-        if occupied {
+        // Force stands in for the per-row acknowledgement; it never kills a live process.
+        let (live, uncertain): (Vec<_>, Vec<_>) = self
+            .session_summaries()
+            .into_iter()
+            .filter(|session| {
+                session.project == project
+                    && session.workspace == name
+                    && (session.phase.is_live()
+                        || session
+                            .recovery
+                            .as_ref()
+                            .is_some_and(|recovery| recovery.requires_ack))
+            })
+            .partition(|session| session.phase.is_live());
+        if !live.is_empty() || (!uncertain.is_empty() && !force) {
             return Err(lifecycle_error(
                 ErrorCode::SessionsRemain,
                 format!(
-                    "live or ownership-uncertain sessions remain for workspace {project}/{name}; stop live sessions or acknowledge stopped processes before removal"
+                    "live or ownership-uncertain sessions remain for workspace {project}/{name}; stop live sessions or acknowledge stopped processes, including archived records, before removal"
                 ),
             ));
         }
@@ -1550,6 +1556,7 @@ impl ServerState {
         // removal then prunes Git's stale registration (see git.rs).
         let directory_present = fs::symlink_metadata(&workspace.path).is_ok();
         if directory_present
+            && !force
             && git::inspect_worktree(&project_record, &workspace)
                 .map_err(|error| lifecycle_error(ErrorCode::Conflict, error.to_string()))?
                 .dirty
@@ -1581,7 +1588,7 @@ impl ServerState {
         next.remove_workspace(project, name)?;
         let mut removed = false;
         let archived = self.retained.lock().archive_workspace(&next, project, name, || {
-            git::remove_worktree(&project_record, &workspace).with_context(|| {
+            git::remove_worktree(&project_record, &workspace, force).with_context(|| {
                 if cleanup.is_some() {
                     format!("cleanup ownership released; inspect retained worktree {} before manual cleanup", workspace.path.display())
                 } else {
@@ -1603,6 +1610,17 @@ impl ServerState {
         })?;
         *registry = next;
         drop(registry);
+        // The worktree is gone; only now persist the forced acknowledgement, by
+        // each row's current run (archiving just bumped the unarchived ones), so
+        // a Git refusal above leaves no acknowledgement behind.
+        {
+            let mut retained = self.retained.lock();
+            for session in &uncertain {
+                if let Some(run) = retained.get(session.id).map(|record| record.run) {
+                    retained.mark_stopped(session.id, run)?;
+                }
+            }
+        }
         for id in archived {
             if let Some(session) = self.sessions.lock().unwrap().remove(&id) {
                 session.revoke_hook_capability();
