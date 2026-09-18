@@ -1,0 +1,79 @@
+Window: "OVRCR GUI", App: OVRCR GUI.
+0 standard window OVRCR GUI, Secondary Actions: Raise
+	1 container
+		2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 62126  elapsed: 1m  agent unknown  local (#2)
+  󰘬 auth-handoff                       │local (#2)
+▌    $ lo
+		3 text (settable) 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+		4 text (settable)  CONSIGINT ────────────────────────────│pid: 62126  elapsed: 1m  agent unknown  local (#2)
+		5 text (settable)   󰘬 auth-handoff                       │local (#2)
+		6 text (settable) ▌    $ local                           │auth-handoff ›
+		7 text (settable)      - review auth handoff        grok │
+		8 text (settable)   󰘬 worktree-lifecycle                 │
+		9 text (settable)      $ local                           │
+		10 text (settable)      - implement lifecycle cl…  claude │
+		11 text (settable)      - review websocket shutdo…  codex │
+		12 text (settable)      - plan snapshot restore        pi │
+		13 text (settable)                                        │
+		14 text (settable)  SPACELIFT-AGENT ──────────────────────│
+		15 text (settable)   󰘬 pipeline-progress-v2               │
+		16 text (settable)      $ local                           │
+		17 text (settable)      - build pipeline progress  claude │
+		18 text (settable)   󰘬 scope-quality                      │
+		19 text (settable)      $ local                           │
+		20 text (settable)      - review scope quality      codex │
+		21 text (settable)                                        │
+		22 text (settable)                                        │
+		23 text (settable)                                        │
+		24 text (settable)                                        │
+		25 text (settable)                                        │
+		26 text (settable)                                        │
+		27 text (settable)                                        │
+		28 text (settable)                                        │
+		29 text (settable)                                        │
+		30 text (settable)                                        │
+		31 text (settable)                                        │
+		32 text (settable)                                        │
+		33 text (settable)                                        │
+		34 text (settable)                                        │
+		35 text (settable)                                        │
+		36 text (settable)                                        │
+		37 text (settable)                                        │
+		38 text (settable)                                        │
+		39 text (settable)                                        │
+		40 text (settable)                                        │
+		41 text (settable)                                        │
+		42 text (settable)                                        │
+		43 text (settable)                                        │
+		44 text (settable)                                        │
+		45 text (settable)                                        │
+		46 text (settable)                                        │
+		47 text (settable)                                        │
+		48 text (settable)                                        │
+		49 text (settable)                                        │                                                                                      ┌ Which key · Space ─────────────────┐
+		50 text (settable)                                        │                                                                                      │Groups                              │
+		51 text (settable)                                        │                                                                                      │t  Terminal                         │
+		52 text (settable)                                        │                                                                                      │w  Workspace                        │
+		53 text (settable)                                        │                                                                                      │p  Project                          │
+		54 text (settable)                                        │                                                                                      │v  View                             │
+		55 text (settable)                                        │                                                                                      │a  Register project                 │
+		56 text (settable)                                        │                                                                                      │N  Disable desktop notifications    │
+		57 text (settable)                                        │                                                                                      │S  Enable ready sound               │
+		58 text (settable)                                        │                                                                                      │q  Detach                           │
+		59 text (settable)                                        │                                                                                      │                                    │
+		60 text (settable)                                        │                                                                                      │Show actions for local              │
+		61 text (settable)                                        │                                                                                      └ [Close] [Back] ────────────────────┘
+		62 text (settable)                                        │
+		63 text (settable) BROWSE  ? Help  Enter Focus  n Create terminal  : Search  v Split  q Detach  t Tasks  a Register project  w Create workspace  p Pause  Space Leader
+	64 close button
+	65 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	66 minimize button
+	67 text OVRCR GUI
+68 menu bar
+	69 OVRCR GUI
+
+The focused UI element is 2 text entry area (settable) OVRCR terminal, Value: 󰚩 OVRCR  agent runtime                                                                                                                                [Actions] [Menu]
+ CONSIGINT ────────────────────────────│pid: 62126  elapsed: 1m  agent unknown  local (#2)
+  󰘬 auth-handoff                       │local (#2)
+▌    $ lo

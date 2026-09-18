@@ -2013,6 +2013,7 @@ impl Dashboard {
                 let preference = palette.launch_preference.take();
                 self.error = None;
                 if let Response::CreatedSession(session) = response {
+                    self.select_session(session.id);
                     if let Some((project, choice)) = preference {
                         self.settings
                             .launch_choices
@@ -2021,12 +2022,11 @@ impl Dashboard {
                             && let Err(error) =
                                 super::settings::save_launch_choice(path, &project, &choice)
                         {
-                            self.error = Some(format!(
+                            self.set_error(format!(
                                 "Session started; could not remember launch choice: {error}"
                             ));
                         }
                     }
-                    self.select_session(session.id);
                     let request_id = self.next_request_id();
                     let outgoing = self
                         .view_request(self.outer_area, request_id)
@@ -3105,6 +3105,314 @@ mod launch_tests {
             );
         }
     }
+    // Exercise the real alert key handler or successful launch response, never the writer directly.
+    fn save_preference(d: &mut Dashboard, action: &str) {
+        match action {
+            "N" | "S" => {
+                d.key(KeyCode::Char(action.chars().next().unwrap()));
+            }
+            _ => {
+                d.open_create_terminal();
+                set(d, "Start", action);
+                if action == "Agent" {
+                    set(d, "Agent", "fixture-agent");
+                }
+                let m = request(d);
+                let mut session = summary(1);
+                session.project = d.hierarchy.projects[0].name.clone();
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: m.request_id,
+                    response: Response::CreatedSession(Box::new(session)),
+                });
+            }
+        }
+    }
+
+    fn rendered_settings_notice(d: &Dashboard) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(240, 30)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw_dashboard_at(frame, d, 0))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn settings_edits_reject_invalid_documents_without_changing_bytes() {
+        for action in ["N", "S", "Agent", "Terminal"] {
+            for original in [
+                "invalid = [",
+                "ready_sound = 'yes'\n",
+                "branch_prefix = 42\n",
+                "launch_choices = []\n",
+            ] {
+                let root = tempfile::tempdir().unwrap();
+                let path = root.path().join("dashboard.toml");
+                std::fs::write(&path, original).unwrap();
+                let mut d = dashboard();
+                d.settings_path = Some(path.clone());
+                let before = d.settings.clone();
+                save_preference(&mut d, action);
+                assert_eq!(
+                    std::fs::read_to_string(&path).unwrap(),
+                    original,
+                    "{action}"
+                );
+                assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+                if matches!(action, "N" | "S") {
+                    assert_eq!(d.settings, before);
+                    assert!(rendered_settings_notice(&d).contains("Could not save"));
+                } else {
+                    assert!(d.palette.is_none());
+                    assert_eq!(d.focused_session(), Some(SessionId(1)));
+                    assert_eq!(d.mode, InputMode::Terminal);
+                    assert_eq!(
+                        d.settings.launch_choices.get("demo"),
+                        Some(&if action == "Agent" {
+                            LaunchChoice::Agent("fixture-agent".into())
+                        } else {
+                            LaunchChoice::Terminal
+                        })
+                    );
+                    assert!(
+                        rendered_settings_notice(&d)
+                            .contains("Session started; could not remember launch choice")
+                    );
+                    assert!(
+                        d.drain_outbox()
+                            .iter()
+                            .all(|message| !matches!(message.request, Request::CreateSession(_)))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn settings_edits_reject_dangling_links_and_read_only_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for action in ["N", "S", "Agent", "Terminal"] {
+            for read_only in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let path = root.path().join("dashboard.toml");
+                let target = root.path().join("actual.toml");
+                symlink("actual.toml", &path).unwrap();
+                if read_only {
+                    std::fs::write(&target, "# keep\nready_sound = false\n").unwrap();
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o444))
+                        .unwrap();
+                }
+                let mut d = dashboard();
+                d.settings_path = Some(path.clone());
+                save_preference(&mut d, action);
+                assert_eq!(
+                    std::fs::read_link(&path).unwrap(),
+                    std::path::Path::new("actual.toml")
+                );
+                let notice = rendered_settings_notice(&d);
+                assert!(
+                    notice.contains(if matches!(action, "N" | "S") {
+                        "Could not save"
+                    } else {
+                        "Session started; could not remember launch choice"
+                    }),
+                    "{action}: {notice}"
+                );
+                assert!(!d.settings.ready_sound);
+                assert!(!d.settings.desktop_notifications);
+                if read_only {
+                    assert_eq!(
+                        std::fs::read_to_string(&target).unwrap(),
+                        "# keep\nready_sound = false\n"
+                    );
+                    assert_eq!(
+                        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                        0o444
+                    );
+                } else {
+                    assert!(!target.exists());
+                }
+                assert_eq!(
+                    std::fs::read_dir(root.path()).unwrap().count(),
+                    if read_only { 2 } else { 1 }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn settings_publication_failure_preserves_target_and_leaves_no_temporary_files() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for action in ["N", "S", "Agent", "Terminal"] {
+            let root = tempfile::tempdir().unwrap();
+            let directory = root.path().join("locked");
+            std::fs::create_dir(&directory).unwrap();
+            let target = directory.join("actual.toml");
+            let path = root.path().join("dashboard.toml");
+            let original = "# preserved\nready_sound = false\n";
+            std::fs::write(&target, original).unwrap();
+            symlink(&target, &path).unwrap();
+            let mut d = dashboard();
+            d.settings_path = Some(path.clone());
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555)).unwrap();
+            // Real filesystem failure at temporary-file creation (run as an unprivileged user).
+            save_preference(&mut d, action);
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
+            assert_eq!(std::fs::read_link(&path).unwrap(), target);
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+            let notice = rendered_settings_notice(&d);
+            assert!(
+                notice.contains("create temporary dashboard settings"),
+                "{action}: {notice}"
+            );
+            if matches!(action, "N" | "S") {
+                assert!(!d.settings.ready_sound);
+                assert!(!d.settings.desktop_notifications);
+            } else {
+                assert_eq!(d.focused_session(), Some(SessionId(1)));
+                assert!(d.palette.is_none());
+                assert_eq!(d.mode, InputMode::Terminal);
+                assert!(d.settings.launch_choices.contains_key("demo"));
+            }
+        }
+    }
+
+    #[test]
+    fn settings_edits_create_private_files_and_missing_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        for action in ["N", "S", "Agent", "Terminal"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("missing/nested/dashboard.toml");
+            let mut d = dashboard();
+            d.settings_path = Some(path.clone());
+            save_preference(&mut d, action);
+            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
+            assert_eq!(error, None);
+            assert_eq!(loaded.desktop_notifications, action == "N");
+            assert_eq!(loaded.ready_sound, action == "S");
+            assert_eq!(
+                loaded.launch_choices.get("demo"),
+                d.settings.launch_choices.get("demo")
+            );
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+                1
+            );
+            assert!(d.error.is_none());
+        }
+    }
+
+    #[test]
+    fn settings_edits_preserve_prior_external_changes_and_exact_project_keys() {
+        for action in ["N", "S", "Agent", "Terminal"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("dashboard.toml");
+            std::fs::write(&path, "# before\n").unwrap();
+            let mut d = dashboard();
+            d.settings_path = Some(path.clone());
+            let project = "project.with-dots_and-punctuation";
+            d.hierarchy.projects[0].name = project.into();
+            d.hierarchy.projects[0].workspaces[0].project = project.into();
+            let external = "# external edit\nbranch_prefix = 'fix/' # keep\npicker_roots = ['/tmp']\n[future]\nvalue = 42 # unknown\n[launch_choices.'other.project']\nkind = 'Agent'\npreset = 'other'\n";
+            std::fs::write(&path, external).unwrap();
+            save_preference(&mut d, action);
+            let saved = std::fs::read_to_string(&path).unwrap();
+            for line in external.lines() {
+                assert!(saved.contains(line), "{action}: missing {line}");
+            }
+            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
+            assert_eq!(error, None);
+            assert_eq!(loaded.branch_prefix, "fix/");
+            assert_eq!(
+                loaded.launch_choices.get("other.project"),
+                Some(&LaunchChoice::Agent("other".into()))
+            );
+            if matches!(action, "N" | "S") {
+                assert_eq!(d.settings, loaded);
+            } else {
+                assert_eq!(
+                    loaded.launch_choices.get(project),
+                    Some(&if action == "Agent" {
+                        LaunchChoice::Agent("fixture-agent".into())
+                    } else {
+                        LaunchChoice::Terminal
+                    })
+                );
+                assert_eq!(loaded.launch_choices.len(), 2);
+            }
+            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+        }
+    }
+
+    #[test]
+    fn successful_launch_preserves_symlinked_commented_settings() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for start in ["Terminal", "Agent"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("dashboard.toml");
+            let target = root.path().join("actual.toml");
+            let original = "# My settings\nready_sound = true # keep\nbranch_prefix = 'fix/'\n[future]\nvalue = 42 # unknown\n[launch_choices.'other.project']\nkind = 'Agent'\npreset = 'other'\n";
+            std::fs::write(&target, original).unwrap();
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+            symlink("actual.toml", &path).unwrap();
+            let mut d = dashboard();
+            d.settings_path = Some(path.clone());
+            d.open_create_terminal();
+            set(&mut d, "Start", start);
+            if start == "Agent" {
+                set(&mut d, "Agent", "fixture-agent");
+            }
+            let m = request(&mut d);
+            d.handle_server_message(ServerMessage::Response {
+                request_id: m.request_id,
+                response: Response::CreatedSession(Box::new(summary(1))),
+            });
+            assert!(
+                std::fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert!(
+                std::fs::read_to_string(&target)
+                    .unwrap()
+                    .starts_with(original)
+            );
+            assert_eq!(
+                std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+            let (loaded, error) = super::super::settings::load_dashboard_settings(&path);
+            assert_eq!(error, None);
+            assert!(loaded.ready_sound);
+            assert_eq!(
+                loaded.launch_choices.get("other.project"),
+                Some(&LaunchChoice::Agent("other".into()))
+            );
+            let expected = if start == "Agent" {
+                LaunchChoice::Agent("fixture-agent".into())
+            } else {
+                LaunchChoice::Terminal
+            };
+            assert_eq!(loaded.launch_choices.get("demo"), Some(&expected));
+            assert_eq!(d.settings.launch_choices.get("demo"), Some(&expected));
+            assert_eq!(d.focused_session(), Some(SessionId(1)));
+            assert!(d.error.is_none());
+            assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+        }
+    }
+
     #[test]
     fn optional_name_custom_command_and_success_only_persistence() {
         let dir = tempfile::tempdir().unwrap();
@@ -3202,6 +3510,93 @@ mod launch_tests {
             restarted.settings.launch_choices.get("demo"),
             Some(&LaunchChoice::Agent("fixture-agent".into()))
         );
+    }
+
+    fn acknowledge_settings_views(d: &mut Dashboard, requests: Vec<ClientMessage>) {
+        let mut requests = std::collections::VecDeque::from(requests);
+        for _ in 0..8 {
+            let Some(message) = requests.pop_front() else {
+                return;
+            };
+            let Request::SetView { view } = message.request else {
+                panic!("unexpected request");
+            };
+            for pane in view.panes {
+                d.handle_server_message(ServerMessage::Response {
+                    request_id: message.request_id,
+                    response: Response::Screen {
+                        session: pane.session,
+                        run: pane.run,
+                        revision: view.revision,
+                        size: pane.size,
+                        bytes: b"USABLE".to_vec(),
+                    },
+                });
+            }
+            requests.extend(d.handle_server_message(ServerMessage::Response {
+                request_id: message.request_id,
+                response: Response::Ok,
+            }));
+        }
+        assert!(requests.is_empty(), "view acknowledgement must converge");
+    }
+
+    #[test]
+    fn launch_save_warning_survives_selection_ack_and_session_accepts_input() {
+        for coalesced in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("dashboard.toml");
+            std::fs::write(&path, "ready_sound = 'invalid'\n").unwrap();
+            let mut d = dashboard();
+            d.settings_path = Some(path);
+            let mut hierarchy = d.hierarchy.clone();
+            hierarchy.projects[0].workspaces[0]
+                .sessions
+                .push(summary(10));
+            let initial = d.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy),
+            ));
+            acknowledge_settings_views(&mut d, initial);
+            let pending = if coalesced {
+                d.handle_server_message(ServerMessage::Event(ServerEvent::ScreenDirty {
+                    session: SessionId(10),
+                    run: crate::protocol::SessionRunId(1),
+                    revision: d.view_revision(),
+                }))
+            } else {
+                Vec::new()
+            };
+            d.open_create_terminal();
+            let launch = request(&mut d);
+            let mut hierarchy = d.hierarchy.clone();
+            hierarchy.projects[0].workspaces[0]
+                .sessions
+                .push(summary(1));
+            let refresh = d.handle_server_message(ServerMessage::Event(
+                ServerEvent::HierarchyChanged(hierarchy),
+            ));
+            assert!(refresh.is_empty());
+            let selected = d.handle_server_message(ServerMessage::Response {
+                request_id: launch.request_id,
+                response: Response::CreatedSession(Box::new(summary(1))),
+            });
+            assert!(
+                rendered_settings_notice(&d)
+                    .contains("Session started; could not remember launch choice")
+            );
+            acknowledge_settings_views(&mut d, pending.into_iter().chain(selected).collect());
+            assert!(
+                rendered_settings_notice(&d)
+                    .contains("Session started; could not remember launch choice"),
+                "coalesced={coalesced}"
+            );
+            assert_eq!(d.focused_session(), Some(SessionId(1)));
+            assert!(d.palette.is_none());
+            assert_eq!(
+                d.key(KeyCode::Char('x')),
+                DashboardAction::PtyBytes(b"x".to_vec())
+            );
+        }
     }
 
     #[test]

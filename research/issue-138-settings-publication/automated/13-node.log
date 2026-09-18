@@ -1,0 +1,118 @@
+TAP version 13
+# Subtest: captures exact native history at each conversation boundary
+ok 1 - captures exact native history at each conversation boundary
+  ---
+  duration_ms: 229.134709
+  type: 'test'
+  ...
+# Subtest: inert outside a managed invocation: registers nothing
+ok 2 - inert outside a managed invocation: registers nothing
+  ---
+  duration_ms: 1.864042
+  type: 'test'
+  ...
+# Subtest: one response cycle: start, end, settled carry run, outcome and ordered sequence
+ok 3 - one response cycle: start, end, settled carry run, outcome and ordered sequence
+  ---
+  duration_ms: 274.404083
+  type: 'test'
+  ...
+# Subtest: error and aborted outcomes come from the last assistant message; a second run increments
+ok 4 - error and aborted outcomes come from the last assistant message; a second run increments
+  ---
+  duration_ms: 240.0045
+  type: 'test'
+  ...
+# Subtest: continuations inside one cycle keep the run; the last end before settled decides the outcome
+ok 5 - continuations inside one cycle keep the run; the last end before settled decides the outcome
+  ---
+  duration_ms: 234.07425
+  type: 'test'
+  ...
+# Subtest: non-tui modes never spawn a helper; shutdown reports once then disables
+ok 6 - non-tui modes never spawn a helper; shutdown reports once then disables
+  ---
+  duration_ms: 194.179
+  type: 'test'
+  ...
+# Subtest: a print-mode shutdown drains nothing and spawns no helper
+ok 7 - a print-mode shutdown drains nothing and spawns no helper
+  ---
+  duration_ms: 1.482167
+  type: 'test'
+  ...
+# Subtest: a hung helper is killed at the deadline and the handler still resolves
+ok 8 - a hung helper is killed at the deadline and the handler still resolves
+  ---
+  duration_ms: 904.009792
+  type: 'test'
+  ...
+# Subtest: queue overflow disables reporting and sends one content-free unavailable notice
+ok 9 - queue overflow disables reporting and sends one content-free unavailable notice
+  ---
+  duration_ms: 905.375333
+  type: 'test'
+  ...
+# Subtest: a tool error followed by a successful assistant response is a successful cycle
+ok 10 - a tool error followed by a successful assistant response is a successful cycle
+  ---
+  duration_ms: 232.163583
+  type: 'test'
+  ...
+# Subtest: resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+ok 11 - resume and fork announce the conversation without a cycle; a run whose last assistant errored is an error
+  ---
+  duration_ms: 221.819209
+  type: 'test'
+  ...
+# Subtest: an outer prompt span opens and closes one Input request; the title never leaves
+ok 12 - an outer prompt span opens and closes one Input request; the title never leaves
+  ---
+  duration_ms: 220.37025
+  type: 'test'
+  ...
+# Subtest: a prompt can open while no cycle is running and never touches the cycle
+ok 13 - a prompt can open while no cycle is running and never touches the cycle
+  ---
+  duration_ms: 200.46675
+  type: 'test'
+  ...
+# Subtest: a transition names the conversation it left by id, never by its file path
+ok 14 - a transition names the conversation it left by id, never by its file path
+  ---
+  duration_ms: 200.22875
+  type: 'test'
+  ...
+# Subtest: tree navigation invalidates the response cycle and carries only idleness
+ok 15 - tree navigation invalidates the response cycle and carries only idleness
+  ---
+  duration_ms: 209.416291
+  type: 'test'
+  ...
+# Subtest: the reattach command re-announces a disabled producer once and says so
+ok 16 - the reattach command re-announces a disabled producer once and says so
+  ---
+  duration_ms: 219.348
+  type: 'test'
+  ...
+# Subtest: a shutdown drain discards the queue and delivers only the final frame in one deadline
+ok 17 - a shutdown drain discards the queue and delivers only the final frame in one deadline
+  ---
+  duration_ms: 209.363917
+  type: 'test'
+  ...
+# Subtest: a replacement factory is a new instance that names the conversation it replaced
+ok 18 - a replacement factory is a new instance that names the conversation it replaced
+  ---
+  duration_ms: 203.126333
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4951.369

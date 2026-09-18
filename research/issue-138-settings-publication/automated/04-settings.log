@@ -1,0 +1,36 @@
+   Compiling ovrcr-tui v0.1.0 (/Users/xlyk/.superset/worktrees/ce516841-6a34-4a08-8d1f-cefa87725355/chartreuse-acai/crates/ovrcr-tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.55s
+     Running unittests src/lib.rs (target/debug/deps/ovrcr_tui-536e5659431ea8d1)
+
+running 13 tests
+test dashboard::settings::tests::invalid_file_yields_defaults_and_error ... ok
+test dashboard::settings::tests::ready_sound_default_off_and_independent_of_desktop_notifications ... ok
+test dashboard::settings::tests::desktop_notifications_default_off_and_explicit_config_opt_in ... ok
+test dashboard::palette::launch_tests::settings_save_failure_does_not_reopen_launch_or_lose_created_session ... ok
+test dashboard::settings::tests::loads_overrides_and_expands_picker_roots ... ok
+test dashboard::settings::persistence_tests::failed_replacement_cleans_temporary_file_before_returning_error ... FAILED
+test dashboard::settings::persistence_tests::launch_save_preserves_unrelated_settings_and_files ... ok
+test dashboard::palette::launch_tests::successful_launch_preserves_symlinked_commented_settings ... ok
+test dashboard::palette::launch_tests::settings_edits_create_private_files_and_missing_directories ... ok
+test dashboard::palette::launch_tests::settings_edits_preserve_prior_external_changes_and_exact_project_keys ... ok
+test dashboard::settings::persistence_tests::launch_edits_preserve_existing_table_styles_and_unknown_fields ... ok
+test dashboard::palette::launch_tests::settings_edits_reject_dangling_links_and_read_only_targets ... ok
+test dashboard::palette::launch_tests::settings_edits_reject_invalid_documents_without_changing_bytes ... ok
+
+failures:
+
+---- dashboard::settings::persistence_tests::failed_replacement_cleans_temporary_file_before_returning_error stdout ----
+
+thread 'dashboard::settings::persistence_tests::failed_replacement_cleans_temporary_file_before_returning_error' (138766125) panicked at crates/ovrcr-tui/src/dashboard/settings.rs:364:9:
+assertion `left == right` failed
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dashboard::settings::persistence_tests::failed_replacement_cleans_temporary_file_before_returning_error
+
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 158 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p ovrcr-tui --lib`
