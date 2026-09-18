@@ -1,13 +1,17 @@
 use super::agents::{AgentSource, apply_overrides, detect_agents};
 use super::input::is_browse_key;
 use super::keymap::{Action, KeyBinding, keymap};
-use super::picker::{PathPicker, PickItem, PickList, complete_path, expand_path};
+use super::picker::{
+    PathPicker, PickItem, PickList, complete_path, expand_path, split_workspace_pick,
+};
 use super::render::{CRUST, MAUVE, MUTED, PEACH, SUBTEXT, TEXT, clip_text};
-use super::state::find_session;
+use super::state::{
+    find_session, find_workspace, session_workspace_heading, workspace_heading, workspace_label,
+};
 use super::{Dashboard, DashboardAction, InputMode};
 use crate::protocol::{
     BranchRequest, ClientMessage, CreateSessionRequest, Request, Response, SessionKind,
-    SessionLaunch,
+    SessionLaunch, new_workspace_id,
 };
 use crate::session::SessionId;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -97,6 +101,7 @@ pub(super) struct Palette {
     archive: Option<Vec<crate::protocol::SessionSummary>>,
     error: Option<String>,
     workspace_acknowledged: bool,
+    workspace_id: Option<String>,
     launch_preference: Option<(String, super::settings::LaunchChoice)>,
     failed_launch: Option<CreateSessionRequest>,
     launch_project: Option<String>,
@@ -167,6 +172,7 @@ impl Palette {
             archive: None,
             error: None,
             workspace_acknowledged: false,
+            workspace_id: None,
             launch_preference: None,
             failed_launch: None,
             launch_project: None,
@@ -226,6 +232,19 @@ fn text_field(label: &'static str, value: String, required: bool) -> Field {
         hidden: false,
         edited: false,
         kind: FieldKind::Text,
+    }
+}
+
+fn ensure_workspace_id(palette: &mut Palette) -> Result<String, String> {
+    if let Some(id) = &palette.workspace_id {
+        return Ok(id.clone());
+    }
+    match new_workspace_id() {
+        Ok(id) => {
+            palette.workspace_id = Some(id.clone());
+            Ok(id)
+        }
+        Err(error) => Err(format!("Could not allocate workspace identity: {error}")),
     }
 }
 fn pick_field(label: &'static str, value: String, items: Vec<PickItem>) -> Field {
@@ -327,6 +346,13 @@ impl Dashboard {
     }
 
     pub(super) fn open_create_terminal(&mut self) -> DashboardAction {
+        if let Some(warning) = self
+            .current_workspace()
+            .and_then(|workspace| workspace.warning.clone())
+        {
+            self.set_error(warning);
+            return DashboardAction::Redraw;
+        }
         self.cancel_mouse_gesture();
         self.whichkey = None;
         if let Some(begin) = self.history_begin_request.as_mut() {
@@ -338,6 +364,7 @@ impl Dashboard {
             archive: None,
             error: None,
             workspace_acknowledged: false,
+            workspace_id: None,
             launch_preference: None,
             failed_launch: None,
             launch_project: None,
@@ -353,7 +380,9 @@ impl Dashboard {
     pub(super) fn open_create_workspace(&mut self) -> DashboardAction {
         let action = self.open_palette();
         let page = self.palette_form(Command::CreateWorkspace);
-        self.palette.as_mut().unwrap().page = page;
+        let palette = self.palette.as_mut().unwrap();
+        palette.page = page;
+        let _ = ensure_workspace_id(palette);
         action
     }
 
@@ -363,8 +392,14 @@ impl Dashboard {
         } = &mut palette.page
         {
             let project = match command {
-                Command::CreateTerminal => Some(split_workspace(&fields[1].value).0),
-                Command::CreateWorkspace => Some(fields[0].value.clone()),
+                Command::CreateTerminal => fields
+                    .iter()
+                    .find(|field| field.label == "Workspace")
+                    .map(|field| split_workspace_pick(&field.value).0),
+                Command::CreateWorkspace => fields
+                    .iter()
+                    .find(|field| field.label == "Project")
+                    .map(|field| field.value.clone()),
                 _ => None,
             };
             if let Some(project) = project {
@@ -400,19 +435,32 @@ impl Dashboard {
         else {
             return;
         };
-        let project = fields[0].value.clone();
-        let existing = fields[2].value == "existing";
-        fields[4].hidden = existing;
-        fields[4].required = !existing;
+        let project = fields
+            .iter()
+            .find(|field| field.label == "Project")
+            .map(|field| field.value.clone())
+            .unwrap_or_default();
+        let existing = fields
+            .iter()
+            .find(|field| field.label == "Branch mode")
+            .is_some_and(|field| field.value == "existing");
+        let Some(branch_i) = fields.iter().position(|field| field.label == "Branch") else {
+            return;
+        };
+        let Some(base_i) = fields.iter().position(|field| field.label == "Base") else {
+            return;
+        };
+        fields[base_i].hidden = existing;
+        fields[base_i].required = !existing;
         if hints.project.as_ref() != Some(&project) {
             hints.project = Some(project.clone());
-            fields[3].kind = FieldKind::Text;
+            fields[branch_i].kind = FieldKind::Text;
             if existing {
-                fields[3].value.clear();
+                fields[branch_i].value.clear();
             }
         }
-        if !existing && !fields[3].edited {
-            fields[3].value = format!("{}{}", self.settings.branch_prefix, fields[1].value);
+        if !existing && !fields[branch_i].edited {
+            fields[branch_i].value = self.settings.branch_prefix.clone();
         }
         if hints.inspect.is_none()
             && !hints.cache.contains_key(&project)
@@ -442,10 +490,10 @@ impl Dashboard {
         hints.note = None;
         match hints.cache.get(&project) {
             Some(Ok(result)) => {
-                if !fields[4].edited {
-                    fields[4].value.clone_from(&result.base);
+                if !fields[base_i].edited {
+                    fields[base_i].value.clone_from(&result.base);
                 }
-                if existing && !matches!(fields[3].kind, FieldKind::Pick(_)) {
+                if existing && !matches!(fields[branch_i].kind, FieldKind::Pick(_)) {
                     let mut list = PickList::new(
                         result
                             .branches
@@ -456,31 +504,30 @@ impl Dashboard {
                             })
                             .collect(),
                     );
-                    if fields[3].value.is_empty() {
-                        fields[3].value = result.branches.first().cloned().unwrap_or_default();
+                    if fields[branch_i].value.is_empty() {
+                        fields[branch_i].value =
+                            result.branches.first().cloned().unwrap_or_default();
                     }
-                    if result.branches.contains(&fields[3].value) {
-                        list.select_value(&fields[3].value);
+                    if result.branches.contains(&fields[branch_i].value) {
+                        list.select_value(&fields[branch_i].value);
                     } else {
-                        // Filter to what the user typed instead of silently
-                        // replacing it; an unmatched query accepts nothing.
-                        list.query.clone_from(&fields[3].value);
+                        list.query.clone_from(&fields[branch_i].value);
                     }
                     if !result.branches.is_empty() {
-                        fields[3].kind = FieldKind::Pick(list);
+                        fields[branch_i].kind = FieldKind::Pick(list);
                     }
                 }
             }
             Some(Err(error)) => {
                 hints.note = Some(format!("{error}; enter branch/base manually"));
-                if !fields[4].edited {
-                    fields[4].value = "main".into();
+                if !fields[base_i].edited {
+                    fields[base_i].value = "main".into();
                 }
             }
             None => {
                 hints.note = Some("Loading Git suggestions…".into());
-                if !fields[4].edited {
-                    fields[4].value = "main".into();
+                if !fields[base_i].edited {
+                    fields[base_i].value = "main".into();
                 }
             }
         }
@@ -592,10 +639,107 @@ impl Dashboard {
         }
     }
 
+    pub(super) fn sync_palette_workspace_identity(&mut self) {
+        let removal = match &self.palette {
+            Some(palette) if palette.pending.is_some() => None,
+            Some(Palette {
+                page:
+                    Page::Confirm {
+                        request: Some(Request::RemoveWorkspace { project, name }),
+                        target,
+                    },
+                ..
+            }) => Some((project.clone(), name.clone(), target.clone())),
+            _ => None,
+        };
+        if let Some((project, name, target)) = removal {
+            let stale = match find_workspace(self, &project, &name) {
+                None => true,
+                Some(workspace) => {
+                    let heading = workspace_heading(self, workspace);
+                    let expected = removal_confirmation(
+                        Request::RemoveWorkspace {
+                            project: project.clone(),
+                            name: name.clone(),
+                        },
+                        &heading,
+                    );
+                    workspace.root
+                        || !matches!(expected, Page::Confirm { target: current, .. } if current == target)
+                }
+            };
+            if stale {
+                let page = self.palette_form(Command::RemoveWorkspace);
+                if let Some(palette) = self.palette.as_mut() {
+                    palette.page = page;
+                    palette.error = None;
+                }
+                return;
+            }
+        }
+        let Some(palette) = self.palette.as_ref() else {
+            return;
+        };
+        let Page::Form {
+            command, fields, ..
+        } = &palette.page
+        else {
+            return;
+        };
+        if !matches!(command, Command::CreateTerminal | Command::RemoveWorkspace) {
+            return;
+        }
+        let include_root = !matches!(command, Command::RemoveWorkspace);
+        let Some(field) = fields.iter().find(|field| field.label == "Workspace") else {
+            return;
+        };
+        let FieldKind::Pick(list) = &field.kind else {
+            return;
+        };
+        let selected = list
+            .accepted()
+            .map(|item| item.value.clone())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| field.value.clone());
+        let query = list.query.clone();
+        let (project, id) = split_workspace_pick(&selected);
+        let mut list = PickList::workspaces(&self.hierarchy, &project, &id, include_root);
+        // Keep the typed filter; never copy the selected branch label into query.
+        list.query = query;
+        let filtered = list.filtered();
+        // An out-of-range selection cannot be accepted. A branch handoff must
+        // require a new user selection, not silently choose the first match.
+        list.selected = filtered
+            .iter()
+            .position(|item| item.value == selected)
+            .unwrap_or(filtered.len());
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        let Page::Form { fields, .. } = &mut palette.page else {
+            return;
+        };
+        let Some(field) = fields.iter_mut().find(|field| field.label == "Workspace") else {
+            return;
+        };
+        if !selected.is_empty() {
+            field.value = selected;
+        }
+        field.kind = FieldKind::Pick(list);
+    }
+
     pub(super) fn open_remove_context(&mut self, workspace: bool) -> DashboardAction {
         let (project, name) = self.creation_context();
         if project.is_empty() || (workspace && name.is_empty()) {
             return DashboardAction::None;
+        }
+        if workspace
+            && self
+                .current_workspace()
+                .is_some_and(|workspace| workspace.root)
+        {
+            self.set_error(super::keymap::ROOT_PROTECTED);
+            return DashboardAction::Redraw;
         }
         self.cancel_mouse_gesture();
         if let Some(begin) = self.history_begin_request.as_mut() {
@@ -613,18 +757,28 @@ impl Dashboard {
         self.mode = InputMode::Browse;
         DashboardAction::Redraw
     }
-
     fn command_page(&self, command: Command) -> Page {
         match command {
             Command::StartNewConversation(id) => {
                 let session = find_session(self, id).expect("new conversation target exists");
+                if let Some(warning) = find_workspace(self, &session.project, &session.workspace)
+                    .and_then(|workspace| workspace.warning.clone())
+                {
+                    return Page::Confirm {
+                        request: None,
+                        target: warning,
+                    };
+                }
                 let mut page = self.palette_form(Command::CreateTerminal);
                 if let Page::Form { fields, .. } = &mut page {
                     for field in fields.iter_mut() {
                         match field.label {
                             "Start" => field.value = "Agent".into(),
                             "Workspace" => {
-                                field.value = format!("{} / {}", session.project, session.workspace)
+                                field.value = super::picker::workspace_pick_value(
+                                    &session.project,
+                                    &session.workspace,
+                                )
                             }
                             "Agent" => {
                                 if let SessionKind::Agent { name } = &session.kind {
@@ -644,6 +798,14 @@ impl Dashboard {
             }
             Command::ReopenTerminal(id) => {
                 let session = find_session(self, id).expect("reopen target exists");
+                if let Some(warning) = find_workspace(self, &session.project, &session.workspace)
+                    .and_then(|workspace| workspace.warning.clone())
+                {
+                    return Page::Confirm {
+                        request: None,
+                        target: warning,
+                    };
+                }
                 let acknowledge_stopped = session
                     .recovery
                     .as_ref()
@@ -696,9 +858,8 @@ impl Dashboard {
                         expected_run: session.run,
                     }),
                     target: format!(
-                        "Close {} / {} / {} (#{}). Stop its currently owned processes and archive its record.",
-                        session.project,
-                        session.workspace,
+                        "Close {} / {} (#{}). Stop its currently owned processes and archive its record.",
+                        session_workspace_heading(self, session),
                         session.display_name(),
                         id.0
                     ),
@@ -744,9 +905,11 @@ impl Dashboard {
             return rows
                 .iter()
                 .filter(|row| {
+                    let place = session_workspace_heading(self, row);
                     let label = format!(
-                        "{} {} {} {}",
+                        "{} {} {} {} {}",
                         row.display_name(),
+                        place,
                         row.project,
                         row.workspace,
                         row.cwd.display()
@@ -756,10 +919,9 @@ impl Dashboard {
                 })
                 .flat_map(|row| {
                     let label = format!(
-                        "{} / {} / {} (#{} )",
+                        "{} / {} (#{})",
+                        session_workspace_heading(self, row),
                         row.display_name(),
-                        row.project,
-                        row.workspace,
                         row.id.0
                     );
                     [
@@ -886,7 +1048,7 @@ impl Dashboard {
                         label: format!(
                             "Switch terminal: {} / {} / {} (#{})",
                             project.name,
-                            workspace.name,
+                            workspace_label(self, workspace),
                             session.display_name(),
                             session.id.0
                         ),
@@ -1136,17 +1298,30 @@ impl Dashboard {
                 }
                 palette.error = None;
             }
-            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(fields[*active].kind, FieldKind::Toggle)) => {
+            KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right if matches!(&palette.page, Page::Form { fields, active, .. } if matches!(fields[*active].kind, FieldKind::Toggle)) =>
+            {
                 if let Page::Form { fields, .. } = &mut palette.page {
-                    fields[2].value = if fields[2].value == "new" {
-                        "existing"
-                    } else {
-                        "new"
+                    let to_existing = fields
+                        .iter()
+                        .find(|field| field.label == "Branch mode")
+                        .is_some_and(|field| field.value == "new");
+                    if let Some(mode) = fields.iter_mut().find(|field| field.label == "Branch mode")
+                    {
+                        mode.value = if to_existing { "existing" } else { "new" }.into();
                     }
-                    .into();
-                    fields[3].kind = FieldKind::Text;
-                    fields[3].value.clear();
-                    fields[3].edited = false;
+                    if let Some(branch) = fields.iter_mut().find(|field| field.label == "Branch") {
+                        branch.kind = FieldKind::Text;
+                        if to_existing {
+                            // A leftover new-branch name is not an existing-branch filter.
+                            branch.value.clear();
+                            branch.edited = false;
+                        }
+                    }
+                    if let Some(base) = fields.iter_mut().find(|field| field.label == "Base") {
+                        base.kind = FieldKind::Text;
+                        base.value.clear();
+                        base.edited = false;
+                    }
                 }
             }
             KeyCode::Char(ch)
@@ -1351,7 +1526,12 @@ impl Dashboard {
                                     },
                                 );
                             }
-                            command => palette.page = self.command_page(command),
+                            command => {
+                                palette.page = self.command_page(command.clone());
+                                if matches!(command, Command::CreateWorkspace) {
+                                    let _ = ensure_workspace_id(&mut palette);
+                                }
+                            }
                         }
                     }
                 }
@@ -1384,7 +1564,7 @@ impl Dashboard {
                             .iter()
                             .find(|p| p.name == previous.project)
                             .is_some_and(|p| {
-                                p.workspaces.iter().any(|w| w.name == previous.workspace)
+                                p.workspaces.iter().any(|w| w.id == previous.workspace)
                             })
                         {
                             palette.error = Some("Workspace not yet registered; wait for the hierarchy update before retrying.".into());
@@ -1428,7 +1608,9 @@ impl Dashboard {
                     let last = submit
                         || visible.last().copied() == Some(*active)
                         || (matches!(command, Command::CreateWorkspace)
-                            && (*active == 1 || (*active == 3 && fields[2].value == "existing")));
+                            && fields
+                                .get(*active)
+                                .is_some_and(|field| field.label == "Branch"));
                     if !last {
                         move_form_field(fields, active, false);
                     } else if let Some(index) = fields
@@ -1445,8 +1627,13 @@ impl Dashboard {
                             self.palette = Some(palette);
                             return action;
                         }
-                        let values: Vec<_> =
-                            fields.iter().map(|f| f.value.trim().to_string()).collect();
+                        let field = |label: &str| {
+                            fields
+                                .iter()
+                                .find(|f| f.label == label)
+                                .map(|f| f.value.trim().to_string())
+                                .unwrap_or_default()
+                        };
                         let selected_launch = if matches!(
                             command,
                             Command::CreateTerminal
@@ -1466,10 +1653,22 @@ impl Dashboard {
                         };
                         let request = match command {
                             Command::CreateTerminal => {
+                                let (project, id) = split_workspace_pick(&field("Workspace"));
+                                let Some(workspace) = find_workspace(self, &project, &id) else {
+                                    palette.error =
+                                        Some("Workspace not found in available choices".into());
+                                    self.palette = Some(palette);
+                                    return action;
+                                };
+                                if let Some(warning) = &workspace.warning {
+                                    palette.error = Some(warning.clone());
+                                    self.palette = Some(palette);
+                                    return action;
+                                }
                                 Request::CreateSession(CreateSessionRequest {
-                                    project: split_workspace(&values[1]).0,
-                                    workspace: split_workspace(&values[1]).1,
-                                    name: values[2].clone(),
+                                    project: workspace.project.clone(),
+                                    workspace: workspace.id.clone(),
+                                    name: field("Name"),
                                     argv: selected_launch.as_ref().unwrap().argv.clone(),
                                     label: selected_launch.as_ref().unwrap().label.clone(),
                                     kind: selected_launch.as_ref().unwrap().kind.clone(),
@@ -1477,33 +1676,50 @@ impl Dashboard {
                             }
                             Command::RenameTerminal(session) => Request::SetSessionTitle {
                                 session: *session,
-                                title: (!values[0].is_empty()).then(|| values[0].clone()),
-                            },
-                            Command::CreateWorkspace => Request::CreateWorkspaceWithLaunch {
-                                project: values[0].clone(),
-                                name: values[1].clone(),
-                                launch: selected_launch.clone(),
-                                branch: if values[2] == "existing" {
-                                    BranchRequest::Existing {
-                                        branch: values[3].clone(),
-                                    }
-                                } else {
-                                    BranchRequest::New {
-                                        branch: values[3].clone(),
-                                        base: values[4].clone(),
-                                    }
+                                title: {
+                                    let name = field("Name");
+                                    (!name.is_empty()).then_some(name)
                                 },
                             },
+                            Command::CreateWorkspace => {
+                                let id = if let Some(id) = palette.workspace_id.clone() {
+                                    id
+                                } else {
+                                    match new_workspace_id() {
+                                        Ok(id) => {
+                                            palette.workspace_id = Some(id.clone());
+                                            id
+                                        }
+                                        Err(error) => {
+                                            palette.error = Some(format!(
+                                                "Could not allocate workspace identity: {error}"
+                                            ));
+                                            self.palette = Some(palette);
+                                            return action;
+                                        }
+                                    }
+                                };
+                                Request::CreateWorkspaceWithLaunch {
+                                    project: field("Project"),
+                                    id,
+                                    launch: selected_launch.clone(),
+                                    branch: if field("Branch mode") == "existing" {
+                                        BranchRequest::Existing {
+                                            branch: field("Branch"),
+                                        }
+                                    } else {
+                                        BranchRequest::New {
+                                            branch: field("Branch"),
+                                            base: field("Base"),
+                                        }
+                                    },
+                                }
+                            }
                             Command::RecoverLaunch => {
                                 let previous = palette.failed_launch.as_ref().unwrap();
-                                let registered = self
-                                    .hierarchy
-                                    .projects
-                                    .iter()
-                                    .find(|p| p.name == previous.project)
-                                    .is_some_and(|p| {
-                                        p.workspaces.iter().any(|w| w.name == previous.workspace)
-                                    });
+                                let registered =
+                                    find_workspace(self, &previous.project, &previous.workspace)
+                                        .is_some();
                                 if !registered {
                                     palette.error = Some("Workspace is not yet registered in the dashboard. Wait for the hierarchy update before retrying.".into());
                                     self.palette = Some(palette);
@@ -1519,21 +1735,44 @@ impl Dashboard {
                                 })
                             }
                             Command::RegisterProject => Request::AddProject {
-                                name: values[1].clone(),
-                                repo: expand_path(&values[0]),
-                                workspace_root: expand_path(&values[2]),
+                                name: field("Name"),
+                                repo: expand_path(&field("Repository")),
+                                workspace_root: expand_path(&field("Workspace root")),
                             },
                             Command::RemoveWorkspace => {
-                                let (project, name) = split_workspace(&values[0]);
-                                Request::RemoveWorkspace { project, name }
+                                let (project, id) = split_workspace_pick(&field("Workspace"));
+                                let Some(workspace) = find_workspace(self, &project, &id) else {
+                                    palette.error =
+                                        Some("Workspace not found in available choices".into());
+                                    self.palette = Some(palette);
+                                    return action;
+                                };
+                                if workspace.root {
+                                    palette.error = Some(super::keymap::ROOT_PROTECTED.to_string());
+                                    self.palette = Some(palette);
+                                    return action;
+                                }
+                                Request::RemoveWorkspace {
+                                    project: workspace.project.clone(),
+                                    name: workspace.id.clone(),
+                                }
                             }
                             Command::RemoveProject => Request::RemoveProject {
-                                name: values[0].clone(),
+                                name: field("Project"),
                             },
                             _ => unreachable!(),
                         };
                         if matches!(command, Command::RemoveWorkspace | Command::RemoveProject) {
-                            palette.page = removal_confirmation(request);
+                            let display = match &request {
+                                Request::RemoveWorkspace { project, name } => {
+                                    find_workspace(self, project, name)
+                                        .map(|workspace| workspace_heading(self, workspace))
+                                        .unwrap_or_default()
+                                }
+                                Request::RemoveProject { name } => name.clone(),
+                                _ => String::new(),
+                            };
+                            palette.page = removal_confirmation(request, &display);
                         } else {
                             action = self.palette_submit(&mut palette, request);
                         }
@@ -1737,7 +1976,7 @@ impl Dashboard {
         let launch = match &request {
             Request::CreateWorkspaceWithLaunch {
                 project,
-                name,
+                id: name,
                 launch: Some(launch),
                 ..
             } => Some(CreateSessionRequest {
@@ -1786,9 +2025,15 @@ impl Dashboard {
                     PickList::workspaces(&self.hierarchy, &project, &workspace, true);
                 let workspace_value = workspace_list
                     .accepted()
-                    .map(|i| i.value.clone())
+                    .map(|item| item.value.clone())
                     .unwrap_or_default();
-                let mut launch = self.launch_fields(&split_workspace(&workspace_value).0, false);
+                let launch_project = split_workspace_pick(&workspace_value).0;
+                let launch_project = if launch_project.is_empty() {
+                    project.clone()
+                } else {
+                    launch_project
+                };
+                let mut launch = self.launch_fields(&launch_project, false);
                 let command = launch.pop().unwrap();
                 let agent = launch.pop().unwrap();
                 vec![
@@ -1828,9 +2073,8 @@ impl Dashboard {
                 let project_name = project.value.clone();
                 let mut fields = vec![
                     project,
-                    text("Name", String::new(), true),
-                    mode,
                     text("Branch", self.settings.branch_prefix.clone(), true),
+                    mode,
                     text("Base", "main".into(), true),
                 ];
                 fields.extend(self.launch_fields(&project_name, true));
@@ -2050,32 +2294,33 @@ impl Dashboard {
         if !palette.workspace_acknowledged {
             return Vec::new();
         }
-        let Page::Form {
-            command: Command::CreateWorkspace,
-            fields,
-            ..
-        } = &palette.page
-        else {
+        if !matches!(
+            palette.page,
+            Page::Form {
+                command: Command::CreateWorkspace,
+                ..
+            }
+        ) {
+            return Vec::new();
+        }
+        let Some(id) = palette.workspace_id.clone() else {
             return Vec::new();
         };
-        let workspace = self
-            .hierarchy
-            .projects
-            .iter()
-            .find(|project| project.name == fields[0].value.trim())
-            .and_then(|project| {
-                project
-                    .workspaces
-                    .iter()
-                    .find(|workspace| workspace.name == fields[1].value.trim())
-            });
-        let Some(workspace) = workspace else {
+        let project = match &palette.page {
+            Page::Form { fields, .. } => fields
+                .iter()
+                .find(|field| field.label == "Project")
+                .map(|field| field.value.trim().to_string())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        let Some(workspace) = find_workspace(self, &project, &id).cloned() else {
             return Vec::new();
         };
         if workspace.sessions.is_empty() {
             let row = super::TreeRow::Workspace {
                 project: workspace.project.clone(),
-                name: workspace.name.clone(),
+                id: workspace.id.clone(),
             };
             self.palette = None;
             self.error = None;
@@ -2195,11 +2440,21 @@ impl Dashboard {
                     }
                     targets.push((lines.len(), PaletteTarget::Field(index, false)));
                     lines.push(Line::styled(field.label, Style::default().fg(SUBTEXT)));
+                    let pick_label;
                     let editing = match &field.kind {
                         FieldKind::Pick(list) if index == *active && !list.query.is_empty() => {
-                            &list.query
+                            list.query.as_str()
                         }
-                        _ => &field.value,
+                        FieldKind::Pick(list) => {
+                            pick_label = list
+                                .items
+                                .iter()
+                                .find(|item| item.value == field.value)
+                                .map(|item| item.label.as_str())
+                                .unwrap_or(field.value.as_str());
+                            pick_label
+                        }
+                        _ => field.value.as_str(),
                     };
                     let cursor = if index == *active {
                         palette.cursor
@@ -2349,7 +2604,12 @@ impl Dashboard {
                                 usize::from(inner.width)
                             ),
                             clip_text(
-                                &format!("Workspace: {}", session.workspace),
+                                &format!(
+                                    "Workspace: {}",
+                                    find_workspace(self, &session.project, &session.workspace)
+                                        .map(|workspace| workspace_label(self, workspace))
+                                        .unwrap_or_else(|| session.project.clone())
+                                ),
                                 usize::from(inner.width)
                             )
                         )
@@ -2385,7 +2645,9 @@ impl Dashboard {
                 Page::Form {
                     command: Command::CreateWorkspace,
                     ..
-                } => "Enter on Name submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel",
+                } => {
+                    "Enter on Branch submits · Tab next · ↑/↓ pick · Space/←/→ toggle · Esc cancel"
+                }
                 Page::Form {
                     command: Command::RenameTerminal(_),
                     ..
@@ -2457,18 +2719,10 @@ fn mark_form_edit(
         _ => {}
     }
 }
-
-fn split_workspace(value: &str) -> (String, String) {
-    value
-        .split_once(" / ")
-        .map(|(project, workspace)| (project.to_string(), workspace.to_string()))
-        .unwrap_or_else(|| (value.to_string(), String::new()))
-}
-
-fn removal_confirmation(request: Request) -> Page {
+fn removal_confirmation(request: Request, display: &str) -> Page {
     let target = match &request {
-        Request::RemoveWorkspace { project, name } => format!(
-            "Remove workspace {project} / {name}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths. Live or ownership-uncertain sessions block removal."
+        Request::RemoveWorkspace { .. } => format!(
+            "Remove workspace {display}. Remove its clean worktree; keep the branch. Archive stopped sessions with their original paths. Live or ownership-uncertain sessions block removal."
         ),
         Request::RemoveProject { name } => {
             format!(
@@ -2554,11 +2808,6 @@ mod mouse_tests {
         d.palette_paste("X");
         d.palette_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         d.palette_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        let Page::Form { fields, active, .. } = &d.palette.as_ref().unwrap().page else {
-            panic!()
-        };
-        assert_eq!(*active, 1);
-        assert_eq!(fields[1].value, "a界z");
         click(&mut d, "[Cancel]", 1, 100, 30);
         assert!(d.palette.is_none());
     }
@@ -2576,9 +2825,12 @@ mod mouse_tests {
             }
         ));
         d.palette = Some(Palette {
-            page: removal_confirmation(Request::RemoveProject {
-                name: "demo".into(),
-            }),
+            page: removal_confirmation(
+                Request::RemoveProject {
+                    name: "demo".into(),
+                },
+                "demo",
+            ),
             ..Palette::new()
         });
         let DashboardAction::Request(message) = click(&mut d, "[Confirm]", 1, 100, 30) else {
@@ -2701,7 +2953,13 @@ mod mouse_tests {
             panic!()
         };
         assert_eq!(fields[2].value, "existing");
-        assert!(fields[4].hidden);
+        assert!(
+            fields
+                .iter()
+                .find(|field| field.label == "Base")
+                .unwrap()
+                .hidden
+        );
         d.open_register_project();
         let dir = tempfile::tempdir().unwrap();
         for i in 0..15 {
@@ -2831,8 +3089,6 @@ mod mouse_tests {
         ));
         d.poll_palette();
         assert!(d.drain_outbox().is_empty(), "inspection is still pending");
-        // Supply the awaited suggestion result deterministically; exercise the
-        // production idle-poll replay, without a timing-dependent Git worker.
         let palette = d.palette.as_mut().unwrap();
         palette.suggestions.cache.insert(
             "demo".into(),
@@ -2851,7 +3107,7 @@ mod mouse_tests {
         );
         let message = drained.remove(0);
         assert!(
-            matches!(message.request, Request::CreateWorkspaceWithLaunch { project, name, branch: BranchRequest::New { base, .. }, .. } if project == "demo" && name == "deferred" && base == "develop")
+            matches!(message.request, Request::CreateWorkspaceWithLaunch { project, id, branch: BranchRequest::New { branch, base, .. }, .. } if project == "demo" && id.len() == 32 && branch.ends_with("deferred") && base == "develop")
         );
         d.poll_palette();
         assert!(
@@ -2873,8 +3129,8 @@ mod launch_tests {
     use super::super::settings::{AgentOverride, LaunchChoice};
     use super::*;
     use crate::protocol::{
-        AgentActivity, ErrorCode, ProjectSummary, ServerEvent, ServerMessage, SessionKind,
-        SessionPhase, SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
+        AgentActivity, ErrorCode, ProjectSummary, ServerEvent, ServerMessage, SessionId,
+        SessionKind, SessionPhase, SessionRecovery, SessionSummary, TerminalSize, WorkspaceSummary,
     };
 
     fn dashboard() -> Dashboard {
@@ -2887,6 +3143,9 @@ mod launch_tests {
             workspaces: vec![WorkspaceSummary {
                 project: "demo".into(),
                 name: "root".into(),
+                id: "root".into(),
+                root: false,
+                warning: None,
                 path: "/tmp/unused".into(),
                 sessions: vec![],
             }],
@@ -2995,7 +3254,8 @@ mod launch_tests {
         p.suggestions
             .cache
             .insert("demo".into(), Err("fixture".into()));
-        set(d, "Name", "new-work");
+        p.workspace_id = Some("new-work".into());
+        set(d, "Branch", "feature/new-work");
         set(d, "Start", start);
     }
     #[test]
@@ -3038,6 +3298,9 @@ mod launch_tests {
                 d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
                     project: "demo".into(),
                     name: "new-work".into(),
+                    id: "new-work".into(),
+                    root: false,
+                    warning: None,
                     path: "/tmp/unused".into(),
                     sessions: vec![],
                 });
@@ -3081,7 +3344,7 @@ mod launch_tests {
             let m = request(&mut d);
             let Request::CreateWorkspaceWithLaunch {
                 project,
-                name,
+                id: name,
                 launch,
                 ..
             } = m.request
@@ -3679,6 +3942,9 @@ mod launch_tests {
             d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
                 project: "demo".into(),
                 name: "new-work".into(),
+                id: "new-work".into(),
+                root: false,
+                warning: None,
                 path: "/tmp/unused".into(),
                 sessions: vec![],
             });
@@ -4037,6 +4303,9 @@ mod launch_tests {
         d.hierarchy.projects[0].workspaces.push(WorkspaceSummary {
             project: "demo".into(),
             name: "new-work".into(),
+            id: "new-work".into(),
+            root: false,
+            warning: None,
             path: "/tmp/unused".into(),
             sessions: vec![],
         });

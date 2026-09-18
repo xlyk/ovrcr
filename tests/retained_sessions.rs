@@ -783,13 +783,15 @@ fn wait_phase(live: &Live, id: u64, phase: &str) -> Value {
 }
 
 fn create_terminal(live: &Live, name: &str, argv: &[&str]) -> Value {
+    let path = live.workspace_root.join(live::WORKSPACE);
+    let path = path.to_str().unwrap();
     let mut args = vec![
         "terminal",
         "create",
         "--project",
         live::PROJECT,
-        "--workspace",
-        live::WORKSPACE,
+        "--path",
+        path,
         "--name",
         name,
         "--",
@@ -1712,6 +1714,8 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
     json(&live, &["shutdown", "--kill"]);
     live.join();
     live.start_binary();
+    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,
         &[
@@ -1719,8 +1723,8 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
             "get",
             "--project",
             live::PROJECT,
-            "--name",
-            live::WORKSPACE,
+            "--path",
+            worktree,
         ],
     );
     let path = std::path::Path::new(workspace["path"].as_str().unwrap());
@@ -1764,13 +1768,20 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
         "{response:?}"
     );
     assert!(!path.exists(), "commit failure occurs after Git removal");
-    assert_eq!(json(&live, &["terminal", "list"]), saved);
+    let mut unavailable_sessions = saved.clone();
+    for session in unavailable_sessions.as_array_mut().unwrap() {
+        session["workspace"] = Value::String(ovrcr::git::UNAVAILABLE_CHECKOUT.into());
+    }
+    assert_eq!(json(&live, &["terminal", "list"]), unavailable_sessions);
     assert!(
         json(&live, &["terminal", "list", "--archived"])
             .as_array()
             .unwrap()
             .is_empty()
     );
+    let mut unavailable_workspace = workspace.clone();
+    unavailable_workspace["name"] = Value::String(ovrcr::git::UNAVAILABLE_CHECKOUT.into());
+    unavailable_workspace["branch"] = Value::String(ovrcr::git::UNAVAILABLE_CHECKOUT.into());
     assert_eq!(
         json(
             &live,
@@ -1779,17 +1790,17 @@ fn workspace_removal_blocks_live_and_uncertain_rows_and_preserves_records_on_fai
                 "get",
                 "--project",
                 live::PROJECT,
-                "--name",
-                live::WORKSPACE
+                "--path",
+                worktree
             ]
         ),
-        workspace
+        unavailable_workspace
     );
     db.execute_batch("DROP TRIGGER reject_commit; DROP TABLE commit_guard;")
         .unwrap();
     json(&live, &["shutdown", "--kill"]);
     live.join();
-    assert_eq!(json(&live, &["terminal", "list"]), saved);
+    assert_eq!(json(&live, &["terminal", "list"]), unavailable_sessions);
 }
 
 #[test]
@@ -1876,6 +1887,8 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
     for row in json(&live, &["terminal", "list"]).as_array().unwrap() {
         json(&live, &["terminal", "kill", &row["id"].to_string()]);
     }
+    let worktree_path = live.workspace_root.join(live::WORKSPACE);
+    let worktree = worktree_path.to_str().unwrap();
     let workspace = json(
         &live,
         &[
@@ -1883,8 +1896,8 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
             "get",
             "--project",
             live::PROJECT,
-            "--name",
-            live::WORKSPACE,
+            "--path",
+            worktree,
         ],
     );
     let path = workspace["path"].as_str().unwrap();
@@ -1895,8 +1908,8 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
             "remove",
             "--project",
             live::PROJECT,
-            "--name",
-            live::WORKSPACE,
+            "--path",
+            worktree,
         ],
     );
     assert!(!std::path::Path::new(path).exists());
@@ -1910,7 +1923,7 @@ fn workspace_removal_retains_archive_context_through_project_removal_and_restart
         .unwrap();
     assert_eq!(saved["title"], "Original context");
     assert_eq!(saved["project"], live::PROJECT);
-    assert_eq!(saved["workspace"], live::WORKSPACE);
+    assert_eq!(saved["workspace"], format!("unavailable @ {path}"));
     assert_eq!(saved["cwd"], path);
     json(&live, &["shutdown", "--kill"]);
     live.join();

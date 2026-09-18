@@ -53,19 +53,24 @@ pub(super) fn workspace_value(
     let terminal_count = sessions
         .iter()
         .filter(|session| {
-            !session.archived && session.project == project && session.workspace == workspace.name
+            !session.archived && session.project == project && session.workspace == workspace.id
         })
         .count();
+    let name = workspace.branch.as_str();
     json!({
         "project": project,
-        "name": workspace.name,
+        "name": name,
         "path": path_text(&workspace.path),
-        "branch": workspace.branch,
+        "branch": name,
         "terminal_count": terminal_count,
     })
 }
 
-pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Value {
+pub(super) fn terminal_value(
+    session: &SessionSummary,
+    now_unix_ms: u64,
+    registry: Option<&ovrcr::config::Registry>,
+) -> Value {
     let (phase, exit_code, exit_signal) = match &session.phase {
         SessionPhase::Running => ("running", Value::Null, Value::Null),
         SessionPhase::Paused => ("paused", Value::Null, Value::Null),
@@ -87,7 +92,7 @@ pub(super) fn terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Valu
         "run": session.run.0,
         "kind": kind,
         "project": session.project,
-        "workspace": session.workspace,
+        "workspace": workspace_label(registry, session),
         "cwd": session.cwd,
         "name": session.name,
         "title": session.title,
@@ -305,7 +310,9 @@ pub(super) fn print_legacy_response(response: Response, json_output: bool) -> Ap
                             let terminals = workspace
                                 .sessions
                                 .iter()
-                                .map(|session| legacy_terminal_value(session, now_unix_ms))
+                                .map(|session| {
+                                    legacy_terminal_value(session, now_unix_ms, &workspace.name)
+                                })
                                 .collect::<Vec<_>>();
                             json!({
                                 "project": workspace.project,
@@ -351,13 +358,36 @@ pub(super) fn print_legacy_response(response: Response, json_output: bool) -> Ap
     }
 }
 
-fn legacy_terminal_value(session: &SessionSummary, now_unix_ms: u64) -> Value {
-    let mut value = terminal_value(session, now_unix_ms);
+fn legacy_terminal_value(
+    session: &SessionSummary,
+    now_unix_ms: u64,
+    workspace_name: &str,
+) -> Value {
+    let mut value = terminal_value(session, now_unix_ms, None);
     if let Value::Object(fields) = &mut value {
+        fields.insert("workspace".into(), json!(workspace_name));
         fields.remove("context_usage");
         fields.remove("context_stale");
     }
     value
+}
+
+fn workspace_label(registry: Option<&ovrcr::config::Registry>, session: &SessionSummary) -> String {
+    registry
+        .and_then(|registry| {
+            registry
+                .projects
+                .iter()
+                .find(|project| project.name == session.project)
+        })
+        .and_then(|project| {
+            project
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == session.workspace)
+        })
+        .map(|workspace| workspace.branch.clone())
+        .unwrap_or_else(|| format!("unavailable @ {}", session.cwd.display()))
 }
 
 fn path_text(path: &Path) -> String {

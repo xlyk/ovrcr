@@ -49,6 +49,9 @@ fn task_hierarchy() -> HierarchySnapshot {
             name: "project".into(),
             workspaces: vec![WorkspaceSummary {
                 project: "project".into(),
+                id: "workspace".into(),
+                root: false,
+                warning: None,
                 name: "workspace".into(),
                 path: PathBuf::from("/tmp/workspace"),
                 sessions: vec![SessionSummary {

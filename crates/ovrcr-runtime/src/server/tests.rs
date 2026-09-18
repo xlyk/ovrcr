@@ -2488,9 +2488,11 @@ fn relative_bound_socket_validates_spawn_and_child_cwd_is_distinct() {
             repo: root.path().to_path_buf(),
             workspace_root: root.path().to_path_buf(),
             workspaces: vec![crate::config::WorkspaceRecord {
-                name: "workspace".into(),
+                id: "workspace".into(),
                 path: child_cwd.clone(),
                 branch: "main".into(),
+                git_identity: None,
+                setup_pending: false,
             }],
         }],
     };
@@ -2604,6 +2606,7 @@ fn test_state_with_dispatch(
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
             retained: parking_lot::Mutex::new(SessionStore::in_memory()),
+            observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -2645,6 +2648,7 @@ fn test_state_with_socket(
             sessions: Mutex::new(HashMap::new()),
             dashboard: ActiveDashboard::default(),
             retained: parking_lot::Mutex::new(SessionStore::in_memory()),
+            observations: parking_lot::Mutex::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
             dispatch,
             shutdown: AtomicBool::new(false),
@@ -5206,9 +5210,11 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
             repo: root.path().to_path_buf(),
             workspace_root: root.path().to_path_buf(),
             workspaces: vec![crate::config::WorkspaceRecord {
-                name: "workspace".into(),
+                id: "workspace".into(),
                 path: workspace.clone(),
                 branch: "main".into(),
+                git_identity: None,
+                setup_pending: false,
             }],
         }],
     };
@@ -5222,6 +5228,7 @@ fn registration_publishes_the_session_before_its_events_can_arrive() {
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
         retained: parking_lot::Mutex::new(SessionStore::in_memory()),
+        observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -5385,9 +5392,11 @@ fn session_output_flows_while_another_session_spawns() {
             repo: root.path().to_path_buf(),
             workspace_root: root.path().to_path_buf(),
             workspaces: vec![crate::config::WorkspaceRecord {
-                name: "workspace".into(),
+                id: "workspace".into(),
                 path: workspace.clone(),
                 branch: "main".into(),
+                git_identity: None,
+                setup_pending: false,
             }],
         }],
     };
@@ -5430,6 +5439,7 @@ fn session_output_flows_while_another_session_spawns() {
         sessions: Mutex::new(HashMap::new()),
         dashboard: ActiveDashboard::default(),
         retained: parking_lot::Mutex::new(SessionStore::in_memory()),
+        observations: parking_lot::Mutex::new(HashMap::new()),
         mutation_lock: Mutex::new(()),
         dispatch: dispatch.clone(),
         shutdown: AtomicBool::new(false),
@@ -7422,4 +7432,138 @@ fn remove_test_session(state: &ServerState, id: &SessionId) -> Option<Arc<Sessio
         }
     }
     state.sessions.lock().unwrap().remove(id)
+}
+
+#[test]
+fn failed_root_shell_keeps_setup_pending_and_does_not_duplicate_launch() {
+    use super::connections::error_for_lifecycle;
+    use crate::retained::SessionMetadata;
+    use ovrcr_protocol::ErrorCode;
+    use std::process::Command;
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        ["init", "-b", "main"].as_slice(),
+        ["config", "user.name", "OVRCR Tests"].as_slice(),
+        ["config", "user.email", "tests@example.invalid"].as_slice(),
+        ["commit", "--allow-empty", "-m", "initial"].as_slice(),
+    ] {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .env_remove("GIT_DIR")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let repo = std::fs::canonicalize(&repo).unwrap();
+    let git_identity = Some(crate::git::capture_worktree_identity(&repo).unwrap());
+    let config = dir.path().join("config.toml");
+    let root_id = "root-workspace";
+    let registry = Registry {
+        projects: vec![crate::config::ProjectRecord {
+            name: "fixture".into(),
+            repo: repo.clone(),
+            workspace_root: dir.path().to_path_buf(),
+            workspaces: vec![crate::config::WorkspaceRecord {
+                id: root_id.into(),
+                path: repo.clone(),
+                branch: "main".into(),
+                git_identity,
+                setup_pending: true,
+            }],
+        }],
+    };
+    crate::config::save_registry_atomic(&registry, &config).unwrap();
+    let retained = SessionStore::open(&config).unwrap();
+    let (events, _event_receiver) = event_channel(None);
+    let (dispatch, _dispatch_receiver) = dispatch_channel(None);
+    let state = Arc::new(ServerState {
+        tasks: None,
+        socket: dir.path().join("socket"),
+        registry_path: config,
+        registry: Mutex::new(registry),
+        sessions: Mutex::new(HashMap::new()),
+        dashboard: ActiveDashboard::default(),
+        retained: parking_lot::Mutex::new(retained),
+        observations: parking_lot::Mutex::new(HashMap::new()),
+        mutation_lock: Mutex::new(()),
+        dispatch,
+        shutdown: AtomicBool::new(false),
+        stopping: AtomicBool::new(false),
+        events: Mutex::new(Some(events)),
+        #[cfg(test)]
+        resize_hook: Mutex::new(None),
+        before_view_publish_hook: Mutex::new(None),
+        before_dashboard_write_hook: Mutex::new(None),
+        #[cfg(feature = "acceptance-diagnostics")]
+        dashboard_monitor: None,
+    });
+    let record = state
+        .retained
+        .lock()
+        .create(SessionMetadata {
+            project: "fixture".into(),
+            workspace: root_id.into(),
+            name: "local".into(),
+            label: "sh".into(),
+            cwd: repo.clone(),
+            kind: ovrcr_protocol::SessionKind::Terminal,
+            pinned_title: Some("local".into()),
+            application_title: None,
+        })
+        .unwrap();
+    let launched = state
+        .retained
+        .lock()
+        .begin_run(record.id, record.run)
+        .unwrap();
+    assert!(
+        state
+            .retained
+            .lock()
+            .record_failure(
+                launched.id,
+                launched.run,
+                "Launch did not complete; confirm previous processes stopped before retrying"
+                    .into(),
+            )
+            .unwrap()
+    );
+
+    let error = state
+        .add_project("fixture".into(), repo.clone(), dir.path().to_path_buf())
+        .unwrap_err();
+    let response = error_for_lifecycle(error);
+    assert!(
+        matches!(
+            response,
+            Response::Error {
+                code: ErrorCode::OwnershipUncertain | ErrorCode::PartialFailure,
+                ..
+            }
+        ),
+        "{response:?}"
+    );
+    assert!(
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .project("fixture")
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == root_id)
+            .unwrap()
+            .setup_pending
+    );
+    assert!(state.sessions.lock().unwrap().is_empty());
+    assert_eq!(state.retained.lock().records().count(), 1);
 }

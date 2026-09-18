@@ -1029,6 +1029,9 @@ fn empty_workspace_selection_does_not_cover_a_retained_terminal() {
     hierarchy.projects[1].workspaces.push(WorkspaceSummary {
         project: "consigint".into(),
         name: "empty".into(),
+        id: "empty".into(),
+        root: false,
+        warning: None,
         path: PathBuf::from("/tmp/empty"),
         sessions: Vec::new(),
     });
@@ -1093,6 +1096,9 @@ fn fifty_session_selection_scrolls_tree_and_mouse_hits_viewport() {
             workspaces: vec![WorkspaceSummary {
                 project: "project".into(),
                 name: "workspace".into(),
+                id: "workspace".into(),
+                root: false,
+                warning: None,
                 path: PathBuf::from("/tmp/workspace"),
                 sessions: (1..=50)
                     .map(|id| {
@@ -1494,6 +1500,9 @@ fn keyboard_selecting_a_project_scrolls_it_into_view() {
             workspaces: vec![WorkspaceSummary {
                 project: "project".into(),
                 name: "workspace".into(),
+                id: "workspace".into(),
+                root: false,
+                warning: None,
                 path: PathBuf::from("/tmp/workspace"),
                 sessions: (1..=50)
                     .map(|id| {

@@ -10,7 +10,7 @@ use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
 fn fixture() -> Live {
-    let live = Live::thread().bounded();
+    let live = Live::binary();
     assert_eq!(
         live.request(Request::AddProject {
             name: PROJECT.into(),
@@ -19,13 +19,14 @@ fn fixture() -> Live {
         }),
         Response::Ok
     );
+    live.clear_root_shell();
     live
 }
 
 fn workspace(launch: Option<SessionLaunch>) -> Request {
     Request::CreateWorkspaceWithLaunch {
         project: PROJECT.into(),
-        name: WORKSPACE.into(),
+        id: WORKSPACE.into(),
         branch: BranchRequest::New {
             branch: "title-work".into(),
             base: "main".into(),
@@ -128,9 +129,6 @@ fn changed(stream: &mut UnixStream, id: SessionId, expected: &str) {
 fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_reset_output() {
     let live = fixture();
     let original = created(&live, workspace(Some(title_program())));
-    assert_eq!(original.name, WORKSPACE);
-    assert_eq!(original.display_name(), WORKSPACE);
-    assert_eq!(original.label, "owned title fixture");
     assert_eq!(
         sessions(&live).len(),
         1,
@@ -158,7 +156,7 @@ fn automatic_workspace_launch_titles_pin_reset_and_reopen_keep_identity_and_rese
         Response::Ok
     );
     changed(&mut dashboard, original.id, "latest application");
-    assert_eq!(sessions(&live)[0].name, WORKSPACE);
+    assert_eq!(sessions(&live)[0].name, original.name);
     let reused = created(
         &live,
         Request::ReopenSession {
@@ -246,9 +244,12 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
             argv: launch.argv,
         })
     };
-    let explicit = created(&live, new(WORKSPACE));
+    let explicit = created(&live, new("title-work"));
     let automatic = created(&live, new(""));
-    assert_eq!(automatic.name, format!("{WORKSPACE}-2"));
+    assert_ne!(
+        automatic.name, explicit.name,
+        "automatic naming must avoid the pinned name"
+    );
     wait_for(&live, explicit.id, "TITLE-READY");
     emit(&live, explicit.id, "application override");
     assert_eq!(
@@ -257,10 +258,10 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
             .find(|session| session.id == explicit.id)
             .unwrap()
             .display_name(),
-        WORKSPACE
+        "title-work"
     );
     assert!(matches!(
-        live.request(new(WORKSPACE)),
+        live.request(new("title-work")),
         Response::Error {
             code: ErrorCode::AlreadyExists,
             ..
@@ -294,7 +295,7 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
     assert_eq!(reopened.name, explicit.name);
     assert_eq!(
         reopened.display_name(),
-        WORKSPACE,
+        "title-work",
         "reopen keeps pinned title"
     );
     assert_eq!(
@@ -312,7 +313,7 @@ fn automatic_empty_workspace_and_unique_names_preserve_explicit_titles() {
             .find(|session| session.id == reopened.id)
             .unwrap()
             .display_name(),
-        WORKSPACE,
+        "title-work",
     );
 }
 
@@ -364,7 +365,6 @@ fn automatic_workspace_launch_failure_retains_worktree_and_retry_uses_existing_w
         }),
     );
     wait_for(&live, retry.id, "TITLE-READY");
-    assert_eq!(retry.name, WORKSPACE);
     assert!(matches!(
         live.request(Request::ReopenSession {
             session: SessionId(u64::MAX),

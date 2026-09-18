@@ -72,6 +72,9 @@ fn fixture_hierarchy() -> HierarchySnapshot {
                 workspaces: vec![WorkspaceSummary {
                     project: "spacelift-agent".into(),
                     name: "progress".into(),
+                    id: "progress".into(),
+                    root: false,
+                    warning: None,
                     path: PathBuf::from("/tmp/progress"),
                     sessions: vec![session_summary(
                         3,
@@ -90,6 +93,9 @@ fn fixture_hierarchy() -> HierarchySnapshot {
                     WorkspaceSummary {
                         project: "consigint".into(),
                         name: "lifecycle".into(),
+                        id: "lifecycle".into(),
+                        root: false,
+                        warning: None,
                         path: PathBuf::from("/tmp/lifecycle"),
                         sessions: vec![
                             session_summary(
@@ -115,6 +121,9 @@ fn fixture_hierarchy() -> HierarchySnapshot {
                     WorkspaceSummary {
                         project: "consigint".into(),
                         name: "auth".into(),
+                        id: "auth".into(),
+                        root: false,
+                        warning: None,
                         path: PathBuf::from("/tmp/auth"),
                         sessions: vec![
                             session_summary(
@@ -341,21 +350,26 @@ fn answer_workspace_inspect(dashboard: &mut Dashboard, request_id: u64, repo: &s
 }
 
 /// Drives the create-workspace form to a deferred submit on a typed branch.
-fn type_existing_branch_and_submit(dashboard: &mut Dashboard, name: &str, branch: &str) -> u64 {
+fn type_existing_branch_and_submit(dashboard: &mut Dashboard, branch: &str) -> u64 {
     use ovrcr::tui::DashboardAction;
     let DashboardAction::Request(inspect) = dashboard.key(KeyCode::Char('w')) else {
         panic!("leader workspace must request repository inspection");
     };
     assert_eq!(inspect.request, Request::Inspect);
-    dashboard.event_action(Event::Paste(name.into()));
     dashboard.key(KeyCode::Tab); // branch mode
     dashboard.key(KeyCode::Right); // existing
-    dashboard.key(KeyCode::Tab); // branch, still a text field while hints are absent
+    dashboard.key(KeyCode::BackTab); // branch
+    dashboard.ctrl('u');
     dashboard.event_action(Event::Paste(branch.into()));
     assert_eq!(dashboard.key(KeyCode::Enter), DashboardAction::Redraw);
     let text = palette_text(dashboard);
     assert!(text.contains("Waiting for Git suggestions"), "{text}");
     inspect.request_id
+}
+
+fn assert_workspace_id(id: &str) {
+    assert_eq!(id.len(), 32, "{id}");
+    assert!(id.chars().all(|ch| ch.is_ascii_hexdigit()), "{id}");
 }
 
 /// Polls the deferred submit until the palette stops waiting on Git, refusing

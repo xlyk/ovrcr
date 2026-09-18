@@ -3,7 +3,7 @@
 //! run. `key_action`, the footer, the key popup and the palette all read this
 //! table, so a hint can never disagree with what the key does.
 
-use super::state::find_session;
+use super::state::{find_session, workspace_heading};
 use super::{Dashboard, DashboardAction, InputMode, TreeRow};
 use crate::task_tui::TasksView;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -60,7 +60,8 @@ pub(super) struct GroupSlot {
 /// the pane has not acknowledged a screen yet, so the key becomes available on
 /// its own. Every other reason means the action does not apply to this target.
 const WAITING: &str = "waiting for acknowledged screen";
-
+pub(super) const LAUNCH_BLOCKED: &str = "root workspace is not on the default branch";
+pub(super) const ROOT_PROTECTED: &str = "repository-root workspace cannot be removed";
 pub(super) struct KeyBinding {
     /// The label the footer and the popup print.
     pub key: &'static str,
@@ -139,7 +140,7 @@ fn folded(code: KeyCode) -> KeyCode {
 }
 
 impl KeyBinding {
-    fn unless(mut self, reason: Option<&'static str>) -> Self {
+    pub(super) fn unless(mut self, reason: Option<&'static str>) -> Self {
         if let Some(reason) = reason {
             self.reason = Some(reason);
             self.description = format!("{}: {reason}", self.name);
@@ -170,7 +171,7 @@ impl KeyBinding {
     /// A group drops a row the current target cannot use, and dims one that is
     /// only waiting for the screen.
     pub(super) fn shown_in_group(&self) -> bool {
-        self.enabled() || self.reason == Some(WAITING)
+        self.enabled() || matches!(self.reason, Some(WAITING | LAUNCH_BLOCKED | ROOT_PROTECTED))
     }
 
     /// This binding as the popup group lists it: the group's label, and the
@@ -571,15 +572,13 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .action_session()
         .and_then(|id| find_session(dashboard, id));
     let (project, workspace) = dashboard.creation_context();
+    let current = dashboard.current_workspace();
     let target = selected
         .map(|s| {
-            format!(
-                "{} (#{}) in {} / {}",
-                s.display_name(),
-                s.id.0,
-                s.project,
-                s.workspace
-            )
+            let place = current
+                .map(|workspace| workspace_heading(dashboard, workspace))
+                .unwrap_or_else(|| s.project.clone());
+            format!("{} (#{}) in {place}", s.display_name(), s.id.0)
         })
         .unwrap_or_default();
     let missing = selected.is_none().then_some("no session selected");
@@ -589,11 +588,18 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         .iter()
         .any(|p| !p.workspaces.is_empty()))
     .then_some("no workspace available; register a project first");
-    let workspace_target = if workspace.is_empty() {
-        "the workspace you choose".into()
-    } else {
-        format!("{project} / {workspace}")
-    };
+    let launch_blocked = current
+        .and_then(|workspace| workspace.warning.as_ref())
+        .map(|_| LAUNCH_BLOCKED);
+    let workspace_target = current
+        .map(|workspace| workspace_heading(dashboard, workspace))
+        .unwrap_or_else(|| {
+            if workspace.is_empty() {
+                "the workspace you choose".into()
+            } else {
+                format!("{project} / {workspace}")
+            }
+        });
     let project_target = if project.is_empty() {
         "the project you choose"
     } else {
@@ -688,9 +694,9 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         if let Some(container) = dashboard.selected_container.as_ref() {
             let collapsed = match container {
                 TreeRow::Project { name } => dashboard.collapsed_projects.contains(name),
-                TreeRow::Workspace { project, name } => dashboard
+                TreeRow::Workspace { project, id } => dashboard
                     .collapsed_workspaces
-                    .contains(&(project.clone(), name.clone())),
+                    .contains(&(project.clone(), id.clone())),
                 TreeRow::Session { .. } => false,
             };
             if collapsed {
@@ -717,7 +723,7 @@ pub(super) fn keymap(dashboard: &Dashboard) -> Vec<KeyGroup> {
         };
     vec![
         KeyGroup { title: "Create".into(), keys: vec![
-            key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(no_workspace).group('w', "n"),
+            key_binding("n", "Create terminal", format!("Choose an agent or shell to start in {workspace_target}; opens a form"), Char('n'), Action::CreateTerminal).unless(launch_blocked.or(no_workspace)).group('w', "n"),
             key_binding("w", "Create workspace", format!("Create a worktree and branch under {project_target} and choose its first Agent or Terminal; opens a form"), Char('w'), Action::CreateWorkspace).unless(dashboard.hierarchy.projects.is_empty().then_some("no project registered")).group('p', "n"),
             key_binding("a", "Register project", "Register a repository and its root workspace; opens a form; keeps the repository".into(), Char('a'), Action::RegisterProject).group('p', "a"),
         ] },

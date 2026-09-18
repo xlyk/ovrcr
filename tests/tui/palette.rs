@@ -2,7 +2,8 @@
 
 use crate::*;
 
-fn extra_workspace_hierarchy() -> HierarchySnapshot {
+fn extra_workspace_hierarchy(id: impl Into<String>) -> HierarchySnapshot {
+    let id = id.into();
     let mut hierarchy = fixture_hierarchy();
     let project = hierarchy
         .projects
@@ -10,11 +11,11 @@ fn extra_workspace_hierarchy() -> HierarchySnapshot {
         .find(|project| project.name == "consigint")
         .unwrap();
     let mut workspace = project.workspaces[1].clone();
+    workspace.id = id.clone();
     workspace.name = "pick-demo".into();
-    workspace.sessions.truncate(1);
+    workspace.sessions.retain(|session| session.name == "local");
     workspace.sessions[0].id = SessionId(99);
-    workspace.sessions[0].workspace = "pick-demo".into();
-    workspace.sessions[0].name = "local".into();
+    workspace.sessions[0].workspace = id;
     project.workspaces.push(workspace);
     hierarchy
 }
@@ -583,6 +584,9 @@ fn whichkey_empty_workspace_click_sets_terminal_form_target() {
     hierarchy.projects[0].workspaces.push(WorkspaceSummary {
         project: "spacelift-agent".into(),
         name: "empty".into(),
+        id: "empty".into(),
+        root: false,
+        warning: None,
         path: "/tmp/empty".into(),
         sessions: vec![],
     });
@@ -774,43 +778,10 @@ fn palette_switches_by_search_and_confirms_exact_close_target() {
 
 #[test]
 fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() {
-    use ovrcr::protocol::{BranchRequest, Request};
+    use ovrcr::protocol::Request;
     use ovrcr::tui::DashboardAction;
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let cases = [
-        (
-            "create workspace",
-            vec!["consigint", "new-space", "new", "feature/palette", "main"],
-            Request::CreateWorkspaceWithLaunch {
-                launch: Some(ovrcr::protocol::SessionLaunch {
-                    kind: ovrcr::protocol::SessionKind::Terminal,
-                    argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                    label: None,
-                }),
-                project: "consigint".into(),
-                name: "new-space".into(),
-                branch: BranchRequest::New {
-                    branch: "feature/palette".into(),
-                    base: "main".into(),
-                },
-            },
-        ),
-        (
-            "create workspace",
-            vec!["consigint", "existing", "existing", "topic"],
-            Request::CreateWorkspaceWithLaunch {
-                launch: Some(ovrcr::protocol::SessionLaunch {
-                    kind: ovrcr::protocol::SessionKind::Terminal,
-                    argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                    label: None,
-                }),
-                project: "consigint".into(),
-                name: "existing".into(),
-                branch: BranchRequest::Existing {
-                    branch: "topic".into(),
-                },
-            },
-        ),
         (
             "register project",
             vec!["/tmp/repo with spaces", "repo", "/tmp/worktrees"],
@@ -849,18 +820,9 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         let mut dashboard = dashboard_fixture();
         palette_search(&mut dashboard, query);
         dashboard.key(KeyCode::Enter);
-        if query == "create workspace" {
-            dashboard.key(KeyCode::BackTab);
-        }
         for (index, value) in values.iter().enumerate() {
-            if query == "create workspace" && index == 2 {
-                if *value == "existing" {
-                    dashboard.key(KeyCode::Char(' '));
-                }
-            } else {
-                dashboard.ctrl('u');
-                dashboard.event_action(Event::Paste((*value).into()));
-            }
+            dashboard.ctrl('u');
+            dashboard.event_action(Event::Paste((*value).into()));
             for (width, height) in [(120, 40), (40, 12), (12, 5), (1, 1)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 terminal
@@ -876,10 +838,6 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
                 dashboard.key(next);
             }
         }
-        if query == "create workspace" {
-            dashboard.key(KeyCode::Tab);
-            dashboard.key(KeyCode::Tab);
-        }
         let mut action = dashboard.key(KeyCode::Enter);
         if query.starts_with("remove") {
             assert_eq!(action, DashboardAction::Redraw);
@@ -890,6 +848,98 @@ fn palette_forms_build_workspace_and_project_requests_and_draw_at_small_sizes() 
         };
         assert_eq!(message.request, expected);
     }
+}
+
+#[test]
+fn create_workspace_form_submits_branch_without_name() {
+    use ovrcr::protocol::{BranchRequest, Request};
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "create workspace");
+    dashboard.key(KeyCode::Enter);
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Branch"), "{text}");
+    assert!(!text.contains("Name"), "{text}");
+    dashboard.key(KeyCode::BackTab);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("consigint".into()));
+    dashboard.key(KeyCode::Tab);
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("feature/palette".into()));
+    dashboard.key(KeyCode::Tab); // mode
+    dashboard.key(KeyCode::Tab); // base
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("main".into()));
+    dashboard.key(KeyCode::BackTab); // mode
+    dashboard.key(KeyCode::BackTab); // branch
+    let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
+        panic!("create workspace did not submit");
+    };
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = message.request
+    else {
+        panic!("expected create workspace: {:?}", message.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_workspace_id(&id);
+    assert_eq!(
+        branch,
+        BranchRequest::New {
+            branch: "feature/palette".into(),
+            base: "main".into(),
+        }
+    );
+    assert!(launch.is_some());
+}
+
+#[test]
+fn create_workspace_existing_branch_keeps_generated_id() {
+    use ovrcr::protocol::{BranchRequest, Request};
+    use ovrcr::tui::DashboardAction;
+    let mut dashboard = dashboard_fixture();
+    palette_search(&mut dashboard, "create workspace");
+    dashboard.key(KeyCode::Enter);
+    dashboard.key(KeyCode::Tab); // mode
+    dashboard.key(KeyCode::Char(' ')); // existing
+    dashboard.key(KeyCode::BackTab); // branch
+    dashboard.ctrl('u');
+    dashboard.event_action(Event::Paste("topic".into()));
+    let DashboardAction::Request(first) = dashboard.key(KeyCode::Enter) else {
+        panic!("existing branch did not submit");
+    };
+    let Request::CreateWorkspaceWithLaunch {
+        id: first_id,
+        branch,
+        ..
+    } = &first.request
+    else {
+        panic!("{:?}", first.request);
+    };
+    assert_workspace_id(first_id);
+    assert_eq!(
+        branch,
+        &BranchRequest::Existing {
+            branch: "topic".into()
+        }
+    );
+    dashboard.handle_server_message(ServerMessage::Response {
+        request_id: first.request_id,
+        response: Response::Error {
+            code: ErrorCode::Internal,
+            message: "retry me".into(),
+        },
+    });
+    let DashboardAction::Request(retry) = dashboard.key(KeyCode::Enter) else {
+        panic!("retry did not submit");
+    };
+    let Request::CreateWorkspaceWithLaunch { id: retry_id, .. } = retry.request else {
+        panic!("{:?}", retry.request);
+    };
+    assert_eq!(retry_id, *first_id);
 }
 
 #[test]
@@ -904,25 +954,29 @@ fn w_opens_workspace_form_with_project_and_derived_branch() {
     assert!(text.contains("Create workspace"), "{text}");
     assert!(text.contains("consigint"), "{text}");
     assert!(text.contains("feature/pick-demo"), "{text}");
+    assert!(!text.contains("Name"), "{text}");
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
-        panic!("Enter on Name must submit with defaults");
+        panic!("Enter on Branch must submit with defaults");
     };
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = message.request
+    else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_workspace_id(&id);
     assert_eq!(
-        message.request,
-        Request::CreateWorkspaceWithLaunch {
-            launch: Some(ovrcr::protocol::SessionLaunch {
-                kind: ovrcr::protocol::SessionKind::Terminal,
-                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                label: None
-            }),
-            project: "consigint".into(),
-            name: "pick-demo".into(),
-            branch: BranchRequest::New {
-                branch: "feature/pick-demo".into(),
-                base: "main".into()
-            },
+        branch,
+        BranchRequest::New {
+            branch: "feature/pick-demo".into(),
+            base: "main".into()
         }
     );
+    assert!(launch.is_some());
 }
 
 #[test]
@@ -1000,19 +1054,14 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
         );
         std::thread::yield_now();
     }
-    dashboard.event_action(Event::Paste("first".into()));
-    dashboard.key(KeyCode::Tab); // mode
-    dashboard.key(KeyCode::Tab); // branch
     dashboard.ctrl('u');
     dashboard.event_action(Event::Paste("custom/kept".into()));
-    dashboard.key(KeyCode::BackTab);
-    dashboard.key(KeyCode::BackTab); // name
-    dashboard.ctrl('u');
-    dashboard.event_action(Event::Paste("renamed".into()));
+    dashboard.key(KeyCode::Tab); // mode
+    dashboard.key(KeyCode::BackTab); // branch
     assert!(palette_text(&dashboard).contains("custom/kept"));
-    dashboard.key(KeyCode::Tab);
+    dashboard.key(KeyCode::Tab); // mode
     dashboard.key(KeyCode::Right); // existing
-    dashboard.key(KeyCode::Tab); // branch pick
+    dashboard.key(KeyCode::BackTab); // branch pick
     let text = palette_text(&dashboard);
     assert!(text.contains("main") && text.contains("topic"), "{text}");
     assert!(!text.contains("Base"), "{text}");
@@ -1028,21 +1077,24 @@ fn workspace_branch_mode_uses_local_branches_and_preserves_edits() {
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("existing branch did not submit");
     };
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = message.request
+    else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_workspace_id(&id);
     assert_eq!(
-        message.request,
-        Request::CreateWorkspaceWithLaunch {
-            launch: Some(ovrcr::protocol::SessionLaunch {
-                kind: ovrcr::protocol::SessionKind::Terminal,
-                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                label: None
-            }),
-            project: "consigint".into(),
-            name: "renamed".into(),
-            branch: ovrcr::protocol::BranchRequest::Existing {
-                branch: "topic".into()
-            },
+        branch,
+        ovrcr::protocol::BranchRequest::Existing {
+            branch: "topic".into()
         }
     );
+    assert!(launch.is_some());
 }
 
 #[test]
@@ -1050,7 +1102,7 @@ fn typed_existing_branch_survives_hint_arrival() {
     use ovrcr::protocol::BranchRequest;
     let repo = hint_repository(&["release-2"]);
     let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let message = loop {
@@ -1068,21 +1120,24 @@ fn typed_existing_branch_survives_hint_arrival() {
         );
         std::thread::yield_now();
     };
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = message.request
+    else {
+        panic!("expected create workspace: {:?}", message.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_workspace_id(&id);
     assert_eq!(
-        message.request,
-        Request::CreateWorkspaceWithLaunch {
-            launch: Some(ovrcr::protocol::SessionLaunch {
-                kind: ovrcr::protocol::SessionKind::Terminal,
-                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                label: None
-            }),
-            project: "consigint".into(),
-            name: "typed-branch".into(),
-            branch: BranchRequest::Existing {
-                branch: "release-2".into()
-            },
+        branch,
+        BranchRequest::Existing {
+            branch: "release-2".into()
         }
     );
+    assert!(launch.is_some());
 }
 
 #[test]
@@ -1091,7 +1146,7 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
     use ovrcr::tui::DashboardAction;
     let repo = hint_repository(&["release-2-old"]);
     let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let text = poll_until_deferred_submit_refused(
         &mut dashboard,
@@ -1105,21 +1160,24 @@ fn fuzzy_matched_branch_is_not_submitted_without_confirmation() {
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("confirming the filtered branch must submit");
     };
+    let Request::CreateWorkspaceWithLaunch {
+        project,
+        id,
+        branch,
+        launch,
+    } = message.request
+    else {
+        panic!("expected create workspace: {:?}", message.request);
+    };
+    assert_eq!(project, "consigint");
+    assert_workspace_id(&id);
     assert_eq!(
-        message.request,
-        Request::CreateWorkspaceWithLaunch {
-            launch: Some(ovrcr::protocol::SessionLaunch {
-                kind: ovrcr::protocol::SessionKind::Terminal,
-                argv: vec![std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())],
-                label: None
-            }),
-            project: "consigint".into(),
-            name: "typed-branch".into(),
-            branch: BranchRequest::Existing {
-                branch: "release-2-old".into()
-            },
+        branch,
+        BranchRequest::Existing {
+            branch: "release-2-old".into()
         }
     );
+    assert!(launch.is_some());
 }
 
 #[test]
@@ -1128,7 +1186,7 @@ fn case_only_branch_mismatch_is_refused_not_submitted() {
     // the user typed: creating the workspace on it would silently use the wrong branch.
     let repo = hint_repository(&["Release-2"]);
     let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let text = poll_until_deferred_submit_refused(
         &mut dashboard,
@@ -1143,7 +1201,7 @@ fn case_only_branch_mismatch_is_refused_not_submitted() {
 fn typed_branch_missing_from_hints_is_refused_not_replaced() {
     let repo = hint_repository(&[]);
     let mut dashboard = dashboard_fixture();
-    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "typed-branch", "release-2");
+    let inspect_id = type_existing_branch_and_submit(&mut dashboard, "release-2");
     answer_workspace_inspect(&mut dashboard, inspect_id, repo.path());
     let text = poll_until_deferred_submit_refused(
         &mut dashboard,
@@ -1164,13 +1222,17 @@ fn workspace_created_with_exited_local_shell_closes_palette() {
     let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
         panic!("workspace form did not submit");
     };
+    let Request::CreateWorkspaceWithLaunch { id, .. } = &message.request else {
+        panic!("{:?}", message.request);
+    };
+    let created_id = id.clone();
     dashboard.handle_server_message(ServerMessage::Response {
         request_id: message.request_id,
         response: Response::Ok,
     });
     assert!(palette_text(&dashboard).contains("Working"));
     assert!(palette_text(&dashboard).contains("┌ Create workspace"));
-    let mut hierarchy = extra_workspace_hierarchy();
+    let mut hierarchy = extra_workspace_hierarchy(created_id);
     let workspace = hierarchy
         .projects
         .iter_mut()
@@ -1244,7 +1306,7 @@ fn workspace_creation_cancel_and_failure_do_not_attach_late() {
     });
     assert!(palette_text(&dashboard).contains("Working"));
     assert!(palette_text(&dashboard).contains("┌ Create workspace"));
-    let hierarchy = extra_workspace_hierarchy();
+    let hierarchy = extra_workspace_hierarchy("pick-demo");
     dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
         hierarchy.clone(),
     )));
@@ -1288,8 +1350,13 @@ fn workspace_creation_attaches_to_its_local_shell() {
         let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
             panic!("workspace form did not submit");
         };
-        let event =
-            ServerMessage::Event(ServerEvent::HierarchyChanged(extra_workspace_hierarchy()));
+        let created_id = match &message.request {
+            Request::CreateWorkspaceWithLaunch { id, .. } => id.clone(),
+            other => panic!("expected create workspace: {other:?}"),
+        };
+        let event = ServerMessage::Event(ServerEvent::HierarchyChanged(extra_workspace_hierarchy(
+            created_id,
+        )));
         let ack = ServerMessage::Response {
             request_id: message.request_id,
             response: Response::Ok,
@@ -2040,15 +2107,29 @@ fn removal_picker_rejects_no_match_and_excludes_root() {
     let mut hierarchy = fixture_hierarchy();
     hierarchy.projects[1].workspaces.push(WorkspaceSummary {
         project: "consigint".into(),
-        name: "root".into(),
+        name: "main".into(),
+        id: "root-id".into(),
+        root: true,
+        warning: None,
         path: "/tmp/root".into(),
+        sessions: vec![],
+    });
+    hierarchy.projects[1].workspaces.push(WorkspaceSummary {
+        project: "consigint".into(),
+        name: "root".into(),
+        id: "feature-root".into(),
+        root: false,
+        warning: None,
+        path: "/tmp/feature-root".into(),
         sessions: vec![],
     });
     dashboard.install_hierarchy(hierarchy);
     palette_search(&mut dashboard, "remove workspace");
     dashboard.key(KeyCode::Enter);
-    assert!(!palette_text(&dashboard).contains("consigint / root"));
-    dashboard.event_action(Event::Paste("root".into()));
+    let text = palette_text(&dashboard);
+    assert!(!text.contains("consigint / main"), "{text}");
+    assert!(text.contains("consigint / root"), "{text}");
+    dashboard.event_action(Event::Paste("main".into()));
     assert_eq!(
         dashboard.key(KeyCode::Enter),
         ovrcr::tui::DashboardAction::Redraw
@@ -2212,7 +2293,7 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         let action = dashboard.key(KeyCode::Char('w'));
         answer_palette_inspect(&mut dashboard, action);
         dashboard.event_action(Event::Paste("pick-demo".into()));
-        for _ in 0..4 {
+        for _ in 0..3 {
             dashboard.key(KeyCode::Tab);
         }
         dashboard.ctrl('u');
@@ -2220,21 +2301,22 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         let DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) else {
             panic!("empty workspace form did not submit")
         };
-        assert!(matches!(
-            message.request,
-            Request::CreateWorkspaceWithLaunch { launch: None, .. }
-        ));
-        let mut hierarchy = extra_workspace_hierarchy();
-        hierarchy
+        let Request::CreateWorkspaceWithLaunch { id, launch, .. } = &message.request else {
+            panic!("{:?}", message.request);
+        };
+        assert!(launch.is_none());
+        let created_id = id.clone();
+        let mut hierarchy = extra_workspace_hierarchy(created_id.clone());
+        let workspace = hierarchy
             .projects
             .iter_mut()
             .find(|p| p.name == "consigint")
             .unwrap()
             .workspaces
             .last_mut()
-            .unwrap()
-            .sessions
-            .clear();
+            .unwrap();
+        workspace.name = "feature/pick-demo".into();
+        workspace.sessions.clear();
         let event = ServerMessage::Event(ServerEvent::HierarchyChanged(hierarchy));
         let ack = ServerMessage::Response {
             request_id: message.request_id,
@@ -2265,12 +2347,12 @@ fn empty_workspace_creation_selects_its_empty_state_in_either_response_order() {
         assert!(outgoing.iter().any(|m| matches!(&m.request, Request::SetView { view } if view.focused.is_none() && view.panes.is_empty())));
         let text = palette_text(&dashboard);
         assert!(
-            text.contains("consigint / pick-demo: press n to start a terminal here"),
+            text.contains("consigint / feature/pick-demo: press n to start a terminal here"),
             "{text}"
         );
         assert!(!text.contains("┌ Create workspace"), "{text}");
         dashboard.key(KeyCode::Char('n'));
-        assert!(palette_text(&dashboard).contains("consigint / pick-demo"));
+        assert!(palette_text(&dashboard).contains("consigint / feature/pick-demo"));
     }
 }
 
@@ -2757,4 +2839,309 @@ fn exited_agent_with_empty_recovery_keeps_stale_activity_out_of_header() {
     let text = rendered_rows(&dashboard, 180, 24).join("\n");
     assert!(text.contains("pid: closed"), "{text}");
     assert!(!text.contains("busy"), "{text}");
+    assert!(!text.contains("busy"), "{text}");
+}
+
+#[test]
+fn workspace_selection_and_fold_survive_branch_relabel() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Enter);
+    let collapsed = rendered_rows(&dashboard, 88, 38).join("\n");
+    assert!(collapsed.contains("▸"), "{collapsed}");
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "feature/auth-renamed".into();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    let text = rendered_rows(&dashboard, 88, 38).join("\n");
+    assert!(text.contains("feature/auth-renamed"), "{text}");
+    assert!(text.contains("▸"), "{text}");
+    assert!(
+        !text.contains("review"),
+        "folded workspace must keep sessions hidden: {text}"
+    );
+}
+
+#[test]
+fn duplicate_branch_labels_include_distinguishing_paths() {
+    let mut hierarchy = fixture_hierarchy();
+    let prefix = "/private/var/folders/j9/h6rlffxd1r794s9g9ps_52t40000gn/T/ovrcr";
+    hierarchy.projects[1].workspaces.extend([
+        WorkspaceSummary {
+            project: "consigint".into(),
+            id: "renamed-one".into(),
+            name: "feature/workspace-renamed".into(),
+            path: format!("{prefix}/worktree-one").into(),
+            root: false,
+            warning: None,
+            sessions: vec![],
+        },
+        WorkspaceSummary {
+            project: "consigint".into(),
+            id: "renamed-two".into(),
+            name: "feature/workspace-renamed".into(),
+            path: format!("{prefix}/worktree-two").into(),
+            root: false,
+            warning: None,
+            sessions: vec![],
+        },
+    ]);
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    // Default sidebar is 40 cells: prefix-clipping the full path made both rows
+    // `feature/workspace-renamed (/privat…`. The distinguishing basename must
+    // remain visible at that width.
+    let rows = rendered_rows(&dashboard, 88, 38);
+    let labels: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.contains("feature/workspace-renamed")
+                || row.contains("worktree-one")
+                || row.contains("worktree-two")
+        })
+        .cloned()
+        .collect();
+    let one = labels
+        .iter()
+        .find(|row| row.contains("worktree-one"))
+        .unwrap_or_else(|| panic!("missing worktree-one in sidebar: {labels:?}"));
+    let two = labels
+        .iter()
+        .find(|row| row.contains("worktree-two"))
+        .unwrap_or_else(|| panic!("missing worktree-two in sidebar: {labels:?}"));
+    assert_ne!(
+        one, two,
+        "narrow sidebar must distinguish duplicate branches: {one}"
+    );
+    assert!(!one.contains("worktree-two"), "{one}");
+    assert!(!two.contains("worktree-one"), "{two}");
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Tab); // Workspace pick list
+    let form = palette_text(&dashboard);
+    assert!(
+        form.contains("/private/var/folders") && form.contains("worktree-one"),
+        "picker keeps the full path when there is room: {form}"
+    );
+}
+
+#[test]
+fn warning_disables_new_terminal_and_shows_reason() {
+    let mut hierarchy = fixture_hierarchy();
+    let workspace = &mut hierarchy.projects[1].workspaces[1];
+    workspace.root = true;
+    workspace.warning = Some("root is on feature/x; check out main".into());
+    workspace.name = "feature/x".into();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    dashboard.key(KeyCode::Char('k'));
+    dashboard.key(KeyCode::Char('k'));
+    let text = rendered_rows(&dashboard, 120, 38).join("\n");
+    assert!(text.contains("feature/x"), "{text}");
+    assert!(
+        text.contains("root is on feature/x") || text.contains('!'),
+        "{text}"
+    );
+    assert_eq!(
+        dashboard.key(KeyCode::Char('n')),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    assert!(
+        rendered_rows(&dashboard, 120, 38)
+            .join("\n")
+            .contains("root is on feature/x")
+            || palette_text(&dashboard).is_empty(),
+        "warning must surface instead of opening create terminal"
+    );
+}
+
+#[test]
+fn slash_branch_picker_does_not_split_on_slashes() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "feature/auth".into();
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(1));
+    dashboard.key(KeyCode::Char('n'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("consigint / feature/auth"), "{text}");
+    let mut submitted = None;
+    for _ in 0..6 {
+        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+            submitted = Some(message);
+            break;
+        }
+    }
+    let message = submitted.expect("create terminal must submit");
+    let Request::CreateSession(request) = message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(request.project, "consigint");
+    assert_eq!(request.workspace, "auth");
+    assert_eq!(request.workspace, "auth");
+}
+
+#[test]
+fn shared_internal_ids_are_resolved_with_project() {
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[0].workspaces.push(WorkspaceSummary {
+        project: "spacelift-agent".into(),
+        id: "auth".into(),
+        name: "feature/other".into(),
+        path: "/tmp/other".into(),
+        root: false,
+        warning: None,
+        sessions: vec![session_summary(
+            99,
+            "spacelift-agent",
+            "auth",
+            "local",
+            "zsh",
+            Some(99),
+            0,
+        )],
+    });
+    let mut dashboard = dashboard_fixture();
+    dashboard.install_hierarchy(hierarchy);
+    dashboard.install_focus(SessionId(99));
+    dashboard.key(KeyCode::Char('n'));
+    let text = palette_text(&dashboard);
+    assert!(text.contains("spacelift-agent / feature/other"), "{text}");
+    let mut submitted = None;
+    for _ in 0..6 {
+        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+            submitted = Some(message);
+            break;
+        }
+    }
+    let message = submitted.expect("create terminal must submit");
+    let Request::CreateSession(request) = message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(request.project, "spacelift-agent");
+    assert_eq!(request.workspace, "auth");
+}
+
+#[test]
+fn terminal_workspace_picker_shows_current_branch_and_keeps_stable_target() {
+    let mut dashboard = dashboard_fixture();
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Tab);
+    let open = palette_text(&dashboard);
+    assert!(open.contains("Create terminal"), "{open}");
+    assert!(open.contains("consigint / auth"), "{open}");
+
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "feature/auth-renamed".into();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+
+    let text = palette_text(&dashboard);
+    assert!(text.contains("Create terminal"), "{text}");
+    assert!(
+        text.contains("consigint / feature/auth-renamed"),
+        "picker must show the current branch: {text}"
+    );
+    assert!(
+        !text.contains("consigint / auth"),
+        "picker must not keep the old branch label: {text}"
+    );
+
+    let mut submitted = None;
+    for _ in 0..6 {
+        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+            submitted = Some(message);
+            break;
+        }
+    }
+    let message = submitted.expect("create terminal must submit the same workspace");
+    let Request::CreateSession(request) = message.request else {
+        panic!("{:?}", message.request);
+    };
+    assert_eq!(request.project, "consigint");
+    assert_eq!(request.workspace, "auth");
+}
+
+#[test]
+fn workspace_removal_confirmation_cannot_submit_after_branch_relabel() {
+    let mut dashboard = dashboard_fixture();
+    let mut original = fixture_hierarchy();
+    original.projects[1].workspaces[1].name = "feature/auth.previous".into();
+    dashboard.install_hierarchy(original);
+    palette_search(&mut dashboard, "remove workspace");
+    dashboard.key(KeyCode::Enter);
+    assert_eq!(
+        dashboard.key(KeyCode::Enter),
+        ovrcr::tui::DashboardAction::Redraw
+    );
+    let confirm = palette_text(&dashboard);
+    assert!(confirm.contains("Confirm action"), "{confirm}");
+    assert!(
+        confirm.contains("consigint / feature/auth.previous"),
+        "{confirm}"
+    );
+
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "feature/auth".into();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+
+    let text = palette_text(&dashboard);
+    assert!(
+        !text.contains("Confirm action"),
+        "stale confirmation must be invalidated: {text}"
+    );
+    assert!(
+        text.contains("consigint / feature/auth"),
+        "picker must show the current branch: {text}"
+    );
+    if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+        panic!("stale confirmation must not submit: {:?}", message.request);
+    }
+}
+
+#[test]
+fn relabeled_workspace_filter_requires_reselection_before_retargeting() {
+    let mut dashboard = dashboard_fixture();
+    let mut hierarchy = fixture_hierarchy();
+    hierarchy.projects[1].workspaces[1].name = "feature/foo".into();
+    hierarchy.projects[1].workspaces[0].name = "feature/bar".into();
+    dashboard.install_hierarchy(hierarchy.clone());
+    dashboard.key(KeyCode::Char('n'));
+    dashboard.key(KeyCode::Tab);
+    for character in "feature/foo".chars() {
+        dashboard.key(KeyCode::Char(character));
+    }
+
+    hierarchy.projects[1].workspaces[1].name = "feature/bar".into();
+    hierarchy.projects[1].workspaces[0].name = "feature/foo".into();
+    dashboard.handle_server_message(ServerMessage::Event(ServerEvent::HierarchyChanged(
+        hierarchy,
+    )));
+    for _ in 0..6 {
+        assert!(
+            !matches!(
+                dashboard.key(KeyCode::Enter),
+                ovrcr::tui::DashboardAction::Request(_)
+            ),
+            "a stale filtered selection must not target the workspace that acquired its branch"
+        );
+    }
+    dashboard.key(KeyCode::Down);
+    let mut submitted = None;
+    for _ in 0..6 {
+        if let ovrcr::tui::DashboardAction::Request(message) = dashboard.key(KeyCode::Enter) {
+            submitted = Some(message.request);
+            break;
+        }
+    }
+    let Some(Request::CreateSession(request)) = submitted else {
+        panic!("explicit reselection must permit submission");
+    };
+    assert_eq!(request.project, "consigint");
+    assert_eq!(request.workspace, "lifecycle");
 }

@@ -58,7 +58,7 @@ pub(crate) enum InputMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TreeRow {
     Project { name: String },
-    Workspace { project: String, name: String },
+    Workspace { project: String, id: String },
     Session { id: SessionId },
 }
 

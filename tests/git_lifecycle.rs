@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 
 use live::Live;
 use ovrcr::config::{ProjectRecord, WorkspaceRecord, load_registry};
-use ovrcr::git::{BranchSpec, create_worktree, inspect_worktree, remove_worktree};
+use ovrcr::git::{
+    BranchSpec, UNAVAILABLE_CHECKOUT, checkout_name, create_worktree, default_branch,
+    inspect_worktree, observe_registry, remove_worktree, root_warning, worktree_identity,
+};
 use ovrcr::protocol::{ErrorCode, Request, Response};
 
 struct GitFixture {
@@ -50,7 +53,7 @@ impl GitFixture {
 
 #[test]
 fn add_project_creates_a_missing_workspace_root() {
-    let fixture = Live::thread();
+    let fixture = Live::binary();
 
     let workspace_root = fixture.root.path().join("workspaces").join("demo");
     assert!(!workspace_root.exists());
@@ -187,6 +190,13 @@ fn creates_new_and_existing_branch_worktrees() {
     )
     .unwrap();
     assert_eq!(first.branch, "feature/new");
+    assert_eq!(first.id, "new-work");
+    assert_eq!(first.path, fixture.project.workspace_root.join("new-work"));
+    assert!(!first.setup_pending);
+    assert_eq!(
+        first.git_identity.as_deref(),
+        Some(worktree_identity(&first.path).unwrap()).as_deref()
+    );
 
     fixture.git(&["branch", "feature/existing", "main"]);
     let second = create_worktree(
@@ -198,6 +208,8 @@ fn creates_new_and_existing_branch_worktrees() {
     )
     .unwrap();
     assert_eq!(second.branch, "feature/existing");
+    assert!(second.git_identity.is_some());
+    assert!(!second.setup_pending);
 }
 
 #[test]
@@ -362,9 +374,11 @@ fn refuses_to_remove_worktree_outside_registered_root() {
     ]);
     let outside = outside.canonicalize().unwrap();
     let workspace = WorkspaceRecord {
-        name: "outside-work".into(),
+        id: "outside-work".into(),
         path: outside.clone(),
         branch: "feature/outside".into(),
+        git_identity: ovrcr::git::worktree_identity(&outside).ok(),
+        setup_pending: false,
     };
     let project = ProjectRecord {
         workspaces: vec![workspace.clone()],
@@ -380,17 +394,8 @@ fn refuses_to_remove_worktree_outside_registered_root() {
 }
 
 #[test]
-fn refuses_to_remove_branch_checked_out_elsewhere() {
+fn refuses_replacement_worktree_with_different_identity() {
     let fixture = GitFixture::new();
-    let elsewhere = fixture.dir.path().join("elsewhere");
-    fixture.git(&[
-        "worktree",
-        "add",
-        "-b",
-        "feature/shared",
-        elsewhere.to_str().unwrap(),
-        "main",
-    ]);
     let workspace = create_worktree(
         &fixture.project,
         "shared-claim",
@@ -400,20 +405,41 @@ fn refuses_to_remove_branch_checked_out_elsewhere() {
         },
     )
     .unwrap();
-    let claimed = WorkspaceRecord {
-        branch: "feature/shared".into(),
-        ..workspace
-    };
     let project = ProjectRecord {
-        workspaces: vec![claimed.clone()],
+        workspaces: vec![workspace.clone()],
         ..fixture.project.clone()
     };
+    live::git(
+        &fixture.project.repo,
+        &["worktree", "remove", workspace.path.to_str().unwrap()],
+    );
+    live::git(
+        &fixture.project.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/replacement",
+            workspace.path.to_str().unwrap(),
+            "main",
+        ],
+    );
 
-    let error = remove_worktree(&project, &claimed).unwrap_err().to_string();
-    assert!(error.contains("branch checked out elsewhere"));
-    assert!(claimed.path.exists());
-    assert!(fixture.worktree_paths().contains(&claimed.path));
-    assert!(elsewhere.exists());
+    let error = inspect_worktree(&fixture.project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("replacement") || error.contains("unrelated"),
+        "{error}"
+    );
+    let error = remove_worktree(&project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("replacement") || error.contains("unrelated"),
+        "{error}"
+    );
+    assert!(workspace.path.exists());
 }
 
 #[test]
@@ -508,9 +534,11 @@ fn removes_workspace_whose_directory_is_gone() {
     // A missing directory whose path Git does not list is refused: the
     // registry alone never authorizes a prune.
     let unknown = WorkspaceRecord {
-        name: "never-created".into(),
+        id: "never-created".into(),
         path: fixture.project.workspace_root.join("never-created"),
         branch: "feature/vanished".into(),
+        git_identity: None,
+        setup_pending: false,
     };
     let project = ProjectRecord {
         workspaces: vec![unknown.clone()],
@@ -518,6 +546,170 @@ fn removes_workspace_whose_directory_is_gone() {
     };
     let error = remove_worktree(&project, &unknown).unwrap_err().to_string();
     assert!(error.contains("registry/Git path disagreement"), "{error}");
+}
+
+#[test]
+fn missing_replacement_worktree_cannot_be_pruned_by_the_old_registration() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "owned",
+        BranchSpec::New {
+            branch: "feature/owned".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+    let old_admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
+    let _old_admin = std::fs::File::open(old_admin.trim()).unwrap();
+    live::git(
+        &fixture.project.repo,
+        &["worktree", "remove", workspace.path.to_str().unwrap()],
+    );
+    live::git(
+        &fixture.project.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/replacement",
+            workspace.path.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let replacement_admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
+    std::fs::remove_dir_all(&workspace.path).unwrap();
+
+    let error = remove_worktree(&project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("replacement") || error.contains("unrelated") || error.contains("identity"),
+        "{error}"
+    );
+    assert!(
+        std::path::Path::new(replacement_admin.trim()).is_dir(),
+        "replacement admin must survive a prune of the old registration"
+    );
+}
+
+#[test]
+fn missing_replacement_without_held_inode_cannot_be_pruned() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "owned",
+        BranchSpec::New {
+            branch: "feature/owned".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+    live::git(
+        &fixture.project.repo,
+        &["worktree", "remove", workspace.path.to_str().unwrap()],
+    );
+    live::git(
+        &fixture.project.repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/replacement",
+            workspace.path.to_str().unwrap(),
+            "main",
+        ],
+    );
+    let replacement_admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
+    std::fs::remove_dir_all(&workspace.path).unwrap();
+
+    let error = remove_worktree(&project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("replacement") || error.contains("unrelated") || error.contains("identity"),
+        "{error}"
+    );
+    assert!(std::path::Path::new(replacement_admin.trim()).is_dir());
+}
+
+#[test]
+fn missing_worktree_prune_leaves_unrelated_prunable_admin() {
+    let fixture = GitFixture::new();
+    let owned = create_worktree(
+        &fixture.project,
+        "owned",
+        BranchSpec::New {
+            branch: "feature/owned".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let other = create_worktree(
+        &fixture.project,
+        "other",
+        BranchSpec::New {
+            branch: "feature/other".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let other_admin = live::git(&other.path, &["rev-parse", "--absolute-git-dir"]);
+    let project = ProjectRecord {
+        workspaces: vec![owned.clone()],
+        ..fixture.project.clone()
+    };
+    std::fs::remove_dir_all(&owned.path).unwrap();
+    std::fs::remove_dir_all(&other.path).unwrap();
+
+    remove_worktree(&project, &owned).unwrap();
+
+    assert!(!fixture.worktree_paths().contains(&owned.path));
+    assert!(
+        fixture.worktree_paths().contains(&other.path),
+        "unrelated prunable admin must not be swept by another workspace's cleanup"
+    );
+    assert!(std::path::Path::new(other_admin.trim()).is_dir());
+}
+
+#[test]
+fn refuses_to_prune_missing_worktree_without_git_identity() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "no-identity",
+        BranchSpec::New {
+            branch: "feature/no-identity".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let admin = live::git(&workspace.path, &["rev-parse", "--absolute-git-dir"]);
+    let mut missing_identity = workspace.clone();
+    missing_identity.git_identity = None;
+    let project = ProjectRecord {
+        workspaces: vec![missing_identity.clone()],
+        ..fixture.project.clone()
+    };
+    std::fs::remove_dir_all(&workspace.path).unwrap();
+
+    let error = remove_worktree(&project, &missing_identity)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("identity") || error.contains("replacement"),
+        "{error}"
+    );
+    assert!(std::path::Path::new(admin.trim()).is_dir());
+    assert!(fixture.worktree_paths().contains(&workspace.path));
 }
 
 #[test]
@@ -580,4 +772,279 @@ fn refuses_symlink_substitution_without_touching_either_worktree() {
     assert!(second.path.exists());
     assert!(fixture.worktree_paths().contains(&first.path));
     assert!(fixture.worktree_paths().contains(&second.path));
+}
+
+#[test]
+fn inspect_and_remove_survive_branch_switch_and_detach() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "switch-work",
+        BranchSpec::New {
+            branch: "feature/switch".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let identity = workspace.git_identity.clone().unwrap();
+    live::git(&workspace.path, &["checkout", "-b", "feature/renamed"]);
+    let inspected = inspect_worktree(&fixture.project, &workspace).unwrap();
+    assert_eq!(inspected.branch, "feature/renamed");
+    assert_eq!(checkout_name(&workspace.path).unwrap(), "feature/renamed");
+    assert_eq!(worktree_identity(&workspace.path).unwrap(), identity);
+
+    live::git(&workspace.path, &["checkout", "--detach", "HEAD"]);
+    let inspected = inspect_worktree(&fixture.project, &workspace).unwrap();
+    assert!(
+        inspected.branch.starts_with("detached @ "),
+        "{}",
+        inspected.branch
+    );
+    assert_eq!(worktree_identity(&workspace.path).unwrap(), identity);
+
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+    remove_worktree(&project, &workspace).unwrap();
+    assert!(!workspace.path.exists());
+}
+
+#[test]
+fn refuses_to_remove_or_inspect_repository_checkout() {
+    let fixture = GitFixture::new();
+    let workspace = WorkspaceRecord {
+        id: "root".into(),
+        path: fixture.project.repo.clone(),
+        branch: "main".into(),
+        git_identity: worktree_identity(&fixture.project.repo).ok(),
+        setup_pending: false,
+    };
+    let project = ProjectRecord {
+        workspaces: vec![workspace.clone()],
+        ..fixture.project.clone()
+    };
+    let error = remove_worktree(&project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("repository checkout"), "{error}");
+    let error = inspect_worktree(&fixture.project, &workspace)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("repository checkout"), "{error}");
+    assert!(fixture.project.repo.join("README").exists());
+}
+
+#[test]
+fn default_branch_matches_tui_resolver_semantics() {
+    let fixture = GitFixture::new();
+    assert_eq!(default_branch(&fixture.project.repo).unwrap(), "main");
+    fixture.git(&["branch", "topic"]);
+    fixture.git(&["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+    fixture.git(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/topic",
+    ]);
+    assert_eq!(default_branch(&fixture.project.repo).unwrap(), "topic");
+    fixture.git(&["branch", "-D", "topic"]);
+    assert_eq!(
+        default_branch(&fixture.project.repo).unwrap(),
+        "refs/remotes/origin/topic"
+    );
+}
+
+#[test]
+fn root_warning_and_observe_preserve_setup_default() {
+    let fixture = GitFixture::new();
+    let feature = create_worktree(
+        &fixture.project,
+        "feature-work",
+        BranchSpec::New {
+            branch: "feature/observe".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let root = WorkspaceRecord {
+        id: "root".into(),
+        path: fixture.project.repo.clone(),
+        branch: "main".into(),
+        git_identity: worktree_identity(&fixture.project.repo).ok(),
+        setup_pending: false,
+    };
+    let registry = ovrcr::config::Registry {
+        projects: vec![ProjectRecord {
+            workspaces: vec![root.clone(), feature.clone()],
+            ..fixture.project.clone()
+        }],
+    };
+    assert!(root_warning(&registry.projects[0]).is_none());
+
+    live::git(&feature.path, &["checkout", "-b", "feature/moved"]);
+    live::git(&fixture.project.repo, &["checkout", "-b", "feature/drift"]);
+    let mut observed = registry.clone();
+    observe_registry(&mut observed);
+    assert_eq!(observed.projects[0].workspaces[0].branch, "feature/drift");
+    assert_eq!(observed.projects[0].workspaces[1].branch, "feature/moved");
+    assert_eq!(registry.projects[0].workspaces[0].branch, "main");
+    assert_eq!(registry.projects[0].workspaces[1].branch, "feature/observe");
+    let warning = root_warning(&registry.projects[0]).expect("root drift");
+    assert!(warning.contains("feature/drift"), "{warning}");
+    assert!(warning.contains("main"), "{warning}");
+
+    live::git(&fixture.project.repo, &["checkout", "main"]);
+    assert!(root_warning(&registry.projects[0]).is_none());
+}
+
+#[test]
+fn observe_marks_missing_feature_workspace_unavailable() {
+    let fixture = GitFixture::new();
+    let missing = WorkspaceRecord {
+        id: "gone".into(),
+        path: fixture.project.workspace_root.join("gone"),
+        branch: "feature/gone".into(),
+        git_identity: None,
+        setup_pending: false,
+    };
+    let mut registry = ovrcr::config::Registry {
+        projects: vec![ProjectRecord {
+            workspaces: vec![missing],
+            ..fixture.project.clone()
+        }],
+    };
+    observe_registry(&mut registry);
+    assert_eq!(
+        registry.projects[0].workspaces[0].branch,
+        UNAVAILABLE_CHECKOUT
+    );
+}
+
+#[test]
+fn head_fallback_does_not_bless_root_drift() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        ["init", "-b", "trunk"].as_slice(),
+        ["config", "user.name", "OVRCR Tests"].as_slice(),
+        ["config", "user.email", "tests@example.invalid"].as_slice(),
+        ["commit", "--allow-empty", "-m", "initial"].as_slice(),
+    ] {
+        live::git(&repo, args);
+    }
+    let workspace_root = dir.path().join("workspaces");
+    std::fs::create_dir(&workspace_root).unwrap();
+    let project = ProjectRecord {
+        name: "fixture".into(),
+        repo: repo.canonicalize().unwrap(),
+        workspace_root: workspace_root.canonicalize().unwrap(),
+        workspaces: vec![WorkspaceRecord {
+            id: "root".into(),
+            path: repo.canonicalize().unwrap(),
+            branch: "trunk".into(),
+            git_identity: worktree_identity(&repo).ok(),
+            setup_pending: false,
+        }],
+    };
+    assert_eq!(default_branch(&project.repo).unwrap(), "trunk");
+    assert!(root_warning(&project).is_none());
+    live::git(&project.repo, &["checkout", "-b", "feature/other"]);
+    assert_eq!(default_branch(&project.repo).unwrap(), "feature/other");
+    let warning = root_warning(&project).expect("stored trunk must remain expected");
+    assert!(warning.contains("trunk"), "{warning}");
+    assert!(warning.contains("feature/other"), "{warning}");
+}
+
+#[test]
+fn refuses_existing_worktree_without_git_identity() {
+    let fixture = GitFixture::new();
+    let workspace = create_worktree(
+        &fixture.project,
+        "no-identity",
+        BranchSpec::New {
+            branch: "feature/no-identity".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let mut missing_identity = workspace.clone();
+    missing_identity.git_identity = None;
+    let project = ProjectRecord {
+        workspaces: vec![missing_identity.clone()],
+        ..fixture.project.clone()
+    };
+    let error = inspect_worktree(&fixture.project, &missing_identity)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("identity") || error.contains("replacement"),
+        "{error}"
+    );
+    let error = remove_worktree(&project, &missing_identity)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("identity") || error.contains("replacement"),
+        "{error}"
+    );
+    assert!(workspace.path.exists());
+}
+
+#[test]
+fn refuses_same_id_with_different_registered_path() {
+    let fixture = GitFixture::new();
+    let actual = create_worktree(
+        &fixture.project,
+        "owned-work",
+        BranchSpec::New {
+            branch: "feature/owned".into(),
+            base: "main".into(),
+        },
+    )
+    .unwrap();
+    let forged = WorkspaceRecord {
+        path: fixture.project.workspace_root.join("forged"),
+        ..actual.clone()
+    };
+    let project = ProjectRecord {
+        workspaces: vec![actual.clone()],
+        ..fixture.project.clone()
+    };
+    let error = remove_worktree(&project, &forged).unwrap_err().to_string();
+    assert!(error.contains("workspace is not registered"), "{error}");
+    assert!(actual.path.exists());
+}
+
+#[test]
+fn detached_root_warning_uses_stored_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        ["init", "-b", "trunk"].as_slice(),
+        ["config", "user.name", "OVRCR Tests"].as_slice(),
+        ["config", "user.email", "tests@example.invalid"].as_slice(),
+        ["commit", "--allow-empty", "-m", "initial"].as_slice(),
+    ] {
+        live::git(&repo, args);
+    }
+    let workspace_root = dir.path().join("workspaces");
+    std::fs::create_dir(&workspace_root).unwrap();
+    let project = ProjectRecord {
+        name: "fixture".into(),
+        repo: repo.canonicalize().unwrap(),
+        workspace_root: workspace_root.canonicalize().unwrap(),
+        workspaces: vec![WorkspaceRecord {
+            id: "root".into(),
+            path: repo.canonicalize().unwrap(),
+            branch: "trunk".into(),
+            git_identity: worktree_identity(&repo).ok(),
+            setup_pending: false,
+        }],
+    };
+    live::git(&project.repo, &["checkout", "--detach", "HEAD"]);
+    let warning = root_warning(&project).expect("detached root");
+    assert!(warning.contains("trunk"), "{warning}");
+    assert!(warning.contains("detached"), "{warning}");
 }

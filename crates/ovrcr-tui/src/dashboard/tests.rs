@@ -36,16 +36,16 @@ fn sidebar_maps_each_line_to_its_visible_tree_row() {
         TreeRow::Project { name: "one".into() },
         TreeRow::Workspace {
             project: "one".into(),
-            name: "first".into(),
+            id: "first".into(),
         },
         TreeRow::Session { id: SessionId(1) },
         TreeRow::Workspace {
             project: "one".into(),
-            name: "empty".into(),
+            id: "empty".into(),
         },
         TreeRow::Workspace {
             project: "one".into(),
-            name: "last".into(),
+            id: "last".into(),
         },
         TreeRow::Session { id: SessionId(2) },
         TreeRow::Project { name: "two".into() },
@@ -88,6 +88,9 @@ fn hints_name_targets_and_explain_disabled_session_actions() {
         workspaces: vec![WorkspaceSummary {
             project: "consigint".into(),
             name: "auth-handoff".into(),
+            id: "auth-handoff".into(),
+            root: false,
+            warning: None,
             path: "/tmp/auth-handoff".into(),
             sessions: vec![SessionSummary {
                 archived: false,
@@ -891,6 +894,9 @@ fn pending_history_copy_survives_unfocused_hierarchy_removal() {
                 workspaces: vec![WorkspaceSummary {
                     project: "p".into(),
                     name: "w".into(),
+                    id: "w".into(),
+                    root: false,
+                    warning: None,
                     path: std::path::PathBuf::from("/tmp"),
                     sessions: vec![summary(1)],
                 }],
@@ -1031,6 +1037,9 @@ fn mouse_release_precedes_the_replacement_view_request() {
             workspaces: vec![WorkspaceSummary {
                 project: "consigint".into(),
                 name: "auth".into(),
+                id: "auth".into(),
+                root: false,
+                warning: None,
                 path: "/tmp/auth".into(),
                 sessions: ids.iter().copied().map(summary).collect(),
             }],
@@ -1169,6 +1178,9 @@ fn hierarchy_removal_clears_a_parked_wheel_deferral() {
             workspaces: vec![WorkspaceSummary {
                 project: "consigint".into(),
                 name: "auth".into(),
+                id: "auth".into(),
+                root: false,
+                warning: None,
                 path: "/tmp/auth".into(),
                 sessions: ids.iter().copied().map(summary).collect(),
             }],
@@ -1380,6 +1392,9 @@ fn provider_metrics_label_stale_past_five_minutes_and_narrow_to_tok() {
         workspaces: vec![WorkspaceSummary {
             project: "p".into(),
             name: "w".into(),
+            id: "w".into(),
+            root: false,
+            warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
                 archived: false,
@@ -1536,6 +1551,9 @@ fn provider_dashboard_preserves_quality_unknowns_and_component_age() {
         workspaces: vec![WorkspaceSummary {
             project: "p".into(),
             name: "w".into(),
+            id: "w".into(),
+            root: false,
+            warning: None,
             path: "/tmp/w".into(),
             sessions: vec![SessionSummary {
                 archived: false,
@@ -2351,6 +2369,9 @@ fn session_hierarchy(ids: &[u64]) -> crate::protocol::HierarchySnapshot {
             workspaces: vec![WorkspaceSummary {
                 project: "consigint".into(),
                 name: "auth".into(),
+                id: "auth".into(),
+                root: false,
+                warning: None,
                 path: "/tmp/auth".into(),
                 sessions: ids
                     .iter()
@@ -2590,6 +2611,9 @@ fn keymap_dashboard(phase: crate::protocol::SessionPhase) -> Dashboard {
         workspaces: vec![WorkspaceSummary {
             project: "consigint".into(),
             name: "auth".into(),
+            id: "auth".into(),
+            root: false,
+            warning: None,
             path: "/tmp/auth".into(),
             sessions: vec![keymap_session(12, phase)],
         }],

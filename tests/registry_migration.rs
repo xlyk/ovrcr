@@ -273,10 +273,15 @@ fn interrupted_initial_sqlite_transaction_recovers_into_one_time_migration() {
     );
     live.join();
     assert_eq!(project_names(&live), ["recover"]);
+    let workspaces = json(&live, &["workspace", "list", "--project", "recover"]);
+    let workspaces = workspaces.as_array().unwrap();
     assert_eq!(
-        json(&live, &["project", "get", "recover"])["workspace_count"],
-        0
+        workspaces.len(),
+        1,
+        "interrupted migration must create one protected root"
     );
+    assert_eq!(workspaces[0]["path"], live.repo.to_str().unwrap());
+    assert_eq!(workspaces[0]["branch"], "main");
     assert!(!live.socket.exists());
     assert_eq!(std::fs::read_to_string(&live.config).unwrap(), original);
 

@@ -201,7 +201,7 @@ pub(super) fn handle_connection(state: Arc<ServerState>, mut stream: UnixStream)
             }
             state.dashboard.send_owner(
                 &identity,
-                response_message(message.request_id, Response::Hierarchy(snapshot(&state))),
+                response_message(message.request_id, Response::Hierarchy(state.hierarchy())),
             );
             continue;
         }
@@ -600,16 +600,17 @@ pub(super) fn handle_request_with_id(
             name,
             repo,
             workspace_root,
-        } => state
-            .add_project(name, repo, workspace_root)
-            .map_or_else(error_for_lifecycle, |_| {
+        } => state.add_project(name, repo, workspace_root).map_or_else(
+            |error| lifecycle_response_with_partial_hierarchy(state, error),
+            |_| {
                 state
                     .dashboard
                     .try_send(ServerMessage::Event(ServerEvent::HierarchyChanged(
                         state.hierarchy(),
                     )));
                 Response::Ok
-            }),
+            },
+        ),
         Request::RemoveProject { name } => {
             state
                 .remove_project(&name)
@@ -624,7 +625,7 @@ pub(super) fn handle_request_with_id(
         }
         Request::CreateWorkspace {
             project,
-            name,
+            id: name,
             branch,
         } => state.create_workspace(project, name, branch).map_or_else(
             |error| lifecycle_response_with_partial_hierarchy(state, error),
@@ -639,7 +640,7 @@ pub(super) fn handle_request_with_id(
         ),
         Request::CreateWorkspaceWithLaunch {
             project,
-            name,
+            id: name,
             branch,
             launch,
         } => {

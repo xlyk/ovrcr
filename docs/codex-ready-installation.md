@@ -92,14 +92,14 @@ git -C "$OVRCR_NATIVE_ROOT/repo" -c user.name=OVRCR \
   -c user.email=ovrcr@example.invalid commit --allow-empty -m 'Native readiness fixture'
 "$OVRCR_INSTALL" project add ready-check "$OVRCR_NATIVE_ROOT/repo" \
   --workspace-root "$OVRCR_NATIVE_ROOT/workspaces"
-"$OVRCR_INSTALL" workspace create --project ready-check --name native \
+"$OVRCR_INSTALL" workspace create --project ready-check \
   --new-branch codex/ready-install-check --base main
 OVRCR_NATIVE_SESSION=$("$OVRCR_INSTALL" new --project ready-check \
-  --workspace native --name codex-ready -- sh)
+  --workspace codex/ready-install-check --name codex-ready -- sh)
 "$OVRCR_INSTALL"
 ```
 
-Confirm the fixture server runs the installed executable and uses only the recorded temporary config, socket and workspace. Select `ready-check / native / codex-ready` in the dashboard and press Enter. In that OVRCR terminal, verify its inherited `OVRCR_CONFIG` and `OVRCR_SOCKET` match the fixture, then run the installed wrapper and exact native executable without an initial prompt:
+Confirm the fixture server runs the installed executable and uses only the recorded temporary config, socket and workspace. Select `ready-check / codex/ready-install-check / codex-ready` in the dashboard and press Enter. In that OVRCR terminal, verify its inherited `OVRCR_CONFIG` and `OVRCR_SOCKET` match the fixture, then run the installed wrapper and exact native executable without an initial prompt:
 
 ```sh
 "$OVRCR_INSTALL" agent run codex -- "$CODEX_BIN"

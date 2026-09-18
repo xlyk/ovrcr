@@ -60,49 +60,49 @@ impl Demo {
         )?;
         self.create_project_fixture(&repositories, &workspaces, "consigint")?;
         self.create_project_fixture(&repositories, &workspaces, "spacelift-agent")?;
-        self.create_workspace_fixture("consigint", "worktree-lifecycle")?;
-        self.create_workspace_fixture("consigint", "auth-handoff")?;
-        self.create_workspace_fixture("spacelift-agent", "pipeline-progress-v2")?;
-        self.create_workspace_fixture("spacelift-agent", "scope-quality")?;
+        let lifecycle = self.create_workspace_fixture("consigint", "worktree-lifecycle")?;
+        let auth = self.create_workspace_fixture("consigint", "auth-handoff")?;
+        let pipeline = self.create_workspace_fixture("spacelift-agent", "pipeline-progress-v2")?;
+        let quality = self.create_workspace_fixture("spacelift-agent", "scope-quality")?;
 
         self.create_agent_fixture(
             "consigint",
-            "worktree-lifecycle",
+            &lifecycle,
             "implement lifecycle cleanup",
             "claude / sonnet-4",
             "lifecycle cleanup",
         )?;
         self.create_agent_fixture(
             "consigint",
-            "worktree-lifecycle",
+            &lifecycle,
             "review websocket shutdown",
             "codex / gpt-5.4",
             "websocket shutdown review",
         )?;
         self.create_agent_fixture(
             "consigint",
-            "worktree-lifecycle",
+            &lifecycle,
             "plan snapshot restore",
             "pi / grok-4.6",
             "snapshot restore plan",
         )?;
         self.create_agent_fixture(
             "consigint",
-            "auth-handoff",
+            &auth,
             "review auth handoff",
             "grok / grok-4.6",
             "authentication handoff review",
         )?;
         self.create_agent_fixture(
             "spacelift-agent",
-            "pipeline-progress-v2",
+            &pipeline,
             "build pipeline progress",
             "claude / opus-4",
             "pipeline progress fixture",
         )?;
         self.create_agent_fixture(
             "spacelift-agent",
-            "scope-quality",
+            &quality,
             "review scope quality",
             "codex / gpt-5.4",
             "scope quality review",
@@ -185,21 +185,19 @@ impl Demo {
         Ok(())
     }
 
-    fn create_workspace_fixture(&self, project: &str, name: &str) -> Result<()> {
+    fn create_workspace_fixture(&self, project: &str, name: &str) -> Result<String> {
         let branch = format!("gui-{project}-{name}");
         self.cli(&[
             "workspace",
             "create",
             "--project",
             project,
-            "--name",
-            name,
             "--new-branch",
             &branch,
             "--base",
             "main",
         ])?;
-        Ok(())
+        Ok(branch)
     }
 
     fn create_agent_fixture(

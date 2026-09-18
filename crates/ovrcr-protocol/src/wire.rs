@@ -199,7 +199,7 @@ pub enum Request {
     },
     CreateWorkspace {
         project: String,
-        name: String,
+        id: String,
         branch: BranchRequest,
     },
     RemoveWorkspace {
@@ -282,7 +282,7 @@ pub enum Request {
     },
     CreateWorkspaceWithLaunch {
         project: String,
-        name: String,
+        id: String,
         branch: BranchRequest,
         launch: Option<SessionLaunch>,
     },
@@ -343,8 +343,11 @@ pub struct ProjectSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceSummary {
     pub project: String,
+    pub id: String,
     pub name: String,
     pub path: PathBuf,
+    pub root: bool,
+    pub warning: Option<String>,
     pub sessions: Vec<SessionSummary>,
 }
 
@@ -506,7 +509,7 @@ mod wire_snapshot {
                 "CreateWorkspace",
                 Request::CreateWorkspace {
                     project: "a".into(),
-                    name: "b".into(),
+                    id: "b".into(),
                     branch: BranchRequest::Existing { branch: "c".into() },
                 },
             ),
@@ -650,7 +653,7 @@ mod wire_snapshot {
                 "CreateWorkspaceWithLaunch",
                 Request::CreateWorkspaceWithLaunch {
                     project: "a".into(),
-                    name: "b".into(),
+                    id: "b".into(),
                     branch: BranchRequest::Existing { branch: "c".into() },
                     launch: Some(SessionLaunch {
                         argv: vec!["sh".into()],
@@ -663,7 +666,7 @@ mod wire_snapshot {
                 "CreateWorkspaceWithoutLaunch",
                 Request::CreateWorkspaceWithLaunch {
                     project: "a".into(),
-                    name: "b".into(),
+                    id: "b".into(),
                     branch: BranchRequest::Existing { branch: "c".into() },
                     launch: None,
                 },
@@ -943,6 +946,28 @@ mod wire_snapshot {
                 },
             )),
         ));
+        all.push((
+            "WorkspaceRecord".into(),
+            encode(&crate::WorkspaceRecord {
+                id: "stable".into(),
+                path: "/work".into(),
+                branch: "feature/topic".into(),
+                git_identity: Some("1:2".into()),
+                setup_pending: false,
+            }),
+        ));
+        all.push((
+            "WorkspaceSummary".into(),
+            encode(&WorkspaceSummary {
+                project: "p".into(),
+                id: "stable".into(),
+                name: "feature/topic".into(),
+                path: "/work".into(),
+                root: true,
+                warning: Some("expected main".into()),
+                sessions: Vec::new(),
+            }),
+        ));
         all
     }
 
@@ -1115,6 +1140,14 @@ mod wire_snapshot {
         (
             "ConversationReference::Codex",
             "03066e61746976650d2f62696e2f70726f7669646572010e2f686973746f72792e6a736f6e6c072f636f6e66696700",
+        ),
+        (
+            "WorkspaceRecord",
+            "06737461626c65052f776f726b0d666561747572652f746f7069630103313a3200",
+        ),
+        (
+            "WorkspaceSummary",
+            "017006737461626c650d666561747572652f746f706963052f776f726b01010d6578706563746564206d61696e00",
         ),
     ];
 

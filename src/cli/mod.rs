@@ -172,8 +172,10 @@ fn inspect() -> AppResult<(Registry, Vec<SessionSummary>)> {
         };
     }
     let path = RegistryPath::resolve().map_err(RuntimeError::internal)?.0;
+    let mut registry = load_registry(&path).map_err(RuntimeError::internal)?;
+    ovrcr::git::observe_registry(&mut registry);
     Ok((
-        load_registry(&path).map_err(RuntimeError::internal)?,
+        registry,
         ovrcr::retained::load_session_summaries(&path).map_err(RuntimeError::internal)?,
     ))
 }

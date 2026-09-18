@@ -148,15 +148,23 @@ impl Dashboard {
             return groups;
         }
         let (project, workspace) = self.creation_context();
+        let current = self.current_workspace();
         let session = self
             .action_session()
             .and_then(|id| super::state::find_session(self, id));
         let group = self.whichkey.as_ref().and_then(|popup| popup.group);
+        let workspace_title = current
+            .map(|workspace| super::state::workspace_heading(self, workspace))
+            .unwrap_or_else(|| {
+                if workspace.is_empty() {
+                    String::new()
+                } else {
+                    format!("{project} / {workspace}")
+                }
+            });
         let title = match group {
             Some('t') => session.map(|s| format!("Terminal: {} (#{})", s.display_name(), s.id.0)),
-            Some('w') if !workspace.is_empty() => {
-                Some(format!("Workspace: {project} / {workspace}"))
-            }
+            Some('w') if !workspace.is_empty() => Some(format!("Workspace: {workspace_title}")),
             Some('p') if !project.is_empty() => Some(format!("Project: {project}")),
             Some('v') => Some("View".into()),
             _ => None,
@@ -174,28 +182,33 @@ impl Dashboard {
                 hints.push(binding.with_group_key(slot.key));
             }
             let removal = match group {
-                'w' => Some((
-                    "Remove workspace",
-                    Action::RemoveWorkspace,
-                    format!(
-                        "Remove {project} / {workspace}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
-                    ),
-                )),
-                'p' => Some((
+                'w' => {
+                    let root = current.is_some_and(|workspace| workspace.root);
+                    let mut binding = key_binding(
+                        "x",
+                        "Remove workspace",
+                        format!(
+                            "Remove {workspace_title}; asks for confirmation. Requires no terminals and a clean worktree; keeps the branch."
+                        ),
+                        KeyCode::Char('x'),
+                        Action::RemoveWorkspace,
+                    );
+                    if root {
+                        binding = binding.unless(Some(super::keymap::ROOT_PROTECTED));
+                    }
+                    Some(binding)
+                }
+                'p' => Some(key_binding(
+                    "x",
                     "Remove project",
-                    Action::RemoveProject,
                     format!("Unregister {project}; asks for confirmation. Keeps the repository."),
+                    KeyCode::Char('x'),
+                    Action::RemoveProject,
                 )),
                 _ => None,
             };
-            if let Some((name, action, description)) = removal {
-                hints.push(key_binding(
-                    "x",
-                    name,
-                    description,
-                    KeyCode::Char('x'),
-                    action,
-                ));
+            if let Some(binding) = removal {
+                hints.push(binding);
             }
             return vec![KeyGroup { title, keys: hints }];
         }
@@ -211,7 +224,7 @@ impl Dashboard {
             (
                 "w",
                 "Workspace",
-                format!("{project} / {workspace}"),
+                workspace_title.clone(),
                 !workspace.is_empty(),
             ),
             ("p", "Project", project.clone(), !project.is_empty()),

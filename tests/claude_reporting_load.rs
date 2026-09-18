@@ -72,12 +72,13 @@ impl Fixture {
             ),
             Response::Ok
         );
+        fixture.clear_root_shell();
         assert_eq!(
             send(
                 &mut control,
                 Request::CreateWorkspace {
                     project: "load".into(),
-                    name: "work".into(),
+                    id: "work".into(),
                     branch: BranchRequest::New {
                         branch: "load".into(),
                         base: "main".into()

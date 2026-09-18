@@ -21,6 +21,24 @@ sole writable store. The database path is the full `config.toml` path with
 `.sqlite3` appended. Initial migration imports legacy projects/workspaces;
 schema version 2 adds session metadata; version 3 adds archive disposition.
 Neither migration changes settings or task storage.
+Schema version 6 persists each workspace as a stable `id`, checkout `path`,
+`git_identity`, and `setup_pending` flag. SQLite owns identity, path, and
+root-setup metadata. The stored `branch` is captured metadata: the protected
+root's setup default (used when default-branch detection is only a HEAD
+fallback or fails), and a feature workspace's branch at creation or last
+explicit mutation—not a promise that later checkout changes are written back.
+Live checkout labels are derived observations; Git is the authority for the
+current branch. `observe_registry` overlays those labels on a returned clone
+for inventory and offline inspection and is not written back. Retained sessions
+and task runs keep the workspace `id`; scheduled-task source branches stay as
+configured.
+`git_identity` matches a write-once generation marker in the checkout's Git
+administration directory. Only creation and writable migration capture that
+marker; inspection and removal never stamp an unknown checkout. This separates
+a replacement worktree from the original even if the filesystem reuses its inode.
+The checkout observer runs Git outside the session dispatcher and publishes
+validated observations keyed by project and workspace identity. Dispatcher
+snapshots use that cache without Git calls or registry writes.
 After each migration transaction commits,
 later starts and every save use SQLite only. Offline readers open the database
 read-only. They read preserved TOML only if the database is absent, or both its
